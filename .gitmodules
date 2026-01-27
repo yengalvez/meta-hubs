@@ -1,0 +1,3 @@
+[submodule "hubs"]
+	path = hubs
+	url = https://github.com/yengalvez/hubs.git
