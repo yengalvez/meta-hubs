@@ -1,0 +1,12 @@
+diff --git a/src/storage/store.js b/src/storage/store.js
+index 3b256f12af..0d56aa2c90 100644
+--- a/src/storage/store.js
++++ b/src/storage/store.js
+@@ -137,6 +137,7 @@ export const SCHEMA = {
+         globalSFXVolume: { type: "number", default: 100 },
+         snapRotationDegrees: { type: "number", default: 45 },
+         materialQualitySetting: { type: "string", default: defaultMaterialQuality },
++        enableThirdPersonView: { type: "bool", default: false },
+         enableDynamicShadows: { type: "bool", default: false },
+         disableSoundEffects: { type: "bool", default: false },
+         disableMovement: { type: "bool", default: false },
