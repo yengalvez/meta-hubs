@@ -1,0 +1,134 @@
+html,
+body {
+  background: #0c0c0e;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen,
+    Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
+  padding: 10px;
+  font-size: 16px;
+  border: none;
+  color: #fafafa;
+}
+body::after {
+  content: "";
+  display: flex;
+  width: 60vw;
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 60vh;
+  background: #2a0944;
+  filter: blur(212px);
+  transform: rotate(-24.55deg);
+  pointer-events: none;
+}
+.main {
+  z-index: 1;
+  position: relative;
+}
+.frame {
+  width: 100%;
+  height: 800px;
+  border: none;
+  margin-top: 10px;
+}
+h2 {
+  font-family: "Roboto";
+  font-style: normal;
+  text-align: center;
+
+  font-weight: 500;
+  font-size: 26px;
+  line-height: 110%;
+  /* identical to box height, or 29px */
+
+  text-align: center;
+
+  color: #fafafa;
+}
+.list li {
+  margin-bottom: 12px;
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 300;
+  font-size: 16px;
+  line-height: 150%;
+  /* identical to box height, or 24px */
+
+  /* color: #ffffff; */
+  padding-left: 16px;
+}
+.bordered {
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 20px;
+  padding: 2px 5px;
+  margin: 0 4px;
+  text-transform: uppercase;
+}
+.green {
+  color: #e1ff67;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 30px;
+  padding-top: 10px;
+}
+.actions input:first-child {
+  cursor: pointer;
+  border: none;
+  padding: 9px 13px;
+  background: #e1ff67;
+  border-radius: 18px;
+
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 24px;
+
+  text-transform: uppercase;
+
+  color: #1a1b22;
+}
+.actions input:last-child {
+  cursor: pointer;
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 24px;
+  /* identical to box height, or 133% */
+
+  color: #f2f2f2;
+  padding: 9px 13px;
+
+  text-transform: uppercase;
+
+  border-radius: 18px;
+  background: transparent;
+  border: 2px solid #f2f2f2;
+  opacity: 0.3;
+}
+.note {
+  font-weight: 400;
+  font-style: oblique;
+}
+.link {
+  margin-top: 33px;
+  text-align: center;
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 130%;
+  /* or 18px */
+
+  text-align: center;
+  /* text-transform: uppercase; */
+
+  color: #ececf0;
+}
