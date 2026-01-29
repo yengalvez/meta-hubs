@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Avaturn Integration Example - Mozilla Hubs</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f5f5;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            height: 100%;
+        }
+
+        /* Panel de Avaturn */
+        .avaturn-panel {
+            flex: 2;
+            display: flex;
+            flex-direction: column;
+            background: white;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+        }
+
+        .panel-header {
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .panel-header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .panel-header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        #avaturn-iframe {
+            flex: 1;
+            border: none;
+            background: white;
+        }
+
+        /* Panel de información */
+        .info-panel {
+            flex: 1;
+            padding: 30px;
+            overflow-y: auto;
+            background: #f9f9f9;
+        }
+
+        .info-box {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
+        }
+
+        .info-box h2 {
+            font-size: 20px;
+            margin-bottom: 15px;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .info-box h2::before {
+            content: '✨';
+            font-size: 24px;
+        }
+
+        .info-box p {
+            font-size: 14px;
+            line-height: 1.6;
+            color: #666;
+            margin-bottom: 15px;
+        }
+
+        .status {
+            padding: 12px 16px;
+            background: #e3f2fd;
+            border-left: 4px solid #2196F3;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            color: #1976D2;
+        }
+
+        .status.success {
+            background: #e8f5e9;
+            border-color: #4CAF50;
+            color: #2e7d32;
+        }
+
+        .status.error {
+            background: #ffebee;
+            border-color: #f44336;
+            color: #c62828;
+        }
+
+        .avatar-data {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .avatar-data.visible {
+            display: block;
+        }
+
+        .avatar-data-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 13px;
+        }
+
+        .avatar-data-item:last-child {
+            border-bottom: none;
+        }
+
+        .avatar-data-label {
+            font-weight: 600;
+            color: #555;
+        }
+
+        .avatar-data-value {
+            color: #777;
+            text-align: right;
+        }
+
+        .button {
+            width: 100%;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 12px;
+        }
+
+        .button-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .button-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .button-secondary {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .button-secondary:hover:not(:disabled) {
+            background: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
+        }
+
+        .button:disabled {
+            background: #e0e0e0;
+            color: #999;
+            cursor: not-allowed;
+        }
+
+        .instructions {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .instructions h3 {
+            font-size: 16px;
+            margin-bottom: 10px;
+            color: #856404;
+        }
+
+        .instructions ol {
+            margin-left: 20px;
+            color: #856404;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+
+        .code-snippet {
+            background: #263238;
+            color: #aed581;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            overflow-x: auto;
+            margin-top: 10px;
+        }
+
+        .loader {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .container {
+                flex-direction: column;
+            }
+
+            .avaturn-panel {
+                flex: 1;
+                min-height: 60vh;
+            }
+
+            .info-panel {
+                flex: 1;
+                min-height: 40vh;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Panel de Avaturn -->
+        <div class="avaturn-panel">
+            <div class="panel-header">
+                <h1>🎭 Avaturn Avatar Creator</h1>
+                <p>Crea tu avatar fotorrealista para Mozilla Hubs</p>
+            </div>
+            <iframe
+                id="avaturn-iframe"
+                src="https://demo.avaturn.dev/"
+                allow="microphone; camera"
+                title="Avaturn Avatar Creator"
+            ></iframe>
+        </div>
+
+        <!-- Panel de información -->
+        <div class="info-panel">
+            <div class="info-box">
+                <h2>Estado</h2>
+                <div id="status" class="status">
+                    ⏳ Esperando creación de avatar...
+                </div>
+
+                <div id="avatar-data" class="avatar-data">
+                    <div class="avatar-data-item">
+                        <span class="avatar-data-label">Avatar ID:</span>
+                        <span class="avatar-data-value" id="avatar-id">-</span>
+                    </div>
+                    <div class="avatar-data-item">
+                        <span class="avatar-data-label">Body Type:</span>
+                        <span class="avatar-data-value" id="body-id">-</span>
+                    </div>
+                    <div class="avatar-data-item">
+                        <span class="avatar-data-label">Género:</span>
+                        <span class="avatar-data-value" id="gender">-</span>
+                    </div>
+                    <div class="avatar-data-item">
+                        <span class="avatar-data-label">Animación facial:</span>
+                        <span class="avatar-data-value" id="face-anim">-</span>
+                    </div>
+                    <div class="avatar-data-item">
+                        <span class="avatar-data-label">Tipo de URL:</span>
+                        <span class="avatar-data-value" id="url-type">-</span>
+                    </div>
+                </div>
+
+                <button
+                    id="download-btn"
+                    class="button button-secondary"
+                    disabled
+                >
+                    <span id="download-btn-text">📥 Descargar Avatar GLB</span>
+                </button>
+
+                <button
+                    id="use-btn"
+                    class="button button-primary"
+                    disabled
+                >
+                    <span id="use-btn-text">🚀 Usar en Hubs</span>
+                </button>
+            </div>
+
+            <div class="instructions">
+                <h3>📋 Instrucciones</h3>
+                <ol>
+                    <li>Crea tu avatar usando el editor de Avaturn</li>
+                    <li>Personaliza el cuerpo, ropa y accesorios</li>
+                    <li>Haz clic en "Next" cuando termines</li>
+                    <li>El avatar se exportará automáticamente</li>
+                    <li>Descarga el GLB o úsalo directamente en Hubs</li>
+                </ol>
+            </div>
+
+            <div class="info-box">
+                <h2>💡 URL para Hubs</h2>
+                <p>Una vez creado el avatar, puedes usarlo en Hubs con esta URL:</p>
+                <div id="hubs-url" class="code-snippet">
+                    Crea un avatar primero para ver la URL...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ========== VARIABLES GLOBALES ==========
+        let currentAvatarData = null;
+
+        // ========== ELEMENTOS DEL DOM ==========
+        const elements = {
+            status: document.getElementById('status'),
+            avatarData: document.getElementById('avatar-data'),
+            avatarId: document.getElementById('avatar-id'),
+            bodyId: document.getElementById('body-id'),
+            gender: document.getElementById('gender'),
+            faceAnim: document.getElementById('face-anim'),
+            urlType: document.getElementById('url-type'),
+            downloadBtn: document.getElementById('download-btn'),
+            downloadBtnText: document.getElementById('download-btn-text'),
+            useBtn: document.getElementById('use-btn'),
+            useBtnText: document.getElementById('use-btn-text'),
+            hubsUrl: document.getElementById('hubs-url')
+        };
+
+        // ========== EVENT LISTENERS ==========
+
+        // Escuchar mensajes del iFrame de Avaturn
+        window.addEventListener('message', handleAvaturnMessage);
+
+        // Botón de descarga
+        elements.downloadBtn.addEventListener('click', handleDownload);
+
+        // Botón de usar en Hubs
+        elements.useBtn.addEventListener('click', handleUseInHubs);
+
+        // ========== FUNCIONES ==========
+
+        /**
+         * Maneja mensajes recibidos desde el iFrame de Avaturn
+         */
+        function handleAvaturnMessage(event) {
+            // Validar origen
+            if (!event.origin.includes('avaturn.dev')) {
+                return;
+            }
+
+            console.log('[Avaturn] Mensaje recibido:', event.data);
+
+            // Avatar exportado
+            if (event.data && event.data.type === 'avatarExport') {
+                currentAvatarData = event.data;
+                handleAvatarExport(event.data);
+            }
+        }
+
+        /**
+         * Procesa avatar exportado desde Avaturn
+         */
+        function handleAvatarExport(data) {
+            console.log('[Avaturn] Avatar exportado:', data);
+
+            // Actualizar estado
+            updateStatus('success', '✅ Avatar creado exitosamente');
+
+            // Mostrar datos del avatar
+            elements.avatarData.classList.add('visible');
+            elements.avatarId.textContent = data.avatarId || 'N/A';
+            elements.bodyId.textContent = data.bodyId || 'N/A';
+            elements.gender.textContent = data.gender || 'N/A';
+            elements.faceAnim.textContent = data.avatarSupportsFaceAnimations ? 'Sí (T2)' : 'No (T1)';
+            elements.urlType.textContent = data.urlType || 'N/A';
+
+            // Habilitar botones
+            elements.downloadBtn.disabled = false;
+            elements.useBtn.disabled = false;
+
+            // Generar URL para Hubs
+            generateHubsUrl(data.url);
+        }
+
+        /**
+         * Actualiza el mensaje de estado
+         */
+        function updateStatus(type, message) {
+            elements.status.className = `status ${type}`;
+            elements.status.textContent = message;
+        }
+
+        /**
+         * Descarga el avatar GLB
+         */
+        async function handleDownload() {
+            if (!currentAvatarData || !currentAvatarData.url) {
+                alert('No hay avatar para descargar');
+                return;
+            }
+
+            // Mostrar loading
+            elements.downloadBtn.disabled = true;
+            elements.downloadBtnText.innerHTML = '<span class="loader"></span> Descargando...';
+
+            try {
+                const response = await fetch(currentAvatarData.url);
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `avaturn-avatar-${Date.now()}.glb`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                URL.revokeObjectURL(url);
+
+                updateStatus('success', '✅ Avatar descargado exitosamente');
+            } catch (error) {
+                console.error('[Avaturn] Error descargando avatar:', error);
+                updateStatus('error', '❌ Error al descargar avatar');
+            } finally {
+                elements.downloadBtn.disabled = false;
+                elements.downloadBtnText.textContent = '📥 Descargar Avatar GLB';
+            }
+        }
+
+        /**
+         * Usa el avatar en Hubs
+         */
+        function handleUseInHubs() {
+            if (!currentAvatarData || !currentAvatarData.url) {
+                alert('No hay avatar disponible');
+                return;
+            }
+
+            // Opción 1: Abrir Hubs en nueva pestaña con el avatar
+            const hubsBaseUrl = 'https://hubs.mozilla.com/';
+            const avatarParam = encodeURIComponent(currentAvatarData.url);
+            const hubsUrl = `${hubsBaseUrl}?avatarUrl=${avatarParam}`;
+
+            window.open(hubsUrl, '_blank');
+
+            // Opción 2: Guardar en localStorage para uso posterior
+            localStorage.setItem('customAvatarUrl', currentAvatarData.url);
+            localStorage.setItem('customAvatarData', JSON.stringify(currentAvatarData));
+
+            updateStatus('success', '✅ Avatar guardado. Se abrió Hubs en nueva pestaña.');
+        }
+
+        /**
+         * Genera URL para usar en Hubs
+         */
+        function generateHubsUrl(avatarUrl) {
+            const hubsBaseUrl = 'https://hubs.mozilla.com/';
+            const avatarParam = encodeURIComponent(avatarUrl);
+            const displayName = 'MiNombre'; // Puedes hacer esto editable
+
+            const fullUrl = `${hubsBaseUrl}?avatarUrl=${avatarParam}&displayName=${displayName}`;
+
+            elements.hubsUrl.textContent = fullUrl;
+
+            // Hacer URL clickeable
+            elements.hubsUrl.style.cursor = 'pointer';
+            elements.hubsUrl.title = 'Click para copiar';
+            elements.hubsUrl.onclick = () => {
+                navigator.clipboard.writeText(fullUrl);
+                updateStatus('success', '✅ URL copiada al portapapeles');
+            };
+        }
+
+        // ========== INICIALIZACIÓN ==========
+        console.log('[Avaturn] Integration example loaded');
+        console.log('[Avaturn] Esperando avatar export desde iframe...');
+    </script>
+</body>
+</html>
