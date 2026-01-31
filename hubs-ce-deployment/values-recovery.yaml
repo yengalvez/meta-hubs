@@ -1,0 +1,41 @@
+global:
+  domain: meta-hubs.org
+
+reticulum:
+  image:
+    repository: registry.digitalocean.com/meta-hubs-registry/reticulum
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  resources:
+    limits:
+      memory: 2.5Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+  # Critical env vars to fix crashes and enable features
+  extraEnv:
+    # Disable Sentry to prevent boot loops
+    SENTRY_DSN: ""
+    
+    # CSP Configuration for Avaturn
+    # Note: We must ensure these are non-empty to avoid config parser errors if checks exist
+    CSP_CONNECT_SRC: "self https://demo.avaturn.dev wss://*.stream.meta-hubs.org:4443 https://meta-hubs.org"
+    CSP_FRAME_SRC: "self https://demo.avaturn.dev"
+    CSP_IMG_SRC: "https://demo.avaturn.dev https://nearspark.reticulum.io"
+    
+    # Internal Service Endpoints (Must be valid URLs to avoid hackney crash)
+    # Using internal K8s DNS names
+    PHOTOMNEMONIC_ENDPOINT: "http://moz-photomnemonic:5000"
+    SPEELYCAPTOR_ENDPOINT: "http://moz-speelycaptor:5000"
+    YTDL_HOST: "https://hubs-ytdl-fsu7tyt32a-uc.a.run.app" 
+    
+    # Ensure HOST is correct
+    HOST: "meta-hubs.org"
+
+  nodeSelector:
+    kubernetes.io/hostname: "hubs-pool-krjy4"
+
+  # Ensure secrets are used (these are usually default in the chart but good to be explicit if we can)
+  # The chart handles DB/SMTP secrets via existingSecret usually.

@@ -1,0 +1,202 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ret-config
+  namespace: hcce
+data:
+  config.toml.template: |
+    [peerage]
+    dns_name = "ret.<POD_NS>.svc.cluster.local"
+    app_name = "ret"
+
+    [ret."Elixir.Ret"]
+    pool = "hubs"
+
+    dashboard_access_key = "dummy_key"
+
+
+
+    [ret."Elixir.Ret.DiscordClient"]
+    client_id = "123456789"
+    client_secret = "secret"
+    bot_token = "token"
+
+    [ret."Elixir.RetWeb.Endpoint".https]
+    port = 4000
+    certfile = "/ret/cert.pem"
+    cacertfile = "/ret/cacert.pem"
+    keyfile = "/ret/key.pem"
+
+    [ret."Elixir.RetWeb.Endpoint"]
+    allowed_origins = "*"
+    secret_key_base = "phx-key"
+    allow_crawlers = true
+    thumbnail_url = "http://nearspark.hcce.svc.cluster.local:5000"
+
+
+
+    [ret."Elixir.RetWeb.Endpoint".cors_proxy_url]
+    host = "cors.meta-hubs.org"
+    port = 443
+
+
+
+    [ret."Elixir.RetWeb.Endpoint".imgproxy_url]
+    host = "nearspark.hcce.svc.cluster.local"
+    port = 5000
+
+    [ret."Elixir.RetWeb.Endpoint".assets_url]
+    host = "assets.meta-hubs.org"
+    port = 443
+
+    [ret."Elixir.RetWeb.Endpoint".link_url]
+    host = "link.meta-hubs.org"
+    scheme = "https"
+    port = 443
+
+    [ret."Elixir.RetWeb.Endpoint".url]
+    host = "meta-hubs.org"
+    port = 443
+
+    [ret."Elixir.RetWeb.Endpoint".static_url]
+    host = "meta-hubs.org"
+
+    [ret."Elixir.Ret.Repo"]
+    username = "postgres"
+    password = "123456"
+    database = "retdb"
+    hostname = "pgbouncer-t"
+    template = "template0"
+    pool_size = 5
+    port = 5432
+
+    [ret."Elixir.Ret.SessionLockRepo"]
+    username = "postgres"
+    password = "123456"
+    database = "retdb"
+    hostname = "pgbouncer"
+    template = "template0"
+
+    port = 5432
+
+    [ret."Elixir.Ret.Locking".session_lock_db]
+    username = "postgres"
+    password = "123456"
+    database = "retdb"
+    hostname = "pgbouncer"
+    port = 5432
+
+    [ret."Elixir.Ret.Habitat"]
+    ip = "127.0.0.1"
+    http_port = 9631
+
+    [ret."Elixir.Ret.JanusLoadStatus"]
+    default_janus_host = "https://stream.meta-hubs.org"
+    janus_service_name = "dialog"
+    janus_admin_secret = "secret"
+    janus_admin_port = 7000
+    janus_port = 4443
+    
+    [ret."Elixir.Ret.Guardian"]
+    secret_key = "guardian-key"
+    issuer = "meta-hubs.org"
+
+    [ret."Elixir.Ret.PermsToken"]
+    perms_key = "-----BEGIN PRIVATE KEY-----\\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQDn8A2XsX/vYDOm\\nd79QhxHAaP8GTGX4ctPtTYzJNYJAAshG/3QddqHbb0Am6AaRalWygEYsEseqt1d9\\nV3BnckwCCjNEVKwLYlv3eutcDn9sRcXmIGXwmXTuvAnvnyj+8lawi0mghBufQBa5\\n0hBgtF053wuxmu4ez0ZbaGsQDX2Yxjnbx00aOdE+w6tS9OGgIS5ox2SFwdCuOCHp\\nooROVhdV2RKKf+tK3wvs/DTGo5IcNK5iBErHABqOVkmPY2HlWlDgDdALFfuNK8Zb\\n6OIdmSLL1Ywc6nhcu1OPnQPVVSRADG+Rpn3frnBrw7G2p/kobtRlXqPOXNevrKXG\\nW4otkv3ZAgMBAAECggEBAMd8GUTCHsYU2PexgLPTKDp0U/vn08Bnis1MaO1Z/2fs\\nvLML3aPFuBqSyftsjtGdQo3fc/tOP7seK7qbbQscLDGI8mUv6jV0aKMnbqzjr0bB\\nkB+I+ASDCCaZRnZ5TvpQFq2Lb00Gsvc6WRGDkiCKoLA4ncco+Os43UubOJI6+C5f\\nlJN9V6nKmVoFCGE2PBv4o3edu3A0wontCh+BwgWfWpBOQFn8SMLJ5MHk3XrkOxzV\\n06WB2/g/R3KPq3HdIkGTpZ5uDW8/FJDozd5z5Aep/2jP+VRbR8C9+sUKsMfBNbeB\\nWPuBVa//nvzFTSKBxkFuryWFTb7tKXN5UA4h7yZ3JIECgYEA9Ntll+w1PXX9N7c0\\nimQ39vTVsFcC82G6ja5/zMF/8xbHhgPVORYZhcNw1Nl9VSF+a3h81n/35nUkn9ou\\nfc8c7SoXpYO52iRZUZ5ZKJPf8TQWVJtQ48XE+3cZAKe9vNYTcuxVwOe30M+nNtYY\\nVuI1EZ8LX8SLRYYQrwnTJjIopLECgYEA8n4lMHnr6S2qodBujZHPA4W5T0taRIqU\\n4KauyeITyOWZPeZQ3iDUqLGKr+3LrD/0VtXBx9f26i79KWfghRlqNKwjs5Of5JsP\\ncB2rLnTBIdkBHsn8mzvqsBl4zMMr0ss36ySSRgQwKXFowfbVdDdjZpZKYrdcUAKj\\nZpGBTeTn1akCgYEAxvCGv4OT0ibOIHmCf3pjWgucntRjOlk52Clh/ntsuJXWcEUm\\n9WXGQM8FGnrGgOdgrnLLgv+f66dbpWEAiwk+qFadtcWrt9f2lgDA0d4rge7fAcjb\\nVOR3YhRmxQiEeSu5y5LHLZ9W0poUctJKHjVWBsYg2KN4wHjnjz+9RXhVW1ECgYEA\\nxq/5RMkBNSPHxaIEk1a/KgGtnnz9T1/FMHUijiQBVgBaGU/XPsnjtP0Tx6at1Urp\\npySqDFa155fssqBEJIp4bQQGlKMGxccPVSvaEMx1Woh11IZnxcHIP9X/Frdr9uGv\\nxalHeLsBw1M7JIJcz0Z62ZmXBV978crXm7jpG6vNEVECgYA1kFHLm/K0OW+lJNtq\\nRQsw7jXpIWfR3gr8MKudE3SJi/nX7/VZlIH9eCdEq5jg61dNTe3WZhHSUPF8fGyt\\n5qEScr1CttlEqkHLXWfaGeJI96On7B8BpYgFySiBu634uhb5yhMH27Y0V+416TeM\\nI/LBlLGVzdmTNu8gsM8v9ijQfQ==\\n-----END PRIVATE KEY-----\\n"
+
+
+
+
+
+    [ret."Elixir.Ret.MediaResolver"]
+    thumbnail_server = "http://nearspark.hcce.svc.cluster.local:5000"
+    ytdl_host = "http://nearspark.hcce.svc.cluster.local:5000"
+    photomnemonic_endpoint = "http://photomnemonic.hcce.svc.cluster.local:5000"
+    sketchfab_api_key = "?"
+    tenor_api_key = "?"
+
+    [ret."Elixir.Ret.Speelycaptor"]
+    speelycaptor_endpoint = "http://nearspark.hcce.svc.cluster.local:5000"
+
+    [ret."Elixir.Ret.PageOriginWarmer"]
+    insecure_ssl = true
+
+    [ret."Elixir.Ret.HttpUtils"]
+    insecure_ssl = true
+
+    [ret."Elixir.Ret.Storage"]
+    storage_path = "/storage"
+    ttl = 172800
+    host = "https://meta-hubs.org"
+    quota_gb = "1000"
+
+    [ret."Elixir.RetWeb.Email"]
+    from = "hello@meta-hubs.org"
+
+    [ret."Elixir.Ret.Mailer"]
+    server = "live.smtp.mailtrap.io"
+    port = "2525"
+    username = "smtp@mailtrap.io"
+    password = "75d981b1a58f10aa3d54daa7ab2343a4"
+
+
+
+    [ret."Elixir.Ret.Support"]
+    slack_webhook_url = "https://hooks.slack.com/services/dummy/dummy/dummy"
+
+    [ret."Elixir.RetWeb.Plugs.AddCSP"]
+    child_src = "self"
+    connect_src = "self https://demo.avaturn.dev wss://*.stream.meta-hubs.org:4443 https://meta-hubs.org"
+    font_src = "self"
+    form_action = "self"
+    frame_src = "self https://demo.avaturn.dev"
+    img_src = "https://demo.avaturn.dev https://nearspark.reticulum.io"
+    manifest_src = "self"
+    media_src = "self"
+    script_src = "self"
+    style_src = "self"
+    worker_src = "self"
+
+    [ret."Ret.Repo.Migrations.AdminSchemaInit"]
+    postgrest_password = "dummy"
+
+    [ret."Elixir.Ret.StatsJob"]
+
+    [ret."Elixir.RetWeb.HealthController"]
+
+    [ret."Elixir.RetWeb.PageController"]
+    skip_cache = true
+    # extra_avatar_headers = ""
+    # extra_index_headers = ""
+    # extra_room_headers = ""
+    # extra_scene_headers = ""
+
+    # extra_avatar_html = ""
+    # extra_index_html = ""
+    # extra_room_html = ""
+    # extra_scene_html = ""
+
+    # extra_avatar_script = ""
+    # extra_index_script = ""
+    # extra_room_script = ""
+    # extra_scene_script = ""
+
+    [ret."Elixir.Ret.Account"]
+    admin_email = "info@virtualmente.com"
+
+    [ret."Elixir.Ret.Coturn"]
+    realm = "turkey"
+    public_tls_ports = "5349"
+
+
+
+
+
+    [run]
+    hostname_dns_suffix = "turkey"
+
+    [hackney]
+    max_connections = 250
+
+    [ret."Elixir.Ret.Meta"]
+    phx_host = "meta-hubs.org"

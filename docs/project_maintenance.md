@@ -83,6 +83,14 @@ We will have **two** connected repositories:
 
 ## Deployment Strategy (DigitalOcean / Kubernetes)
 
+### Prerequisites
+-   **kubectl**: If not installed, download directly:
+    ```bash
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/darwin/arm64/kubectl"
+    chmod +x kubectl && mkdir -p ~/bin && mv kubectl ~/bin/
+    ```
+-   **kubeconfig**: Must be configured for the DigitalOcean cluster `hubs-ce-ams3`.
+
 ### 1. Building the Client
 -   Ensure production environment variables are set before building:
     ```bash
@@ -92,16 +100,51 @@ We will have **two** connected repositories:
     ```
 
 ### 2. Deployment Methods
--   **Quick Patch (Hot-fix)**: Use `kubectl cp` to overwrite files in a running pod for immediate testing/fixes.
-    ```bash
-    kubectl cp ./dist/ <pod-name>:/www/hubs/ -c <container-name>
-    ```
--   **Robust Deployment (Recommended)**:
-    1.  **Dockerize**: Build a Docker image containing the `dist` folder.
-    2.  **Registry**: Push image to DigitalOcean Container Registry.
-    3.  **Helm/K8s**: Update the deployment yaml to use the new image tag.
-    4.  `kubectl rollouts` will handle the zero-downtime update.
+
+#### Quick Patch (Hot-fix) -- USE WITH CAUTION
+> [!WARNING]  
+> This method is fragile because Reticulum caches HTML files in memory and uses a separate `/www/hubs/pages/` directory for templates. If you only copy to `/www/hubs/`, changes requiring new JS bundles (hashes) will NOT work until Reticulum is restarted AND `pages/` is updated.
+ 
+**Cluster Details:**
+-   **Namespace**: `hcce`
+-   **Pod**: `moz-hubs-ce-*` (use `kubectl get pods -n hcce | grep hubs`)
+-   **Container**: `hubs-ce`
+
+**Correct Hot-fix Procedure:**
+1.  **Build**: `npm run build`
+2.  **Copy Assets**: Copy `dist/` contents to `/www/hubs/` on the pod.
+3.  **Update Pages**: You MUST also update the HTML templates in `/www/hubs/pages/`.
+    *   *Critical*: The `dist/hub.html` contains references to the NEW JS bundles (e.g., `hub-abc1234.js`). The `pages/hub.html` has OLD references.
+    *   You must replacing the `hub-*.js` and `hub-vendors-*.js` references in `/www/hubs/pages/hub.html` with the new ones from your build.
+4.  **Restart Reticulum**: Reticulum caches these pages in RAM at startup. You MUST restart the Reticulum pods to see changes.
+    *   `kubectl rollout restart deployment moz-reticulum -n hcce`
+
+```bash
+# Example Script for Hot-Fix
+POD=$(~/bin/kubectl get pods -n hcce | grep moz-hubs-ce | grep Running | awk '{print $1}')
+echo "Deploying to $POD..."
+
+# 1. Copy assets
+for f in hubs/dist/*; do ~/bin/kubectl cp "$f" "$POD:/www/hubs/" -n hcce -c hubs-ce; done
+
+# 2. Update Pages (This is the tricky part - use manual editing or careful sed if confident)
+# Verify the new bundle name:
+grep -o 'hub-[a-z0-9]*\.js' hubs/dist/hub.html
+# Then update /www/hubs/pages/hub.html on the pod to match.
+
+# 3. Restart Reticulum
+~/bin/kubectl rollout restart deployment moz-reticulum -n hcce
+```
+
+#### Robust Deployment (Recommended)
+1.  **Dockerize**: Build a Docker image containing the `dist` folder.
+2.  **Registry**: Push image to DigitalOcean Container Registry.
+3.  **Helm/K8s**: Update the deployment yaml to use the new image tag.
+4.  `kubectl rollouts` will handle the zero-downtime update.
 
 ## Troubleshooting
 -   **CSP Errors**: Check `Content-Security-Policy` headers if external resources (images, scripts) are blocked.
+    *   **Fix**: Edit the `ret-config` ConfigMap (`kubectl edit configmap ret-config -n hcce`) and update the `[ret."Elixir.RetWeb.Plugs.AddCSP"]` section (add domains to `frame_src`, `connect_src`, etc). Then restart Reticulum.
 -   **Webpack Issues**: If the build fails, clean `node_modules` and `package-lock.json` and reinstall.
+-   **kubectl not found**: Install using the curl command in Prerequisites or via `brew install kubectl`.
+
