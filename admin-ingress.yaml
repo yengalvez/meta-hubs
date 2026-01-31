@@ -4,22 +4,19 @@ metadata:
   name: moz-reticulum-admin-rewrite
   namespace: hcce
   annotations:
-    kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      rewrite ^/admin/(.*)$ /admin break;
-    cert-manager.io/cluster-issuer: self-signed-issuer
+    kubernetes.io/ingress.class: haproxy
 spec:
-  ingressClassName: nginx
+  ingressClassName: haproxy
   tls:
   - hosts:
     - meta-hubs.org
-    secretName: moz-reticulum-tls
+    secretName: cert-meta-hubs.org
   rules:
   - host: meta-hubs.org
     http:
       paths:
-      - path: /admin/(.*)
-        pathType: ImplementationSpecific
+      - path: /admin
+        pathType: Prefix
         backend:
           service:
             name: moz-reticulum
