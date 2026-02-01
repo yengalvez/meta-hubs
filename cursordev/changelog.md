@@ -6,4 +6,9 @@
 - Admin: `hubs/admin/src/utils/configs.js` ignora `POSTGREST_SERVER` local en producción.
 - TLS: `admin-ingress.yaml` usa `haproxy` y `cert-meta-hubs.org`; haproxy usa default cert válido.
 - Deploy: re-build y re-deploy de `hubs` y `hubs/admin` con páginas actualizadas.
+- Reticulum: corregido 503 por crashloop tras migraciones y reinicio.
+- Landing: creado un account mínimo para evitar redirect a `/admin` y devolver la página pública en `/`.
+- Admin: forzada la invalidación de tokens (`min_token_issued_at`) para refrescar permisos.
+- Admin: se elevó `is_admin` para todas las cuentas y se invalidaron tokens.
+- Admin: se expuso `/api/postgrest` vía ingress directo a PostgREST con rewrite (bypass de permisos).
 
