@@ -1,2 +1,11 @@
-
+.DS_Store
 bin/
+*.pem
+*.crt
+*.key
+*_b64.txt
+input-values.local.yaml
+input-values.yaml
+hcce.yaml
+node_modules/
+.env

@@ -1,3 +1,8 @@
+> **NOTA: Feature futura opcional.** No implementada actualmente en el proyecto.
+> Avaturn ofrece avatares fotorrealistas via iframe que podrian integrarse
+> en el futuro si se necesita un editor de avatares en tiempo real.
+> Esta documentacion se conserva como referencia para posible implementacion futura.
+
 # Implementación de Avaturn en Mozilla Hubs
 ## Guía Rápida de Inicio
 
