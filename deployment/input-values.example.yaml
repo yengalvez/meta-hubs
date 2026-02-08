@@ -1,14 +1,25 @@
 # YenHubs - Hubs CE 2.0.0 Input Values Template
-# Copy this file to hubs-cloud/community-edition/input-values.yaml and fill in your values
-# Or copy to deployment/input-values.local.yaml for local backup (gitignored)
+# ================================================
+# Copy this file to hubs-cloud/community-edition/input-values.yaml and fill in your values.
+# That file is gitignored — never commit real credentials.
 #
+# Full deployment guide: deployment/README.md
 # Official reference: https://docs.hubsfoundation.org/beginners-guide-to-CE.html
 
+# --- Domain & Admin ---
 HUB_DOMAIN: "your-domain.com"
 ADM_EMAIL: "admin@your-domain.com"
+
+# --- Namespace (don't change unless you know what you're doing) ---
 Namespace: "hcce"
+
+# --- Docker images ---
+# Base images come from mozillareality/ by default.
+# hubsfoundation/ images are the newer official ones (CE 2.0.0).
 Container_Dockerhub_Username: "mozillareality"
 Container_Tag: "stable-latest"
+
+# --- Database ---
 DB_USER: "postgres"
 DB_PASS: "CHANGE_ME_strong_password"
 DB_NAME: "retdb"
@@ -16,26 +27,53 @@ DB_HOST: "pgbouncer"
 DB_HOST_T: "pgbouncer-t"
 PGRST_DB_URI: "postgres://$DB_USER:$DB_PASS@pgbouncer/$DB_NAME"
 PSQL: "postgres://$DB_USER:$DB_PASS@pgbouncer/$DB_NAME"
+
+# --- SMTP ---
+# IMPORTANT: DigitalOcean blocks outbound ports 25, 465, and 587.
+# Use alternative ports: Mailtrap uses 2525, Scaleway uses 2587.
 SMTP_SERVER: "your-smtp-server.com"
-SMTP_PORT: "587"
+SMTP_PORT: "2525"
 SMTP_USER: "your-smtp-user"
 SMTP_PASS: "your-smtp-password"
-NODE_COOKIE: "CHANGE_ME_random_string"
-GUARDIAN_KEY: "CHANGE_ME_random_string"
-PHX_KEY: "CHANGE_ME_random_string"
+
+# --- Security keys ---
+# Generate random strings of 32+ characters each. Example:
+#   openssl rand -base64 48
+# These are used for Erlang clustering, Guardian auth tokens, and Phoenix sessions.
+NODE_COOKIE: "CHANGE_ME_use_openssl_rand_base64_48"
+GUARDIAN_KEY: "CHANGE_ME_use_openssl_rand_base64_48"
+PHX_KEY: "CHANGE_ME_use_openssl_rand_base64_48"
+
+# --- Optional API keys (leave empty if not using) ---
 SKETCHFAB_API_KEY: ""
 TENOR_API_KEY: ""
+
+# --- Persistent Volumes ---
 GENERATE_PERSISTENT_VOLUMES: "Yes"
-PERSISTENT_VOLUME_STORAGE_CLASS: "default"
+# DigitalOcean uses "do-block-storage". Other providers: "default", "gp2" (AWS), "standard" (GKE).
+PERSISTENT_VOLUME_STORAGE_CLASS: "do-block-storage"
 PERSISTENT_VOLUME_SIZE: "10Gi"
+
+# --- Image overrides ---
+# Set to "No" to use the default mozillareality/<service>:$Container_Tag.
+# Set to a full image name to override (e.g., "hubsfoundation/hubs:stable-3108").
 OVERRIDE_RETICULUM_IMAGE: "hubsfoundation/reticulum:$Container_Tag"
 OVERRIDE_POSTGREST_IMAGE: "No"
 OVERRIDE_POSTGRES_IMAGE: "No"
 OVERRIDE_PGBOUNCER_IMAGE: "No"
-OVERRIDE_HUBS_IMAGE: "hubsfoundation/hubs:$Container_Tag"
+
+# Pin the Hubs client to a known working version.
+# Check available tags at https://hub.docker.com/r/hubsfoundation/hubs/tags
+OVERRIDE_HUBS_IMAGE: "hubsfoundation/hubs:stable-3108"
+
 OVERRIDE_SPOKE_IMAGE: "hubsfoundation/spoke:$Container_Tag"
 OVERRIDE_NEARSPARK_IMAGE: "No"
 OVERRIDE_PHOTOMNEMONIC_IMAGE: "No"
 OVERRIDE_DIALOG_IMAGE: "No"
 OVERRIDE_COTURN_IMAGE: "No"
-OVERRIDE_HAPROXY_IMAGE: "No"
+
+# REQUIRED for K8s 1.32+. The original mozillareality/haproxy image (based on
+# haproxytech 1.8.5 from 2022) only supports K8s 1.21-1.23 and will crash on
+# any version of K8s currently available on DigitalOcean.
+# See deployment/README.md "Why not mozillareality/haproxy?" for details.
+OVERRIDE_HAPROXY_IMAGE: "haproxytech/kubernetes-ingress:3.2"

@@ -1,0 +1,15 @@
+# IngressClass for HAProxy Ingress Controller 3.2
+# Required when using haproxytech/kubernetes-ingress:3.2 instead of the original
+# mozillareality/haproxy. Without this, HAProxy won't recognize any Ingress
+# resources and all traffic goes to the default backend (404).
+#
+# Apply with: kubectl apply -f deployment/ingress-class.yaml
+# Verify with: kubectl get ingressclass
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: haproxy
+  annotations:
+    ingressclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: haproxy.org/ingress-controller/haproxy

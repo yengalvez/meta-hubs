@@ -1,0 +1,24 @@
+# Let's Encrypt ClusterIssuer for cert-manager
+# Automatically requests and renews SSL certificates for all Hubs CE domains.
+#
+# Apply with: kubectl apply -f deployment/cluster-issuer.yaml
+# Verify with: kubectl get clusterissuer (should show READY: True)
+#
+# Prerequisites:
+#   - cert-manager installed (see deployment/README.md Step 4)
+#   - IngressClass "haproxy" created (deployment/ingress-class.yaml)
+#   - Port 80 open in firewall (HTTP-01 challenges)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    email: info@virtualmente.com
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: haproxy
