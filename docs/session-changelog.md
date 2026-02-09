@@ -74,3 +74,13 @@ Time reference: UTC.
 | 2026-02-09 16:38Z | Committed `hubs` fix (`57a945fae` + `7a0fc7290`): normalize Mixamo/RPM bone names, ensure `AvatarRoot` for template attachment, add fallback eyes, and attach `fullbody-locomotion` to `AvatarRoot` templates. | RPM/Mixamo avatars should now receive `ik-controller` (body yaw + head tracking) and get a basic procedural leg swing while moving. |
 | 2026-02-09 16:42:42Z-16:49:17Z | GitHub Actions run `21833234013` (`custom-docker-build-push`) with `Override_Image_Tag=rpm-avatar-rigging-20260209-7a0fc7290` and `Use_Build_Cache=false`. | Completed `success`; published `ghcr.io/yengalvez/hubs:rpm-avatar-rigging-20260209-7a0fc7290-latest`. |
 | 2026-02-09 ~16:50Z | Rolled out `deployment/hubs` in namespace `hcce` to the new GHCR image tag via `kubectl set image`. | Rollout succeeded; `https://meta-hubs.org` returns HTTP 200. |
+
+## 2026-02-09 (RPM: Fix Floating + Stop Broken Arm IK + Deploy)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-09 ~17:18Z | Committed `hubs` fix `3791e682f`: prefer renaming skeleton joints for Mixamo/RPM, avoid “wrap under Head” fallback when a humanoid skeleton exists, compute avatar offset in IK-root space, and disable the simple hand IK when a full arm chain is detected. | Should stop RPM avatars being glued to camera / floating, and prevent distorted/stretched arms. |
+| 2026-02-09 17:18:59Z-17:26:16Z | GitHub Actions run `21834162983` (`custom-docker-build-push`) with `Override_Image_Tag=rpm-avatar-ikfix-20260209-3791e682f` and `Use_Build_Cache=false`. | Completed `success`; published `ghcr.io/yengalvez/hubs:rpm-avatar-ikfix-20260209-3791e682f-latest`. |
+| 2026-02-09 ~17:26Z | Rolled out `deployment/hubs` in namespace `hcce` to `ghcr.io/yengalvez/hubs:rpm-avatar-ikfix-20260209-3791e682f-latest`. | Rollout succeeded; `https://meta-hubs.org` returns HTTP 200. |
