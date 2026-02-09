@@ -151,6 +151,7 @@ kubectl rollout restart deployment/haproxy -n hcce
 # 7. Verify
 kubectl get pods -n hcce            # All Running
 kubectl get certificates -n hcce    # All READY: True
+kubectl get deployment hubs -n hcce -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
 curl -sI https://your-domain.com    # HTTP/2 with Let's Encrypt cert
 ```
 
@@ -172,22 +173,41 @@ If you've modified the Hubs client (e.g., third-person camera, avatar fixes), yo
 2. **Option A: Custom Docker Image** (Recommended)
    ```bash
    # Build Docker image with your custom dist/
-   docker build -t your-registry/hubs:custom-v1 .
+   docker build -f RetPageOriginDockerfile -t your-registry/hubs:custom-v1 .
    docker push your-registry/hubs:custom-v1
+   # Verify tag exists before deploying:
+   docker manifest inspect your-registry/hubs:custom-v1 >/dev/null
    # Update OVERRIDE_HUBS_IMAGE in hubs-cloud/community-edition/input-values.yaml
    # Then follow the Redeploy steps above (gen-hcce + edit hcce.yaml + apply + RBAC patch)
    ```
+   > If using GHCR, make sure your push token has package write scopes. If the package is private, configure `imagePullSecrets` in the cluster or hubs pods will fail with `ErrImagePull`.
 
 3. **Option B: Hot-fix via kubectl cp** (Emergency only)
    ```bash
-   POD=$(kubectl get pods -n hcce | grep hubs | grep Running | awk '{print $1}')
-   # Copy built assets
-   for f in dist/*; do kubectl cp "$f" "$POD:/www/hubs/" -n hcce -c hubs-ce; done
-   # IMPORTANT: Also update /www/hubs/pages/hub.html with new bundle references
-   # Then restart Reticulum (it caches HTML in memory)
+   export RETICULUM_SERVER="meta-hubs.org"
+   export BASE_ASSETS_PATH="https://assets.meta-hubs.org/hubs/"
+   npm run build
+
+   POD=$(kubectl get pods -n hcce -l app=hubs -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}')
+   kubectl cp dist/assets/. "hcce/$POD:/www/hubs/assets" -c hubs
+
+   for f in dist/*.html dist/hub.service.js dist/schema.toml; do
+     b=$(basename "$f")
+     kubectl cp "$f" "hcce/$POD:/www/hubs/pages/$b" -c hubs
+   done
+
+   # Restart Reticulum (it caches HTML in memory)
    kubectl rollout restart deployment reticulum -n hcce
    ```
-   > **Warning**: The hot-fix method is fragile. Reticulum caches HTML files in memory and uses `/www/hubs/pages/` for templates. If you only copy to `/www/hubs/`, changes requiring new JS bundles won't work until Reticulum restarts AND `pages/` is updated.
+   > **Warning**: The hot-fix method is fragile and temporary. Pod replacement removes these copied files. Also, if `BASE_ASSETS_PATH` is missing during build, production pages may reference `/assets/...` and fail with 404.
+
+4. **Recovery if custom image rollout fails**
+   ```bash
+   # Example rollback to known-good public image
+   kubectl set image deployment/hubs hubs=hubsfoundation/hubs:stable-3108 -n hcce
+   kubectl rollout status deployment/hubs -n hcce
+   kubectl get pods -n hcce
+   ```
 
 ### Important Notes
 

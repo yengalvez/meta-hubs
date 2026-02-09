@@ -170,7 +170,7 @@ kubectl get clusterissuer          # NAME: letsencrypt-prod, READY: True
 cp deployment/input-values.local.yaml hubs-cloud/community-edition/input-values.yaml
 
 # First-time setup only (if input-values.local.yaml does not exist yet):
-cp deployment/input-values.example.yaml hubs-cloud/community-edition/input-values.yaml
+# cp deployment/input-values.example.yaml hubs-cloud/community-edition/input-values.yaml
 ```
 
 Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
@@ -180,6 +180,7 @@ Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
 - `NODE_COOKIE`, `GUARDIAN_KEY`, `PHX_KEY` - **generate random 32+ character strings** (use `openssl rand -base64 48`)
 - `PERSISTENT_VOLUME_STORAGE_CLASS` - `do-block-storage` for DigitalOcean
 - `OVERRIDE_HUBS_IMAGE` - set this to your custom client image when you ship client-side features (official `hubsfoundation/hubs:*` images do not include local code changes)
+- `OVERRIDE_HAPROXY_IMAGE` - set to `haproxytech/kubernetes-ingress:3.2` for modern K8s compatibility
 
 ### Step 7: Generate hcce.yaml
 
@@ -386,7 +387,80 @@ kubectl rollout restart deployment/haproxy -n hcce
 # 7. Verify
 kubectl get pods -n hcce            # All Running
 kubectl get certificates -n hcce    # All READY: True
+kubectl get deployment hubs -n hcce -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
+curl -sI https://your-domain.com    # HTTP/2 with valid TLS
 ```
+
+---
+
+## Custom Hubs Client Rollout
+
+Use this when shipping client-side features (for example third-person camera, UI changes, avatar logic).
+
+### Durable rollout (recommended)
+
+1. Build the client with production domain values:
+```bash
+cd hubs
+npm ci
+export RETICULUM_SERVER="meta-hubs.org"
+export BASE_ASSETS_PATH="https://assets.meta-hubs.org/hubs/"
+npm run build
+```
+
+2. Build and push a custom image:
+```bash
+docker build -f RetPageOriginDockerfile -t your-registry/hubs:custom-YYYYMMDD .
+docker push your-registry/hubs:custom-YYYYMMDD
+```
+
+3. Verify the tag exists **before** deploy:
+```bash
+docker manifest inspect your-registry/hubs:custom-YYYYMMDD >/dev/null
+```
+
+4. Set `OVERRIDE_HUBS_IMAGE` in `hubs-cloud/community-edition/input-values.yaml`, then redeploy (`gen-hcce` + manual edits + apply + RBAC patch + HAProxy restart).
+
+### GHCR notes (if using `ghcr.io`)
+
+- Pushing from automation requires a token with package write scopes (for example PAT with `write:packages` and `read:packages`).
+- If the package is private, the cluster also needs `imagePullSecrets` for `ghcr.io`; otherwise pods fail with `ErrImagePull` / `ImagePullBackOff`.
+- If you are not managing registry auth explicitly, prefer a registry/tag that your cluster can pull without extra setup.
+
+### Emergency hotfix (non-durable)
+
+Use only for quick validation. This is lost when the hubs pod is replaced.
+
+```bash
+cd hubs
+export RETICULUM_SERVER="meta-hubs.org"
+export BASE_ASSETS_PATH="https://assets.meta-hubs.org/hubs/"
+npm run build
+
+POD=$(kubectl get pods -n hcce -l app=hubs -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}')
+kubectl cp dist/assets/. "hcce/$POD:/www/hubs/assets" -c hubs
+
+for f in dist/*.html dist/hub.service.js dist/schema.toml; do
+  b=$(basename "$f")
+  kubectl cp "$f" "hcce/$POD:/www/hubs/pages/$b" -c hubs
+done
+
+kubectl rollout restart deployment/reticulum -n hcce
+```
+
+> Important: if `BASE_ASSETS_PATH` is not set during build, pages may reference `/assets/...` and return 404 in production domains that serve assets from `assets.<domain>/hubs/`.
+
+### Recovery from bad custom image
+
+If hubs rollout gets stuck with `ErrImagePull` / `ImagePullBackOff`:
+
+```bash
+kubectl set image deployment/hubs hubs=hubsfoundation/hubs:stable-3108 -n hcce
+kubectl rollout status deployment/hubs -n hcce
+kubectl get pods -n hcce
+```
+
+Then fix/publish the custom image and redeploy again.
 
 ---
 
