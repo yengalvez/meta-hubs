@@ -49,3 +49,18 @@ Time reference: UTC (local CET noted where relevant).
 | 2026-02-09 14:24:37Z (15:24:37+01:00 CET) | Committed `hubs` fix `f7605bf73` to: (1) require and select a base avatar listing for Admin local upload (adds `parent_avatar_listing_id`), (2) in-room custom avatar URL now imports Hubs avatar page URLs into local reticulum and stores imported `avatar_id` (SID). | Local upload no longer fails on base-avatar path; Hubs avatar URLs should become properly rigged via import rather than static URL avatars. |
 | 2026-02-09 14:26:22Z-14:31:33Z | GitHub Actions run `21828924354` (`custom-docker-build-push`) for `master` `f7605bf73`. | Completed `success`; published `ghcr.io/yengalvez/hubs:rpm-avatar-import-20260209-f7605bf73-latest`. |
 | 2026-02-09 ~14:31Z | Deployed the new image to DOKS `hcce` via `kubectl set image`. | First rollout hit `ErrImagePull` (`403 Forbidden` from GHCR token endpoint); fixed by updating `ghcr-pull` secret with the newest PAT and restarting `deployment/hubs`. Rollout then succeeded. |
+
+## 2026-02-09 (Admin Local Upload Hardening + Avatar URL Normalization + GHCR Build Reliability)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-09 14:46Z-14:52Z | Hardened Admin local avatar upload in `hubs`: upload via `getDirectReticulumFetchUrl(\"/api/v1/media\")` (avoid ingress limits) and include `base_gltf_url` when creating avatars. | Admin disk-upload flow should succeed for larger avatars and match `AvatarEditor` semantics more closely. |
+| 2026-02-09 14:46Z-14:52Z | Improved in-room `Change Avatar` URL handling to also accept avatar SIDs and Hubs API URLs (e.g. `/api/v1/avatars/<sid>` and `/api/v1/avatars/<sid>/avatar.gltf`) and import remote avatars into local reticulum when cross-origin. | Avoids “static URL avatar” when users paste API URLs; improves reliability of rigged avatars. |
+| 2026-02-09 14:52Z | Merged the fixes into `hubs` `master` and pushed (`01f2132e9`). | Code available on `origin/master`. |
+| 2026-02-09 14:55Z-14:56Z | Observed `custom-docker-build-push` run `21829985541` fail. | Root cause: missing default registry inputs/vars/secrets -> `Username and password required`. |
+| 2026-02-09 14:58Z | Updated `custom-docker-build-push` workflow defaults (`a7c9eb2e7`). | Workflow now defaults to GHCR + repo owner when overrides/vars are absent. |
+| 2026-02-09 14:59Z-15:06Z | Observed `custom-docker-build-push` run `21830114386` fail when using `GITHUB_TOKEN` fallback. | Root cause: GHCR returned `403 Forbidden` on cache/push HEAD requests. |
+| 2026-02-09 15:08Z-15:17Z | Re-ran `custom-docker-build-push` with explicit PAT auth + no build cache: run `21830444511`. | Completed `success` and published `ghcr.io/yengalvez/hubs:rpm-avatar-import-20260209-a7c9eb2e7-latest`. |
+| 2026-02-09 15:17Z-15:18Z | Deployed the new image to DOKS `hcce`: `kubectl set image deployment/hubs ...` + rollout status. | Deployment rolled out successfully; `deployment/hubs` now points at the new image tag. |

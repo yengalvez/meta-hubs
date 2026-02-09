@@ -455,6 +455,25 @@ The cheapest and most reliable loop is:
 
 Avoid building container images inside the cluster (Kaniko pods) on a single 8GB node: it will often OOM/evict during `npm ci`, and the “fix” (bigger node) increases monthly cost.
 
+### GitHub Actions Image Build (Preferred)
+
+In the `hubs` repo, use the Actions workflow `custom-docker-build-push` to build/push the image (avoids local Docker and avoids in-cluster builds).
+
+1. Go to GitHub Actions in `yengalvez/hubs` and open the workflow `custom-docker-build-push`.
+2. Click “Run workflow”.
+3. Set `Override_Image_Tag` (example: `rpm-avatar-import-YYYYMMDD-<shortsha>`).
+
+Registry auth for GHCR:
+
+- Recommended: configure repo vars/secrets once:
+`REGISTRY_BASE_URL=ghcr.io`, `REGISTRY_NAMESPACE=<owner>`, and secrets `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` (PAT with `write:packages` + `read:packages`).
+- Alternative: fill `Override_Registry_Base_URL`, `Override_Registry_Namespace`, `Override_Registry_Username`, `Override_Registry_Password` in the run form.
+
+Common failures:
+
+- `Username and password required`: registry username/password are missing (no secrets, no override inputs).
+- `403 Forbidden` from GHCR on HEAD requests (for example buildcache manifests or blobs): the token does not have package rights, or the GHCR package is not granting repo access. Use a PAT with package scopes or adjust GHCR package access settings.
+
 ### Durable rollout (recommended)
 
 1. Build the client with production domain values:
