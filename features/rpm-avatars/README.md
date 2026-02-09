@@ -1,202 +1,256 @@
-# ReadyPlayer.me GLB Avatars for Hubs CE
+# Integración ReadyPlayer.me Full-Body Avatars en Hubs Foundation 2.0.0
 
-## Overview
+## Contenido del Paquete
 
-ReadyPlayer.me (RPM) has shut down, but we have pre-downloaded `.glb` avatar files that can be used in Hubs Community Edition. These avatars are full-body, rigged humanoid models in GLB format (glTF 2.0 binary) that work with Hubs' avatar system.
+Este directorio contiene toda la investigación técnica y código necesario para integrar avatares full-body de ReadyPlayer.me en tu instancia de Hubs Foundation 2.0.0.
 
-This guide covers how to upload and validate these avatars for proper functionality including movement, bones, animations, and third-person camera compatibility.
+### Archivos Principales
 
-## Uploading Avatars via Admin Panel
+1. **`INTEGRACION_RPM_HUBS.md`** - Documento maestro de investigación (40+ páginas)
+   - Estado del ecosistema RPM y Hubs
+   - Arquitectura técnica completa
+   - Comparación de esqueletos y sistemas de huesos
+   - Problemas conocidos y soluciones
+   - Guía de implementación paso a paso
+   - Referencias completas
 
-Hubs CE provides a native way to manage avatars through the Admin Panel.
+2. **`codigo/`** - Implementaciones de código
+   - `avatar-utils-extended.js` - Validador de skeleton extendido
+   - `fullbody-avatar-component.js` - Componente A-Frame full-body
+   - `prepare-rpm-avatar.py` - Script Blender de pre-procesamiento
 
-### Steps
+## Quick Start
 
-1. Log into your Hubs instance as admin
-2. Navigate to **Admin Panel** (`https://your-domain.com/admin`)
-3. Go to **Avatars** section
-4. Click **New Avatar** (or import)
-5. Upload the `.glb` file
-6. Set a name and thumbnail
-7. Save
+### 1. Lectura Inicial (30 min)
 
-The avatar will now be available for users to select in the avatar picker.
-
-### Bulk Upload via API
-
-For multiple avatars, you can use the Reticulum API directly:
+Lee el documento principal para entender:
+- Por qué Hubs no soporta full-body nativamente
+- Diferencias entre skeleton Mixamo (RPM) y High Fidelity (Hubs)
+- Arquitectura de XRCLOUD (única implementación open-source existente)
 
 ```bash
-# Upload avatar GLB via API
-curl -X POST "https://your-domain.com/api/v1/avatars" \
-  -H "Authorization: Bearer <admin-token>" \
-  -F "avatar[file]=@avatar.glb" \
-  -F "avatar[name]=My RPM Avatar"
+# Abrir documento principal
+open INTEGRACION_RPM_HUBS.md
+# o
+cat INTEGRACION_RPM_HUBS.md | less
 ```
 
-## Known Issues with RPM GLBs in Hubs
+### 2. Preparar Avatar RPM (1 hora)
 
-ReadyPlayer.me avatars were not originally designed for Hubs. The following issues have been documented by the community and have known fixes.
+Antes de intentar subir tu avatar a Hubs, pre-procesalo con Blender:
 
-### 1. T-Pose Flashing
+```bash
+# Instalar Blender si no lo tienes
+# macOS: brew install --cask blender
+# Linux: sudo apt install blender
+# Windows: descargar de blender.org
 
-**Symptom**: Avatar flickers back to T-Pose during animations.
-
-**Cause**: RPM avatars include `VectorKeyframeTrack`s (position/scale tracks) that conflict with Hubs' animation system. Only `QuaternionKeyframeTrack`s (rotation) should be used.
-
-**Fix**: Filter animations before loading:
-```javascript
-clip.tracks = clip.tracks.filter(track =>
-  track instanceof THREE.QuaternionKeyframeTrack
-);
+# Procesar avatar
+blender --background --python codigo/prepare-rpm-avatar.py -- \
+  ~/Descargas/mi_avatar_rpm.glb \
+  ~/Descargas/mi_avatar_hubs_ready.glb \
+  --height 1.7
 ```
 
-Additionally, finger/hand tracks can cause issues:
-```javascript
-const fingerKeywords = ['thumb', 'index', 'middle', 'ring', 'pinky', 'finger'];
-clip.tracks = clip.tracks.filter(track => {
-  const name = track.name.toLowerCase();
-  return !fingerKeywords.some(keyword => name.includes(keyword));
-});
+Esto:
+- Valida skeleton Mixamo
+- Ajusta escala a 1.7m de altura
+- Centra en origen
+- Exporta GLB optimizado
+
+### 3. Setup de Desarrollo Hubs (2-3 horas)
+
+```bash
+# Clonar Hubs Foundation
+git clone https://github.com/Hubs-Foundation/hubs.git hubs-rpm
+cd hubs-rpm
+
+# Crear rama de desarrollo
+git checkout -b feature/rpm-fullbody
+
+# Instalar dependencias
+npm ci
+
+# Copiar archivos de código
+cp ../codigo/avatar-utils-extended.js src/utils/avatar-utils.js
+cp ../codigo/fullbody-avatar-component.js src/components/fullbody-avatar.js
+
+# Configurar .env
+cp .env.defaults .env
+# Editar .env con tu configuración
+
+# Iniciar desarrollo
+npm run dev
 ```
 
-**Reference**: Hubs issues #5964, #4847
+### 4. Testing Inicial (1 hora)
 
-### 2. Missing Bot_PBS Material
+1. Abrir `https://localhost:8080`
+2. Crear o unirse a una room
+3. Click en avatar → "Avatar GLB URL"
+4. Subir `mi_avatar_hubs_ready.glb`
+5. Verificar consola del navegador para logs
 
-**Symptom**: Avatar renders incorrectly or materials look wrong.
+**Checklist**:
+- [ ] Avatar carga sin errores
+- [ ] Skeleton se valida correctamente (ver logs)
+- [ ] Upper body renderiza
+- [ ] Lower body **no renderiza** (esperado sin más modificaciones)
 
-**Cause**: Hubs expects the primary avatar material to be named `Bot_PBS`. RPM avatars use different material names.
+### 5. Implementación Full-Body (15-20 horas)
 
-**Fix**: Rename the first material:
-```javascript
-// Find first material and rename to Bot_PBS
-gltf.scene.traverse(node => {
-  if (node.isMesh && node.material) {
-    const mat = Array.isArray(node.material) ? node.material[0] : node.material;
-    mat.name = "Bot_PBS";
-  }
-});
+Seguir la **Guía de Implementación** en `INTEGRACION_RPM_HUBS.md` sección correspondiente:
+
+- **Fase 1**: Preparación del entorno ✅ (ya hecho arriba)
+- **Fase 2**: Análisis de avatares RPM (4-6h)
+- **Fase 3**: Modificación del core de Hubs (15-20h)
+- **Fase 4**: Subida y validación (5-8h)
+- **Fase 5**: Testing y debugging (8-12h)
+
+## Estructura del Proyecto
+
+```
+RPM/
+├── README.md (este archivo)
+├── INTEGRACION_RPM_HUBS.md (documento principal - 40+ páginas)
+└── codigo/
+    ├── avatar-utils-extended.js (validador skeleton)
+    ├── fullbody-avatar-component.js (componente A-Frame)
+    └── prepare-rpm-avatar.py (script Blender)
 ```
 
-### 3. Textures Not Loading / Wrong Colors
+## Conceptos Clave
 
-**Symptom**: Avatar appears black or with incorrect colors.
+### Skeleton Mixamo vs High Fidelity
 
-**Cause**: Texture encoding must be explicitly set for Hubs' renderer.
-
-**Fix**:
-```javascript
-// Base color maps need sRGB encoding
-material.map.encoding = THREE.sRGBEncoding;
-
-// Normal maps need Linear encoding
-material.normalMap.encoding = THREE.LinearEncoding;
+**ReadyPlayer.me usa Mixamo** (53+ huesos, full-body):
+```
+Armature
+├── Hips
+│   ├── Spine → Spine1 → Spine2 → Neck → Head
+│   ├── LeftUpLeg → LeftLeg → LeftFoot ✅ LOWER BODY
+│   └── RightUpLeg → RightLeg → RightFoot ✅ LOWER BODY
 ```
 
-For CORS issues when loading textures from external URLs:
-```javascript
-const proxiedUrl = `/api/v1/media?url=${encodeURIComponent(avatarUrl)}`;
+**Hubs usa High Fidelity** (simplificado, half-body only):
+```
+Hips
+├── Spine → Spine1 → Spine2 → Neck → Head
+├── LeftArm → LeftForeArm → LeftHand
+├── RightArm → RightForeArm → RightHand
+└── ❌ Sin lower body
 ```
 
-### 4. Audio Feedback Not Working
+### Por Qué Hubs No Soporta Full-Body
 
-**Symptom**: Avatar head doesn't scale when the user speaks.
+De la documentación oficial:
+> "Hubs ha eliminado lower body y arm joints porque no usan IK en este momento. Esto es principalmente porque Hubs es una aplicación web donde tiempos de descarga grandes pueden afectar el rendimiento, especialmente en móviles."
 
-**Fix**: Add the `scale-audio-feedback` Hubs component to the Head bone:
-```javascript
-headNode.userData.gltfExtensions = {
-  MOZ_hubs_components: {
-    "scale-audio-feedback": {
-      minScale: 1.0,
-      maxScale: 1.3
-    }
-  }
-};
-```
+### Solución: XRCLOUD
 
-## Required Bone Structure
+XRCLOUD (by BELIVVR) implementó full-body en 2022-2024:
+- Open source (MIT): https://github.com/luke-n-alpha/xrcloud
+- Funcional pero con limitaciones (no integrado con bit-ecs)
+- Descontinuado en 2025
 
-Hubs requires a humanoid skeleton with these bones for proper IK (inverse kinematics) and animation:
+**Podemos usar su código como referencia** pero necesitamos reimplementarlo correctamente.
 
-### Minimum Required
-- `Hips`
-- `Spine`
-- `Neck`
-- `Head`
-- `LeftShoulder`, `LeftArm`, `LeftForeArm`, `LeftHand`
-- `RightShoulder`, `RightArm`, `RightForeArm`, `RightHand`
+## Problemas Conocidos
 
-### Recommended for Full Body
-- `Spine1`, `Spine2` (better torso deformation)
-- `LeftUpLeg`, `LeftLeg`, `LeftFoot`
-- `RightUpLeg`, `RightLeg`, `RightFoot`
-- `LeftToeBase`, `RightToeBase`
+### 1. Nombres de Huesos Hard-Coded
 
-RPM full-body avatars typically include all these bones. Half-body avatars (issue #5964) are NOT recommended as they cause mesh holes.
+**Síntoma**: `Error: Missing required bones`
 
-## Pre-Upload Validation Checklist
+**Causa**: Hubs valida nombres de huesos contra lista hard-coded que no incluye lower body
 
-Before uploading a GLB to Hubs:
+**Solución**: Usar `avatar-utils-extended.js` que acepta skeleton Mixamo
 
-- [ ] File is valid `.glb` format (glTF 2.0 binary)
-- [ ] Skeleton is present with required bones
-- [ ] Full-body avatar (not half-body)
-- [ ] Vertex count < 100,000 (for web performance)
-- [ ] Triangle count < 50,000
-- [ ] Textures are power-of-2 dimensions (512, 1024, 2048)
-- [ ] Textures are max 2048x2048
-- [ ] No problematic VectorKeyframeTracks in animations
+### 2. Lower Body No Renderiza
 
-Use `glb-avatar-validator.js` to automate this validation (see below).
+**Síntoma**: Solo se ve torso y brazos, piernas invisibles
 
-## Validator Script
+**Causa**: Sistema de avatares de Hubs no renderiza lower body meshes
 
-The file `glb-avatar-validator.js` in this directory provides automated validation and processing:
+**Solución**: Componente `fullbody-avatar.js` + modificaciones en rendering
 
-```javascript
-import { HubsGLBAvatarValidator } from './glb-avatar-validator.js';
+### 3. Animaciones de Piernas
 
-const validator = new HubsGLBAvatarValidator();
+**Síntoma**: Piernas en pose T estática
 
-// Validate
-const result = await validator.validate(gltf);
-console.log('Valid:', result.valid);
-console.log('Errors:', result.errors);
-console.log('Warnings:', result.warnings);
+**Causa**: Sin IK ni animaciones procedurales para lower body
 
-// Process (fix known issues automatically)
-const processed = validator.process(gltf);
+**Solución**: Sistema de animación procedural (implementado parcialmente en `fullbody-avatar-component.js`)
 
-// Generate detailed report
-const report = validator.generateReport(gltf);
-```
+### 4. Performance
 
-The validator:
-- Checks skeleton and required bones
-- Validates materials and textures
-- Detects problematic animations
-- Checks geometry vertex/triangle counts
-- Filters VectorKeyframeTracks (T-Pose fix)
-- Ensures Bot_PBS material naming
-- Optimizes texture encoding
-- Adds Hubs audio feedback components
-- Computes bounding volumes for performance
+**Síntoma**: FPS bajo con múltiples avatares full-body
 
-## Third-Person Camera Compatibility
+**Causa**: Más vértices, huesos, y complejidad de rendering
 
-For RPM avatars to work correctly with the third-person camera feature (see `features/third-person/`):
+**Solución**: LOD system, optimización de geometría, limitar número de full-body simultáneos
 
-- The avatar MUST have a complete skeleton (Hips through Head chain)
-- The camera system uses `avatarRig.object3D.matrixWorld` for positioning
-- The third-person layer system (`CAMERA_LAYER_THIRD_PERSON_ONLY`) makes the avatar body visible to the user
-- First-person layers are disabled so you see your own avatar from behind
+## Recursos Adicionales
 
-If the avatar skeleton is incomplete, the camera may position incorrectly or the avatar body may not render in third-person view.
+### Documentación Oficial
 
-## References
+- [Hubs Foundation Docs](https://docs.hubsfoundation.org/)
+- [Hubs Avatar Pipelines](https://github.com/Hubs-Foundation/hubs-avatar-pipelines)
+- [Ready Player Me Docs](https://docs.readyplayer.me/)
 
-- Hubs Issue #5964: Half-body RPM avatars
-- Hubs Issue #4847: Speaking indicators with external avatars
-- Hubs Issue #5532: Third-person view
-- Hubs PR #5660: Third-person camera implementation
+### Issues Relevantes de GitHub
+
+- [Full body avatars discussion #3203](https://github.com/Hubs-Foundation/hubs/discussions/3203)
+- [3rd person view #5532](https://github.com/Hubs-Foundation/hubs/issues/5532)
+
+### Código Open Source
+
+- [XRCLOUD by BELIVVR](https://github.com/luke-n-alpha/xrcloud)
+- [XRCLOUD Avatar Editor](https://github.com/belivvr/xrcloud-avatar-editor)
+
+## FAQ
+
+### ¿Puedo usar avatares RPM sin modificar Hubs?
+
+**No.** Los avatares full-body RPM requieren modificaciones al core de Hubs. Half-body RPM puede funcionar con limitaciones.
+
+### ¿Cuánto tiempo toma la implementación?
+
+**40-60 horas de desarrollo** + 15-20 horas de testing. Depende de experiencia con Three.js, A-Frame, y bit-ecs.
+
+### ¿Funcionará con futuras versiones de Hubs?
+
+**Probablemente no sin mantenimiento.** Este es un fork custom que requiere actualización cuando Hubs Foundation lance nuevas versiones.
+
+### ¿Puedo contribuir esto a Hubs Foundation oficial?
+
+**Posible pero complejo.** Hubs Foundation indicó que no tienen full-body en su roadmap por razones de performance. Una PR requeriría demostrar que no impacta negativamente performance de usuarios que no usan full-body.
+
+### ¿XRCLOUD es mejor opción que implementación propia?
+
+**Depende.** XRCLOUD funciona pero:
+- ❌ No integrado con bit-ecs moderno
+- ❌ Proyecto descontinuado (sin mantenimiento)
+- ❌ Limitaciones conocidas (jump bug, performance)
+- ✅ Código de referencia valioso
+- ✅ Prueba de concepto funcional
+
+**Recomendación**: Estudiar XRCLOUD, pero implementar desde cero con bit-ecs.
+
+## Contacto y Soporte
+
+Este es un proyecto de investigación técnica. Para consultas:
+
+1. **Issues técnicos de Hubs**: [GitHub Issues](https://github.com/Hubs-Foundation/hubs/issues)
+2. **Discusiones de la comunidad**: [Hubs Discord](https://discord.gg/hubs)
+3. **Documentación de este proyecto**: Ver `INTEGRACION_RPM_HUBS.md`
+
+## Licencia
+
+- Código de ejemplo: MIT License
+- Documentación: CC BY 4.0
+
+---
+
+**Última actualización**: Febrero 2026
+**Versión**: 1.0
+**Estado**: Investigación completa, implementación por realizar
