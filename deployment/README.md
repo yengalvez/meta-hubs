@@ -362,6 +362,46 @@ curl -sI https://yourdomain.com
 
 ---
 
+## Content Bootstrap (Base/Default Avatars + Default Scene)
+
+A fresh Hubs CE install often has **zero approved avatar/scene listings**. This is normal, but it breaks flows that assume listings exist (for example, the avatar editor and local avatar uploads from the Admin panel).
+
+### Minimum required
+
+1. **At least 1 base avatar listing** (tagged `base`)
+2. **At least 1 default avatar listing** (tagged `default`)
+3. **At least 1 default scene listing** (tagged `default`)
+
+### Recommended bootstrap source
+
+Use the official demo site as a known-good source:
+
+```text
+# Base avatars (pick 1)
+https://demo.hubsfoundation.org/avatars/SSNk5gu    # Avatar Base - Bot
+https://demo.hubsfoundation.org/avatars/wvaCk6Q    # Avatar Base - Default Block Avatar
+https://demo.hubsfoundation.org/avatars/2QuHJnl    # Avatar Base - Bot Alternate
+```
+
+### Bootstrap workflow
+
+1. Go to `Admin -> Import Content`.
+2. Paste one URL from the list above.
+3. Click `Preview Import`.
+4. Ensure `Set to Base`, `Set to Default`, and `Featured` are checked.
+5. Click `Import`.
+6. Repeat as needed (for example import a default scene).
+
+### Verify base avatars exist (API)
+
+```bash
+curl -s 'https://yourdomain.com/api/v1/media/search?filter=base&source=avatar_listings' | head -c 200
+```
+
+If this returns `entries: []`, local avatar creation will fail with a `400` when trying to create an avatar (because Reticulum expects new avatars to reference an existing base avatar listing).
+
+---
+
 ## Redeploy After Code Changes
 
 When you modify the Hubs client, Reticulum, or any configuration:

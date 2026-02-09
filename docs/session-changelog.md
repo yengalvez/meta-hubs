@@ -37,3 +37,15 @@ Time reference: UTC (local CET noted where relevant).
 
 - The emergency hotfix (`kubectl cp` into running pod) is not durable across full pod replacement.
 - Durable production rollout still requires a successfully published custom image and `OVERRIDE_HUBS_IMAGE` update to that image tag.
+
+## 2026-02-09 (Avatar Bootstrap + Admin Local Upload Fix + URL Avatar Import Fix)
+
+Time reference: UTC (local CET noted where relevant).
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-09 14:15Z-14:18Z | Investigated why Admin local `.glb` avatar upload fails in production. | Found root cause: there were **no base avatar listings** (`/api/v1/media/search?filter=base&source=avatar_listings` returned 0) and Reticulum rejects attempts to create base avatars via file upload (`POST /api/v1/avatars` without `parent_avatar_listing_id` returns `400` / `Internal server error`). |
+| 2026-02-09 14:15Z-14:18Z | Bootstrapped a base avatar listing by importing a known-good base avatar from `demo.hubsfoundation.org` and creating an `avatar_listings` row tagged `base`, `default`, `featured`. | Base avatar listings became available locally (unblocking avatar creation for uploaded avatars). |
+| 2026-02-09 14:24:37Z (15:24:37+01:00 CET) | Committed `hubs` fix `f7605bf73` to: (1) require and select a base avatar listing for Admin local upload (adds `parent_avatar_listing_id`), (2) in-room custom avatar URL now imports Hubs avatar page URLs into local reticulum and stores imported `avatar_id` (SID). | Local upload no longer fails on base-avatar path; Hubs avatar URLs should become properly rigged via import rather than static URL avatars. |
+| 2026-02-09 14:26:22Z-14:31:33Z | GitHub Actions run `21828924354` (`custom-docker-build-push`) for `master` `f7605bf73`. | Completed `success`; published `ghcr.io/yengalvez/hubs:rpm-avatar-import-20260209-f7605bf73-latest`. |
+| 2026-02-09 ~14:31Z | Deployed the new image to DOKS `hcce` via `kubectl set image`. | First rollout hit `ErrImagePull` (`403 Forbidden` from GHCR token endpoint); fixed by updating `ghcr-pull` secret with the newest PAT and restarting `deployment/hubs`. Rollout then succeeded. |

@@ -38,6 +38,18 @@ Time reference: UTC (local CET noted where relevant).
 | 2026-02-09 (verification) | Verified HTTP-level correctness of prod assets + admin UI. | `https://meta-hubs.org` returned 200; `admin.html` loaded and bundle contained `Upload Avatars from Disk`. |
 | 2026-02-09 | Merged the feature branch into `hubs` `master` (fast-forward) and pushed `master` to origin. | `origin/master` now includes the avatar fixes + admin upload code (no longer only in a feature branch). |
 
+### 2026-02-09 - Avatar Bootstrap + Admin Local Upload Fix + URL Avatar Import Fix
+
+Time reference: UTC (local CET noted where relevant).
+
+| Time | What was done | Outcome |
+|------|----------------|---------|
+| 2026-02-09 14:15Z-14:18Z | Debugged production failures for Admin local avatar upload. Confirmed `/api/v1/media/search?filter=base&source=avatar_listings` returned 0 entries (no base avatars), and that attempting to create a base avatar via `POST /api/v1/avatars` returned `400` (`Internal server error`). | Root cause identified: Reticulum requires a base avatar listing and does not allow creating base avatars from file upload. |
+| 2026-02-09 14:15Z-14:18Z | Bootstrapped a base avatar by importing a known-good base avatar from `demo.hubsfoundation.org` and creating an `avatar_listings` record tagged `base`, `default`, `featured`. | Base avatar listings now exist in production, unblocking avatar creation flows. |
+| 2026-02-09 14:24:37Z (15:24:37+01:00 CET) | Committed `hubs` fix (`f7605bf73`) to: (1) require and auto-select a base avatar listing for Admin local avatar uploads (`parent_avatar_listing_id`), (2) in-room "Custom Avatar URL" modal now imports Hubs avatar page URLs into local reticulum and stores the imported avatar SID (instead of storing a remote model URL). | Admin local `.glb` avatar upload no longer hits the base-avatar 400 path; Hubs avatar URLs should result in properly rigged avatars via import. |
+| 2026-02-09 14:26Z-14:31Z | Built and pushed a new custom image via GitHub Actions `custom-docker-build-push` run `21828924354`. | Published `ghcr.io/yengalvez/hubs:rpm-avatar-import-20260209-f7605bf73-latest`. |
+| 2026-02-09 14:31Z-14:40Z | Rolled out new image in DOKS `hcce`. Hit `ErrImagePull` (`403 Forbidden` from GHCR token endpoint), then fixed by updating the `ghcr-pull` secret with the latest PAT and restarting the `hubs` deployment. | `deployment/hubs` now runs `ghcr.io/yengalvez/hubs:rpm-avatar-import-20260209-f7605bf73-latest` successfully. |
+
 ## Operational Reminder
 
 - Hotfix via `kubectl cp` is temporary and can be lost after pod replacement.
