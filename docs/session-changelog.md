@@ -84,3 +84,14 @@ Time reference: UTC.
 | 2026-02-09 ~17:18Z | Committed `hubs` fix `3791e682f`: prefer renaming skeleton joints for Mixamo/RPM, avoid “wrap under Head” fallback when a humanoid skeleton exists, compute avatar offset in IK-root space, and disable the simple hand IK when a full arm chain is detected. | Should stop RPM avatars being glued to camera / floating, and prevent distorted/stretched arms. |
 | 2026-02-09 17:18:59Z-17:26:16Z | GitHub Actions run `21834162983` (`custom-docker-build-push`) with `Override_Image_Tag=rpm-avatar-ikfix-20260209-3791e682f` and `Use_Build_Cache=false`. | Completed `success`; published `ghcr.io/yengalvez/hubs:rpm-avatar-ikfix-20260209-3791e682f-latest`. |
 | 2026-02-09 ~17:26Z | Rolled out `deployment/hubs` in namespace `hcce` to `ghcr.io/yengalvez/hubs:rpm-avatar-ikfix-20260209-3791e682f-latest`. | Rollout succeeded; `https://meta-hubs.org` returns HTTP 200. |
+
+## 2026-02-09 (RPM Shared Animations: Idle + Walk + Deploy)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-09 ~18:10Z-18:15Z | Implemented shared Mixamo locomotion MVP in `hubs`: added shared `idle`/`walk` clips (as GLB assets), loader/retargeting utility, and updated `fullbody-locomotion` to prefer shared animations over procedural swing (legs-only to avoid IK conflicts). | Full-body RPM/Mixamo avatars should now play shared idle/walk without requiring per-avatar embedded animations. |
+| 2026-02-09 ~18:15Z-18:17Z | Ran local validation in `/Users/Shared/Gits/YenHubs/hubs`: `npm run check`, `npm run lint:js`, `npm run build`. | Passed (webpack size warnings only). |
+| 2026-02-09 18:18:19Z-18:25:34Z | GitHub Actions run `21836105337` (`custom-docker-build-push`) with `Override_Image_Tag=rpm-anim-idle-walk-20260209-eb3276a77` and `Use_Build_Cache=false`. | Completed `success`; published `ghcr.io/yengalvez/hubs:rpm-anim-idle-walk-20260209-eb3276a77-latest`. |
+| 2026-02-09 ~18:26Z | Installed `kubectl` client to `~/.local/bin/kubectl` (v1.35.0) and rolled out `deployment/hubs` in namespace `hcce` to the new image tag via `kubectl set image`. | Rollout succeeded; `deployment/hubs` now points at `ghcr.io/yengalvez/hubs:rpm-anim-idle-walk-20260209-eb3276a77-latest` and `https://meta-hubs.org` returns HTTP 200. |
