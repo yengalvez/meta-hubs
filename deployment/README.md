@@ -166,6 +166,10 @@ kubectl get clusterissuer          # NAME: letsencrypt-prod, READY: True
 ### Step 6: Configure input-values.yaml
 
 ```bash
+# Preferred (real local values kept outside subrepo history):
+cp deployment/input-values.local.yaml hubs-cloud/community-edition/input-values.yaml
+
+# First-time setup only (if input-values.local.yaml does not exist yet):
 cp deployment/input-values.example.yaml hubs-cloud/community-edition/input-values.yaml
 ```
 
@@ -175,6 +179,7 @@ Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
 - `SMTP_*` - your SMTP credentials
 - `NODE_COOKIE`, `GUARDIAN_KEY`, `PHX_KEY` - **generate random 32+ character strings** (use `openssl rand -base64 48`)
 - `PERSISTENT_VOLUME_STORAGE_CLASS` - `do-block-storage` for DigitalOcean
+- `OVERRIDE_HUBS_IMAGE` - set this to your custom client image when you ship client-side features (official `hubsfoundation/hubs:*` images do not include local code changes)
 
 ### Step 7: Generate hcce.yaml
 

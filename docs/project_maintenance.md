@@ -78,7 +78,8 @@ The deployment uses Hubs CE 2.0.0 on DigitalOcean Kubernetes with:
 | `deployment/input-values.example.yaml` | Template for input-values.yaml |
 | `deployment/cluster-issuer.yaml` | Let's Encrypt ClusterIssuer manifest |
 | `deployment/ingress-class.yaml` | HAProxy IngressClass manifest |
-| `hubs-cloud/community-edition/input-values.yaml` | Real config values (**gitignored**) |
+| `deployment/input-values.local.yaml` | Local source of truth for real deploy values (**do not commit secrets**) |
+| `hubs-cloud/community-edition/input-values.yaml` | Generated working copy used by `gen-hcce` (copied from `deployment/input-values.local.yaml`) |
 | `hubs-cloud/community-edition/hcce.yaml` | Generated K8s manifest (**gitignored**) |
 
 ### Quick Deploy (New Cluster)
@@ -97,8 +98,11 @@ kubectl apply -f deployment/ingress-class.yaml
 kubectl apply -f deployment/cluster-issuer.yaml
 
 # 4. Configure and generate
-cp deployment/input-values.example.yaml hubs-cloud/community-edition/input-values.yaml
-# Edit input-values.yaml with real values
+# If you already have real values, always use deployment/input-values.local.yaml:
+cp deployment/input-values.local.yaml hubs-cloud/community-edition/input-values.yaml
+# First-time setup only (no local file yet):
+# cp deployment/input-values.example.yaml hubs-cloud/community-edition/input-values.yaml
+# Then edit with real values
 cd hubs-cloud/community-edition
 npm ci && npm run gen-hcce
 
@@ -154,7 +158,7 @@ curl -sI https://your-domain.com    # HTTP/2 with Let's Encrypt cert
 
 ### Custom Client Deployment
 
-If you've modified the Hubs client (e.g., third-person camera, avatar fixes), you need to build a custom Docker image:
+If you've modified the Hubs client (e.g., third-person camera, avatar fixes), you need to build and deploy a custom Docker image. The official `hubsfoundation/hubs:*` image will not include your local code changes.
 
 1. **Build the client**:
    ```bash
@@ -170,7 +174,7 @@ If you've modified the Hubs client (e.g., third-person camera, avatar fixes), yo
    # Build Docker image with your custom dist/
    docker build -t your-registry/hubs:custom-v1 .
    docker push your-registry/hubs:custom-v1
-   # Update OVERRIDE_HUBS_IMAGE in input-values.yaml
+   # Update OVERRIDE_HUBS_IMAGE in hubs-cloud/community-edition/input-values.yaml
    # Then follow the Redeploy steps above (gen-hcce + edit hcce.yaml + apply + RBAC patch)
    ```
 
