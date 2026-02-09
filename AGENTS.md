@@ -25,6 +25,19 @@ Time reference: UTC (local CET noted where relevant).
 | 2026-02-09 11:00:09Z (12:00:09+01:00 CET) | Reviewed and corrected deployment documentation in `deployment/README.md` and `docs/project_maintenance.md` (verify active hubs image + consistent `RetPageOriginDockerfile` build command). | Deployment guide aligned with real rollout workflow. |
 | 2026-02-09 (user confirmation) | User reported third-person camera working correctly in real usage. | Manual production validation confirmed. |
 
+### 2026-02-09 - Avatar Upload Fix + Admin Local Upload + RPM MVP + Production Rollout
+
+Time reference: UTC (local CET noted where relevant).
+
+| Time | What was done | Outcome |
+|------|----------------|---------|
+| 2026-02-09 12:19:58Z (13:19:58+01:00 CET) | Committed avatar pipeline fixes + admin local upload MVP in `hubs` (`9b5ae36ee`) on branch `codex/rpm-avatar-import-mvp`. | URL-based avatar import normalized; admin can upload `.glb` avatars from disk; RPM/fullbody detection + tagging added. |
+| 2026-02-09 12:25:12Z-12:34:18Z | Ran GitHub Actions workflow `custom-docker-build-push` run `21826862113`. | `success` and published `ghcr.io/yengalvez/hubs:rpm-avatar-import-20260209-9b5ae36ee-latest`. |
+| 2026-02-09 (during deploy) | Updated cluster pull auth for private GHCR image (`ghcr-pull` secret) and attached it to `hcce` ServiceAccount `default` as `imagePullSecrets`. | Prevented `ErrImagePull` / `ImagePullBackOff` when using private GHCR images. |
+| 2026-02-09 (during deploy) | Rolled out production image update: set `deployment/hubs` image to `ghcr.io/yengalvez/hubs:rpm-avatar-import-20260209-9b5ae36ee-latest` and verified rollout. | All `hcce` deployments back to green; `hubs` running the custom image. |
+| 2026-02-09 (verification) | Verified HTTP-level correctness of prod assets + admin UI. | `https://meta-hubs.org` returned 200; `admin.html` loaded and bundle contained `Upload Avatars from Disk`. |
+| 2026-02-09 | Merged the feature branch into `hubs` `master` (fast-forward) and pushed `master` to origin. | `origin/master` now includes the avatar fixes + admin upload code (no longer only in a feature branch). |
+
 ## Operational Reminder
 
 - Hotfix via `kubectl cp` is temporary and can be lost after pod replacement.

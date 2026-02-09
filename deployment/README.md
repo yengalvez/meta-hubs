@@ -173,6 +173,14 @@ cp deployment/input-values.local.yaml hubs-cloud/community-edition/input-values.
 # cp deployment/input-values.example.yaml hubs-cloud/community-edition/input-values.yaml
 ```
 
+> Security note: `hubs-cloud/community-edition/input-values.yaml` is **not ignored** upstream in the `hubs-cloud` repo. Never commit it.
+>
+> To prevent accidents, add it to your **local excludes**:
+> ```bash
+> cd hubs-cloud
+> echo "community-edition/input-values.yaml" >> "$(git rev-parse --git-path info/exclude)"
+> ```
+
 Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
 - `HUB_DOMAIN` - your domain
 - `ADM_EMAIL` - admin email for first login
@@ -397,6 +405,16 @@ curl -sI https://your-domain.com    # HTTP/2 with valid TLS
 
 Use this when shipping client-side features (for example third-person camera, UI changes, avatar logic).
 
+### Recommended Loop (No Extra DigitalOcean Cost)
+
+The cheapest and most reliable loop is:
+
+1. Push code to GitHub.
+2. Build + push the image in **GitHub Actions** (no DO CPU/RAM usage, avoids in-cluster OOM builds).
+3. Deploy by updating the `hubs` deployment image, then verify.
+
+Avoid building container images inside the cluster (Kaniko pods) on a single 8GB node: it will often OOM/evict during `npm ci`, and the “fix” (bigger node) increases monthly cost.
+
 ### Durable rollout (recommended)
 
 1. Build the client with production domain values:
@@ -424,8 +442,30 @@ docker manifest inspect your-registry/hubs:custom-YYYYMMDD >/dev/null
 ### GHCR notes (if using `ghcr.io`)
 
 - Pushing from automation requires a token with package write scopes (for example PAT with `write:packages` and `read:packages`).
+- If the token is missing `write:packages`, the push fails with an error like: `permission_denied: The token provided does not match expected scopes.`
 - If the package is private, the cluster also needs `imagePullSecrets` for `ghcr.io`; otherwise pods fail with `ErrImagePull` / `ImagePullBackOff`.
 - If you are not managing registry auth explicitly, prefer a registry/tag that your cluster can pull without extra setup.
+
+#### Cluster Pull Auth (Private GHCR)
+
+Recommended: attach the pull secret to the **default ServiceAccount** in the namespace so you never forget it in YAML:
+
+```bash
+kubectl create secret generic ghcr-pull -n hcce \
+  --type=kubernetes.io/dockerconfigjson \
+  --from-file=.dockerconfigjson=/path/to/dockerconfig.json
+
+kubectl patch serviceaccount default -n hcce \
+  --type=merge \
+  -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+```
+
+If you must patch only one deployment instead:
+
+```bash
+kubectl patch deployment hubs -n hcce --type='json' \
+  -p='[{"op":"add","path":"/spec/template/spec/imagePullSecrets","value":[{"name":"ghcr-pull"}]}]'
+```
 
 ### Emergency hotfix (non-durable)
 
@@ -449,6 +489,8 @@ kubectl rollout restart deployment/reticulum -n hcce
 ```
 
 > Important: if `BASE_ASSETS_PATH` is not set during build, pages may reference `/assets/...` and return 404 in production domains that serve assets from `assets.<domain>/hubs/`.
+>
+> Debugging tip: the **correct** static host/path is `https://assets.<domain>/hubs/...`. Requests like `https://<domain>/assets/...` can return confusing errors (for example `bad Room ID`) because they hit reticulum instead of the hubs static service.
 
 ### Recovery from bad custom image
 

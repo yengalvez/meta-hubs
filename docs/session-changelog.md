@@ -21,6 +21,18 @@ Time reference: UTC (local CET noted where relevant).
 | 2026-02-09 11:00:09Z (12:00:09+01:00 CET) | Re-reviewed and corrected deployment docs in `deployment/README.md` and `docs/project_maintenance.md` (added active hubs image verification and unified custom build command with `RetPageOriginDockerfile`). | Deployment docs left consistent for future runs. |
 | 2026-02-09 (user validation) | User confirmed third-person camera works well in real usage. | Functional validation confirmed manually. |
 
+## 2026-02-09 (Avatar Upload Fix + Admin Local Upload + RPM MVP + Deploy)
+
+Time reference: UTC (local CET noted where relevant).
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-09 12:19:58Z (13:19:58+01:00 CET) | Created commit `9b5ae36ee` in `hubs` implementing: URL normalization in Change Avatar, safer `proxiedUrlFor`/thumbnail fallbacks, admin local `.glb` avatar uploads (batch), and RPM/fullbody skeleton detection + tags. | Feature complete in code; removes `https://undefined/...` proxy breakage and adds disk upload flow. |
+| 2026-02-09 12:25:12Z-12:34:18Z | GitHub Actions run `21826862113` (`custom-docker-build-push`) for commit `9b5ae36eedf3d21c9ca50c19ffed6e6cb03df1f9`. | Completed `success` and published `ghcr.io/yengalvez/hubs:rpm-avatar-import-20260209-9b5ae36ee-latest`. |
+| 2026-02-09 (deploy) | Updated Kubernetes namespace `hcce` to pull private GHCR images (`ghcr-pull` secret + `imagePullSecrets` on ServiceAccount `default`). | Fixed `ErrImagePull` / `ImagePullBackOff` for private `ghcr.io` tags. |
+| 2026-02-09 (deploy) | Rolled out `deployment/hubs` to `ghcr.io/yengalvez/hubs:rpm-avatar-import-20260209-9b5ae36ee-latest`. | Pods `Running`; deployment `hubs` shows correct image via jsonpath. |
+| 2026-02-09 (verification) | Verified `https://meta-hubs.org` and `https://assets.meta-hubs.org/hubs/pages/admin.html` are up and serving the new admin UI. | Admin bundle contains `Upload Avatars from Disk` and site returns HTTP 200 with expected CSP/headers. |
+
 ## Notes
 
 - The emergency hotfix (`kubectl cp` into running pod) is not durable across full pod replacement.
