@@ -101,3 +101,16 @@ Time reference: UTC.
 | 2026-02-09 21:53Z-22:00Z | Retried durable GHCR build/push for arm swing using GitHub Actions run `21842185352` (`custom-docker-build-push`, `Override_Image_Tag=rpm-anim-idle-walk-arms-20260209-24612e845`). | `failure`: GHCR returned `403 Forbidden` on cache importer and blob HEAD during push (default workflow token did not have required package perms / GHCR was denying). |
 | 2026-02-09 22:02Z-22:09Z | Dispatched GitHub Actions run `21842475778` with explicit PAT auth (`Override_Registry_Username=yengalvez`, `Override_Registry_Password=<PAT>`) and `Use_Build_Cache=false`. | `success`: published `ghcr.io/yengalvez/hubs:rpm-anim-idle-walk-arms-20260209-24612e845-latest`. |
 | 2026-02-09 ~22:11Z | Rolled out `deployment/hubs` to the new image tag via `kubectl set image` and restarted `deployment/reticulum` to refresh cached HTML/asset hashes. | Rollout succeeded; verified `meta-hubs.org` serves 200 and HTML references valid asset URLs; hubs pod now runs the arm-swing build. |
+
+## 2026-02-09 (Avatar Featured + Preview Thumbnails Fix + Deploy)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-09 ~22:40Z | Investigated why “Featured avatars” was empty and why avatar preview thumbnails were missing in the “Change Avatar” UI. | Root cause: `ret0_admin.featured_avatar_listings` filters by `avatars.allow_promotion=true` in addition to `tags.tags ? 'featured'`, so featured-tagged avatars with `allow_promotion=false` are invisible. |
+| 2026-02-09 ~22:50Z | Backfilled `allow_promotion=true` for avatars whose `avatar_listings.tags` includes `featured`. | Featured endpoints began returning 7 entries; Featured Avatars list is no longer empty. |
+| 2026-02-09 ~22:55Z | Implemented admin fixes in `hubs` and pushed commit `dfdb76bcd`: (1) local `.glb` uploads generate a real thumbnail preview (WebGL snapshot) instead of a placeholder, (2) imported avatars/scenes are auto-marked `allow_promotion=true`, (3) “Feature” button ensures `allow_promotion=true` for the underlying avatar/scene, (4) guard against missing `tags` when featuring/unfeaturing. | Fixes should make new imports immediately eligible for Featured lists and show proper preview thumbnails. |
+| 2026-02-09 ~23:00Z-23:06Z | Dispatched GitHub Actions run `21844461489` (`custom-docker-build-push`) with `Override_Image_Tag=avatars-featured-previews-20260209-dfdb76bcd` and explicit registry auth inputs. | `success`: published `ghcr.io/yengalvez/hubs:avatars-featured-previews-20260209-dfdb76bcd-latest`. |
+| 2026-02-09 ~23:10Z-23:13Z | Rolled out `deployment/hubs` in namespace `hcce` to `ghcr.io/yengalvez/hubs:avatars-featured-previews-20260209-dfdb76bcd-latest` and restarted `deployment/reticulum`. | Rollout succeeded; `meta-hubs.org` serves 200; `/api/v1/media/search?source=avatar_listings&filter=featured` returns 7 entries. |
+| 2026-02-09 ~23:15Z | Hardened CI in `hubs` commit `787b5236f`: skip `hubs-RetPageOrigin` (turkey deploy) job unless required secrets are configured. | Prevents noisy failing GitHub Actions runs in forks that don’t have turkey secrets. |
