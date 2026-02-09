@@ -22,7 +22,12 @@
 - A task is NEVER considered finished until verified on the live site.
 - Prefer building/pushing images in **GitHub Actions** (cheaper, avoids in-cluster OOM builds). See `deployment/README.md`.
 - **Standard Method**: Generate YAML with `npm run gen-hcce`, apply with `kubectl apply -f hcce.yaml`.
-- **Emergency Method**: `kubectl cp` (Hot-fix). WARNING: Non-durable and requires copying both `assets/` and `pages/` plus restarting Reticulum. See `deployment/README.md`.
+- **No Unapproved Method Switching**: If the standard deploy path is blocked (CI failure, GitHub outage, build error, kubectl/apply error), STOP and report:
+  - what failed (exact command / run id),
+  - why it failed (best known cause),
+  - the safest next step.
+  Do not attempt alternate deploy approaches (hotpatching pods, in-cluster builds, manual asset copying, etc.) unless the user explicitly approves the deviation first.
+- **Emergency Method (Only With Explicit User Approval)**: `kubectl cp`/hotpatching. WARNING: Non-durable and can break the live site if page/asset URLs are wrong; typically requires restarting Reticulum to flush cached HTML. See `deployment/README.md`.
 
 ## Code Standards
 - Maintain documentation for every new feature in `features/`.
