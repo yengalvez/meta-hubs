@@ -655,6 +655,29 @@ kubectl logs deployment/<name> -n hcce      # Check logs
 kubectl rollout restart deployment -n hcce  # Restart all pods
 ```
 
+### Featured avatars/scenes are empty
+
+Hubs CE’s `featured_*` views filter on both:
+
+- the listing tag: `tags.tags` contains `"featured"`
+- the underlying object: `avatars.allow_promotion=true` / `scenes.allow_promotion=true`
+
+So if you only add the `"featured"` tag on the listing but `allow_promotion` is still `false`, the Featured lists will stay empty.
+
+Fix options:
+
+- Admin UI: open the underlying Avatar/Scene record and set `allow_promotion=true`.
+- Prefer: use the Admin “Feature” button on the listing (this repo’s `hubs` admin code makes “Feature” also set `allow_promotion=true` automatically).
+
+### Avatar thumbnails missing in “Change Avatar”
+
+Avatar tiles use the thumbnail owned file (e.g. `thumbnail_owned_file_id` / `images.preview.url`). If the avatar/listing has no thumbnail (or a broken owned file), the UI shows a blank/placeholder tile.
+
+Fix:
+
+- Re-upload / re-import the avatar so it gets a fresh thumbnail.
+- Or update the avatar’s thumbnail in Admin > Avatars (the local upload flow generates a real thumbnail preview from the GLB on import).
+
 ---
 
 ## Backups
