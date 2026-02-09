@@ -62,6 +62,14 @@ cert-manager (namespace: cert-manager)
 
 > The 4GB node ($24) is NOT enough. Hubs CE uses ~3.5GB at idle. With 4GB, pods get OOM-killed and evicted in a cascade.
 
+## Avoid Surprise DigitalOcean Charges
+
+- Each additional Kubernetes `Service` of type `LoadBalancer` typically adds an extra DigitalOcean Load Balancer (about **$12/mo** each).
+- Adding nodes (or extra node pools) increases monthly cost immediately.
+- Increasing PVC sizes increases block storage cost.
+
+For day-to-day feature iteration, prefer rolling out a new client image with `kubectl set image deployment/hubs ...` rather than creating new infra resources.
+
 ---
 
 ## Prerequisites
@@ -452,6 +460,21 @@ The cheapest and most reliable loop is:
 1. Push code to GitHub.
 2. Build + push the image in **GitHub Actions** (no DO CPU/RAM usage, avoids in-cluster OOM builds).
 3. Deploy by updating the `hubs` deployment image, then verify.
+
+Concrete commands (after the image exists in your registry):
+
+```bash
+IMAGE="ghcr.io/yengalvez/hubs:<your-tag>-latest"
+
+kubectl -n hcce set image deployment/hubs hubs="$IMAGE"
+kubectl -n hcce rollout status deployment/hubs --timeout=300s
+kubectl -n hcce get deployment hubs -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
+
+curl -sI https://meta-hubs.org | head -n 1
+```
+
+This avoids re-running `gen-hcce` for client-only changes (and avoids the “RBAC resets on apply” footgun).
+It also does not create any new DigitalOcean resources, so it should not change billing.
 
 Avoid building container images inside the cluster (Kaniko pods) on a single 8GB node: it will often OOM/evict during `npm ci`, and the “fix” (bigger node) increases monthly cost.
 

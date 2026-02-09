@@ -64,3 +64,13 @@ Time reference: UTC.
 | 2026-02-09 14:59Z-15:06Z | Observed `custom-docker-build-push` run `21830114386` fail when using `GITHUB_TOKEN` fallback. | Root cause: GHCR returned `403 Forbidden` on cache/push HEAD requests. |
 | 2026-02-09 15:08Z-15:17Z | Re-ran `custom-docker-build-push` with explicit PAT auth + no build cache: run `21830444511`. | Completed `success` and published `ghcr.io/yengalvez/hubs:rpm-avatar-import-20260209-a7c9eb2e7-latest`. |
 | 2026-02-09 15:17Z-15:18Z | Deployed the new image to DOKS `hcce`: `kubectl set image deployment/hubs ...` + rollout status. | Deployment rolled out successfully; `deployment/hubs` now points at the new image tag. |
+
+## 2026-02-09 (RPM Rigging Fix + Basic Full-Body Locomotion + Deploy)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-09 16:38Z | Committed `hubs` fix (`57a945fae` + `7a0fc7290`): normalize Mixamo/RPM bone names, ensure `AvatarRoot` for template attachment, add fallback eyes, and attach `fullbody-locomotion` to `AvatarRoot` templates. | RPM/Mixamo avatars should now receive `ik-controller` (body yaw + head tracking) and get a basic procedural leg swing while moving. |
+| 2026-02-09 16:42:42Z-16:49:17Z | GitHub Actions run `21833234013` (`custom-docker-build-push`) with `Override_Image_Tag=rpm-avatar-rigging-20260209-7a0fc7290` and `Use_Build_Cache=false`. | Completed `success`; published `ghcr.io/yengalvez/hubs:rpm-avatar-rigging-20260209-7a0fc7290-latest`. |
+| 2026-02-09 ~16:50Z | Rolled out `deployment/hubs` in namespace `hcce` to the new GHCR image tag via `kubectl set image`. | Rollout succeeded; `https://meta-hubs.org` returns HTTP 200. |
