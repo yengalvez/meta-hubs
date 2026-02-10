@@ -483,6 +483,21 @@ It also does not create any new DigitalOcean resources, so it should not change 
 
 Avoid building container images inside the cluster (Kaniko pods) on a single 8GB node: it will often OOM/evict during `npm ci`, and the “fix” (bigger node) increases monthly cost.
 
+If the site is blank and the browser console shows lots of `404` for `https://<hub-domain>/hubs/assets/...`:
+
+- Check that the `ret` Ingress rule for `<hub-domain>` routes `/hubs` to the `hubs` service (and `/spoke` to `spoke`). If it only routes `/` to `ret`, all client asset requests will hit Reticulum and 404.
+- Quick fix (patch Ingress, then restart Reticulum):
+```bash
+kubectl -n hcce patch ingress ret --type=json -p='[
+  {"op":"replace","path":"/spec/rules/0/http/paths","value":[
+    {"path":"/hubs","pathType":"Prefix","backend":{"service":{"name":"hubs","port":{"number":8080}}}},
+    {"path":"/spoke","pathType":"Prefix","backend":{"service":{"name":"spoke","port":{"number":8080}}}},
+    {"path":"/","pathType":"Prefix","backend":{"service":{"name":"ret","port":{"number":4001}}}}
+  ]}
+]'
+kubectl -n hcce rollout restart deployment/reticulum
+```
+
 ### GitHub Actions Image Build (Preferred)
 
 In the `hubs` repo, use the Actions workflow `custom-docker-build-push` to build/push the image (avoids local Docker and avoids in-cluster builds).
