@@ -114,3 +114,14 @@ Time reference: UTC.
 | 2026-02-09 ~23:00Z-23:06Z | Dispatched GitHub Actions run `21844461489` (`custom-docker-build-push`) with `Override_Image_Tag=avatars-featured-previews-20260209-dfdb76bcd` and explicit registry auth inputs. | `success`: published `ghcr.io/yengalvez/hubs:avatars-featured-previews-20260209-dfdb76bcd-latest`. |
 | 2026-02-09 ~23:10Z-23:13Z | Rolled out `deployment/hubs` in namespace `hcce` to `ghcr.io/yengalvez/hubs:avatars-featured-previews-20260209-dfdb76bcd-latest` and restarted `deployment/reticulum`. | Rollout succeeded; `meta-hubs.org` serves 200; `/api/v1/media/search?source=avatar_listings&filter=featured` returns 7 entries. |
 | 2026-02-09 ~23:15Z | Hardened CI in `hubs` commit `787b5236f`: skip `hubs-RetPageOrigin` (turkey deploy) job unless required secrets are configured. | Prevents noisy failing GitHub Actions runs in forks that don’t have turkey secrets. |
+
+## 2026-02-10 (Admin Import: Fix Import Errors + Listing Activation + Featured Reliability)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-10 ~00:00Z | Implemented `hubs` Admin fixes (commit `83ad93135`): (1) `Approve existing` avatar/scene listings now set `state: active`, (2) import defaults no longer auto-select Base/Default/Featured, (3) local import base-avatar detection falls back to any listing that exposes `gltfs.base` (built-in base bot) when `filter=base` returns none, (4) “Feature” button also activates delisted listings. | Fixes the common failure mode where imports create delisted listings that never show up in user pickers/featured lists, and prevents local `.glb` imports from failing when no base-tagged listing exists yet. |
+| 2026-02-10 00:00:37Z-00:07:17Z | GitHub Actions run `21845813611` (`custom-docker-build-push`) for `codex/admin-import-fix-active-featured` with `Override_Image_Tag=admin-import-fix-20260210-83ad93135`. | `failure`: GHCR returned `403 Forbidden` on cache importer and blob HEAD during push (workflow `GITHUB_TOKEN` lacked package write rights / registry secrets not configured). |
+| 2026-02-10 00:09:07Z-00:16:51Z | Re-ran GitHub Actions as run `21846017453` with explicit registry auth inputs (`Override_Registry_Password=<PAT>`) and `Use_Build_Cache=false`. | `success`: published `ghcr.io/yengalvez/hubs:admin-import-fix-20260210-83ad93135-latest`. |
+| 2026-02-10 ~00:17Z-00:21Z | Rolled out `deployment/hubs` in namespace `hcce` to `ghcr.io/yengalvez/hubs:admin-import-fix-20260210-83ad93135-latest`, then restarted `deployment/reticulum` to refresh cached page-origin HTML/asset hashes. | Deployment healthy; `/admin` now references the new `admin-*.js` hash that exists on `assets.meta-hubs.org` (avoids blank admin page due to 404 hashed assets). |

@@ -470,6 +470,11 @@ kubectl -n hcce set image deployment/hubs hubs="$IMAGE"
 kubectl -n hcce rollout status deployment/hubs --timeout=300s
 kubectl -n hcce get deployment hubs -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
 
+# Reticulum caches the page-origin HTML and hashed asset references. After any hubs image update,
+# restart reticulum so /admin and room pages don't reference missing old hashes.
+kubectl -n hcce rollout restart deployment/reticulum
+kubectl -n hcce rollout status deployment/reticulum --timeout=300s
+
 curl -sI https://meta-hubs.org | head -n 1
 ```
 
