@@ -21,6 +21,9 @@
 - **IMPORTANT**: Export `BASE_ASSETS_PATH` and `RETICULUM_SERVER` before building, or the live site can be blank/wrong. See `deployment/README.md`.
 - A task is NEVER considered finished until verified on the live site.
 - Prefer building/pushing images in **GitHub Actions** (cheaper, avoids in-cluster OOM builds). See `deployment/README.md`.
+- If GitHub Actions fails, STOP and report the exact run URL and error (do not switch deploy method without explicit approval). Common fixes are documented in `deployment/README.md`:
+  - `Invalid workflow file ... Unrecognized named-value: 'secrets'` (reusable workflow job `if:` must not reference `secrets.*`).
+  - `403 Forbidden` pushing to GHCR (ensure `packages: write` + repo workflow permissions + correct registry secrets).
 - **Standard Method**: Generate YAML with `npm run gen-hcce`, apply with `kubectl apply -f hcce.yaml`.
 - **No Unapproved Method Switching**: If the standard deploy path is blocked (CI failure, GitHub outage, build error, kubectl/apply error), STOP and report:
   - what failed (exact command / run id),
