@@ -138,3 +138,45 @@ Time reference: UTC.
 | 2026-02-11 17:21Z | New `bot-orchestrator` deployment came up with `ErrImagePull` (`mozillareality/bot-orchestrator:stable-latest` not available for this environment). | Mitigated by scaling `deployment/bot-orchestrator` to `0` to keep production healthy until a custom orchestrator image is published. |
 | 2026-02-11 17:56Z-17:57Z | Installed local container runtime (`docker` + `colima` + `docker-buildx`), built and pushed orchestrator image from `hubs-cloud/community-edition/services/bot-orchestrator` for `linux/amd64`. | Published `ghcr.io/yengalvez/bot-orchestrator:codex-bots-hybrid-mvp-latest` and `ghcr.io/yengalvez/bot-orchestrator:codex-bots-hybrid-mvp-7c39c91`. |
 | 2026-02-11 17:57Z-17:58Z | Updated `deployment/bot-orchestrator` to GHCR image and scaled back to `1` replica; then regenerated and re-applied `hcce.yaml` using `OVERRIDE_BOT_ORCHESTRATOR_IMAGE`, re-patched RBAC, and restarted HAProxy. | `bot-orchestrator`, `hubs`, and `haproxy` all `Running` (`1/1`), with images pinned to GHCR/custom tags and `meta-hubs.org`/`meta-hubs.org/spoke` returning `HTTP/2 200`. |
+
+## 2026-02-11 (Bots GPT-5 Nano Hardening + Runner Capacity + Deploy Wiring)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-11 18:00Z-18:46Z | Implemented `bot-orchestrator` production hardening on `codex/bots-hybrid-mvp`: OpenAI Responses API integration (`gpt-5-nano`), structured JSON reply parsing (`reply` + optional `go_to_waypoint`), deterministic fallback on LLM failure, in-memory chat rate-limit, runner queue/capacity model (`MAX_ACTIVE_ROOMS=1`), and `MAX_BOTS_PER_ROOM=5` clamp. | Orchestrator now supports real LLM chat with safe fallback and low-cost runner scheduling behavior. |
+| 2026-02-11 18:00Z-18:46Z | Added runner runtime pieces in `services/bot-orchestrator`: new `run-bot.js`, Dockerfile update with Chromium runtime, and package updates (`puppeteer-core`, `docopt`, `query-string`). | Service can autostart one technical room runner process from inside the orchestrator container. |
+| 2026-02-11 18:00Z-18:46Z | Wired deploy config/template for bots+LLM in `hubs-cloud/community-edition/generate_script/hcce.yam` and generator fallback logic (`OPENAI_API_KEY` <- legacy `OPENAI`; auto-generate `BOT_ACCESS_KEY` if omitted). | Generated manifests now include `OPENAI_API_KEY`, `OPENAI_MODEL=gpt-5-nano`, runner envs, and low-cost capacity defaults. |
+| 2026-02-11 18:00Z-18:46Z | Aligned bot-count limits to `0..5` in Hubs UI and Reticulum normalization paths (`RoomSettingsSidebar`, `bot-runner-system`, `ret/hub.ex`, `hub_channel.ex`, bot controllers). | Client/backend limits are now consistent with low-cost production mode. |
+| 2026-02-11 18:00Z-18:46Z | Added feature documentation at `features/bots/README.md` (usuario/admin + troubleshooting), and updated deployment/rules docs for required bot secrets (`BOT_ACCESS_KEY`, `OPENAI_API_KEY`) and verification steps. | Docs now cover operation and troubleshooting for future bot rollouts. |
+
+## 2026-02-11 (Bots Deploy Completion + Reticulum Readiness Fix + Production Verification)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-11 ~19:08Z-19:12Z | Detected `reticulum` rollout stuck (`1/2 Ready`) after enabling global bots feature flags. | Readiness probe `GET /?skipadmin` returned 500 repeatedly; rollout blocked by old replica pending termination. |
+| 2026-02-11 ~19:12Z-19:14Z | Root-cause analysis from pod logs showed `CaseClauseError` in `Ret.AppConfig.get_config/1`: DB value type mismatch for `ret0.app_configs.value`. | Confirmed `features|enable_room_bots` and `features|enable_bot_chat` were stored as raw JSON boolean (`true`) instead of expected object wrapper (`{\"value\": true}`). |
+| 2026-02-11 ~19:14Z-19:16Z | Corrected both rows in PostgreSQL to `{\"value\": true}` and rechecked rollout. | New reticulum pod became `2/2 Ready`; deployment rollout completed successfully. |
+| 2026-02-11 ~19:16Z-19:20Z | Verified production health and TLS: `meta-hubs.org` + `/spoke` HTTP 200, certificate issuer `Let's Encrypt R13`, hubs and bot-orchestrator images pinned to final GPT-5 Nano tags. | Site healthy and on correct images (`ghcr.io/yengalvez/hubs:bots-gpt5nano-20260211-f9c07d368-latest`, `ghcr.io/yengalvez/bot-orchestrator:bots-gpt5nano-20260211-4cda738-latest`). |
+| 2026-02-11 ~19:20Z-19:24Z | Smoke-tested bot orchestrator internals: `room-config` clamp, chat response via LLM, queue/capacity behavior (`MAX_ACTIVE_ROOMS=1`, `MAX_BOTS_PER_ROOM=5`). | Confirmed clamp to 5, `gpt-5-nano` responses with `go_to_waypoint`, and `queued_capacity` behavior when second room is enabled. |
+| 2026-02-11 ~19:24Z-19:27Z | Found runner crash in logs: `TypeError: querystring.stringify is not a function` from `run-bot.js`. Implemented fix using `URLSearchParams`, pushed `de457fb`, built via Actions run `21919717500`, and rolled out `bot-orchestrator`. | Crash loop removed; runner starts with valid URL query string. |
+| 2026-02-11 ~19:27Z-19:29Z | Detected runner lifecycle issue (`detached Frame` retry loop after room stop). Hardened `run-bot.js` with bounded retries + page recreation + SIGTERM/SIGINT shutdown, pushed `f04cdfd`, built via Actions run `21919851347`, and rolled out. | Runner now exits cleanly on stop and no longer loops on detached frame errors. |
+| 2026-02-11 ~19:29Z-19:31Z | Added chat action fallback in `bot-orchestrator` (`app.js`): if LLM omits `action`, apply `detectWaypointAction` from user message/context. Pushed `a02d43b`, built via Actions run `21919952860`, and rolled out `ghcr.io/yengalvez/bot-orchestrator:bots-gpt5nano-20260211-a02d43b-latest`. | `ve a spawbot-2` now returns deterministic action (`go_to_waypoint`) even when model reply omits it; production healthy after rollout. |
+| 2026-02-11 ~19:46Z-19:49Z | Incident: rooms failed to join with UI message `Imposible conectarse a esta sala` and console error `JsonWebTokenError: invalid signature`. | Root cause: `reticulum` and `dialog` had mismatched JWT key material (`PERMS_KEY`) after secret regeneration/partial restarts. Restarting `deployment/dialog` aligned keys and room join recovered immediately. |
+| 2026-02-11 ~19:49Z | Hardening: updated `generate_script/index.js` to preserve existing `PERMS_KEY` (generate only when missing), derive public JWK from that key, and avoid accidental rotation on every `gen-hcce`. | Prevents future silent key drift causing room connection failures. |
+
+## 2026-02-11 (Bots Runner Navigation Timeout Fix + Successful Rollout)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-11 ~23:40Z | Patched `hubs-cloud/community-edition/services/bot-orchestrator/run-bot.js` (commit `f146cae`) to stop using `waitUntil: \"networkidle2\"` and wait for explicit startup readiness (`scene entered` + `NAF connected`) with retry-safe timeouts. | Removed false navigation timeouts that caused runner restart loops. |
+| 2026-02-11 ~22:48Z-22:51Z | Triggered Actions run `21926135680` for bot-orchestrator image build. | `failure`: `failed to read dockerfile: open Dockerfile: no such file or directory` due incorrect override (`Override_Dockerfile=Dockerfile`). |
+| 2026-02-11 ~22:50Z-22:51Z | Triggered Actions run `21926174128` with corrected Dockerfile path handling. | `failure`: GHCR push denied (`403 Forbidden` on blob HEAD). |
+| 2026-02-11 ~22:52Z-22:53Z | Triggered Actions run `21926216670` with explicit registry auth inputs (`Override_Registry_Username` + `Override_Registry_Password` PAT). | `success`: published `ghcr.io/yengalvez/bot-orchestrator:bots-runnerfix-20260211-f146cae-latest`. |
+| 2026-02-11 ~22:53Z-22:54Z | Rolled out `deployment/bot-orchestrator` in namespace `hcce` via `kubectl set image` to `ghcr.io/yengalvez/bot-orchestrator:bots-runnerfix-20260211-f146cae-latest`. | Rollout `success`; new pod `bot-orchestrator-7cb5684689-jnl5p` running. |
+| 2026-02-11 ~22:54Z-22:58Z | Verified runtime via orchestrator `/health`, forced `room-config` for room `VJopCY3`, and validated in-room with Playwright. | Runner state `running`, active hub list includes `VJopCY3`, and clients observe bot entities (`[bot-info]` present). |

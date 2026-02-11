@@ -196,6 +196,9 @@ Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
 - `NODE_COOKIE`, `GUARDIAN_KEY`, `PHX_KEY` - **generate random 32+ character strings** (use `openssl rand -base64 48`)
 - `PERSISTENT_VOLUME_STORAGE_CLASS` - `do-block-storage` for DigitalOcean
 - `OVERRIDE_HUBS_IMAGE` - set this to your custom client image when you ship client-side features (official `hubsfoundation/hubs:*` images do not include local code changes)
+- `OVERRIDE_BOT_ORCHESTRATOR_IMAGE` - set this to your custom bot orchestrator image when room bots/chat are enabled
+- `BOT_ACCESS_KEY` - random shared key used by Reticulum <-> bot-orchestrator internal calls
+- `OPENAI_API_KEY` - API key used by bot-orchestrator for LLM chat (model defaults to `gpt-5-nano`)
 - `OVERRIDE_HAPROXY_IMAGE` - set to `haproxytech/kubernetes-ingress:3.2` for modern K8s compatibility
 
 ### Step 7: Generate hcce.yaml
@@ -444,7 +447,51 @@ kubectl rollout restart deployment/haproxy -n hcce
 kubectl get pods -n hcce            # All Running
 kubectl get certificates -n hcce    # All READY: True
 kubectl get deployment hubs -n hcce -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
+kubectl get deployment bot-orchestrator -n hcce -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
+kubectl port-forward deployment/bot-orchestrator -n hcce 15001:5001 &
+curl -s http://127.0.0.1:15001/health | jq .
 curl -sI https://your-domain.com    # HTTP/2 with valid TLS
+```
+
+Optional bot smoke test (internal API):
+
+```bash
+BOT_KEY=$(kubectl get secret configs -n hcce -o jsonpath='{.data.BOT_ACCESS_KEY}' | base64 --decode)
+
+curl -s -X POST http://127.0.0.1:15001/internal/bots/room-config \
+  -H "content-type: application/json" \
+  -H "x-ret-bot-access-key: $BOT_KEY" \
+  -d '{"hub_sid":"smoketest-room","bots":{"enabled":true,"count":2,"mobility":"medium","chat_enabled":true}}' | jq .
+```
+
+### Activar flags globales de bots (sin romper Reticulum)
+
+Si activas flags en `ret0.app_configs` para mostrar bots/chat en todas las salas, **no** escribas un booleano JSON plano en `value`.
+
+`ret0.app_configs.value` debe guardarse como objeto con wrapper:
+
+- Correcto: `{"value": true}`
+- Incorrecto: `true`
+
+Si guardas `true` plano, Reticulum puede fallar en readiness con errores como:
+`cannot load true as type :map for field :value`
+
+Ejemplo seguro:
+
+```sql
+insert into ret0.app_configs (app_config_id, key, value, inserted_at, updated_at)
+values
+  ((extract(epoch from now()) * 1000000)::bigint, 'features|enable_room_bots', '{"value": true}'::jsonb, now(), now()),
+  ((extract(epoch from now()) * 1000000)::bigint + 1, 'features|enable_bot_chat', '{"value": true}'::jsonb, now(), now())
+on conflict (key) do update
+set value = excluded.value, updated_at = now();
+```
+
+Y después:
+
+```bash
+kubectl -n hcce rollout restart deployment/reticulum
+kubectl -n hcce rollout status deployment/reticulum --timeout=300s
 ```
 
 ---
@@ -516,9 +563,30 @@ Common failures:
 
 - `Username and password required`: registry username/password are missing (no secrets, no override inputs).
 - `403 Forbidden` from GHCR on HEAD requests (for example buildcache manifests or blobs): the token does not have package rights, or the GHCR package is not granting repo access. Fix by using a PAT with `write:packages` as `REGISTRY_PASSWORD`, or ensure the repo Actions setting “Workflow permissions” is **read/write** and the workflow requests `permissions: packages: write`.
+- `failed to read dockerfile: open Dockerfile: no such file or directory` on `hubs-cloud` bot-orchestrator builds: the workflow already defaults to `Override_Code_Path=community-edition/services/bot-orchestrator` and `Override_Dockerfile=community-edition/services/bot-orchestrator/Dockerfile`. Do not set `Override_Dockerfile=Dockerfile`; leave it empty or pass the full path.
 - `Invalid workflow file ... Unrecognized named-value: 'secrets'`: the `hubs/.github/workflows/hubs-RetPageOrigin.yml` workflow had a job-level `if:` that referenced `secrets.*` on a job that calls a reusable workflow (`uses:`). GitHub Actions rejects this at parse time. Fix: gate that job using `github.repository_owner` (or an explicit repo var like `ENABLE_TURKEY_GITOPS`) and pass secrets only in the `secrets:` block, not in the job `if:`.
 - Docker tag errors when building from branches like `codex/foo`: Docker tags cannot contain `/`. Fix: sanitize the tag in CI (replace `/` with `-`) or set `Override_Image_Tag` to a slash-free value.
 - `bot-orchestrator` `ErrImagePull` after `kubectl apply`: `hcce.yaml` may point to `$Container_Dockerhub_Username/bot-orchestrator:$Container_Tag` (often unresolved in forks). Fix by setting `OVERRIDE_BOT_ORCHESTRATOR_IMAGE` to a valid pushed image, or temporarily scale `deployment/bot-orchestrator` to `0` until the image exists.
+
+### Room join error: `Imposible conectarse a esta sala` + `JsonWebTokenError: invalid signature`
+
+Cause:
+- `reticulum` and `dialog` are using different `PERMS_KEY` material (JWT signing key mismatch).
+
+Typical trigger:
+- Running `gen-hcce` with regenerated keys, applying manifests, then restarting only one of the two deployments.
+
+Fix:
+```bash
+kubectl -n hcce rollout restart deployment/reticulum
+kubectl -n hcce rollout restart deployment/dialog
+kubectl -n hcce rollout status deployment/reticulum --timeout=300s
+kubectl -n hcce rollout status deployment/dialog --timeout=300s
+```
+
+Prevention:
+- Keep `PERMS_KEY` stable in `deployment/input-values.local.yaml`.
+- The generator now preserves existing `PERMS_KEY` and only generates one when missing.
 
 ### Durable rollout (recommended)
 
