@@ -518,6 +518,7 @@ Common failures:
 - `403 Forbidden` from GHCR on HEAD requests (for example buildcache manifests or blobs): the token does not have package rights, or the GHCR package is not granting repo access. Fix by using a PAT with `write:packages` as `REGISTRY_PASSWORD`, or ensure the repo Actions setting “Workflow permissions” is **read/write** and the workflow requests `permissions: packages: write`.
 - `Invalid workflow file ... Unrecognized named-value: 'secrets'`: the `hubs/.github/workflows/hubs-RetPageOrigin.yml` workflow had a job-level `if:` that referenced `secrets.*` on a job that calls a reusable workflow (`uses:`). GitHub Actions rejects this at parse time. Fix: gate that job using `github.repository_owner` (or an explicit repo var like `ENABLE_TURKEY_GITOPS`) and pass secrets only in the `secrets:` block, not in the job `if:`.
 - Docker tag errors when building from branches like `codex/foo`: Docker tags cannot contain `/`. Fix: sanitize the tag in CI (replace `/` with `-`) or set `Override_Image_Tag` to a slash-free value.
+- `bot-orchestrator` `ErrImagePull` after `kubectl apply`: `hcce.yaml` may point to `$Container_Dockerhub_Username/bot-orchestrator:$Container_Tag` (often unresolved in forks). Fix by setting `OVERRIDE_BOT_ORCHESTRATOR_IMAGE` to a valid pushed image, or temporarily scale `deployment/bot-orchestrator` to `0` until the image exists.
 
 ### Durable rollout (recommended)
 
@@ -541,7 +542,7 @@ docker push your-registry/hubs:custom-YYYYMMDD
 docker manifest inspect your-registry/hubs:custom-YYYYMMDD >/dev/null
 ```
 
-4. Set `OVERRIDE_HUBS_IMAGE` in `hubs-cloud/community-edition/input-values.yaml`, then redeploy (`gen-hcce` + manual edits + apply + RBAC patch + HAProxy restart).
+4. Set `OVERRIDE_HUBS_IMAGE` in `hubs-cloud/community-edition/input-values.yaml`, then redeploy (`gen-hcce` + manual edits + apply + RBAC patch + HAProxy restart). If bots are enabled in this rollout, also set `OVERRIDE_BOT_ORCHESTRATOR_IMAGE` to a valid published tag.
 
 ### GHCR notes (if using `ghcr.io`)
 

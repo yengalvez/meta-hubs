@@ -125,3 +125,16 @@ Time reference: UTC.
 | 2026-02-10 00:00:37Z-00:07:17Z | GitHub Actions run `21845813611` (`custom-docker-build-push`) for `codex/admin-import-fix-active-featured` with `Override_Image_Tag=admin-import-fix-20260210-83ad93135`. | `failure`: GHCR returned `403 Forbidden` on cache importer and blob HEAD during push (workflow `GITHUB_TOKEN` lacked package write rights / registry secrets not configured). |
 | 2026-02-10 00:09:07Z-00:16:51Z | Re-ran GitHub Actions as run `21846017453` with explicit registry auth inputs (`Override_Registry_Password=<PAT>`) and `Use_Build_Cache=false`. | `success`: published `ghcr.io/yengalvez/hubs:admin-import-fix-20260210-83ad93135-latest`. |
 | 2026-02-10 ~00:17Z-00:21Z | Rolled out `deployment/hubs` in namespace `hcce` to `ghcr.io/yengalvez/hubs:admin-import-fix-20260210-83ad93135-latest`, then restarted `deployment/reticulum` to refresh cached page-origin HTML/asset hashes. | Deployment healthy; `/admin` now references the new `admin-*.js` hash that exists on `assets.meta-hubs.org` (avoids blank admin page due to 404 hashed assets). |
+
+## 2026-02-11 (Bots MVP Branch Deploy Attempt + Hubs Image Rollout)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-11 14:38Z-14:39Z | Pushed branch `codex/bots-hybrid-mvp` to `yengalvez/hubs` and `yengalvez/hubs-cloud`. | Branches published; ready for CI + deploy. |
+| 2026-02-11 14:39:35Z-14:44:09Z | GitHub Actions run `21909457715` (`custom-docker-build-push`) on `yengalvez/hubs` for `codex/bots-hybrid-mvp` (`headSha=0e6699502...`). | `success`: published `ghcr.io/yengalvez/hubs:codex-bots-hybrid-mvp-latest` and `ghcr.io/yengalvez/hubs:codex-bots-hybrid-mvp-23`. |
+| 2026-02-11 17:20Z-17:21Z | Regenerated `hcce.yaml` from local values, applied ingress/HAProxy manual fixes (cert-manager + ssl redirect annotations, HAProxy 3.2, remove haproxy container securityContext, keep certs workflow), then `kubectl apply -f hcce.yaml` + RBAC patch + HAProxy rollout restart. | Cluster rollout successful; `deployment/hubs` updated to `ghcr.io/yengalvez/hubs:codex-bots-hybrid-mvp-latest`; `meta-hubs.org` and `/spoke` return `HTTP/2 200`. |
+| 2026-02-11 17:21Z | New `bot-orchestrator` deployment came up with `ErrImagePull` (`mozillareality/bot-orchestrator:stable-latest` not available for this environment). | Mitigated by scaling `deployment/bot-orchestrator` to `0` to keep production healthy until a custom orchestrator image is published. |
+| 2026-02-11 17:56Z-17:57Z | Installed local container runtime (`docker` + `colima` + `docker-buildx`), built and pushed orchestrator image from `hubs-cloud/community-edition/services/bot-orchestrator` for `linux/amd64`. | Published `ghcr.io/yengalvez/bot-orchestrator:codex-bots-hybrid-mvp-latest` and `ghcr.io/yengalvez/bot-orchestrator:codex-bots-hybrid-mvp-7c39c91`. |
+| 2026-02-11 17:57Z-17:58Z | Updated `deployment/bot-orchestrator` to GHCR image and scaled back to `1` replica; then regenerated and re-applied `hcce.yaml` using `OVERRIDE_BOT_ORCHESTRATOR_IMAGE`, re-patched RBAC, and restarted HAProxy. | `bot-orchestrator`, `hubs`, and `haproxy` all `Running` (`1/1`), with images pinned to GHCR/custom tags and `meta-hubs.org`/`meta-hubs.org/spoke` returning `HTTP/2 200`. |

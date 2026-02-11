@@ -9,3 +9,4 @@ input-values.yaml
 hcce.yaml
 node_modules/
 .env
+erl_crash.dump
