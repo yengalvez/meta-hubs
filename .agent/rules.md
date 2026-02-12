@@ -30,6 +30,9 @@
   - why it failed (best known cause),
   - the safest next step.
   Do not attempt alternate deploy approaches (hotpatching pods, in-cluster builds, manual asset copying, etc.) unless the user explicitly approves the deviation first.
+- Bots rollout requires `BOT_ACCESS_KEY` and `OPENAI_API_KEY` in `deployment/input-values.local.yaml` (never commit real values).
+- When writing global feature flags into `ret0.app_configs`, `value` must be stored as a JSON object wrapper (`{"value": <...>}`), not a raw primitive (`true`/`false`), or Reticulum readiness can fail with `cannot load ... as type :map`.
+- Keep `PERMS_KEY` stable across deploys. If rooms fail with `JsonWebTokenError: invalid signature`, restart both `reticulum` and `dialog` so they load the same key material.
 - **Emergency Method (Only With Explicit User Approval)**: `kubectl cp`/hotpatching. WARNING: Non-durable and can break the live site if page/asset URLs are wrong; typically requires restarting Reticulum to flush cached HTML. See `deployment/README.md`.
 
 ## Code Standards

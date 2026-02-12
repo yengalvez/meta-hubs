@@ -65,12 +65,17 @@ OVERRIDE_PGBOUNCER_IMAGE: "No"
 # Pin the Hubs client to a known working version.
 # Check available tags at https://hub.docker.com/r/hubsfoundation/hubs/tags
 OVERRIDE_HUBS_IMAGE: "hubsfoundation/hubs:stable-3108"
+OVERRIDE_BOT_ORCHESTRATOR_IMAGE: "No"
 
 OVERRIDE_SPOKE_IMAGE: "hubsfoundation/spoke:$Container_Tag"
 OVERRIDE_NEARSPARK_IMAGE: "No"
 OVERRIDE_PHOTOMNEMONIC_IMAGE: "No"
 OVERRIDE_DIALOG_IMAGE: "No"
 OVERRIDE_COTURN_IMAGE: "No"
+
+# Bots/LLM secrets (required only if bots feature is enabled)
+BOT_ACCESS_KEY: "change-me-random-64chars"
+OPENAI_API_KEY: "change-me-openai-api-key"
 
 # REQUIRED for K8s 1.32+. The original mozillareality/haproxy image (based on
 # haproxytech 1.8.5 from 2022) only supports K8s 1.21-1.23 and will crash on
