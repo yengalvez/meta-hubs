@@ -586,7 +586,8 @@ kubectl -n hcce rollout status deployment/dialog --timeout=300s
 
 Prevention:
 - Keep `PERMS_KEY` stable in `deployment/input-values.local.yaml`.
-- The generator now preserves existing `PERMS_KEY` and only generates one when missing.
+- Ensure `PERMS_KEY` is actually present in your local inputs. If it is missing, `gen-hcce` will generate a new key on every run and update the `configs` secret; if you then restart only `reticulum` or only `dialog`, rooms will break until both are restarted on the same key.
+- If you see `secretOrPublicKey must...` errors from the Dialog websocket (`stream.<domain>:4443`), it usually means Dialog is not loading a valid PEM. Use an `OVERRIDE_DIALOG_IMAGE` that writes `/app/certs/perms.pub.pem` by unescaping the env var (or adjust the Dialog entrypoint accordingly).
 
 ### Durable rollout (recommended)
 

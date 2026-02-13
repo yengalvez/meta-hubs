@@ -180,3 +180,15 @@ Time reference: UTC.
 | 2026-02-11 ~22:52Z-22:53Z | Triggered Actions run `21926216670` with explicit registry auth inputs (`Override_Registry_Username` + `Override_Registry_Password` PAT). | `success`: published `ghcr.io/yengalvez/bot-orchestrator:bots-runnerfix-20260211-f146cae-latest`. |
 | 2026-02-11 ~22:53Z-22:54Z | Rolled out `deployment/bot-orchestrator` in namespace `hcce` via `kubectl set image` to `ghcr.io/yengalvez/bot-orchestrator:bots-runnerfix-20260211-f146cae-latest`. | Rollout `success`; new pod `bot-orchestrator-7cb5684689-jnl5p` running. |
 | 2026-02-11 ~22:54Z-22:58Z | Verified runtime via orchestrator `/health`, forced `room-config` for room `VJopCY3`, and validated in-room with Playwright. | Runner state `running`, active hub list includes `VJopCY3`, and clients observe bot entities (`[bot-info]` present). |
+
+## 2026-02-13 (Room Connection Outage Fix + Dialog PERMS_KEY Unescape + Build Badge)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-13 ~09:03Z-09:10Z | Reproduced the “room won’t load” issue via Playwright: UI shows `Imposible conectarse a esta sala`, with console errors originating from Dialog JWT verification (`JsonWebTokenError: invalid signature` / `secretOrPublicKey must...`). | Confirmed it was not missing assets/404; it was a signaling/auth failure between client and `dialog` (`stream.<domain>:4443`). |
+| 2026-02-13 ~09:20Z-09:38Z | Shipped a custom `dialog` image that writes a valid `/app/certs/perms.pub.pem` by unescaping `PERMS_KEY` (handles double-escaped `\\\\n`) at runtime; fixed the `dialog` Dockerfile runtime Node version to match the build stage (avoids native module ABI crash). | `deployment/dialog` returned to `Running` and accepted protoo websocket connections. |
+| 2026-02-13 ~09:39Z-09:41Z | Restarted `deployment/reticulum` so both `reticulum` and `dialog` used the same current `PERMS_KEY` from the `configs` secret. | Rooms load again (lobby shows `Join Room` instead of “Imposible conectarse…”). |
+| 2026-02-13 ~09:41Z | Persisted the current `PERMS_KEY` into local deploy inputs (`deployment/input-values.local.yaml` and the working copy `hubs-cloud/community-edition/input-values.yaml`) to prevent silent key rotation on future `gen-hcce` runs (which can break rooms after partial restarts). | Prevents recurrence of “invalid signature” outages caused by regenerated PERMS keys. |
+| 2026-02-13 ~09:47Z-09:55Z | Improved the in-room build/version badge logic to prefer the `frontend-<hash>.js` bundle hash (instead of matching the first hashed script like `webxr-polyfill-*`), built/pushed a new Hubs image via GitHub Actions, and rolled it out. | Toolbar now shows the correct build fingerprint (e.g. `743fbc0e`) to confirm which version is running in production. |

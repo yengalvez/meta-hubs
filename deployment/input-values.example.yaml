@@ -1,7 +1,7 @@
 # YenHubs - Hubs CE 2.0.0 Input Values Template
 # ================================================
 # Copy this file to hubs-cloud/community-edition/input-values.yaml and fill in your values.
-# That file is gitignored — never commit real credentials.
+# IMPORTANT: hubs-cloud/community-edition/input-values.yaml is NOT gitignored upstream. Never commit real credentials.
 #
 # Full deployment guide: deployment/README.md
 # Official reference: https://docs.hubsfoundation.org/beginners-guide-to-CE.html
@@ -43,6 +43,16 @@ SMTP_PASS: "your-smtp-password"
 NODE_COOKIE: "CHANGE_ME_use_openssl_rand_base64_48"
 GUARDIAN_KEY: "CHANGE_ME_use_openssl_rand_base64_48"
 PHX_KEY: "CHANGE_ME_use_openssl_rand_base64_48"
+
+# --- PERMS_KEY (required; keep stable) ---
+# RSA private key used to sign room permissions tokens (RS512). Dialog verifies these tokens using the key material.
+# If you omit this, the generator will create one, but you MUST persist it or you can break rooms after partial restarts.
+# Generate a key (example):
+#   openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt
+PERMS_KEY: |
+  -----BEGIN PRIVATE KEY-----
+  CHANGE_ME
+  -----END PRIVATE KEY-----
 
 # --- Optional API keys (leave empty if not using) ---
 SKETCHFAB_API_KEY: ""
