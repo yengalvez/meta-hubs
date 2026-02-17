@@ -74,8 +74,9 @@ Configuracion (Kubernetes env vars en `bot-orchestrator`):
 
 1. Verifica que `Enable bots` esta activado en esa sala.
 2. Verifica que `Bot Count` > 0.
-3. Revisa que la feature global de bots/chat este habilitada en app config.
-4. Revisa despliegue de `bot-orchestrator` en `hcce`.
+3. Asegura que **NO** tienes activado `Enable bitECS based Client` (por ahora los bots solo se ven en el cliente clasico).
+4. Revisa que la feature global de bots/chat este habilitada en app config.
+5. Revisa despliegue de `bot-orchestrator` en `hcce`.
 
 ## No responden en chat
 
