@@ -22,7 +22,7 @@ Esta feature permite añadir bots por sala, con movilidad configurable y chat pr
 1. Abre `Room Settings`.
 2. Activa:
 - `Enable bots`
-- `Bot Count` (0 a 5)
+- `Bot Count` (0 a 10)
 - `Mobility` (`low`, `medium`, `high`)
 - `Enable bot chat` (si quieres chat privado)
 3. Guarda cambios.
@@ -47,11 +47,26 @@ Esta feature permite añadir bots por sala, con movilidad configurable y chat pr
 - `medium`: equilibrio entre quietud y movimiento.
 - `high`: se mueven con mas frecuencia.
 
+## Runner (ghost vs chromium) y coste
+
+Hay 2 backends de runner:
+
+- `ghost`: runner en Node (sin Chromium). No renderiza nada: solo publica `bot-path` + `bot-info` por Phoenix/NAF. Es el modo recomendado por coste.
+- `chromium`: runner basado en navegador headless. Funciona, pero consume mucha mas CPU/RAM por sala.
+
+Configuracion (Kubernetes env vars en `bot-orchestrator`):
+
+- `RUNNER_BACKEND`: backend por defecto (`ghost` o `chromium`).
+- `RUNNER_BACKEND_CANARY_HUBS`: lista CSV de `hub_sid` que fuerzan `ghost` aunque el default sea `chromium` (canary seguro).
+- `MAX_ACTIVE_ROOMS`: maximo de salas con runner activo a la vez.
+- `MAX_BOTS_PER_ROOM`: maximo de bots por sala.
+- Si el backend default es `chromium`, se recomienda cap adicional (por coste) con `MAX_CHROMIUM_ROOMS`.
+
 ## Limites del MVP (intencionales)
 
-- Maximo `5` bots por sala.
-- Capacidad global low-cost: `1` sala activa con runner tecnico a la vez.
-- Si otra sala activa bots mientras hay una ya activa, puede quedar en estado de capacidad ocupada (`queued_capacity`) hasta liberar runner.
+- Maximo `10` bots por sala (clamp en backend).
+- Capacidad global por defecto: `5` salas activas con runner a la vez (`MAX_ACTIVE_ROOMS`).
+- Con backend `chromium`, se recomienda limitar a 1 sala activa (por coste) y usar `ghost` para escalar.
 
 ## Troubleshooting
 
@@ -72,8 +87,9 @@ Esta feature permite añadir bots por sala, con movilidad configurable y chat pr
 ## No se mueven o se mueven raro
 
 1. Asegura que la escena tenga **al menos 2 waypoints** separados entre si.
-2. Si hay paredes/objetos entre un waypoint y otro, el bot puede descartar ese enlace (raycast) y elegir otro.
-3. Verifica que la sala no este en cola de capacidad por limite global del runner.
+2. El bloqueo por obstaculos (raycast) es best-effort:
+- En `ghost` runner, el raycast MVP usa `box-collider` de Spoke. Si tu escena no tiene colliders, no se bloquearan caminos.
+3. Verifica que la sala no este en cola de capacidad por limite global del runner (`MAX_ACTIVE_ROOMS`).
 
 ## Animaciones / avatares
 - Los bots intentan usar avatares `featured` con tags `fullbody` o `rpm` (si existen).
@@ -81,6 +97,5 @@ Esta feature permite añadir bots por sala, con movilidad configurable y chat pr
 
 ## Sala en cola de capacidad
 
-- Es esperado con modo low-cost.
-- Solo una sala con runner activo a la vez.
-- Al liberar la sala activa (o desactivar bots), la siguiente sala en cola puede activarse.
+- Es esperado si la capacidad global esta limitada.
+- Si el maximo de runners esta ocupado, otra sala puede quedar en cola hasta liberar.
