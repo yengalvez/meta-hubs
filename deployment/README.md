@@ -2,7 +2,7 @@
 
 Hubs Community Edition 2.0.0 on DigitalOcean Kubernetes with automated SSL via cert-manager.
 
-> **Last updated**: February 2026 | **Cluster**: K8s 1.34 | **Region**: AMS3
+> **Last updated**: March 2026 | **Cluster**: K8s 1.34 | **Region**: AMS3
 
 ---
 
@@ -35,20 +35,31 @@ cert-manager (namespace: cert-manager)
 - HTTP-01 challenges via HAProxy
 ```
 
-## Current Cluster State
+## Final Production State Before Freeze
 
 | Component | Version / Image |
 |-----------|----------------|
 | Kubernetes | 1.34.1-do.3 |
 | HAProxy | `haproxytech/kubernetes-ingress:3.2` |
-| Hubs client | `hubsfoundation/hubs:stable-3108` |
-| Reticulum | `hubsfoundation/reticulum:stable-latest` |
+| Hubs client | `ghcr.io/yengalvez/hubs:runtime-fix-20260219-5e1344b00-55` |
+| Reticulum | `ghcr.io/yengalvez/reticulum:ret-cspfix-20260219-984ba9a-latest` |
 | Spoke | `hubsfoundation/spoke:stable-latest` |
-| Dialog | `mozillareality/dialog:stable-latest` |
+| Dialog | `ghcr.io/yengalvez/dialog:dialog-permsfix-20260213-1b23c9e-latest` |
+| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator:ghost-fullsync-20260307-e38b70d-latest` |
 | Coturn | `mozillareality/coturn:stable-latest` |
 | PostgreSQL | `mozillareality/postgres:stable-latest` |
 | cert-manager | v1.19.3 (Helm chart) |
 | Helm | v3.20.0 |
+
+Final runtime notes before the project freeze:
+
+- Domain: `meta-hubs.org`
+- Cluster name: `hubs-ce`
+- Namespace: `hcce`
+- Bots backend: `ghost`
+- Hubs repo base branch: `master`
+- Hubs-cloud repo base branch: `master`
+- Superproject base branch: `main`
 
 ## Cost
 
@@ -777,12 +788,26 @@ Fix:
 ```bash
 # Database backup (do this BEFORE any risky changes)
 PGSQL_POD=$(kubectl get pod -n hcce -l app=pgsql -o jsonpath='{.items[0].metadata.name}')
-kubectl exec $PGSQL_POD -n hcce -- pg_dump -U postgres ret_dev > backup_$(date +%Y%m%d).sql
+kubectl exec $PGSQL_POD -n hcce -- pg_dump -U postgres retdb > backup_$(date +%Y%m%d).sql
 
 # Built-in backup script (if available in your version)
 cd hubs-cloud/community-edition
 npm run backup
 ```
+
+For the project freeze performed in March 2026, a full local snapshot was also saved outside the cluster at:
+
+```bash
+/Users/Shared/Gits/YenHubs/output/project-freeze-20260316-090114/
+```
+
+That snapshot contains:
+
+- `retdb-*.sql.gz`
+- current deployment image tags
+- cluster metadata from `doctl`
+- Kubernetes manifests/state exports
+- local working deployment values copies kept out of git history
 
 ## Cost Savings
 
@@ -796,6 +821,57 @@ kubectl get pods -n hcce -w  # Wait for all Running
 ```
 
 > The Load Balancer ($12/mo) keeps billing even at 0 replicas. To fully stop costs, delete the cluster (data is lost unless backed up).
+
+## Project Freeze / Full Shutdown
+
+Use this path if you are pausing the project for weeks or months and want DigitalOcean cost as close to zero as possible:
+
+```bash
+# 1. Confirm backups already exist
+ls -lh /Users/Shared/Gits/YenHubs/output/project-freeze-20260316-090114/
+
+# 2. Confirm cluster and LB that will be removed
+doctl kubernetes cluster list
+doctl compute load-balancer list
+
+# 3. Delete the DOKS cluster (this also removes the managed LB and cluster-attached volumes)
+doctl kubernetes cluster delete hubs-ce --force
+
+# 4. Verify there is no cluster left
+doctl kubernetes cluster list
+doctl compute load-balancer list
+doctl compute volume list
+```
+
+Expected result:
+
+- the site goes offline until rebuilt
+- DOKS node, managed LB, and attached block storage stop billing
+- local backups and docs remain the source of truth for future recovery
+
+This shutdown flow was executed successfully on `2026-03-16` and verified until:
+
+- `doctl kubernetes cluster list` returned no clusters
+- `doctl compute load-balancer list` returned no active load balancers
+- `doctl compute volume list` returned no remaining block volumes
+
+## Rebuild After The Freeze
+
+When resuming the project:
+
+1. Recreate the DOKS cluster in AMS3 with one 8GB / 4vCPU node and no HA.
+2. Restore kubeconfig with `doctl kubernetes cluster kubeconfig save hubs-ce`.
+3. Reinstall cert-manager and reapply `/Users/Shared/Gits/YenHubs/deployment/ingress-class.yaml` plus `/Users/Shared/Gits/YenHubs/deployment/cluster-issuer.yaml`.
+4. Copy the local `input-values.local.yaml` back into `hubs-cloud/community-edition/input-values.yaml`.
+5. Run `npm ci && npm run gen-hcce`, reapply the known manual ingress edits, then `kubectl apply -f hcce.yaml`.
+6. Restore the database dump into the new `pgsql` pod.
+7. Validate `meta-hubs.org`, TLS, room entry, avatar flow, and bots (`ghost` backend).
+
+The short handoff checklist for this rebuild is maintained in:
+
+```bash
+/Users/Shared/Gits/YenHubs/docs/project-freeze-2026-03.md
+```
 
 ## References
 

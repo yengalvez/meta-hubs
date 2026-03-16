@@ -1,5 +1,7 @@
 # Bots en YenHubs (MVP)
 
+> Estado final antes del project freeze (marzo 2026): backend por defecto `ghost`, imagen desplegada `ghcr.io/yengalvez/bot-orchestrator:ghost-fullsync-20260307-e38b70d-latest`, capacidad prevista `MAX_ACTIVE_ROOMS=5`, `MAX_BOTS_PER_ROOM=10`.
+
 Esta feature permite añadir bots por sala, con movilidad configurable y chat privado por proximidad.
 
 ## Que hace
@@ -53,6 +55,8 @@ Hay 2 backends de runner:
 
 - `ghost`: runner en Node (sin Chromium). No renderiza nada: solo publica `bot-path` + `bot-info` por Phoenix/NAF. Es el modo recomendado por coste.
 - `chromium`: runner basado en navegador headless. Funciona, pero consume mucha mas CPU/RAM por sala.
+
+En el cierre final del proyecto se dejo `ghost` como backend estable y recomendado.
 
 Configuracion (Kubernetes env vars en `bot-orchestrator`):
 

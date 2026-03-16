@@ -193,3 +193,52 @@ Time reference: UTC.
 | 2026-02-13 ~09:41Z | Persisted the current `PERMS_KEY` into local deploy inputs (`deployment/input-values.local.yaml` and the working copy `hubs-cloud/community-edition/input-values.yaml`) to prevent silent key rotation on future `gen-hcce` runs (which can break rooms after partial restarts). | Prevents recurrence of “invalid signature” outages caused by regenerated PERMS keys. |
 | 2026-02-13 ~09:47Z-09:55Z | Improved the in-room build/version badge logic to prefer the `frontend-<hash>.js` bundle hash (instead of matching the first hashed script like `webxr-polyfill-*`), built/pushed a new Hubs image via GitHub Actions, and rolled it out. | Toolbar now shows the correct build fingerprint (e.g. `743fbc0e`) to confirm which version is running in production. |
 | 2026-02-13 ~11:00Z-11:22Z | Fixed `reticulum` internal bots discovery endpoint (`GET /api-internal/v1/hubs/active_with_bots`) to use `RetWeb.Presence.present_hub_sids()` instead of `hubs.last_active_at` filtering; built a new `reticulum` image via GitHub Actions and deployed via `gen-hcce` + `kubectl apply`. | `bot-orchestrator` now sees active bot-enabled rooms (e.g. `VJopCY3`) and starts the headless runner; verified bots spawn and move between `spawbot-*` waypoints in-room. |
+
+## 2026-02-19 (Runtime Fix: `transforming` undefined + avatar fetch fallback)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-02-19 ~22:35Z-22:41Z | Patched null-guards for `transform-selected-object` usage in `visibility-while-frozen`, `visible-if-transforming`, `cursor-controller`, `app-aware-mouse`, and `pinnable`. | Eliminated recurring runtime crash `Cannot read properties of undefined (reading 'transforming')` when transform system is unavailable/late. |
+| 2026-02-19 ~22:41Z-22:42Z | Added safe fallback in `fetchRandomDefaultAvatarId()` (`src/utils/identity.js`) to return bundled default avatar if Reticulum fetch fails in local/dev contexts. | Prevented startup crash path caused by `TypeError: Failed to fetch` during profile init. |
+| 2026-02-19 ~22:42Z-22:43Z | Validation in `hubs`: `npm run check`, `npm run lint:js`, `npm run build`. | All passed (build with expected size warnings only). |
+| 2026-02-19 ~22:43Z-22:49Z | Pushed `hubs` commit `5e1344b00` and built image through GitHub Actions run `22203229807` (`success`). | Published `ghcr.io/yengalvez/hubs:runtime-fix-20260219-5e1344b00-55`. |
+| 2026-02-19 ~22:49Z-22:50Z | Rolled out `deployment/hubs` in namespace `hcce` to runtime-fix image and verified endpoint health. | Deployment ready on `ghcr.io/yengalvez/hubs:runtime-fix-20260219-5e1344b00-55`; `https://meta-hubs.org` returns HTTP 200. |
+
+## 2026-03-02 (Bots visibility/count stability fix in ghost runner)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-03-02 ~13:08Z-13:14Z | Investigated intermittent room bots issue (showing fewer than configured and disappearing after settings changes). Verified live `bot-orchestrator` config and logs, and inspected runner/realtime code paths. | Identified two stability risks in `run-ghost-runner.js`: (1) presence sync cache never removed disconnected occupants (rejoin could miss bot full sync), (2) `hub_refresh` could overwrite bot config with `count=0` when payload lacked `user_data.bots`. |
+| 2026-03-02 ~13:15Z-13:18Z | Patched ghost runner to prune stale occupants on each `Presence.onSync` and re-trigger full sync for rejoining occupants; patched `hub_refresh` handling to only update bot config when `user_data.bots` is explicitly present. Commit `3c96d70` on `hubs-cloud` branch `codex/bots-ghost-runner`. | Fix reduces “sometimes 0 bots” and “partial bot count after rejoin/config change” caused by missed resyncs/partial refresh payloads. |
+| 2026-03-02 ~13:18Z-13:21Z | Built/pushed bot-orchestrator image via GitHub Actions run `22577767949` (`success`) and rolled out `deployment/bot-orchestrator` to `ghcr.io/yengalvez/bot-orchestrator-runner:ghost-syncfix-20260302-3c96d70-29`. | New pod running and runner joined `VJopCY3`; startup logs confirm scene + waypoints parsing (`all=25`, `spawn=9`, `patrol=9`). |
+| 2026-03-02 ~13:22Z | Updated local deploy inputs to pin current bot-orchestrator image tag in both working files. | `deployment/input-values.local.yaml` and `hubs-cloud/community-edition/input-values.yaml` now reference `ghost-syncfix-20260302-3c96d70-29`. |
+
+## 2026-03-02 (Bots idle-recovery hardening + runner watchdog deploy)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-03-02 ~22:15Z-22:30Z | Diagnosed long-idle bot disappearance and reviewed runner failure mode. Patched `hubs-cloud/community-edition/services/bot-orchestrator/run-bot.js` with health watchdog (fatal page errors, repeated unhealthy checks, browser/page unexpected close => process exit for orchestrator restart). Also added channel-level fail-fast exits in `run-ghost-runner.js` (`channel.onError/onClose`). Commit `2e8d15e` on `hubs-cloud` branch `codex/bots-ghost-runner`. | Eliminated zombie-runner condition where process stayed alive but stopped publishing bots after prolonged idle/disconnect states. |
+| 2026-03-02 ~22:28Z-22:35Z | Triggered GitHub Actions build for bot-orchestrator. First run `22598645629` failed with GHCR push `403 Forbidden` (default workflow token). Re-ran with explicit registry credentials (`Override_Registry_Username` + `Override_Registry_Password`) as run `22598853824` (`success`). | Published `ghcr.io/yengalvez/bot-orchestrator:bot-watchdog-20260302-2e8d15e-p1-31`. |
+| 2026-03-02 ~22:36Z-22:41Z | Deployed new bot-orchestrator image and tested backend modes. `ghost` backend was active but did not surface bot entities in client for this room, so rollout switched to `RUNNER_BACKEND=chromium` with watchdog-enabled image and completed. | Production bot-orchestrator now runs watchdog-hardened Chromium runner (`runner_backend_default=chromium`, `max_bots_per_room=10`). |
+| 2026-03-02 ~22:41Z-22:46Z | Validation: orchestrator `/health` healthy (`active_rooms=1`, hub `VJopCY3`), runner startup logs show scene enter + network connected, and Playwright checks observed bot entities appearing on repeated room loads (`[bot-info]` count reached 5 on both passes). | Bots are visible again after reconnect flows; recovery logic is now automatic if runner degrades. |
+| 2026-03-02 ~22:46Z | Updated working deploy inputs to avoid future drift. | `deployment/input-values.local.yaml` and `hubs-cloud/community-edition/input-values.yaml` now pin `OVERRIDE_BOT_ORCHESTRATOR_IMAGE=ghcr.io/yengalvez/bot-orchestrator:bot-watchdog-20260302-2e8d15e-p1-31` and `RUNNER_BACKEND=chromium`. |
+
+| 2026-03-07 ~09:45Z-10:04Z | Diagnosed ghost-runner bot loss in lobby/spectator mode. Verified via Phoenix watcher + Playwright that the runner was publishing `naf/nafr`, but fresh clients often missed the one-shot first sync and therefore never instantiated `room-bot-*` entities. Patched `/Users/Shared/Gits/YenHubs/hubs-cloud/community-edition/services/bot-orchestrator/run-ghost-runner.js` to schedule short full-sync bursts on startup, bot reconcile, and each late join instead of relying on a single immediate first sync. Committed `e38b70d`, built image via GitHub Actions run `22796901406`, updated deploy values to `ghcr.io/yengalvez/bot-orchestrator:ghost-fullsync-20260307-e38b70d-latest`, regenerated `hcce.yaml`, and redeployed with `RUNNER_BACKEND=ghost`. | New pod `bot-orchestrator-555b4cd785-ngwj5` running with ghost backend; fresh spectator load on `https://meta-hubs.org/VJopCY3/inicio` now auto-instantiates 5 bots (`room-bot-*`) without manual resync/probe. |
+
+## 2026-03-16 (Project freeze, full backup, merge closure, and DigitalOcean shutdown)
+
+Time reference: UTC.
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-03-16 ~08:01Z-08:02Z | Generated a local freeze bundle at `/Users/Shared/Gits/YenHubs/output/project-freeze-20260316-090114/`, including `retdb` dump, Kubernetes state exports, DigitalOcean metadata, image tags, submodule status, and local deployment inputs kept outside git history. | A complete recovery bundle now exists locally for rebuilding the project without relying on chat history. |
+| 2026-03-16 ~08:03Z-08:08Z | Consolidated shutdown/recovery docs in `/Users/Shared/Gits/YenHubs/deployment/README.md`, `/Users/Shared/Gits/YenHubs/docs/project-freeze-2026-03.md`, `/Users/Shared/Gits/YenHubs/features/bots/README.md`, and the root README. Removed the stray `IN` line accidentally left in `/Users/Shared/Gits/YenHubs/features/rpm-avatars/README.md`. | The repo now documents final production state, branch layout, backup location, rebuild order, and the fact that bots ended on `ghost` runner. |
+| 2026-03-16 ~08:05Z-08:08Z | Merged `/Users/Shared/Gits/YenHubs/hubs` branch `codex/ui-es-avaturn-private` into `master` and pushed commit `7aa9a35f4d3d6e9ac48cdf3cebf4553073f43823`. | Client subrepo closure completed on base branch `master`. |
+| 2026-03-16 ~08:08Z-08:10Z | Merged `/Users/Shared/Gits/YenHubs/hubs-cloud` branch `codex/bots-ghost-runner` into `master`, resolved the workflow conflict in `.github/workflows/custom-docker-build-push.yml` by keeping the `Override_Repo_Name`-capable version, and pushed commit `832d8e39566e22768b816422bffc9417f9f5a53c`. | Deployment subrepo closure completed on base branch `master`. |
+| 2026-03-16 ~08:10Z-08:12Z | Deleted DigitalOcean cluster `hubs-ce`, then manually removed the remaining orphaned node, load balancer, and two block volumes after confirming cluster deletion had not cleared them. | DigitalOcean runtime cost for this project was reduced to effectively zero: no cluster, no droplet, no load balancer, and no attached block storage remain. |

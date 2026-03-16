@@ -1,11 +1,14 @@
 # YenHubs - Hubs CE 2.0.0 Custom Deployment
 
+> Project freeze note (March 2026): this project has been left in a documented, recoverable parked state. For the final production state, recovery order, and shutdown notes, see `/Users/Shared/Gits/YenHubs/docs/project-freeze-2026-03.md` and `/Users/Shared/Gits/YenHubs/deployment/README.md`.
+
 Custom deployment of [Hubs Foundation Community Edition](https://hubsfoundation.org/) on DigitalOcean Kubernetes.
 
 ## Features
 
 - **Third-person camera** - Toggle between first and third person view ([docs](features/third-person/doc-thirdperson.md))
 - **ReadyPlayer.me GLB avatars** - Pre-downloaded full-body avatars with validation ([docs](features/rpm-avatars/README.md))
+- **Bots with ghost runner** - Room bots with lower-cost Node-based orchestration ([docs](features/bots/README.md))
 - **Automated SSL** - Let's Encrypt certificates via cert-manager with auto-renewal
 - **Cost-optimized** - DigitalOcean deployment at ~$62/month
 
