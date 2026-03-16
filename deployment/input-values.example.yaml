@@ -1,7 +1,7 @@
 # YenHubs - Hubs CE 2.0.0 Input Values Template
 # ================================================
 # Copy this file to hubs-cloud/community-edition/input-values.yaml and fill in your values.
-# That file is gitignored — never commit real credentials.
+# IMPORTANT: hubs-cloud/community-edition/input-values.yaml is NOT gitignored upstream. Never commit real credentials.
 #
 # Full deployment guide: deployment/README.md
 # Official reference: https://docs.hubsfoundation.org/beginners-guide-to-CE.html
@@ -44,6 +44,16 @@ NODE_COOKIE: "CHANGE_ME_use_openssl_rand_base64_48"
 GUARDIAN_KEY: "CHANGE_ME_use_openssl_rand_base64_48"
 PHX_KEY: "CHANGE_ME_use_openssl_rand_base64_48"
 
+# --- PERMS_KEY (required; keep stable) ---
+# RSA private key used to sign room permissions tokens (RS512). Dialog verifies these tokens using the key material.
+# If you omit this, the generator will create one, but you MUST persist it or you can break rooms after partial restarts.
+# Generate a key (example):
+#   openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt
+PERMS_KEY: |
+  -----BEGIN PRIVATE KEY-----
+  CHANGE_ME
+  -----END PRIVATE KEY-----
+
 # --- Optional API keys (leave empty if not using) ---
 SKETCHFAB_API_KEY: ""
 TENOR_API_KEY: ""
@@ -65,12 +75,17 @@ OVERRIDE_PGBOUNCER_IMAGE: "No"
 # Pin the Hubs client to a known working version.
 # Check available tags at https://hub.docker.com/r/hubsfoundation/hubs/tags
 OVERRIDE_HUBS_IMAGE: "hubsfoundation/hubs:stable-3108"
+OVERRIDE_BOT_ORCHESTRATOR_IMAGE: "No"
 
 OVERRIDE_SPOKE_IMAGE: "hubsfoundation/spoke:$Container_Tag"
 OVERRIDE_NEARSPARK_IMAGE: "No"
 OVERRIDE_PHOTOMNEMONIC_IMAGE: "No"
 OVERRIDE_DIALOG_IMAGE: "No"
 OVERRIDE_COTURN_IMAGE: "No"
+
+# Bots/LLM secrets (required only if bots feature is enabled)
+BOT_ACCESS_KEY: "change-me-random-64chars"
+OPENAI_API_KEY: "change-me-openai-api-key"
 
 # REQUIRED for K8s 1.32+. The original mozillareality/haproxy image (based on
 # haproxytech 1.8.5 from 2022) only supports K8s 1.21-1.23 and will crash on
