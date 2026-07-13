@@ -8,5 +8,7 @@ input-values.local.yaml
 input-values.yaml
 hcce.yaml
 node_modules/
+.tools/
+output/
 .env
 erl_crash.dump

@@ -2,7 +2,7 @@
 
 > Project freeze note (March 2026): this project has been left in a documented, recoverable parked state. For the final production state, recovery order, and shutdown notes, see `/Users/Shared/Gits/YenHubs/docs/project-freeze-2026-03.md` and `/Users/Shared/Gits/YenHubs/deployment/README.md`.
 
-> Resume note (July 2026): upstream/version research, verified baseline, current costs, blockers, and the proposed audit scope are in `/Users/Shared/Gits/YenHubs/docs/reactivation-audit-2026-07.md`. Do not create paid infrastructure or begin audit fixes until the checkpoint in that document is approved.
+> Audit note (July 2026): the audit and estimated DigitalOcean spend are approved. Findings and fixes are tracked in `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`. The cluster remains off until local `doctl` authentication and SMTP rotation are completed.
 
 Custom deployment of [Hubs Foundation Community Edition](https://hubsfoundation.org/) on DigitalOcean Kubernetes.
 
@@ -58,6 +58,8 @@ YenHubs/
 │   └── future/         # Features for potential future implementation
 │       └── Avaturn/    # Avaturn avatar editor (not active)
 └── docs/               # Project maintenance documentation
+    ├── reactivation-audit-2026-07.md  # Rebuild baseline, versions, cost and blockers
+    └── audit-2026-07.md               # Findings, fixes and remaining acceptance tests
 ```
 
 ## Cost Estimate

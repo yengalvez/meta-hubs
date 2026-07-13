@@ -1,7 +1,7 @@
 # YenHubs - Hubs CE 2.0.0 Input Values Template
 # ================================================
 # Copy this file to hubs-cloud/community-edition/input-values.yaml and fill in your values.
-# IMPORTANT: hubs-cloud/community-edition/input-values.yaml is NOT gitignored upstream. Never commit real credentials.
+# IMPORTANT: this fork gitignores the working copy, but never force-add or commit real credentials.
 #
 # Full deployment guide: deployment/README.md
 # Official reference: https://docs.hubsfoundation.org/beginners-guide-to-CE.html
@@ -86,6 +86,11 @@ OVERRIDE_COTURN_IMAGE: "No"
 # Bots/LLM secrets (required only if bots feature is enabled)
 BOT_ACCESS_KEY: "change-me-random-64chars"
 OPENAI_API_KEY: "change-me-openai-api-key"
+OPENAI_MODEL: "gpt-5-nano"
+RUNNER_BACKEND: "ghost"
+RUNNER_BACKEND_CANARY_HUBS: ""
+MAX_ACTIVE_ROOMS: "5"
+MAX_BOTS_PER_ROOM: "10"
 
 # REQUIRED for K8s 1.32+. The original mozillareality/haproxy image (based on
 # haproxytech 1.8.5 from 2022) only supports K8s 1.21-1.23 and will crash on

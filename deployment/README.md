@@ -2,7 +2,10 @@
 
 Hubs Community Edition 2.0.0 on DigitalOcean Kubernetes with automated SSL via cert-manager.
 
-> **Last updated**: March 2026 | **Cluster**: K8s 1.34 | **Region**: AMS3
+> **Last updated**: July 2026 | **Cluster**: currently deleted; target DOKS 1.36, `HA=false` | **Region**: AMS3
+>
+> Reactivation blockers: authenticate `doctl` locally and configure a newly rotated `SMTP_PASS`. Do not reuse
+> credentials found in Git history. The estimated topology (~62 USD/month) has been approved.
 
 ---
 
@@ -202,13 +205,9 @@ cp deployment/input-values.local.yaml hubs-cloud/community-edition/input-values.
 # cp deployment/input-values.example.yaml hubs-cloud/community-edition/input-values.yaml
 ```
 
-> Security note: `hubs-cloud/community-edition/input-values.yaml` is **not ignored** upstream in the `hubs-cloud` repo. Never commit it.
->
-> To prevent accidents, add it to your **local excludes**:
-> ```bash
-> cd hubs-cloud
-> echo "community-edition/input-values.yaml" >> "$(git rev-parse --git-path info/exclude)"
-> ```
+> Security note: este fork ignora `hubs-cloud/community-edition/input-values.yaml` mediante
+> `hubs-cloud/.gitignore`. Comprueba siempre `git status` antes de un commit y nunca fuerces
+> (`git add -f`) este archivo: contiene secretos reales del despliegue.
 
 Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
 - `HUB_DOMAIN` - your domain

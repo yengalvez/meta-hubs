@@ -2,7 +2,8 @@
 
 Este documento fija el punto de partida comprobado para reactivar YenHubs y, despues, auditarlo sin depender del historial de una conversacion.
 
-> Estado: preparacion completada. La auditoria y la creacion de recursos de pago en DigitalOcean no deben empezar sin confirmacion explicita del propietario.
+> Estado: auditoria iniciada y gasto de reactivacion autorizado el 13 de julio de 2026. Las correcciones locales
+> estan en ramas `codex/audit-2026`. La creacion del cluster sigue bloqueada hasta renovar `doctl` y SMTP.
 
 ## 1. Que proyecto es realmente
 
@@ -64,7 +65,7 @@ Pruebas realizadas sobre el estado congelado, sin iniciar la auditoria:
 Deuda detectada que se tratara en la auditoria, no con un `npm audit fix --force` automatico:
 
 - Cliente Hubs: 69 avisos npm (3 bajos, 17 moderados, 38 altos y 11 criticos).
-- Bot orchestrator: 7 avisos npm (4 moderados, 2 altos y 1 critico).
+- Bot orchestrator: 0 avisos npm despues de actualizar dependencias compatibles y fijar `phoenix-js` por commit.
 - Hay dependencias antiguas y paquetes Git; cada aviso se debe clasificar por ruta realmente ejecutable y riesgo de regresion.
 - El entrypoint principal de la sala ronda 8.3 MiB, por lo que rendimiento y carga inicial deben formar parte de la auditoria UX/tecnica.
 
@@ -103,9 +104,9 @@ No mostrar, copiar a documentacion ni versionar sus valores.
 ## 5. Bloqueadores antes de reactivar DigitalOcean
 
 1. `doctl account get` devuelve HTTP 401. Hay que renovar la autenticacion local con `doctl auth init` usando un token nuevo de DigitalOcean. No pegar el token en chats ni commits.
-2. Hay que aprobar expresamente la creacion de recursos de pago.
-3. Antes de crear el cluster, comprobar en el panel/API que `HA=false`. En DOKS 1.36 o posterior, omitir el campo de HA en determinadas llamadas de creacion puede habilitarlo por defecto y sumar 40 USD/mes.
-4. La rama/commit local de cada submodulo debe alinearse con los commits estables indicados arriba antes de abrir ramas de actualizacion.
+2. El gasto estimado ya esta autorizado.
+3. `SMTP_PASS` esta vacio intencionadamente porque la credencial anterior aparecio en la historia Git. Hay que rotarla en el proveedor y guardarla solo en `deployment/input-values.local.yaml`.
+4. Antes de crear el cluster, comprobar en el panel/API que `HA=false`. En DOKS 1.36 o posterior, omitir el campo de HA en determinadas llamadas de creacion puede habilitarlo por defecto y sumar 40 USD/mes.
 
 Preflight reproducible y de solo lectura:
 
@@ -212,14 +213,12 @@ La auditoria empieza solo despues del punto de confirmacion del propietario.
 6. Mantener un tag conocido para rollback y un dump de DB previo.
 7. No cambiar a metodos de deploy alternativos si CI falla sin autorizacion expresa.
 
-## 10. Punto de control obligatorio
+## 10. Estado del punto de control
 
-Antes de continuar hacen falta dos confirmaciones separadas:
-
-1. **Reactivar DigitalOcean**: autorizar el gasto estimado y renovar `doctl` localmente.
-2. **Iniciar auditoria**: confirmar que se puede empezar a abrir ramas, registrar hallazgos y aplicar correcciones.
-
-La preparacion anterior no equivale a haber iniciado la auditoria.
+- Auditoria: autorizada e iniciada.
+- Coste DigitalOcean: autorizado para la topologia estimada de 62 USD/mes y `HA=false`.
+- Pendiente del propietario: ejecutar `doctl auth init` localmente y rotar/configurar SMTP.
+- Informe vivo: `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`.
 
 ## Referencias oficiales
 

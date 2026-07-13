@@ -4,12 +4,18 @@
 
 Esta feature permite añadir bots por sala, con movilidad configurable y chat privado por proximidad.
 
+> Privacidad: YenHubs no guarda las conversaciones del bot en base de datos. El historial visible vive solo en la
+> memoria del navegador durante la sesion de sala. Las peticiones a OpenAI usan `store: false`, pero OpenAI puede
+> conservar datos de monitoreo de abuso hasta 30 dias salvo que la organizacion tenga Zero Data Retention aprobado.
+
 ## Que hace
 
 - Bots visibles en sala con avatar.
 - Movimiento automatico entre puntos (`spawbot-*`) con ciclos `idle -> walk -> idle`.
 - Chat privado por bot con IA (`gpt-5-nano`).
 - Accion opcional de movimiento por chat: `go_to_waypoint(spawbot-...)`.
+- Prompt de comportamiento configurable por sala (maximo 1500 caracteres).
+- Moderacion de entrada/salida, rate limit y allowlist de acciones.
 
 ## Guia rapida para usuarios
 
@@ -57,6 +63,8 @@ Hay 2 backends de runner:
 - `chromium`: runner basado en navegador headless. Funciona, pero consume mucha mas CPU/RAM por sala.
 
 En el cierre final del proyecto se dejo `ghost` como backend estable y recomendado.
+Si `RUNNER_BACKEND` falta o tiene un valor invalido, el fallback seguro tambien es `ghost`. Chromium solo debe
+activarse de forma explicita para diagnostico.
 
 Configuracion (Kubernetes env vars en `bot-orchestrator`):
 
@@ -71,6 +79,23 @@ Configuracion (Kubernetes env vars en `bot-orchestrator`):
 - Maximo `10` bots por sala (clamp en backend).
 - Capacidad global por defecto: `5` salas activas con runner a la vez (`MAX_ACTIVE_ROOMS`).
 - Con backend `chromium`, se recomienda limitar a 1 sala activa (por coste) y usar `ghost` para escalar.
+- El raycast no usa navmesh: solo evita `box-collider` detectados entre waypoints.
+- Los bots no estan implementados para el cliente bitECS.
+
+## Privacidad y seguridad del chat IA
+
+- La API key de OpenAI solo se inyecta en `bot-orchestrator`; nunca llega al navegador.
+- Reticulum valida la sala, el bot y la accion antes de emitir movimiento.
+- Los clientes no pueden publicar directamente `bot_command`.
+- El mensaje se limita a 800 caracteres y la respuesta a 500.
+- El rate limit por defecto es 8 mensajes por minuto para cada combinacion sala/bot/usuario.
+- El prompt de sala es subordinado al prompt fijo de seguridad del sistema.
+- Solo se acepta `go_to_waypoint` hacia un nombre saneado `spawbot-*`.
+- No se registran prompts ni respuestas completas.
+- El identificador de cuenta se transforma con HMAC antes de enviarse como `safety_identifier`.
+
+Antes de un evento publico, documentar el aviso de privacidad, probar prompt injection en espanol y decidir si se
+necesita solicitar Zero Data Retention a OpenAI.
 
 ## Troubleshooting
 
