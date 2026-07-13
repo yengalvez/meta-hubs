@@ -2,10 +2,11 @@
 
 Hubs Community Edition 2.0.0 on DigitalOcean Kubernetes with automated SSL via cert-manager.
 
-> **Last updated**: July 2026 | **Cluster**: currently deleted; baseline DOKS `1.34.8-do.2`, `HA=false` | **Region**: AMS3
+> **Last updated**: July 2026 | **Cluster**: `hubs-ce` active on DOKS `1.34.8-do.2`, `HA=false` | **Region**: AMS3
 >
-> Local `doctl` authentication and the rotated Mailtrap credential are ready. Reticulum derives the sender as
-> `noreply@<HUB_DOMAIN>`; there is no `SMTP_FROM` input. The estimated non-HA topology (~62 USD/month) is approved.
+> The March baseline and database are restored. Mailtrap uses the `info@meta-hubs.org` account; Reticulum derives
+> the sender as `noreply@<HUB_DOMAIN>` and has no `SMTP_FROM` input. DNS/TLS validation is the remaining reactivation
+> gate before switching from the frozen images to the July audited candidates.
 
 ---
 
@@ -67,8 +68,8 @@ Final runtime notes before the project freeze:
 ## Audited Candidate Images (July 2026)
 
 These images were built by the approved GitHub Actions workflows and are pinned in the local ignored values file.
-They have not yet been validated in DOKS. DigitalOcean authentication and the rotated Mailtrap credential are now
-configured locally, so the remaining gate is the repository preflight and exact non-HA cluster creation:
+They have not yet been validated in DOKS. The non-HA cluster and March baseline are restored, so these candidates
+must only be rolled out after DNS/TLS and the frozen baseline pass their live smoke tests:
 
 | Component | Candidate image | Actions run |
 |-----------|-----------------|-------------|
@@ -741,7 +742,7 @@ reapplying the validated manifest.
 ## Cost Savings
 
 ```bash
-# Scale to 0 (stops compute, keeps storage + LB billing)
+# Optional maintenance mode: stops application workloads only.
 kubectl scale deployment --all --replicas=0 -n hcce
 
 # Scale back up
@@ -749,7 +750,9 @@ kubectl scale deployment --all --replicas=1 -n hcce
 kubectl get pods -n hcce -w  # Wait for all Running
 ```
 
-> The Load Balancer ($12/mo) keeps billing even at 0 replicas. To fully stop costs, delete the cluster (data is lost unless backed up).
+> Scaling deployments to zero does **not** reduce the DigitalOcean bill for this topology. The DOKS node (~$48/mo),
+> Load Balancer (~$12/mo) and block volumes (~$2/mo) remain allocated and billable. It only frees CPU/RAM inside
+> the already-paid node. For a long pause, make a verified backup and use the full shutdown procedure below.
 
 ## Project Freeze / Full Shutdown
 

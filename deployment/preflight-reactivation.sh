@@ -9,6 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VALUES_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 BACKUP_DIR="${BACKUP_DIR:-$ROOT_DIR/output/project-freeze-20260316-090114}"
+DOCTL_CONTEXT="${DOCTL_CONTEXT:-yenhubs}"
+CLUSTER_NAME="${CLUSTER_NAME:-hubs-ce}"
 
 failures=0
 warnings=0
@@ -183,10 +185,10 @@ if [[ -f "$VALUES_FILE" ]]; then
 fi
 
 printf '\nServicios externos\n'
-if doctl account get >/dev/null 2>&1; then
-  pass "DigitalOcean autenticado"
+if doctl account get --context "$DOCTL_CONTEXT" >/dev/null 2>&1; then
+  pass "DigitalOcean autenticado (contexto: $DOCTL_CONTEXT)"
 else
-  fail "DigitalOcean no autenticado; ejecutar doctl auth init antes de crear el cluster"
+  fail "DigitalOcean no autenticado en el contexto $DOCTL_CONTEXT"
 fi
 
 if [[ -f "$VALUES_FILE" ]]; then
@@ -210,7 +212,64 @@ if [[ -f "$VALUES_FILE" ]]; then
 fi
 
 printf '\nCost gate\n'
-warn "Antes de crear DOKS se necesita aprobacion del coste y confirmar HA=false"
+cluster_json="$(
+  doctl kubernetes cluster get "$CLUSTER_NAME" --context "$DOCTL_CONTEXT" -o json 2>/dev/null || true
+)"
+if [[ "$(printf '%s' "$cluster_json" | jq 'length' 2>/dev/null)" == "1" ]]; then
+  cluster_id="$(printf '%s' "$cluster_json" | jq -r '.[0].id')"
+  cluster_region="$(printf '%s' "$cluster_json" | jq -r '.[0].region')"
+  cluster_state="$(printf '%s' "$cluster_json" | jq -r '.[0].status.state')"
+  cluster_ha="$(printf '%s' "$cluster_json" | jq -r '.[0].ha // false')"
+  pool_count="$(printf '%s' "$cluster_json" | jq '.[0].node_pools | length')"
+  pool_size="$(printf '%s' "$cluster_json" | jq -r '.[0].node_pools[0].size // empty')"
+  node_count="$(printf '%s' "$cluster_json" | jq -r '.[0].node_pools[0].count // 0')"
+
+  if [[ "$cluster_region" == "ams3" && "$cluster_state" == "running" ]]; then
+    pass "Cluster $CLUSTER_NAME activo en ams3"
+  else
+    fail "Cluster inesperado: region=$cluster_region estado=$cluster_state"
+  fi
+
+  if [[ "$cluster_ha" == "false" ]]; then
+    pass "Control plane HA desactivado"
+  else
+    fail "Control plane HA activado; incrementa el coste"
+  fi
+
+  if [[ "$pool_count" == "1" && "$pool_size" == "s-4vcpu-8gb" && "$node_count" == "1" ]]; then
+    pass "Un unico nodo s-4vcpu-8gb"
+  else
+    fail "Topologia de nodos inesperada: pools=$pool_count size=$pool_size nodes=$node_count"
+  fi
+
+  cluster_volume_count="$(
+    doctl compute volume list --context "$DOCTL_CONTEXT" -o json |
+      jq --arg tag "k8s:$cluster_id" '[.[] | select((.tags // []) | index($tag))] | length'
+  )"
+  cluster_volume_sizes="$(
+    doctl compute volume list --context "$DOCTL_CONTEXT" -o json |
+      jq -r --arg tag "k8s:$cluster_id" \
+        '[.[] | select((.tags // []) | index($tag)) | .size_gigabytes] | sort | join(",")'
+  )"
+  if [[ "$cluster_volume_count" == "2" && "$cluster_volume_sizes" == "10,10" ]]; then
+    pass "Dos volumenes DOKS de 10 GiB"
+  else
+    fail "Volumenes inesperados: count=$cluster_volume_count sizes=$cluster_volume_sizes"
+  fi
+
+  lb_ip="$(kubectl get service lb -n hcce -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+  matching_lbs="$(
+    doctl compute load-balancer list --context "$DOCTL_CONTEXT" -o json |
+      jq --arg ip "$lb_ip" '[.[] | select(.ip == $ip)] | length'
+  )"
+  if [[ -n "$lb_ip" && "$matching_lbs" == "1" ]]; then
+    pass "Un unico Load Balancer para el servicio lb ($lb_ip)"
+  else
+    fail "Load Balancer inesperado: service_ip=${lb_ip:-missing} matches=$matching_lbs"
+  fi
+else
+  warn "El cluster $CLUSTER_NAME no existe; antes de crearlo se necesita aprobacion del coste y HA=false"
+fi
 
 printf '\nSummary: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
 if ((failures > 0)); then

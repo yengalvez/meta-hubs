@@ -1,6 +1,8 @@
 # YenHubs - Hubs CE 2.0.0 Custom Deployment
 
-> Project freeze note (March 2026): this project has been left in a documented, recoverable parked state. For the final production state, recovery order, and shutdown notes, see `/Users/Shared/Gits/YenHubs/docs/project-freeze-2026-03.md` and `/Users/Shared/Gits/YenHubs/deployment/README.md`.
+> Recovery note (July 2026): the March freeze has been restored to a new non-HA DigitalOcean cluster. DNS/TLS and
+> live smoke tests remain before the audited July images are rolled out. For the recovery order and shutdown notes,
+> see `/Users/Shared/Gits/YenHubs/docs/project-freeze-2026-03.md` and `/Users/Shared/Gits/YenHubs/deployment/README.md`.
 
 > Audit note (July 2026): the audit and estimated DigitalOcean spend are approved. Findings and fixes are tracked in `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`. Reactivation uses the frozen non-HA topology before any upstream upgrade.
 
