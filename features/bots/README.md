@@ -19,7 +19,8 @@ Esta feature permite añadir bots por sala, con movilidad configurable y chat pr
 
 ## Guia rapida para usuarios
 
-1. Entra en una sala donde el admin haya activado bots.
+1. Inicia sesion y entra en una sala donde el admin haya activado bots. Los invitados pueden verlos, pero el endpoint
+   de chat exige una cuenta autenticada.
 2. Acercate a un bot.
 3. Pulsa el boton `Talk` en la toolbar.
 4. Escribe un mensaje en el panel privado.
@@ -110,7 +111,7 @@ necesita solicitar Zero Data Retention a OpenAI.
 ## No responden en chat
 
 1. Verifica que `Enable bot chat` esta activo en la sala.
-2. Verifica que el usuario este autenticado (si aplica permisos de sala).
+2. Verifica que el usuario este autenticado; el chat de bots no acepta invitados.
 3. Verifica que `OPENAI_API_KEY` esta presente en secret/config.
 4. Revisa logs de `bot-orchestrator` y `reticulum`.
 

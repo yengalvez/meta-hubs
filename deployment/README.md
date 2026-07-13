@@ -4,8 +4,8 @@ Hubs Community Edition 2.0.0 on DigitalOcean Kubernetes with automated SSL via c
 
 > **Last updated**: July 2026 | **Cluster**: currently deleted; target DOKS 1.36, `HA=false` | **Region**: AMS3
 >
-> Reactivation blockers: authenticate `doctl` locally and configure a newly rotated `SMTP_PASS`. Do not reuse
-> credentials found in Git history. The estimated topology (~62 USD/month) has been approved.
+> Reactivation blockers: authenticate `doctl` locally and configure a newly rotated `SMTP_PASS` plus `SMTP_FROM`.
+> Do not reuse credentials found in Git history. The estimated topology (~62 USD/month) has been approved.
 
 ---
 
@@ -25,7 +25,7 @@ HAProxy Ingress Controller (haproxytech/kubernetes-ingress:3.2)
 - ssl-redirect per ingress annotation
     |
     +---> Reticulum (:4001)    -- API server, serves Hubs/Spoke HTML
-    +---> Hubs (:8080)         -- Web client (stable-3108)
+    +---> Hubs (:8080)         -- Custom web client
     +---> Spoke (:8080)        -- Scene editor
     +---> Dialog (:4443)       -- WebRTC signaling (stream.domain)
     +---> Nearspark (:5000)    -- CORS image proxy (cors.domain)
@@ -64,6 +64,17 @@ Final runtime notes before the project freeze:
 - Hubs-cloud repo base branch: `master`
 - Superproject base branch: `main`
 
+## Audited Candidate Images (July 2026)
+
+These images were built by the approved GitHub Actions workflows and are pinned in the local ignored values file.
+They have not yet been validated in DOKS because reactivation is blocked by DigitalOcean auth and SMTP:
+
+| Component | Candidate image | Actions run |
+|-----------|-----------------|-------------|
+| Hubs client | `ghcr.io/yengalvez/hubs:audit-20260713-430d98939-latest` | `29285879154` |
+| Reticulum | `ghcr.io/yengalvez/reticulum:audit-20260713-ret-ff26b96-latest` | `29285617020` |
+| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator:audit-20260713-bots-5eb70e1-latest` | `29285037607` |
+
 ## Cost
 
 | Resource | Monthly |
@@ -82,7 +93,9 @@ Final runtime notes before the project freeze:
 - Adding nodes (or extra node pools) increases monthly cost immediately.
 - Increasing PVC sizes increases block storage cost.
 
-For day-to-day feature iteration, prefer rolling out a new client image with `kubectl set image deployment/hubs ...` rather than creating new infra resources.
+For normal feature iteration, build with the approved GitHub Actions workflow, update the local image override, run
+`gen-hcce`, review the generated manifest and deploy with `kubectl apply`. Do not use `kubectl set image` or another
+deployment path unless the owner explicitly approves an emergency exception.
 
 ---
 
@@ -577,12 +590,13 @@ Registry auth for GHCR:
 
 - Recommended: configure repo vars/secrets once:
 `REGISTRY_BASE_URL=ghcr.io`, `REGISTRY_NAMESPACE=<owner>`, and secrets `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` (PAT with `write:packages` + `read:packages`).
-- Alternative: fill `Override_Registry_Base_URL`, `Override_Registry_Namespace`, `Override_Registry_Username`, `Override_Registry_Password` in the run form.
+- Do not pass a PAT through `Override_Registry_Password`: workflow-dispatch inputs are retained in the run event. Store it as the masked repository secret `REGISTRY_PASSWORD` instead.
+- The automatic `GITHUB_TOKEN` is acceptable only when the target GHCR package grants the repository Actions access. Existing packages such as `bot-orchestrator` may reject it even when the workflow declares `packages: write`.
 
 Common failures:
 
 - `Username and password required`: registry username/password are missing (no secrets, no override inputs).
-- `403 Forbidden` from GHCR on HEAD requests (for example buildcache manifests or blobs): the token does not have package rights, or the GHCR package is not granting repo access. Fix by using a PAT with `write:packages` as `REGISTRY_PASSWORD`, or ensure the repo Actions setting “Workflow permissions” is **read/write** and the workflow requests `permissions: packages: write`.
+- `403 Forbidden` from GHCR on HEAD requests (for example buildcache manifests or blobs): the token does not have package rights, or the GHCR package is not granting repo access. Set repository secrets `REGISTRY_USERNAME=<owner>` and `REGISTRY_PASSWORD=<PAT with read:packages + write:packages>`, then rerun the same workflow. Also verify that Actions has read/write workflow permissions and that the workflow requests `packages: write`. Do not switch to a local or in-cluster build as a workaround.
 - `failed to read dockerfile: open Dockerfile: no such file or directory` on `hubs-cloud` bot-orchestrator builds: the workflow already defaults to `Override_Code_Path=community-edition/services/bot-orchestrator` and `Override_Dockerfile=community-edition/services/bot-orchestrator/Dockerfile`. Do not set `Override_Dockerfile=Dockerfile`; leave it empty or pass the full path.
 - `Invalid workflow file ... Unrecognized named-value: 'secrets'`: the `hubs/.github/workflows/hubs-RetPageOrigin.yml` workflow had a job-level `if:` that referenced `secrets.*` on a job that calls a reusable workflow (`uses:`). GitHub Actions rejects this at parse time. Fix: gate that job using `github.repository_owner` (or an explicit repo var like `ENABLE_TURKEY_GITOPS`) and pass secrets only in the `secrets:` block, not in the job `if:`.
 - Docker tag errors when building from branches like `codex/foo`: Docker tags cannot contain `/`. Fix: sanitize the tag in CI (replace `/` with `-`) or set `Override_Image_Tag` to a slash-free value.
@@ -635,7 +649,7 @@ docker manifest inspect your-registry/hubs:custom-YYYYMMDD >/dev/null
 
 ### GHCR notes (if using `ghcr.io`)
 
-- Pushing from automation requires a token with package write scopes (for example PAT with `write:packages` and `read:packages`).
+- Pushing from automation requires a token with package write scopes (for example PAT with `write:packages` and `read:packages`). Keep it in the repository secret `REGISTRY_PASSWORD`, never in a tracked YAML file or workflow-dispatch input.
 - If the token is missing `write:packages`, the push fails with an error like: `permission_denied: The token provided does not match expected scopes.`
 - If the package is private, the cluster also needs `imagePullSecrets` for `ghcr.io`; otherwise pods fail with `ErrImagePull` / `ImagePullBackOff`.
 - If you are not managing registry auth explicitly, prefer a registry/tag that your cluster can pull without extra setup.

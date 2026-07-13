@@ -21,6 +21,11 @@ Commits estables congelados:
 - `hubs/master`: `7aa9a35f4d3d6e9ac48cdf3cebf4553073f43823`.
 - `hubs-cloud/master`: `832d8e39566e22768b816422bffc9417f9f5a53c`.
 
+Candidatos corregidos durante la auditoria, todavia sin promover a las ramas base:
+
+- `hubs/codex/audit-2026`: `430d989399c4284ccca0eabaf6cce9df46cdcc70`.
+- `hubs-cloud/codex/audit-2026`: `ff26b962407bcc09e7ccc8dc733f98710023a1dc`.
+
 La copia local de `hubs-cloud` puede aparecer en `codex/bots-ghost-runner` (`e38b70d`) aunque el superproyecto fija el merge estable `832d8e3`. Antes de crear ramas nuevas, sincronizar el submodulo con el commit fijado por `main`.
 
 ## 2. Estado de la version y upstream
@@ -101,11 +106,19 @@ La fuente de verdad de secretos sigue siendo:
 
 No mostrar, copiar a documentacion ni versionar sus valores.
 
+El mismo archivo local ya fija los candidatos de julio de 2026:
+
+- `ghcr.io/yengalvez/hubs:audit-20260713-430d98939-latest`
+- `ghcr.io/yengalvez/reticulum:audit-20260713-ret-ff26b96-latest`
+- `ghcr.io/yengalvez/bot-orchestrator:audit-20260713-bots-5eb70e1-latest`
+
+No desplegarlos sin conservar accesibles las imagenes congeladas anteriores para rollback.
+
 ## 5. Bloqueadores antes de reactivar DigitalOcean
 
 1. `doctl account get` devuelve HTTP 401. Hay que renovar la autenticacion local con `doctl auth init` usando un token nuevo de DigitalOcean. No pegar el token en chats ni commits.
 2. El gasto estimado ya esta autorizado.
-3. `SMTP_PASS` esta vacio intencionadamente porque la credencial anterior aparecio en la historia Git. Hay que rotarla en el proveedor y guardarla solo en `deployment/input-values.local.yaml`.
+3. `SMTP_PASS` esta vacio y `SMTP_FROM` no esta definido. La credencial anterior aparecio en la historia Git: hay que rotarla en el proveedor y guardar ambos campos solo en `deployment/input-values.local.yaml`.
 4. Antes de crear el cluster, comprobar en el panel/API que `HA=false`. En DOKS 1.36 o posterior, omitir el campo de HA en determinadas llamadas de creacion puede habilitarlo por defecto y sumar 40 USD/mes.
 
 Preflight reproducible y de solo lectura:
