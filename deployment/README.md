@@ -4,8 +4,9 @@ Hubs Community Edition 2.0.0 on DigitalOcean Kubernetes with automated SSL via c
 
 > **Last updated**: July 2026 | **Cluster**: currently deleted; target DOKS 1.36, `HA=false` | **Region**: AMS3
 >
-> Reactivation blockers: authenticate `doctl` locally and configure a newly rotated `SMTP_PASS` plus `SMTP_FROM`.
-> Do not reuse credentials found in Git history. The estimated topology (~62 USD/month) has been approved.
+> Reactivation blockers: authenticate `doctl` locally and configure a newly rotated `SMTP_PASS`. Reticulum derives
+> the sender as `noreply@<HUB_DOMAIN>`; there is no `SMTP_FROM` input. Do not reuse credentials found in Git history.
+> The estimated topology (~62 USD/month) has been approved.
 
 ---
 

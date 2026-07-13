@@ -118,7 +118,9 @@ No desplegarlos sin conservar accesibles las imagenes congeladas anteriores para
 
 1. `doctl account get` devuelve HTTP 401. Hay que renovar la autenticacion local con `doctl auth init` usando un token nuevo de DigitalOcean. No pegar el token en chats ni commits.
 2. El gasto estimado ya esta autorizado.
-3. `SMTP_PASS` esta vacio y `SMTP_FROM` no esta definido. La credencial anterior aparecio en la historia Git: hay que rotarla en el proveedor y guardar ambos campos solo en `deployment/input-values.local.yaml`.
+3. `SMTP_PASS` esta vacio intencionadamente porque la credencial anterior aparecio en la historia Git. Hay que rotarla
+   en el proveedor y guardarla solo en `deployment/input-values.local.yaml`. No hace falta `SMTP_FROM`: el manifiesto
+   genera el remitente como `noreply@<HUB_DOMAIN>`.
 4. Antes de crear el cluster, comprobar en el panel/API que `HA=false`. En DOKS 1.36 o posterior, omitir el campo de HA en determinadas llamadas de creacion puede habilitarlo por defecto y sumar 40 USD/mes.
 
 Preflight reproducible y de solo lectura:
