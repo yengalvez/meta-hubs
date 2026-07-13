@@ -203,7 +203,7 @@ helm install cert-manager jetstack/cert-manager \
   --version v1.19.3 \
   --namespace cert-manager \
   --create-namespace \
-  --set installCRDs=true \
+  --set crds.enabled=true \
   --set webhook.timeoutSeconds=10
 ```
 
@@ -275,7 +275,7 @@ invariants hold:
 - HAProxy does not use the legacy Mozilla image or security context;
 - HAProxy RBAC contains CRD and Gateway API permissions;
 - no obsolete self-signed bootstrap secret or unresolved placeholder remains;
-- exactly one `LoadBalancer` service is generated.
+- exactly one `LoadBalancer` service and two 10 GiB DigitalOcean PVCs are generated.
 
 Do not edit `hcce.yaml` manually. Fix the tracked template or input values and regenerate it.
 
