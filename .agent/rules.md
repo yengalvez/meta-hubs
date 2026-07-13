@@ -14,9 +14,12 @@
 ## Documentation Convention
 - **Session changelog lives only in** `docs/session-changelog.md`.
 - Deployment/runbook source of truth: `deployment/README.md`.
+- Reactivation and pending audit checkpoint: `docs/reactivation-audit-2026-07.md`.
 - Feature-specific docs live in `features/<feature-name>/`.
 
 ## Deployment Rules
+- The July 2026 restart must first restore the frozen known-good state. Do not combine infrastructure recovery with the Hubs upstream update in one step.
+- Do not create DigitalOcean resources until the owner explicitly approves the estimated cost. For DOKS 1.36+, set `HA=false` explicitly to avoid an unintended $40/month control-plane charge.
 - Every client code change in `hubs/` MUST be built (`npm run build`) and deployed.
 - **IMPORTANT**: Export `BASE_ASSETS_PATH` and `RETICULUM_SERVER` before building, or the live site can be blank/wrong. See `deployment/README.md`.
 - A task is NEVER considered finished until verified on the live site.

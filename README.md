@@ -2,6 +2,8 @@
 
 > Project freeze note (March 2026): this project has been left in a documented, recoverable parked state. For the final production state, recovery order, and shutdown notes, see `/Users/Shared/Gits/YenHubs/docs/project-freeze-2026-03.md` and `/Users/Shared/Gits/YenHubs/deployment/README.md`.
 
+> Resume note (July 2026): upstream/version research, verified baseline, current costs, blockers, and the proposed audit scope are in `/Users/Shared/Gits/YenHubs/docs/reactivation-audit-2026-07.md`. Do not create paid infrastructure or begin audit fixes until the checkpoint in that document is approved.
+
 Custom deployment of [Hubs Foundation Community Edition](https://hubsfoundation.org/) on DigitalOcean Kubernetes.
 
 ## Features

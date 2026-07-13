@@ -93,6 +93,14 @@ For day-to-day feature iteration, prefer rolling out a new client image with `ku
 - **Domain name** with DNS access
 - **SMTP service** (Mailtrap, Scaleway, etc.)
 
+Before recreating a frozen deployment, run the read-only preflight from the repository root:
+
+```bash
+./deployment/preflight-reactivation.sh
+```
+
+It validates tools, pinned submodules, backup integrity, required local keys, GitHub/GHCR access, and DigitalOcean authentication without printing secrets or creating cloud resources.
+
 ---
 
 ## Deploy From Scratch
@@ -114,6 +122,8 @@ For day-to-day feature iteration, prefer rolling out a new client image with `ku
 
 3. Name: lowercase + dashes only (e.g., `hubs-ce-ams3`)
 4. Wait ~5 min for provisioning
+
+> **Cost guard for Kubernetes 1.36+**: set `HA=false` explicitly when using the API/CLI. If the `ha` field is omitted, newer DOKS create APIs can enable HA by default, which adds $40/month.
 
 ### Step 2: Connect kubectl
 
