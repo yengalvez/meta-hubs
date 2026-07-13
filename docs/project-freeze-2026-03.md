@@ -89,6 +89,9 @@ The authoritative full list is in `deployment-images.txt` inside the backup fold
 8. Do not edit `hcce.yaml`: generation now fails if TLS, ingress class, HAProxy RBAC or the one-load-balancer invariant is wrong.
 9. Deploy with `kubectl apply -f hcce.yaml` and verify HAProxy RBAC with the commands in `/Users/Shared/Gits/YenHubs/deployment/README.md`.
 10. Restore the database dump into the new `pgsql` pod.
+    - Use `/Users/Shared/Gits/YenHubs/deployment/restore-retdb.sh`.
+    - Run its `RESTORE_DRY_RUN=1` mode first.
+    - The script creates the missing cluster-level `ret_admin` role before loading the plain SQL dump.
 11. Validate:
    - home page
    - room entry

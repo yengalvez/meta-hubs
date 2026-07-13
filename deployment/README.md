@@ -718,6 +718,26 @@ That snapshot contains:
 - Kubernetes manifests/state exports
 - local working deployment values copies kept out of git history
 
+### Restore the Reticulum database
+
+The database is named `retdb`. A plain `pg_dump` does not include cluster-level roles, but the restored grants need
+the internal NOLOGIN role `ret_admin`. Use the tracked restore script instead of piping the dump directly into an
+empty database:
+
+```bash
+# Read-only validation first.
+RESTORE_DRY_RUN=1 ./deployment/restore-retdb.sh \
+  output/project-freeze-20260316-090114/retdb-20260316-090114.sql.gz
+
+# Destructive restore. This temporarily scales DB consumers to zero, recreates
+# retdb, creates ret_admin if needed, restores with ON_ERROR_STOP and verifies counts.
+CONFIRM_RESTORE=retdb ./deployment/restore-retdb.sh \
+  output/project-freeze-20260316-090114/retdb-20260316-090114.sql.gz
+```
+
+If the restore fails, consumers intentionally remain at zero. Diagnose the restore before scaling them back or
+reapplying the validated manifest.
+
 ## Cost Savings
 
 ```bash
