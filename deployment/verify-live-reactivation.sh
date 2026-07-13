@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+
+# Read-only live acceptance checks for a restored YenHubs deployment.
+# The script does not print secrets or create/update Kubernetes resources.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VALUES_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
+NAMESPACE="${NAMESPACE:-hcce}"
+LOCAL_BOT_PORT="${LOCAL_BOT_PORT:-15001}"
+
+failures=0
+warnings=0
+port_forward_pid=""
+port_forward_log=""
+
+pass() {
+  printf 'PASS  %s\n' "$1"
+}
+
+fail() {
+  printf 'FAIL  %s\n' "$1"
+  failures=$((failures + 1))
+}
+
+warn() {
+  printf 'WARN  %s\n' "$1"
+  warnings=$((warnings + 1))
+}
+
+yaml_value() {
+  local key="$1"
+  awk -v key="$key" '
+    $0 ~ "^" key ":[[:space:]]*" {
+      sub("^" key ":[[:space:]]*", "")
+      sub(/[[:space:]]+#.*$/, "")
+      gsub(/^[[:space:]\047\"]+|[[:space:]\047\"]+$/, "")
+      print
+      exit
+    }
+  ' "$VALUES_FILE"
+}
+
+cleanup() {
+  if [[ -n "$port_forward_pid" ]]; then
+    kill "$port_forward_pid" >/dev/null 2>&1 || true
+    wait "$port_forward_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$port_forward_log" ]]; then
+    rm -f "$port_forward_log"
+  fi
+}
+trap cleanup EXIT INT TERM
+
+printf 'YenHubs live reactivation verification\n\n'
+
+if [[ ! -f "$VALUES_FILE" ]]; then
+  fail "No existe el fichero local de valores: $VALUES_FILE"
+  printf '\nSummary: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+  exit 1
+fi
+
+domain="$(yaml_value HUB_DOMAIN)"
+if [[ -z "$domain" ]]; then
+  fail "HUB_DOMAIN no esta configurado"
+  printf '\nSummary: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+  exit 1
+fi
+
+if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
+  fail "No existe el namespace $NAMESPACE en el contexto kubectl actual"
+  printf '\nSummary: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+  exit 1
+fi
+
+lb_ip="$(kubectl get service lb -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+if [[ -n "$lb_ip" ]]; then
+  pass "Load Balancer publicado: $lb_ip"
+else
+  fail "El servicio lb no tiene IP publica"
+fi
+
+printf '\nDNS\n'
+hosts=("$domain" "assets.$domain" "cors.$domain" "stream.$domain")
+dns_ready=1
+for host in "${hosts[@]}"; do
+  addresses="$(dig +short A "$host" | sort -u | paste -sd, -)"
+  if [[ -n "$lb_ip" && "$addresses" == "$lb_ip" ]]; then
+    pass "$host -> $lb_ip"
+  else
+    fail "$host apunta a ${addresses:-ninguna IP}; esperado $lb_ip"
+    dns_ready=0
+  fi
+done
+
+printf '\nTLS\n'
+certificates_ready=1
+for host in "${hosts[@]}"; do
+  certificate="cert-$host"
+  ready="$(
+    kubectl get certificate "$certificate" -n "$NAMESPACE" \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true
+  )"
+  if [[ "$ready" == "True" ]]; then
+    pass "$certificate Ready=True"
+  else
+    fail "$certificate no esta Ready"
+    certificates_ready=0
+  fi
+done
+
+printf '\nDeployments\n'
+deployments=(
+  pgsql pgbouncer pgbouncer-t reticulum hubs spoke nearspark photomnemonic
+  dialog coturn haproxy bot-orchestrator
+)
+for deployment in "${deployments[@]}"; do
+  if ! kubectl get deployment "$deployment" -n "$NAMESPACE" >/dev/null 2>&1; then
+    fail "Deployment ausente: $deployment"
+    continue
+  fi
+  desired="$(kubectl get deployment "$deployment" -n "$NAMESPACE" -o jsonpath='{.spec.replicas}')"
+  ready="$(kubectl get deployment "$deployment" -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}')"
+  ready="${ready:-0}"
+  if [[ "$desired" -gt 0 && "$ready" == "$desired" ]]; then
+    pass "$deployment Ready $ready/$desired"
+  elif [[ "$desired" -eq 0 ]]; then
+    fail "$deployment esta escalado a cero"
+  else
+    fail "$deployment Ready $ready/$desired"
+  fi
+done
+
+printf '\nDatabase\n'
+pgsql_pod="$(kubectl get pod -n "$NAMESPACE" -l app=pgsql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+if [[ -n "$pgsql_pod" ]]; then
+  database_counts="$(
+    kubectl exec -n "$NAMESPACE" "$pgsql_pod" -- sh -ec \
+      'psql -U "$POSTGRES_USER" -d retdb -At <<'\''SQL'\''
+select count(*) from information_schema.tables
+where table_schema in ('\''ret0'\'', '\''ret0_admin'\'', '\''coturn'\'');
+select count(*) from ret0.schema_migrations;
+select count(*) from ret0.hubs;
+SQL' 2>/dev/null || true
+  )"
+  schema_tables="$(printf '%s\n' "$database_counts" | sed -n '1p')"
+  migrations="$(printf '%s\n' "$database_counts" | sed -n '2p')"
+  hubs="$(printf '%s\n' "$database_counts" | sed -n '3p')"
+  if [[ "$schema_tables" =~ ^[0-9]+$ && "$migrations" =~ ^[0-9]+$ && "$hubs" =~ ^[0-9]+$ ]] &&
+    [[ "$schema_tables" -ge 356 && "$migrations" -ge 94 && "$hubs" -ge 17 ]]; then
+    pass "Restore validado: schema=$schema_tables migrations=$migrations hubs=$hubs"
+  else
+    fail "Conteos inferiores al baseline: schema=${schema_tables:-?} migrations=${migrations:-?} hubs=${hubs:-?}"
+  fi
+else
+  fail "No se encontro el pod PostgreSQL"
+fi
+
+printf '\nHTTPS\n'
+if [[ "$dns_ready" == "1" && "$certificates_ready" == "1" ]]; then
+  for host in "${hosts[@]}"; do
+    http_code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 20 "https://$host/" || true)"
+    case "$http_code" in
+      2*|3*|404)
+        pass "https://$host responde HTTP $http_code"
+        ;;
+      *)
+        fail "https://$host responde HTTP ${http_code:-000}"
+        ;;
+    esac
+  done
+else
+  warn "HTTPS publico no se prueba hasta que DNS y TLS esten listos"
+fi
+
+printf '\nGhost runner\n'
+bot_desired="$(
+  kubectl get deployment bot-orchestrator -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || true
+)"
+bot_ready="$(
+  kubectl get deployment bot-orchestrator -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true
+)"
+if [[ "$bot_desired" == "1" && "${bot_ready:-0}" == "1" ]]; then
+  port_forward_log="$(mktemp /tmp/yenhubs-bot-health.XXXXXX)"
+  kubectl port-forward -n "$NAMESPACE" deployment/bot-orchestrator \
+    "$LOCAL_BOT_PORT:5001" >"$port_forward_log" 2>&1 &
+  port_forward_pid=$!
+
+  health=""
+  attempt=0
+  while [[ "$attempt" -lt 20 ]]; do
+    health="$(curl -fsS --connect-timeout 1 --max-time 2 "http://127.0.0.1:$LOCAL_BOT_PORT/health" 2>/dev/null || true)"
+    if [[ -n "$health" ]]; then
+      break
+    fi
+    sleep 0.25
+    attempt=$((attempt + 1))
+  done
+
+  if [[ -n "$health" ]] && printf '%s' "$health" | jq -e \
+    '.ok == true and .runner_backend_default == "ghost" and .max_bots_per_room == 10' >/dev/null 2>&1; then
+    active_rooms="$(printf '%s' "$health" | jq -r '.active_rooms // 0')"
+    pass "Orchestrator healthy, backend ghost, max bots 10, active rooms $active_rooms"
+  else
+    fail "El health del bot-orchestrator no confirma backend ghost saludable"
+  fi
+else
+  fail "bot-orchestrator no esta Ready 1/1"
+fi
+
+printf '\nSummary: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+if [[ "$failures" -gt 0 ]]; then
+  exit 1
+fi

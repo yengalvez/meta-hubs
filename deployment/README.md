@@ -356,6 +356,16 @@ now eliminated from the generator.
 2. Enter your admin email > check email for magic link > click it
 3. Access admin panel at `https://yourdomain.com/admin`
 
+Run the tracked read-only verifier from the repository root. It checks all four DNS records and certificates,
+deployment readiness, restored DB counts, public HTTPS and the ghost-runner health contract without printing keys:
+
+```bash
+./deployment/verify-live-reactivation.sh
+```
+
+Do not continue to audited images or upstream upgrades until it reports zero failures. Functional room/UI tests are
+still required afterwards; this script proves infrastructure health, not visual correctness.
+
 ---
 
 ## Content Bootstrap (Base/Default Avatars + Default Scene)
