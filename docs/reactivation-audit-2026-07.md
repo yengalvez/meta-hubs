@@ -2,9 +2,9 @@
 
 Este documento fija el punto de partida comprobado para reactivar YenHubs y, despues, auditarlo sin depender del historial de una conversacion.
 
-> Estado: auditoria iniciada y gasto de reactivacion autorizado el 13 de julio de 2026. Las correcciones locales
-> estan en ramas `codex/audit-2026`. `doctl` y Mailtrap ya estan configurados localmente; antes de crear el cluster
-> falta cerrar el generador reproducible y superar el preflight completo.
+> Estado: preparacion de auditoria iniciada y gasto de reactivacion autorizado el 13 de julio de 2026. Las correcciones
+> locales estan en ramas `codex/audit-2026`. El cluster no-HA, el manifiesto congelado y la base de datos ya estan
+> restaurados; falta actualizar DNS en IONOS, emitir TLS y completar los smoke tests antes del rollout auditado.
 
 ## 1. Que proyecto es realmente
 
@@ -25,26 +25,30 @@ Commits estables congelados:
 Candidatos corregidos durante la auditoria, todavia sin promover a las ramas base:
 
 - `hubs/codex/audit-2026`: `430d989399c4284ccca0eabaf6cce9df46cdcc70`.
-- `hubs-cloud/codex/audit-2026`: `ff26b962407bcc09e7ccc8dc733f98710023a1dc`.
+- `hubs-cloud/codex/audit-2026`: `6ba2ee1f8b182c944afe6bb95449ae6701be69f5`.
 
-La copia local de `hubs-cloud` puede aparecer en `codex/bots-ghost-runner` (`e38b70d`) aunque el superproyecto fija el merge estable `832d8e3`. Antes de crear ramas nuevas, sincronizar el submodulo con el commit fijado por `main`.
+El superproyecto de preparacion fija esos dos commits de submodulo. Antes de crear ramas nuevas, comprobar siempre
+`git submodule status` para no trabajar sobre un commit distinto al fijado por el superproyecto.
 
 ## 2. Estado de la version y upstream
 
-Comprobado el 13 de julio de 2026:
+Comprobado de nuevo contra los repositorios oficiales el 14 de julio de 2026:
 
 - El fork usa el generador Hubs CE `2.0.0`.
 - El `hubs-cloud` oficial esta en `2.1.0`.
 - La ultima etiqueta de produccion identificada del cliente es `prod-2026-03-11` (`e3b9cc749`).
-- El fork del cliente parte de `prod-2025-12-17` (`55ae9ec20`), tiene 52 commits propios y esta solo 2 commits por detras de `prod-2026-03-11`.
+- El fork del cliente parte de `prod-2025-12-17` (`55ae9ec20`); la rama auditada tiene 55 commits propios y esta solo 2 commits por detras de `prod-2026-03-11`.
 - Esos 2 commits oficiales corrigen PDFs en VR movil.
 - La rama oficial `master` contiene cambios posteriores de CI, seguridad, documentacion y retirada de branding, pero no debe confundirse automaticamente con una release de produccion.
 
 Pruebas de merge sin modificar las ramas:
 
-- `hubs/master` + `prod-2026-03-11`: merge limpio, sin conflictos.
-- `hubs/master` + ultimo `master` oficial: un conflicto localizado en `.github/workflows/custom-docker-build-push.yml`.
-- `hubs-cloud/master` + ultimo `master` oficial (`2.1.0`): merge limpio, sin conflictos.
+- `hubs/codex/audit-2026` + `prod-2026-03-11`: merge limpio, sin conflictos.
+- `hubs/codex/audit-2026` + ultimo `master` oficial: 15 commits oficiales pendientes; no debe tratarse como release.
+- `hubs-cloud/codex/audit-2026` + `2.1.0`: 33 commits propios y 6 oficiales pendientes. La simulacion solo
+  encuentra un conflicto `modify/delete` en `community-edition/input-values.yaml`: upstream lo modifica y YenHubs lo
+  elimino del historial para que los secretos permanezcan en una copia local ignorada. La resolucion correcta es
+  conservarlo fuera de Git; no es un bloqueo del generador.
 
 Ruta recomendada:
 
