@@ -36,7 +36,8 @@
 - Bots rollout requires `BOT_ACCESS_KEY` and `OPENAI_API_KEY` in `deployment/input-values.local.yaml` (never commit real values).
 - When writing global feature flags into `ret0.app_configs`, `value` must be stored as a JSON object wrapper (`{"value": <...>}`), not a raw primitive (`true`/`false`), or Reticulum readiness can fail with `cannot load ... as type :map`.
 - Keep `PERMS_KEY` stable across deploys by **setting it in** `deployment/input-values.local.yaml` (and copying into `hubs-cloud/community-edition/input-values.yaml`). If it is missing, `gen-hcce` will generate a new key and **rooms can break** after partial restarts (typical symptom: `Imposible conectarse a esta sala` with `JsonWebTokenError: invalid signature`). If this happens, restart both `reticulum` and `dialog` so they load the same key material.
-- **Emergency Method (Only With Explicit User Approval)**: `kubectl cp`/hotpatching. WARNING: Non-durable and can break the live site if page/asset URLs are wrong; typically requires restarting Reticulum to flush cached HTML. See `deployment/README.md`.
+- Runtime hotpatches, local/in-cluster image builds, `kubectl cp` and `kubectl set image` are not standard methods. Do not use them unless the owner explicitly approves a named emergency exception after the normal path fails.
+- Never edit generated `hcce.yaml` or reapply manual RBAC patches. Fix the tracked generator, rerun `npm run gen-hcce`, require the manifest verifier to pass, then apply the generated file unchanged.
 
 ## Code Standards
 - Maintain documentation for every new feature in `features/`.

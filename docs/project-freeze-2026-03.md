@@ -86,8 +86,8 @@ The authoritative full list is in `deployment-images.txt` inside the backup fold
    - `cd hubs-cloud/community-edition`
    - `npm ci`
    - `npm run gen-hcce`
-8. Reapply the known manual `hcce.yaml` edits from `/Users/Shared/Gits/YenHubs/deployment/README.md`.
-9. Deploy with `kubectl apply -f hcce.yaml`, patch HAProxy RBAC if needed, then restart HAProxy.
+8. Do not edit `hcce.yaml`: generation now fails if TLS, ingress class, HAProxy RBAC or the one-load-balancer invariant is wrong.
+9. Deploy with `kubectl apply -f hcce.yaml` and verify HAProxy RBAC with the commands in `/Users/Shared/Gits/YenHubs/deployment/README.md`.
 10. Restore the database dump into the new `pgsql` pod.
 11. Validate:
    - home page
@@ -110,7 +110,14 @@ The authoritative full list is in `deployment-images.txt` inside the backup fold
 - `hubs-cloud/community-edition/input-values.yaml` is a working file and should stay out of git history.
 - The cheapest full stop is deleting the cluster, not scaling to zero.
 - Bots were left on `ghost` specifically to avoid Chromium cost.
-- If rooms break after rebuild, first verify ingress manual edits, deployed image tags, and the preserved local values file.
+- If rooms break after rebuild, first verify the manifest verifier passed, deployed image tags, `PERMS_KEY` consistency and the preserved local values file.
+
+## July 2026 recovery update
+
+The March instructions that required manual ingress edits, a self-signed bootstrap certificate and a post-apply RBAC
+patch are historical. The tracked generator now owns those settings and validates them before apply. The recovery
+baseline is DOKS `1.34.8-do.2`, one `s-4vcpu-8gb` node in `ams3`, fixed scaling and explicit `HA=false`. Upgrades are
+performed only after the restored baseline passes smoke tests and a fresh database dump exists.
 
 ## Where to look first when resuming
 

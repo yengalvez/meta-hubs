@@ -1,253 +1,89 @@
-# Project Maintenance & Development Guide
+# YenHubs Project Maintenance
 
-## Overview
+This file describes repository maintenance only. The authoritative infrastructure and deployment procedure is
+`/Users/Shared/Gits/YenHubs/deployment/README.md`; do not duplicate or improvise its commands here.
 
-This guide covers the development workflow, deployment strategy, and maintenance procedures for the YenHubs custom Hubs CE deployment.
+## Repository layout
 
-## Git Architecture
+- `/Users/Shared/Gits/YenHubs`: superproject, feature documentation and deployment configuration. Base branch: `main`.
+- `/Users/Shared/Gits/YenHubs/hubs`: customized Hubs client submodule. Base branch: `master`.
+- `/Users/Shared/Gits/YenHubs/hubs-cloud`: Hubs CE generator, Reticulum and bot orchestrator submodule. Base branch: `master`.
+- `/Users/Shared/Gits/YenHubs/deployment/input-values.local.yaml`: local source of truth for real values and secrets.
+  It must never be committed.
 
-The project uses two **Git Submodules**:
+The superproject pins exact submodule commits. A change is not fully integrated until the subrepo commit exists and
+the parent repository records the new submodule pointer.
 
-1. **`hubs/`** - Fork of the Hubs client (`yengalvez/hubs`), synced with `Hubs-Foundation/hubs`. Used for custom features (third-person camera, avatar fixes).
-2. **`hubs-cloud/`** - Official Hubs deployment tools (`Hubs-Foundation/hubs-cloud`). Contains the `community-edition/` scripts for generating and applying Kubernetes manifests.
+## Feature workflow
 
-### Why Submodules?
+1. Create a short-lived `codex/<feature>` branch in the affected subrepo.
+2. Implement and validate the change there.
+3. Build container images only with the approved GitHub Actions workflows.
+4. Update the ignored local image override.
+5. Generate and verify the manifest with `npm run gen-hcce`.
+6. Deploy with `kubectl apply -f hcce.yaml` and complete the live checks in the deployment guide.
+7. Merge accepted work to the subrepo base branch, then update the parent submodule pointer.
 
-- **Version pinning**: Each submodule tracks a specific commit. If an update breaks something, revert the parent repo commit to return to the last working version.
-- **Separation**: Project infrastructure (deployment configs, feature docs) stays separate from the massive Hubs client codebase.
+If GitHub Actions or the standard deployment path fails, stop and report the failure. Do not switch to local Docker,
+in-cluster builds, runtime file copying, `kubectl set image`, manual manifest edits or post-apply RBAC patches without
+explicit owner approval.
 
-### Daily Workflow
+## Required validation
 
-#### Modifying the Hubs Client (e.g., applying third-person camera)
-
-```bash
-cd hubs
-git checkout -b feature/third-person-camera
-# Apply diffs
-git apply ../features/third-person/commit/store.js.diff
-git apply ../features/third-person/commit/camera-system.js.diff
-git apply ../features/third-person/commit/preferences-screen.js.diff
-git add . && git commit -m "Add third-person camera toggle"
-git push origin feature/third-person-camera
-# Update parent
-cd ..
-git add hubs
-git commit -m "Update hubs ref: third-person camera"
-```
-
-#### Updating from Upstream Hubs
+### Hubs client
 
 ```bash
-cd hubs
-git remote add upstream https://github.com/Hubs-Foundation/hubs.git  # if not added
-git fetch upstream
-git merge upstream/master
-git push origin master
-cd ..
-git add hubs
-git commit -m "Sync hubs with upstream"
-```
-
-#### Updating hubs-cloud
-
-```bash
-cd hubs-cloud
-git pull origin master
-cd ..
-git add hubs-cloud
-git commit -m "Update hubs-cloud to latest"
-```
-
-## Deployment Strategy (DigitalOcean / Kubernetes)
-
-> **Full deployment guide**: [deployment/README.md](../deployment/README.md)
-
-### Architecture
-
-The deployment uses Hubs CE 2.0.0 on DigitalOcean Kubernetes with:
-
-- **HAProxy Ingress Controller** (`haproxytech/kubernetes-ingress:3.2`) — routes all traffic
-- **cert-manager** (v1.19.3 via Helm) — automated SSL certificates from Let's Encrypt
-- **8GB RAM node** — minimum for production (4GB causes OOM evictions)
-
-### Key Infrastructure Files
-
-| File | Purpose |
-|------|---------|
-| `deployment/README.md` | Complete deploy-from-scratch guide |
-| `deployment/input-values.example.yaml` | Template for input-values.yaml |
-| `deployment/cluster-issuer.yaml` | Let's Encrypt ClusterIssuer manifest |
-| `deployment/ingress-class.yaml` | HAProxy IngressClass manifest |
-| `deployment/input-values.local.yaml` | Local source of truth for real deploy values (**do not commit secrets**) |
-| `hubs-cloud/community-edition/input-values.yaml` | Generated working copy used by `gen-hcce` (copied from `deployment/input-values.local.yaml`) |
-| `hubs-cloud/community-edition/hcce.yaml` | Generated K8s manifest (**gitignored**) |
-
-### Quick Deploy (New Cluster)
-
-```bash
-# 1. Create DOKS cluster (8GB node) + firewall (see deployment/README.md)
-
-# 2. Install cert-manager
-helm repo add jetstack https://charts.jetstack.io && helm repo update
-helm install cert-manager jetstack/cert-manager \
-  --namespace cert-manager --create-namespace \
-  --set installCRDs=true --set webhook.timeoutSeconds=10
-
-# 3. Apply infrastructure
-kubectl apply -f deployment/ingress-class.yaml
-kubectl apply -f deployment/cluster-issuer.yaml
-
-# 4. Configure and generate
-# If you already have real values, always use deployment/input-values.local.yaml:
-cp deployment/input-values.local.yaml hubs-cloud/community-edition/input-values.yaml
-# First-time setup only (no local file yet):
-# cp deployment/input-values.example.yaml hubs-cloud/community-edition/input-values.yaml
-# Then edit with real values
-cd hubs-cloud/community-edition
-npm ci && npm run gen-hcce
-
-# 5. Edit hcce.yaml (4 mandatory changes — see deployment/README.md Step 8)
-# 6. Apply + patch RBAC
-kubectl apply -f hcce.yaml
-kubectl patch clusterrole haproxy-cr --type=json -p '[
-  {"op":"add","path":"/rules/-","value":{"apiGroups":["apiextensions.k8s.io"],"resources":["customresourcedefinitions"],"verbs":["get","list","watch"]}},
-  {"op":"add","path":"/rules/-","value":{"apiGroups":["gateway.networking.k8s.io"],"resources":["gateways","gatewayclasses","httproutes","referencegrants","tcproutes"],"verbs":["get","list","watch"]}}
-]'
-
-# 7. Configure DNS (4 A records) → wait for certs → finalize SSL
-# See deployment/README.md Steps 11-14
-```
-
-### Redeploy (After Code or Config Changes)
-
-Every time you regenerate and apply `hcce.yaml`, you must repeat the manual edits and RBAC patch:
-
-```bash
-# 1. Update input-values.yaml if needed
-
-# 2. Regenerate manifest
-cd hubs-cloud/community-edition
-npm run gen-hcce
-
-# 3. Edit hcce.yaml — same 4 changes every time:
-#    a) Add cert-manager.io/cluster-issuer: "letsencrypt-prod" to 3 ingresses (ret, dialog, nearspark)
-#    b) Add haproxy.org/ssl-redirect: "true" to 3 ingresses
-#    c) HAProxy image → haproxytech/kubernetes-ingress:3.2 (done via input-values)
-#    d) Remove securityContext from HAProxy deployment
-#    e) Comment out --default-ssl-certificate (if certs already issued)
-
-# 4. Apply
-kubectl apply -f hcce.yaml
-
-# 5. Re-patch RBAC (apply ALWAYS resets the ClusterRole!)
-kubectl patch clusterrole haproxy-cr --type=json -p '[
-  {"op":"add","path":"/rules/-","value":{"apiGroups":["apiextensions.k8s.io"],"resources":["customresourcedefinitions"],"verbs":["get","list","watch"]}},
-  {"op":"add","path":"/rules/-","value":{"apiGroups":["gateway.networking.k8s.io"],"resources":["gateways","gatewayclasses","httproutes","referencegrants","tcproutes"],"verbs":["get","list","watch"]}}
-]'
-
-# 6. Restart HAProxy
-kubectl rollout restart deployment/haproxy -n hcce
-
-# 7. Verify
-kubectl get pods -n hcce            # All Running
-kubectl get certificates -n hcce    # All READY: True
-kubectl get deployment hubs -n hcce -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
-curl -sI https://your-domain.com    # HTTP/2 with Let's Encrypt cert
-```
-
-> **⚠️ Critical**: The RBAC patch is lost every time you run `kubectl apply -f hcce.yaml`. If you forget to re-patch, HAProxy will log errors about missing API group permissions and eventually fail.
-
-### Custom Client Deployment
-
-If you've modified the Hubs client (e.g., third-person camera, avatar fixes), you need to build and deploy a custom Docker image. The official `hubsfoundation/hubs:*` image will not include your local code changes.
-
-1. **Build the client**:
-   ```bash
-   cd hubs
-   npm install
-   export RETICULUM_SERVER="meta-hubs.org"
-   export BASE_ASSETS_PATH="https://assets.meta-hubs.org/hubs/"
-   npm run build
-   ```
-
-2. **Option A: Custom Docker Image** (Recommended)
-   ```bash
-   # Build Docker image with your custom dist/
-   docker build -f RetPageOriginDockerfile -t your-registry/hubs:custom-v1 .
-   docker push your-registry/hubs:custom-v1
-   # Verify tag exists before deploying:
-   docker manifest inspect your-registry/hubs:custom-v1 >/dev/null
-   # Update OVERRIDE_HUBS_IMAGE in hubs-cloud/community-edition/input-values.yaml
-   # Then follow the Redeploy steps above (gen-hcce + edit hcce.yaml + apply + RBAC patch)
-   ```
-   > If using GHCR, make sure your push token has package write scopes. If the package is private, configure `imagePullSecrets` in the cluster or hubs pods will fail with `ErrImagePull`.
-
-3. **Option B: Hot-fix via kubectl cp** (Emergency only)
-   ```bash
-   export RETICULUM_SERVER="meta-hubs.org"
-   export BASE_ASSETS_PATH="https://assets.meta-hubs.org/hubs/"
-   npm run build
-
-   POD=$(kubectl get pods -n hcce -l app=hubs -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}')
-   kubectl cp dist/assets/. "hcce/$POD:/www/hubs/assets" -c hubs
-
-   for f in dist/*.html dist/hub.service.js dist/schema.toml; do
-     b=$(basename "$f")
-     kubectl cp "$f" "hcce/$POD:/www/hubs/pages/$b" -c hubs
-   done
-
-   # Restart Reticulum (it caches HTML in memory)
-   kubectl rollout restart deployment reticulum -n hcce
-   ```
-   > **Warning**: The hot-fix method is fragile and temporary. Pod replacement removes these copied files. Also, if `BASE_ASSETS_PATH` is missing during build, production pages may reference `/assets/...` and fail with 404.
-
-4. **Recovery if custom image rollout fails**
-   ```bash
-   # Example rollback to known-good public image
-   kubectl set image deployment/hubs hubs=hubsfoundation/hubs:stable-3108 -n hcce
-   kubectl rollout status deployment/hubs -n hcce
-   kubectl get pods -n hcce
-   ```
-
-### Important Notes
-
-- **HAProxy 3.2 vs mozillareality**: The original `mozillareality/haproxy:stable-latest` image is based on haproxytech 1.8.5 (2022) and only supports K8s 1.21-1.23. Since K8s 1.31 is no longer available on DigitalOcean, we use `haproxytech/kubernetes-ingress:3.2` directly. This requires the `IngressClass` resource and RBAC patch.
-- **SSL is fully automated**: cert-manager handles certificate issuance and renewal. The `ssl-redirect` is set to `false` globally and `true` per-ingress annotation, so cert-manager solver ingresses can serve HTTP challenges without being redirected.
-- **SMTP ports on DO**: DigitalOcean blocks outbound ports 25, 465, 587. Use Mailtrap (port 2525) or Scaleway (port 2587).
-- **`npm run gen-ssl` is obsolete**: The built-in SSL script deploys a certbot pod that doesn't work with HAProxy 3.2. cert-manager replaces this entirely.
-
-## Troubleshooting
-
-### CSP Errors
-If external resources (images, scripts, iframes) are blocked:
-```bash
-kubectl edit configmap ret-config -n hcce
-# Update [ret."Elixir.RetWeb.Plugs.AddCSP"] section
-# Add domains to frame_src, connect_src, etc.
-kubectl rollout restart deployment reticulum -n hcce
-```
-
-### Build Failures
-```bash
-cd hubs
-rm -rf node_modules package-lock.json
-npm install
+cd /Users/Shared/Gits/YenHubs/hubs
+npm ci
+npm run check
+npm run lint:js
 npm run build
 ```
 
-### Pod CrashLoopBackOff
+### Hubs CE generator
+
 ```bash
-kubectl get pods -n hcce
-kubectl logs <pod-name> -n hcce
-kubectl describe pod <pod-name> -n hcce
+cd /Users/Shared/Gits/YenHubs/hubs-cloud/community-edition
+npm ci
+npm run gen-hcce
+npm audit
 ```
 
-### Certificates Not Renewing
+`gen-hcce` must finish with `Manifest verification passed`. The generated manifest must remain unedited.
+
+### Bot orchestrator
+
 ```bash
-kubectl get certificates -n hcce    # Check READY status and expiry
-kubectl get challenges -n hcce      # Check if challenges are stuck
-kubectl describe challenge -n hcce  # Detailed error info
-# Common cause: ssl-redirect blocking HTTP challenges
-# Check: kubectl get configmap haproxy-config -n hcce -o yaml
-# The global ssl-redirect must be "false" (per-ingress handles the redirect)
+cd /Users/Shared/Gits/YenHubs/hubs-cloud/community-edition/services/bot-orchestrator
+npm ci
+npm test
+npm audit --omit=dev
 ```
+
+## Upstream updates
+
+Do not merge an upstream Hubs release, Hubs CE update and Reticulum dependency modernization into one change. Use this
+order:
+
+1. Restore and validate the known baseline.
+2. Create a fresh database backup.
+3. Integrate a tagged Hubs production release in its own branch.
+4. Integrate a tagged Hubs CE release in a separate branch.
+5. Modernize Reticulum/toolchain separately with migration and rollback tests.
+
+Current findings and upgrade candidates are tracked in `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`.
+
+## Secrets and operational invariants
+
+- Never print, commit or paste tokens, passwords, SMTP credentials, `PERMS_KEY`, `BOT_ACCESS_KEY` or OpenAI keys.
+- Keep `PERMS_KEY` stable across Reticulum and Dialog. A mismatch causes room join failures and JWT signature errors.
+- Bots use the `ghost` backend by default. Chromium is opt-in only because it consumes substantially more CPU/RAM.
+- Keep exactly one Kubernetes `Service` of type `LoadBalancer` and one non-HA node unless a cost increase is approved.
+- The session history belongs only in `/Users/Shared/Gits/YenHubs/docs/session-changelog.md`.
+
+## Recovery references
+
+- Deployment and reactivation: `/Users/Shared/Gits/YenHubs/deployment/README.md`
+- Frozen backup handoff: `/Users/Shared/Gits/YenHubs/docs/project-freeze-2026-03.md`
+- Audit register: `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`
+- Feature docs: `/Users/Shared/Gits/YenHubs/features/`

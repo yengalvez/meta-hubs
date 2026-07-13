@@ -3,7 +3,8 @@
 Este documento fija el punto de partida comprobado para reactivar YenHubs y, despues, auditarlo sin depender del historial de una conversacion.
 
 > Estado: auditoria iniciada y gasto de reactivacion autorizado el 13 de julio de 2026. Las correcciones locales
-> estan en ramas `codex/audit-2026`. La creacion del cluster sigue bloqueada hasta renovar `doctl` y SMTP.
+> estan en ramas `codex/audit-2026`. `doctl` y Mailtrap ya estan configurados localmente; antes de crear el cluster
+> falta cerrar el generador reproducible y superar el preflight completo.
 
 ## 1. Que proyecto es realmente
 
@@ -114,13 +115,12 @@ El mismo archivo local ya fija los candidatos de julio de 2026:
 
 No desplegarlos sin conservar accesibles las imagenes congeladas anteriores para rollback.
 
-## 5. Bloqueadores antes de reactivar DigitalOcean
+## 5. Controles antes de reactivar DigitalOcean
 
-1. `doctl account get` devuelve HTTP 401. Hay que renovar la autenticacion local con `doctl auth init` usando un token nuevo de DigitalOcean. No pegar el token en chats ni commits.
+1. `doctl` esta autenticado en el contexto local `yenhubs`. No pegar el token en chats ni commits.
 2. El gasto estimado ya esta autorizado.
-3. `SMTP_PASS` esta vacio intencionadamente porque la credencial anterior aparecio en la historia Git. Hay que rotarla
-   en el proveedor y guardarla solo en `deployment/input-values.local.yaml`. No hace falta `SMTP_FROM`: el manifiesto
-   genera el remitente como `noreply@<HUB_DOMAIN>`.
+3. La credencial Mailtrap rotada esta guardada solo en `deployment/input-values.local.yaml`; el usuario operativo es
+   `info@meta-hubs.org`. No hace falta `SMTP_FROM`: Reticulum genera `noreply@<HUB_DOMAIN>`.
 4. Antes de crear el cluster, comprobar en el panel/API que `HA=false`. En DOKS 1.36 o posterior, omitir el campo de HA en determinadas llamadas de creacion puede habilitarlo por defecto y sumar 40 USD/mes.
 
 Preflight reproducible y de solo lectura:
@@ -148,12 +148,12 @@ DigitalOcean factura nodos y balanceadores por tiempo de uso con tope mensual. N
 
 La reactivacion debe demostrar primero que el backup sigue funcionando, sin mezclarla con una actualizacion:
 
-1. Renovar autenticacion de `doctl`.
+1. Seleccionar el contexto local `yenhubs` de `doctl`.
 2. Crear `hubs-ce` en `ams3`, un nodo de 8 GiB/4 vCPU, `HA=false`.
 3. Guardar kubeconfig y verificar el nodo.
 4. Instalar cert-manager y aplicar IngressClass/ClusterIssuer.
 5. Generar el manifiesto desde `deployment/input-values.local.yaml`.
-6. Aplicar los ajustes documentados de HAProxy, ingress, certificados y RBAC.
+6. Exigir que `npm run gen-hcce` valide HAProxy, ingress, certificados, RBAC y un unico LoadBalancer; no editar el YAML generado.
 7. Crear el pull secret privado de GHCR y asociarlo al ServiceAccount del namespace.
 8. Desplegar exactamente las imagenes congeladas.
 9. Restaurar `retdb` desde el dump.
@@ -232,7 +232,8 @@ La auditoria empieza solo despues del punto de confirmacion del propietario.
 
 - Auditoria: autorizada e iniciada.
 - Coste DigitalOcean: autorizado para la topologia estimada de 62 USD/mes y `HA=false`.
-- Pendiente del propietario: ejecutar `doctl auth init` localmente y rotar/configurar SMTP.
+- Credenciales operativas: `doctl` y Mailtrap preparados localmente sin versionar secretos.
+- Siguiente puerta: preflight completo y creacion exacta del cluster no-HA de un nodo.
 - Informe vivo: `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`.
 
 ## Referencias oficiales

@@ -2,7 +2,7 @@
 
 > Project freeze note (March 2026): this project has been left in a documented, recoverable parked state. For the final production state, recovery order, and shutdown notes, see `/Users/Shared/Gits/YenHubs/docs/project-freeze-2026-03.md` and `/Users/Shared/Gits/YenHubs/deployment/README.md`.
 
-> Audit note (July 2026): the audit and estimated DigitalOcean spend are approved. Findings and fixes are tracked in `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`. The cluster remains off until local `doctl` authentication and SMTP rotation are completed.
+> Audit note (July 2026): the audit and estimated DigitalOcean spend are approved. Findings and fixes are tracked in `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`. Reactivation uses the frozen non-HA topology before any upstream upgrade.
 
 Custom deployment of [Hubs Foundation Community Edition](https://hubsfoundation.org/) on DigitalOcean Kubernetes.
 
@@ -23,7 +23,7 @@ See [deployment/README.md](deployment/README.md) for the complete guide includin
 git clone --recurse-submodules https://github.com/yengalvez/meta-hubs.git
 cd meta-hubs
 
-# 2. Create DOKS cluster (8GB node) + firewall
+# 2. Create the exact non-HA DOKS baseline (8GB node) + firewall
 # 3. Install cert-manager via Helm
 # 4. Apply IngressClass + ClusterIssuer
 kubectl apply -f deployment/ingress-class.yaml
@@ -36,9 +36,9 @@ cp deployment/input-values.example.yaml hubs-cloud/community-edition/input-value
 # 6. Deploy
 cd hubs-cloud/community-edition
 npm ci && npm run gen-hcce
-# Edit hcce.yaml (4 mandatory changes — see deployment/README.md Step 8)
+# The generator verifies TLS, ingress class, RBAC and exactly one LoadBalancer.
 kubectl apply -f hcce.yaml
-# Patch RBAC + configure DNS → SSL auto-provisions
+# Configure DNS → SSL auto-provisions
 ```
 
 ## Project Structure

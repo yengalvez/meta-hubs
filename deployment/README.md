@@ -2,11 +2,10 @@
 
 Hubs Community Edition 2.0.0 on DigitalOcean Kubernetes with automated SSL via cert-manager.
 
-> **Last updated**: July 2026 | **Cluster**: currently deleted; target DOKS 1.36, `HA=false` | **Region**: AMS3
+> **Last updated**: July 2026 | **Cluster**: currently deleted; baseline DOKS `1.34.8-do.2`, `HA=false` | **Region**: AMS3
 >
-> Reactivation blockers: authenticate `doctl` locally and configure a newly rotated `SMTP_PASS`. Reticulum derives
-> the sender as `noreply@<HUB_DOMAIN>`; there is no `SMTP_FROM` input. Do not reuse credentials found in Git history.
-> The estimated topology (~62 USD/month) has been approved.
+> Local `doctl` authentication and the rotated Mailtrap credential are ready. Reticulum derives the sender as
+> `noreply@<HUB_DOMAIN>`; there is no `SMTP_FROM` input. The estimated non-HA topology (~62 USD/month) is approved.
 
 ---
 
@@ -16,7 +15,7 @@ Hubs Community Edition 2.0.0 on DigitalOcean Kubernetes with automated SSL via c
 Internet
     |
     v
-DigitalOcean Load Balancer (152.42.148.243)
+DigitalOcean regional Load Balancer (one instance; IP assigned on creation)
 Ports: 80, 443, 4443, 5349
     |
     v
@@ -68,7 +67,8 @@ Final runtime notes before the project freeze:
 ## Audited Candidate Images (July 2026)
 
 These images were built by the approved GitHub Actions workflows and are pinned in the local ignored values file.
-They have not yet been validated in DOKS because reactivation is blocked by DigitalOcean auth and SMTP:
+They have not yet been validated in DOKS. DigitalOcean authentication and the rotated Mailtrap credential are now
+configured locally, so the remaining gate is the repository preflight and exact non-HA cluster creation:
 
 | Component | Candidate image | Actions run |
 |-----------|-----------------|-------------|
@@ -87,6 +87,10 @@ They have not yet been validated in DOKS because reactivation is blocked by Digi
 | **Total** | **~$62** |
 
 > The 4GB node ($24) is NOT enough. Hubs CE uses ~3.5GB at idle. With 4GB, pods get OOM-killed and evicted in a cascade.
+
+Pricing references: [DOKS](https://docs.digitalocean.com/products/kubernetes/details/pricing/),
+[regional Load Balancers](https://docs.digitalocean.com/products/networking/load-balancers/details/pricing/) and
+[block storage](https://docs.digitalocean.com/products/volumes/details/pricing/).
 
 ## Avoid Surprise DigitalOcean Charges
 
@@ -124,30 +128,44 @@ It validates tools, pinned submodules, backup integrity, required local keys, Gi
 
 ### Step 1: Create DigitalOcean Kubernetes Cluster
 
-1. DigitalOcean > Kubernetes > Create Cluster
-2. Settings:
+For the July 2026 restoration, reproduce the last known topology before testing Kubernetes upgrades:
+
+```bash
+doctl kubernetes cluster create hubs-ce \
+  --region ams3 \
+  --version 1.34.8-do.2 \
+  --size s-4vcpu-8gb \
+  --count 1 \
+  --ha=false \
+  --auto-upgrade=false \
+  --surge-upgrade=true \
+  --maintenance-window sunday=03:00 \
+  --wait
+```
+
+Equivalent panel settings:
 
 | Parameter | Value |
 |-----------|-------|
-| K8s version | Latest available (1.32+) |
-| Region | Closest to your users |
+| K8s version | `1.34.8-do.2` for baseline restoration |
+| Region | `ams3` |
 | Scaling | Fixed |
 | Machine type | Basic, Regular SSD |
-| Node plan | **$48/mo - 8GB RAM / 4 vCPU** |
+| Node plan | `s-4vcpu-8gb` (**$48/mo - 8GB RAM / 4 vCPU**) |
 | Nodes | 1 |
 | High Availability | No |
 
-3. Name: lowercase + dashes only (e.g., `hubs-ce-ams3`)
-4. Wait ~5 min for provisioning
+Use the exact name `hubs-ce` so backup and operational commands remain valid. Upgrade Kubernetes only after the
+restored baseline passes smoke tests and a new database dump exists.
 
 > **Cost guard for Kubernetes 1.36+**: set `HA=false` explicitly when using the API/CLI. If the `ha` field is omitted, newer DOKS create APIs can enable HA by default, which adds $40/month.
 
 ### Step 2: Connect kubectl
 
 ```bash
-# Option A: via doctl
-doctl auth init
-doctl kubernetes cluster kubeconfig save <cluster-name>
+# Use the project context already authenticated on this Mac.
+doctl auth switch --context yenhubs
+doctl kubernetes cluster kubeconfig save hubs-ce
 
 # Option B: download kubeconfig from DO dashboard
 # Kubernetes > your-cluster > Download Config
@@ -182,6 +200,7 @@ helm repo add jetstack https://charts.jetstack.io
 helm repo update
 
 helm install cert-manager jetstack/cert-manager \
+  --version v1.19.3 \
   --namespace cert-manager \
   --create-namespace \
   --set installCRDs=true \
@@ -245,72 +264,20 @@ npm run gen-hcce
 
 Verify: `ls -lh hcce.yaml` should be 50-250KB.
 
-### Step 8: Modify hcce.yaml (CRITICAL)
+### Step 8: Verify the generated manifest
 
-The generated hcce.yaml needs **4 manual edits** before applying. These are required because the official template doesn't support cert-manager or modern K8s versions.
+`npm run gen-hcce` now runs `verify-generated-manifest.js` automatically. Generation fails unless all of these
+invariants hold:
 
-#### 8a. Add cert-manager + ssl-redirect annotations to all 3 Ingresses
+- `ret`, `dialog` and `nearspark` use cert-manager and per-ingress SSL redirect;
+- every application ingress selects `haproxy` through `spec.ingressClassName`;
+- global SSL redirect is disabled so ACME HTTP-01 solver ingresses remain reachable;
+- HAProxy does not use the legacy Mozilla image or security context;
+- HAProxy RBAC contains CRD and Gateway API permissions;
+- no obsolete self-signed bootstrap secret or unresolved placeholder remains;
+- exactly one `LoadBalancer` service is generated.
 
-Find the 3 Ingress resources (`ret`, `dialog`, `nearspark`) and add these 2 lines to each `annotations:` block:
-
-```yaml
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    haproxy.org/ssl-redirect: "true"
-```
-
-Example for `ret`:
-```yaml
-metadata:
-  name: ret
-  namespace: hcce
-  annotations:
-    kubernetes.io/ingress.class: haproxy
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"     # ADD
-    haproxy.org/ssl-redirect: "true"                        # ADD
-    haproxy.org/response-set-header: |
-      ...existing annotations...
-```
-
-Do the same for `dialog` and `nearspark`.
-
-#### 8b. Change HAProxy image
-
-If you set `OVERRIDE_HAPROXY_IMAGE` in input-values.yaml, this is already done. Otherwise, find the HAProxy deployment and change:
-
-```yaml
-# FROM:
-image: mozillareality/haproxy:stable-latest
-# TO:
-image: haproxytech/kubernetes-ingress:3.2
-```
-
-> **Why?** `mozillareality/haproxy:stable-latest` is based on haproxytech 1.8.5 (2022) and only supports K8s 1.21-1.23. It will crash on any version of K8s currently available on DigitalOcean (1.32+).
-
-#### 8c. Remove securityContext from HAProxy deployment
-
-Find and **delete** the entire `securityContext` block from the HAProxy container:
-
-```yaml
-          # DELETE these lines:
-          securityContext:
-            runAsUser: 1000
-            runAsGroup: 1000
-            capabilities:
-              drop:
-                - ALL
-              add:
-                - NET_BIND_SERVICE
-```
-
-> HAProxy 3.2 uses s6-overlay which needs root access to `/run`.
-
-#### 8d. Keep --default-ssl-certificate (for now)
-
-Leave this line in HAProxy args:
-```yaml
-- --default-ssl-certificate=hcce/cert-hcce
-```
-This bootstrap cert lets HAProxy start before real certs are issued. You'll remove it in Step 13.
+Do not edit `hcce.yaml` manually. Fix the tracked template or input values and regenerate it.
 
 ### Step 9: Apply
 
@@ -318,23 +285,17 @@ This bootstrap cert lets HAProxy start before real certs are issued. You'll remo
 kubectl apply -f hcce.yaml
 ```
 
-### Step 10: Patch ClusterRole RBAC
+### Step 10: Verify HAProxy RBAC and rollout
 
-HAProxy 3.2 needs extra API permissions that aren't in the official template:
+RBAC is part of the tracked template; no post-apply patch is required:
 
 ```bash
-kubectl patch clusterrole haproxy-cr --type=json -p '[
-  {"op":"add","path":"/rules/-","value":{"apiGroups":["apiextensions.k8s.io"],"resources":["customresourcedefinitions"],"verbs":["get","list","watch"]}},
-  {"op":"add","path":"/rules/-","value":{"apiGroups":["gateway.networking.k8s.io"],"resources":["gateways","gatewayclasses","httproutes","referencegrants","tcproutes"],"verbs":["get","list","watch"]}}
-]'
+kubectl auth can-i list customresourcedefinitions.apiextensions.k8s.io \
+  --as=system:serviceaccount:hcce:haproxy-sa
+kubectl auth can-i list gateways.gateway.networking.k8s.io \
+  --as=system:serviceaccount:hcce:haproxy-sa
+kubectl rollout status deployment/haproxy -n hcce --timeout=5m
 ```
-
-Then restart HAProxy:
-```bash
-kubectl rollout restart deployment/haproxy -n hcce
-```
-
-> **WARNING**: `kubectl apply -f hcce.yaml` resets the ClusterRole every time. You MUST re-run this patch after every apply.
 
 ### Step 11: Get Load Balancer IP + Configure DNS
 
@@ -378,26 +339,15 @@ kubectl logs deployment/cert-manager -n cert-manager --tail=50
 
 Once all certificates are READY:
 
-1. Edit hcce.yaml - comment out the bootstrap cert:
-```yaml
-# - --default-ssl-certificate=hcce/cert-hcce
-```
-
-2. Re-apply and re-patch:
 ```bash
-kubectl apply -f hcce.yaml
-# Re-patch RBAC (apply resets it):
-kubectl patch clusterrole haproxy-cr --type=json -p '[
-  {"op":"add","path":"/rules/-","value":{"apiGroups":["apiextensions.k8s.io"],"resources":["customresourcedefinitions"],"verbs":["get","list","watch"]}},
-  {"op":"add","path":"/rules/-","value":{"apiGroups":["gateway.networking.k8s.io"],"resources":["gateways","gatewayclasses","httproutes","referencegrants","tcproutes"],"verbs":["get","list","watch"]}}
-]'
-```
-
-3. Verify:
-```bash
+kubectl get certificates -n hcce
 curl -sI https://yourdomain.com
-# Should show HTTP/2 with valid SSL (issuer: Let's Encrypt)
+openssl s_client -connect yourdomain.com:443 -servername yourdomain.com </dev/null 2>/dev/null \
+  | openssl x509 -noout -issuer -subject -dates
 ```
+
+There is no bootstrap certificate to remove and no RBAC patch to repeat. Both were historical workarounds that are
+now eliminated from the generator.
 
 ### Step 14: Login and Verify
 
@@ -458,26 +408,10 @@ When you modify the Hubs client, Reticulum, or any configuration:
 cd hubs-cloud/community-edition
 npm run gen-hcce
 
-# 3. Edit hcce.yaml (same 4 changes as Step 8):
-#    - cert-manager annotation on 3 ingresses
-#    - ssl-redirect annotation on 3 ingresses
-#    - HAProxy image: haproxytech/kubernetes-ingress:3.2
-#    - Remove HAProxy securityContext
-#    - Comment out --default-ssl-certificate (if certs already issued)
-
-# 4. Apply
+# 3. Apply only after the automatic manifest verifier passes
 kubectl apply -f hcce.yaml
 
-# 5. Re-patch RBAC (apply always resets it!)
-kubectl patch clusterrole haproxy-cr --type=json -p '[
-  {"op":"add","path":"/rules/-","value":{"apiGroups":["apiextensions.k8s.io"],"resources":["customresourcedefinitions"],"verbs":["get","list","watch"]}},
-  {"op":"add","path":"/rules/-","value":{"apiGroups":["gateway.networking.k8s.io"],"resources":["gateways","gatewayclasses","httproutes","referencegrants","tcproutes"],"verbs":["get","list","watch"]}}
-]'
-
-# 6. Restart HAProxy to pick up changes
-kubectl rollout restart deployment/haproxy -n hcce
-
-# 7. Verify
+# 4. Verify
 kubectl get pods -n hcce            # All Running
 kubectl get certificates -n hcce    # All READY: True
 kubectl get deployment hubs -n hcce -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
@@ -540,14 +474,18 @@ The cheapest and most reliable loop is:
 
 1. Push code to GitHub.
 2. Build + push the image in **GitHub Actions** (no DO CPU/RAM usage, avoids in-cluster OOM builds).
-3. Deploy by updating the `hubs` deployment image, then verify.
+3. Update `OVERRIDE_HUBS_IMAGE` in the local values file.
+4. Run `npm run gen-hcce`, review the diff, and deploy with `kubectl apply`.
+5. Verify the rollout and restart Reticulum to refresh page-origin HTML.
 
 Concrete commands (after the image exists in your registry):
 
 ```bash
-IMAGE="ghcr.io/yengalvez/hubs:<your-tag>-latest"
-
-kubectl -n hcce set image deployment/hubs hubs="$IMAGE"
+cd /Users/Shared/Gits/YenHubs
+cp deployment/input-values.local.yaml hubs-cloud/community-edition/input-values.yaml
+cd hubs-cloud/community-edition
+npm run gen-hcce
+kubectl apply -f hcce.yaml
 kubectl -n hcce rollout status deployment/hubs --timeout=300s
 kubectl -n hcce get deployment hubs -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
 
@@ -559,25 +497,16 @@ kubectl -n hcce rollout status deployment/reticulum --timeout=300s
 curl -sI https://meta-hubs.org | head -n 1
 ```
 
-This avoids re-running `gen-hcce` for client-only changes (and avoids the “RBAC resets on apply” footgun).
-It also does not create any new DigitalOcean resources, so it should not change billing.
+The verifier ensures reapplying the manifest does not lose RBAC or TLS settings. This flow does not create additional
+DigitalOcean resources because the manifest is constrained to one `LoadBalancer` service.
 
 Avoid building container images inside the cluster (Kaniko pods) on a single 8GB node: it will often OOM/evict during `npm ci`, and the “fix” (bigger node) increases monthly cost.
 
 If the site is blank and the browser console shows lots of `404` for `https://<hub-domain>/hubs/assets/...`:
 
 - Check that the `ret` Ingress rule for `<hub-domain>` routes `/hubs` to the `hubs` service (and `/spoke` to `spoke`). If it only routes `/` to `ret`, all client asset requests will hit Reticulum and 404.
-- Quick fix (patch Ingress, then restart Reticulum):
-```bash
-kubectl -n hcce patch ingress ret --type=json -p='[
-  {"op":"replace","path":"/spec/rules/0/http/paths","value":[
-    {"path":"/hubs","pathType":"Prefix","backend":{"service":{"name":"hubs","port":{"number":8080}}}},
-    {"path":"/spoke","pathType":"Prefix","backend":{"service":{"name":"spoke","port":{"number":8080}}}},
-    {"path":"/","pathType":"Prefix","backend":{"service":{"name":"ret","port":{"number":4001}}}}
-  ]}
-]'
-kubectl -n hcce rollout restart deployment/reticulum
-```
+- Fix the tracked ingress template, regenerate with `npm run gen-hcce`, apply it through the normal flow and restart
+  Reticulum. Do not leave a runtime-only patch that the next apply can erase.
 
 ### GitHub Actions Image Build (Preferred)
 
@@ -624,29 +553,10 @@ Prevention:
 - Ensure `PERMS_KEY` is actually present in your local inputs. If it is missing, `gen-hcce` will generate a new key on every run and update the `configs` secret; if you then restart only `reticulum` or only `dialog`, rooms will break until both are restarted on the same key.
 - If you see `secretOrPublicKey must...` errors from the Dialog websocket (`stream.<domain>:4443`), it usually means Dialog is not loading a valid PEM. Use an `OVERRIDE_DIALOG_IMAGE` that writes `/app/certs/perms.pub.pem` by unescaping the env var (or adjust the Dialog entrypoint accordingly).
 
-### Durable rollout (recommended)
+### Durable rollout
 
-1. Build the client with production domain values:
-```bash
-cd hubs
-npm ci
-export RETICULUM_SERVER="meta-hubs.org"
-export BASE_ASSETS_PATH="https://assets.meta-hubs.org/hubs/"
-npm run build
-```
-
-2. Build and push a custom image:
-```bash
-docker build -f RetPageOriginDockerfile -t your-registry/hubs:custom-YYYYMMDD .
-docker push your-registry/hubs:custom-YYYYMMDD
-```
-
-3. Verify the tag exists **before** deploy:
-```bash
-docker manifest inspect your-registry/hubs:custom-YYYYMMDD >/dev/null
-```
-
-4. Set `OVERRIDE_HUBS_IMAGE` in `hubs-cloud/community-edition/input-values.yaml`, then redeploy (`gen-hcce` + manual edits + apply + RBAC patch + HAProxy restart). If bots are enabled in this rollout, also set `OVERRIDE_BOT_ORCHESTRATOR_IMAGE` to a valid published tag.
+The durable rollout is the GitHub Actions + local image override + `gen-hcce` + `kubectl apply` sequence above. Local
+Docker builds, in-cluster builds and runtime-only patches are not approved deployment methods for this project.
 
 ### GHCR notes (if using `ghcr.io`)
 
@@ -676,27 +586,6 @@ kubectl patch deployment hubs -n hcce --type='json' \
   -p='[{"op":"add","path":"/spec/template/spec/imagePullSecrets","value":[{"name":"ghcr-pull"}]}]'
 ```
 
-### Emergency hotfix (non-durable)
-
-Use only for quick validation. This is lost when the hubs pod is replaced.
-
-```bash
-cd hubs
-export RETICULUM_SERVER="meta-hubs.org"
-export BASE_ASSETS_PATH="https://assets.meta-hubs.org/hubs/"
-npm run build
-
-POD=$(kubectl get pods -n hcce -l app=hubs -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}')
-kubectl cp dist/assets/. "hcce/$POD:/www/hubs/assets" -c hubs
-
-for f in dist/*.html dist/hub.service.js dist/schema.toml; do
-  b=$(basename "$f")
-  kubectl cp "$f" "hcce/$POD:/www/hubs/pages/$b" -c hubs
-done
-
-kubectl rollout restart deployment/reticulum -n hcce
-```
-
 > Important: if `BASE_ASSETS_PATH` is not set during build, pages may reference `/assets/...` and return 404 in production domains that serve assets from `assets.<domain>/hubs/`.
 >
 > Debugging tip: the **correct** static host/path is `https://assets.<domain>/hubs/...`. Requests like `https://<domain>/assets/...` can return confusing errors (for example `bad Room ID`) because they hit reticulum instead of the hubs static service.
@@ -705,20 +594,17 @@ kubectl rollout restart deployment/reticulum -n hcce
 
 If hubs rollout gets stuck with `ErrImagePull` / `ImagePullBackOff`:
 
-```bash
-kubectl set image deployment/hubs hubs=hubsfoundation/hubs:stable-3108 -n hcce
-kubectl rollout status deployment/hubs -n hcce
-kubectl get pods -n hcce
-```
-
-Then fix/publish the custom image and redeploy again.
+1. Restore the previous known-good `OVERRIDE_HUBS_IMAGE` in `deployment/input-values.local.yaml`.
+2. Copy values, run `npm run gen-hcce`, apply and verify through the standard flow.
+3. Do not fall back to an official image: it does not contain YenHubs features and can desynchronize CSP/assets.
 
 ---
 
 ## Things You Must Know
 
-### RBAC resets on every apply
-`kubectl apply -f hcce.yaml` overwrites the ClusterRole `haproxy-cr` with the original permissions (missing apiextensions + gateway API). You MUST re-patch after EVERY apply. Forgetting this will cause HAProxy to log errors and eventually fail.
+### RBAC is generated, not patched
+`haproxy-cr` includes the required CRD and Gateway API reads in the tracked template. `verify-hcce` rejects a manifest
+that drops them, so no post-apply patch is needed.
 
 ### ssl-redirect strategy
 `ssl-redirect` is set to `false` in the global ConfigMap (`haproxy-config`) and `true` per-ingress via `haproxy.org/ssl-redirect` annotation. This allows cert-manager's temporary solver ingresses (which have no annotation) to serve HTTP challenges without redirect during certificate renewal.
@@ -755,9 +641,8 @@ kubectl describe challenge -n hcce
 ```bash
 kubectl logs deployment/haproxy -n hcce
 # Common causes:
-#   - securityContext not removed (s6-overlay can't write to /run)
-#   - Missing RBAC permissions (re-patch ClusterRole)
-#   - --default-ssl-certificate pointing to non-existent secret
+#   - incompatible HAProxy image override
+#   - generated RBAC/template verification was bypassed
 ```
 
 ### Magic link email not arriving
@@ -887,9 +772,10 @@ When resuming the project:
 2. Restore kubeconfig with `doctl kubernetes cluster kubeconfig save hubs-ce`.
 3. Reinstall cert-manager and reapply `/Users/Shared/Gits/YenHubs/deployment/ingress-class.yaml` plus `/Users/Shared/Gits/YenHubs/deployment/cluster-issuer.yaml`.
 4. Copy the local `input-values.local.yaml` back into `hubs-cloud/community-edition/input-values.yaml`.
-5. Run `npm ci && npm run gen-hcce`, reapply the known manual ingress edits, then `kubectl apply -f hcce.yaml`.
-6. Restore the database dump into the new `pgsql` pod.
-7. Validate `meta-hubs.org`, TLS, room entry, avatar flow, and bots (`ghost` backend).
+5. Run `npm ci && npm run gen-hcce`; the command verifies TLS, ingress class, RBAC and the single-LB invariant.
+6. Apply the generated file unchanged with `kubectl apply -f hcce.yaml`.
+7. Restore the database dump into the new `pgsql` pod.
+8. Validate `meta-hubs.org`, TLS, room entry, avatar flow, and bots (`ghost` backend).
 
 The short handoff checklist for this rebuild is maintained in:
 
