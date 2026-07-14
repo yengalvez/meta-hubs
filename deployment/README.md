@@ -8,8 +8,8 @@ Hubs Community Edition 2.0.0 on DigitalOcean Kubernetes with automated SSL via c
 > uses the `info@meta-hubs.org` account; Reticulum derives the sender as `noreply@<HUB_DOMAIN>` and has no
 > `SMTP_FROM` input. The March freeze did **not** contain the original `ret-pvc` bytes, so exact historical media
 > recovery is impossible. A functional replacement scene, Spoke project, test room and the nine locally recovered
-> avatars were rebuilt through normal application APIs on 2026-07-14. The full audit remains paused until explicit
-> owner confirmation; see `docs/reactivation-media-recovery-2026-07.md`.
+> avatars were rebuilt through normal application APIs on 2026-07-14. The integral audit is now authorized and in
+> progress; see `docs/audit-2026-07.md` and `docs/reactivation-media-recovery-2026-07.md`.
 
 ---
 
@@ -33,6 +33,7 @@ HAProxy Ingress Controller (haproxytech/kubernetes-ingress:3.2)
     +---> Spoke (:8080)        -- Scene editor
     +---> Dialog (:4443)       -- WebRTC signaling (stream.domain)
     +---> Nearspark (:5000)    -- CORS image proxy (cors.domain)
+    +---> Bot orchestrator     -- Ghost runners + private AI chat proxy
     +---> Coturn (:5349)       -- STUN/TURN for WebRTC NAT traversal
     +---> PostgreSQL (:5432)   -- Database (via pgbouncer)
 
@@ -77,11 +78,32 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 |-----------|-----------------|-------------|
 | Hubs client | `ghcr.io/yengalvez/hubs:recovery-avatarfix-20260714-ee75980ad-latest` | `29347365972` |
 | Reticulum | `ghcr.io/yengalvez/reticulum:recovery-retfix-20260714-19c56f6-latest` | `29347365956` |
-| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator:ghost-fullsync-20260307-e38b70d-latest` | `22796901406` |
+| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator:audit-botguard-20260714-7de9b5c-latest` | `29362366946` |
 
-The July bot-orchestrator audit candidate was deliberately not promoted during content recovery. The proven
-`ghost-fullsync` image remains live with `RUNNER_BACKEND=ghost`, `MAX_ACTIVE_ROOMS=5` and
-`MAX_BOTS_PER_ROOM=10`.
+The July bot-orchestrator hardening was promoted on 2026-07-14 after the recovery checkpoint. Production uses
+`RUNNER_BACKEND=ghost`, `MAX_ACTIVE_ROOMS=5` and `MAX_BOTS_PER_ROOM=10`. The exact live digest is
+`sha256:1f71222a824870c52636775df4da0dfade5daf9c9840f3d660440d33b7032cc8`; the March `ghost-fullsync` image remains
+available only as the tested rollback.
+
+Important deployment distinction:
+
+- Hubs and Reticulum run the July recovery commits (`ee75980ad` and `19c56f6f`).
+- Bot orchestrator runs the July audit commit `7de9b5c` built by the standard GitHub Actions workflow.
+- The moderated, rate-limited, `store:false` OpenAI path and hardened same-origin scene loader are live. This reduces
+  YenHubs-side retention but is **not** a claim of OpenAI Zero Data Retention; provider abuse-monitoring retention
+  remains governed by the OpenAI account policy.
+
+The pre-rollout runtime digests and the post-rollout bot digest/evidence captured on 2026-07-14 are stored locally in:
+
+```text
+/Users/Shared/Gits/YenHubs/output/audit-checkpoint-20260714-210044/runtime-image-digests.txt
+/Users/Shared/Gits/YenHubs/output/audit-checkpoint-20260714-210044/postdeploy-botguard.txt
+```
+
+This ignored checkpoint also contains a fresh database dump, the 34 physical blob/metadata pairs currently present,
+a redacted manifest inventory and a second coherent database candidate that was restored twice in isolation. The raw
+production snapshot remains intentionally labelled `INCOMPLETE`: production has 127 active `owned_files` rows but
+only 34 corresponding physical pairs. See the checkpoint `README.txt` before any restore.
 
 ## Cost
 
@@ -448,6 +470,18 @@ curl -s -X POST http://127.0.0.1:15001/internal/bots/room-config \
   -H "x-ret-bot-access-key: $BOT_KEY" \
   -d '{"hub_sid":"smoketest-room","bots":{"enabled":true,"count":2,"mobility":"medium","chat_enabled":true}}' | jq .
 ```
+
+Bot-orchestrator security gate before promotion:
+
+- `npm test` in `community-edition/services/bot-orchestrator` must pass.
+- `npm audit --omit=dev` must report zero vulnerabilities.
+- The Responses request must keep `store:false`, a pseudonymous `safety_identifier` and strict JSON Schema output.
+- `scene.model_url` is same-origin by default. Add a CDN only through `GHOST_SCENE_ALLOWED_HOSTS`; never disable the
+  allowlist to fix a scene.
+- The generated manifest fixes a 10 s timeout, 64 MiB scene limit, 4 MiB JSON limit, 50,000 nodes and 200,000 edges.
+- Validate one neutral chat message (`action=null`) and one explicit `go_to_waypoint` command after rollout.
+- `store:false` is not Zero Data Retention. Confirm the OpenAI organization policy and publish a privacy notice before
+  real public conversations.
 
 ### Activar flags globales de bots (sin romper Reticulum)
 

@@ -1,6 +1,10 @@
 # Bots en YenHubs (MVP)
 
-> Estado final antes del project freeze (marzo 2026): backend por defecto `ghost`, imagen desplegada `ghcr.io/yengalvez/bot-orchestrator:ghost-fullsync-20260307-e38b70d-latest`, capacidad prevista `MAX_ACTIVE_ROOMS=5`, `MAX_BOTS_PER_ROOM=10`.
+> Estado de auditoria del 14 de julio de 2026: backend `ghost`, capacidad `MAX_ACTIVE_ROOMS=5` y
+> `MAX_BOTS_PER_ROOM=10`. Produccion usa
+> `ghcr.io/yengalvez/bot-orchestrator:audit-botguard-20260714-7de9b5c-latest`, publicado por GitHub Actions
+> `29362366946`. Rehidratacion, chat estructurado y carga tardia con tres bots en movimiento pasaron; la imagen de
+> marzo `ghost-fullsync-20260307-e38b70d-latest` queda solo como rollback.
 
 Esta feature permite añadir bots por sala, con movilidad configurable y chat privado por proximidad.
 
@@ -16,6 +20,7 @@ Esta feature permite añadir bots por sala, con movilidad configurable y chat pr
 - Accion opcional de movimiento por chat: `go_to_waypoint(spawbot-...)`.
 - Prompt de comportamiento configurable por sala (maximo 1500 caracteres).
 - Moderacion de entrada/salida, rate limit y allowlist de acciones.
+- Respuesta de IA restringida mediante Structured Outputs y JSON Schema estricto.
 
 ## Guia rapida para usuarios
 
@@ -73,6 +78,11 @@ Configuracion (Kubernetes env vars en `bot-orchestrator`):
 - `RUNNER_BACKEND_CANARY_HUBS`: lista CSV de `hub_sid` que fuerzan `ghost` aunque el default sea `chromium` (canary seguro).
 - `MAX_ACTIVE_ROOMS`: maximo de salas con runner activo a la vez.
 - `MAX_BOTS_PER_ROOM`: maximo de bots por sala.
+- `GHOST_SCENE_ALLOWED_HOSTS`: hosts adicionales CSV para escenas; vacio mantiene solo el origen de Hubs.
+- `GHOST_SCENE_FETCH_TIMEOUT_MS`: timeout de descarga, 10 segundos por defecto.
+- `GHOST_SCENE_MAX_BYTES`: tamano maximo declarado/cargado, 64 MiB por defecto.
+- `GHOST_SCENE_MAX_JSON_BYTES`: JSON glTF maximo, 4 MiB por defecto.
+- `GHOST_SCENE_MAX_NODES` / `GHOST_SCENE_MAX_EDGES`: 50.000 / 200.000 por defecto.
 - Si el backend default es `chromium`, se recomienda cap adicional (por coste) con `MAX_CHROMIUM_ROOMS`.
 
 ## Limites del MVP (intencionales)
@@ -92,11 +102,16 @@ Configuracion (Kubernetes env vars en `bot-orchestrator`):
 - El rate limit por defecto es 8 mensajes por minuto para cada combinacion sala/bot/usuario.
 - El prompt de sala es subordinado al prompt fijo de seguridad del sistema.
 - Solo se acepta `go_to_waypoint` hacia un nombre saneado `spawbot-*`.
+- El fallback solo interpreta verbos completos de movimiento; mencionar un waypoint o una silaba no mueve al bot.
 - No se registran prompts ni respuestas completas.
 - El identificador de cuenta se transforma con HMAC antes de enviarse como `safety_identifier`.
 
 Antes de un evento publico, documentar el aviso de privacidad, probar prompt injection en espanol y decidir si se
 necesita solicitar Zero Data Retention a OpenAI.
+
+`store:false` desactiva el estado recuperable de Responses, pero no sustituye Zero Data Retention. Sin ZDR, los logs de
+monitoreo de abuso del proveedor pueden contener prompts/respuestas y conservarse hasta 30 dias. Referencia oficial:
+<https://developers.openai.com/api/docs/guides/your-data#data-retention-controls-for-abuse-monitoring>.
 
 ## Troubleshooting
 

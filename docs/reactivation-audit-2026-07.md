@@ -2,10 +2,10 @@
 
 Este documento fija el punto de partida comprobado para reactivar YenHubs y, despues, auditarlo sin depender del historial de una conversacion.
 
-> Estado: infraestructura, DNS, TLS, manifiesto congelado y base de datos restaurados. Las correcciones locales estan
-> en ramas `codex/audit-2026`. La validacion funcional esta detenida antes de la auditoria porque el backup de marzo
-> no incluyo `ret-pvc`; la base conserva metadata, pero faltan los bytes de escenas y avatares. La recuperacion se
-> documenta en `docs/reactivation-media-recovery-2026-07.md`.
+> Estado vigente: infraestructura, DNS, TLS, Mailtrap y los 12 deployments estan operativos. La escena funcional,
+> el proyecto Spoke y nueve avatares se reconstruyeron; sala de prueba, tercera persona, bots ghost y chat basico
+> pasaron smoke tests. La auditoria integral ya fue autorizada y esta en curso. Este documento conserva la secuencia
+> de reactivacion; el estado de hallazgos actual vive en `docs/audit-2026-07.md`.
 
 ## 1. Que proyecto es realmente
 
@@ -17,16 +17,17 @@ Repositorios:
 - Cliente web y runtime 3D: `/Users/Shared/Gits/YenHubs/hubs`, fork `yengalvez/hubs`, rama base `master`.
 - Generador de infraestructura y Reticulum: `/Users/Shared/Gits/YenHubs/hubs-cloud`, fork `yengalvez/hubs-cloud`, rama base `master`.
 
-Commits estables congelados:
+Commits estables congelados de marzo:
 
 - Superproyecto: `511e608b6b34567f5477abc3f2cb5c1791604a24`.
 - `hubs/master`: `7aa9a35f4d3d6e9ac48cdf3cebf4553073f43823`.
 - `hubs-cloud/master`: `832d8e39566e22768b816422bffc9417f9f5a53c`.
 
-Candidatos corregidos durante la auditoria, todavia sin promover a las ramas base:
+Candidatos actuales desplegados, todavia sin promover a las ramas base:
 
-- `hubs/codex/audit-2026`: `430d989399c4284ccca0eabaf6cce9df46cdcc70`.
-- `hubs-cloud/codex/audit-2026`: `6ba2ee1f8b182c944afe6bb95449ae6701be69f5`.
+- Superproyecto `codex/audit-2026`: rama de integracion activa; comprobar su HEAD con `git rev-parse HEAD`.
+- `hubs/codex/audit-2026`: `ee75980ad095ec522f3f056bc0eed7158c6c59c7`.
+- `hubs-cloud/codex/audit-2026`: `7de9b5c171fdc8ce977cc9d22d22aec52281471d`.
 
 El superproyecto de preparacion fija esos dos commits de submodulo. Antes de crear ramas nuevas, comprobar siempre
 `git submodule status` para no trabajar sobre un commit distinto al fijado por el superproyecto.
@@ -38,7 +39,7 @@ Comprobado de nuevo contra los repositorios oficiales el 14 de julio de 2026:
 - El fork usa el generador Hubs CE `2.0.0`.
 - El `hubs-cloud` oficial esta en `2.1.0`.
 - La ultima etiqueta de produccion identificada del cliente es `prod-2026-03-11` (`e3b9cc749`).
-- El fork del cliente parte de `prod-2025-12-17` (`55ae9ec20`); la rama auditada tiene 55 commits propios y esta solo 2 commits por detras de `prod-2026-03-11`.
+- El fork del cliente parte de `prod-2025-12-17` (`55ae9ec20`); la rama auditada tiene 56 commits propios y esta solo 2 commits por detras de `prod-2026-03-11`.
 - Esos 2 commits oficiales corrigen PDFs en VR movil.
 - La rama oficial `master` contiene cambios posteriores de CI, seguridad, documentacion y retirada de branding, pero no debe confundirse automaticamente con una release de produccion.
 
@@ -46,7 +47,7 @@ Pruebas de merge sin modificar las ramas:
 
 - `hubs/codex/audit-2026` + `prod-2026-03-11`: merge limpio, sin conflictos.
 - `hubs/codex/audit-2026` + ultimo `master` oficial: 15 commits oficiales pendientes; no debe tratarse como release.
-- `hubs-cloud/codex/audit-2026` + `2.1.0`: 33 commits propios y 6 oficiales pendientes. La simulacion solo
+- `hubs-cloud/codex/audit-2026` + `2.1.0`: 35 commits propios y 6 oficiales pendientes. La simulacion solo
   encuentra un conflicto `modify/delete` en `community-edition/input-values.yaml`: upstream lo modifica y YenHubs lo
   elimino del historial para que los secretos permanezcan en una copia local ignorada. La resolucion correcta es
   conservarlo fuera de Git; no es un bloqueo del generador.
@@ -70,7 +71,7 @@ Pruebas realizadas sobre el estado congelado, sin iniciar la auditoria:
 - `hubs/npm run build`: correcto; Webpack termina con avisos de tamano de bundles, no con errores.
 - `bot-orchestrator/npm ci`: correcto.
 - `node --check app.js`: correcto.
-- `node --check run-ghost-runner.js`: correcto.
+- `node --check run-ghost-runner.js`: correcto; el parser endurecido tambien acepta la escena recuperada real.
 - Generacion aislada de `hcce.yaml` con los valores locales: correcta, manifiesto de aproximadamente 42 KiB.
 
 Deuda detectada que se tratara en la auditoria, no con un `npm audit fix --force` automatico:
@@ -117,13 +118,26 @@ La fuente de verdad de secretos sigue siendo:
 
 No mostrar, copiar a documentacion ni versionar sus valores.
 
-El mismo archivo local ya fija los candidatos de julio de 2026:
+Checkpoint posterior a la recuperacion funcional:
 
-- `ghcr.io/yengalvez/hubs:audit-20260713-430d98939-latest`
-- `ghcr.io/yengalvez/reticulum:audit-20260713-ret-ff26b96-latest`
-- `ghcr.io/yengalvez/bot-orchestrator:audit-20260713-bots-5eb70e1-latest`
+```text
+/Users/Shared/Gits/YenHubs/output/audit-checkpoint-20260714-210044/
+```
 
-No desplegarlos sin conservar accesibles las imagenes congeladas anteriores para rollback.
+Incluye el dump exacto de produccion, los 34 pares fisicos disponibles, manifiesto sin Secrets, digests y una prueba
+de restauracion. Tambien incluye un candidato coherente generado solo en aislamiento: marca inactivos los 93
+`owned_files` historicos cuyos bytes ya no existen y apunta `VJopCY3` a la escena recuperada `f6VKtim`. Ese ajuste no
+se ha aplicado a produccion.
+
+El archivo local fija actualmente las imagenes live de recuperacion:
+
+- `ghcr.io/yengalvez/hubs:recovery-avatarfix-20260714-ee75980ad-latest`
+- `ghcr.io/yengalvez/reticulum:recovery-retfix-20260714-19c56f6-latest`
+- `ghcr.io/yengalvez/bot-orchestrator:audit-botguard-20260714-7de9b5c-latest`
+
+El bot-orchestrator auditado se publico por GitHub Actions `29362366946` y se desplego por el flujo normal. La imagen
+de marzo `ghost-fullsync-20260307-e38b70d-latest` se conserva como rollback. Tras el rollout pasaron rehidratacion de
+dos salas, contrato de chat live y carga tardia en navegador con tres bots moviendose y sin runner visible.
 
 ## 5. Controles antes de reactivar DigitalOcean
 
@@ -176,7 +190,7 @@ No se debe actualizar Hubs y restaurar infraestructura en el mismo paso: si algo
 
 ## 8. Alcance propuesto para la auditoria integral
 
-La auditoria empieza solo despues del punto de confirmacion del propietario.
+El propietario autorizo la auditoria. Este alcance se ejecuta por lotes y mantiene los gates de backup, CI y rollback.
 
 ### Arquitectura y mantenimiento
 
@@ -201,6 +215,7 @@ La auditoria empieza solo despues del punto de confirmacion del propietario.
 - Chat privado: historial solo en memoria de la sesion y borrado al salir/cambiar de sala.
 - OpenAI Responses API desde backend, nunca desde navegador.
 - Enviar explicitamente `store: false` en cada peticion.
+- Exigir Structured Outputs con JSON Schema estricto y validar de nuevo acciones/waypoints en aplicacion.
 - No registrar prompts/respuestas ni incluirlos en telemetria o errores.
 - Moderacion de entrada/salida, limites de longitud/tokens, rate limits y allowlist estricta de acciones.
 - Defensa frente a prompt injection y separacion entre instrucciones del sistema, datos de sala y texto del usuario.
@@ -241,14 +256,14 @@ La auditoria empieza solo despues del punto de confirmacion del propietario.
 
 ## 10. Estado del punto de control
 
-- Reactivacion de infraestructura: completada; la recuperacion funcional de contenido sigue en curso.
-- Revision tecnica preliminar: realizada para preparar el entorno y corregir bloqueos de reactivacion.
-- Auditoria integral y fase sistematica de correcciones: no iniciada; requiere confirmacion explicita del propietario
-  despues de validar una sala de recuperacion y el baseline funcional.
+- Reactivacion de infraestructura: completada y validada.
+- Recuperacion funcional: completada; no es una copia byte a byte de los medios historicos perdidos.
+- Revision tecnica preliminar: realizada y registrada como hallazgos `AUD-*`.
+- Auditoria integral y correcciones: autorizadas y en curso.
 - Coste DigitalOcean: autorizado para la topologia estimada de 62 USD/mes y `HA=false`.
 - Credenciales operativas: `doctl` y Mailtrap preparados localmente sin versionar secretos.
-- Siguiente puerta: publicar la escena recuperada en una sala de prueba, reimportar avatares y completar los smoke
-  tests de third-person, sitting y ghost bots.
+- Siguiente puerta: proteger el baseline con backup coherente, desplegar los guardarrailes del bot candidato y
+  completar audio/WebRTC, sitting multiusuario, movil/VR, Spoke y rollback.
 - Informe vivo: `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`.
 
 ## Referencias oficiales
