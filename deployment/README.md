@@ -4,12 +4,12 @@ Hubs Community Edition 2.0.0 on DigitalOcean Kubernetes with automated SSL via c
 
 > **Last updated**: July 2026 | **Cluster**: `hubs-ce` active on DOKS `1.34.8-do.2`, `HA=false` | **Region**: AMS3
 >
-> The March baseline and database are restored. Authoritative DNS and TLS are configured, although some public
-> resolver caches may temporarily retain the old delegation. Mailtrap uses the
-> `info@meta-hubs.org` account; Reticulum derives the sender as `noreply@<HUB_DOMAIN>` and has no `SMTP_FROM` input.
-> The March freeze did **not** contain the `ret-pvc` media files. The database therefore has valid room/avatar
-> metadata but the restored storage volume is empty. Do not promote the July candidate images or start the full
-> audit until the recovery decision in `docs/reactivation-media-recovery-2026-07.md` is resolved.
+> The March baseline and database are restored. Authoritative DNS, TLS and Mailtrap SMTP are operational. Mailtrap
+> uses the `info@meta-hubs.org` account; Reticulum derives the sender as `noreply@<HUB_DOMAIN>` and has no
+> `SMTP_FROM` input. The March freeze did **not** contain the original `ret-pvc` bytes, so exact historical media
+> recovery is impossible. A functional replacement scene, Spoke project, test room and the nine locally recovered
+> avatars were rebuilt through normal application APIs on 2026-07-14. The full audit remains paused until explicit
+> owner confirmation; see `docs/reactivation-media-recovery-2026-07.md`.
 
 ---
 
@@ -68,17 +68,20 @@ Final runtime notes before the project freeze:
 - Hubs-cloud repo base branch: `master`
 - Superproject base branch: `main`
 
-## Audited Candidate Images (July 2026)
+## Live Recovery Checkpoint (July 2026)
 
-These images were built by the approved GitHub Actions workflows and are pinned in the local ignored values file.
-They have not yet been validated in DOKS. The non-HA cluster and March baseline are restored, so these candidates
-must only be rolled out after DNS/TLS and the frozen baseline pass their live smoke tests:
+These images were built by the approved GitHub Actions workflows, deployed with the standard `gen-hcce` plus
+`kubectl apply` flow and validated in DOKS. They are pinned in the ignored local values file:
 
-| Component | Candidate image | Actions run |
+| Component | Live image | Actions run |
 |-----------|-----------------|-------------|
-| Hubs client | `ghcr.io/yengalvez/hubs:audit-20260713-430d98939-latest` | `29285879154` |
-| Reticulum | `ghcr.io/yengalvez/reticulum:audit-20260713-ret-ff26b96-latest` | `29285617020` |
-| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator:audit-20260713-bots-5eb70e1-latest` | `29285037607` |
+| Hubs client | `ghcr.io/yengalvez/hubs:recovery-avatarfix-20260714-ee75980ad-latest` | `29347365972` |
+| Reticulum | `ghcr.io/yengalvez/reticulum:recovery-retfix-20260714-19c56f6-latest` | `29347365956` |
+| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator:ghost-fullsync-20260307-e38b70d-latest` | `22796901406` |
+
+The July bot-orchestrator audit candidate was deliberately not promoted during content recovery. The proven
+`ghost-fullsync` image remains live with `RUNNER_BACKEND=ghost`, `MAX_ACTIVE_ROOMS=5` and
+`MAX_BOTS_PER_ROOM=10`.
 
 ## Cost
 
@@ -755,12 +758,55 @@ Spoke/Admin upload paths. A deterministic local Spoke starting point can be gene
 
 ```bash
 node deployment/generate-recovery-spoke-project.js \
-  --scene-url 'https://meta-hubs.org/api/v1/media/<UPLOADED-ASSET>' \
+  --scene-url 'https://meta-hubs.org/files/<UPLOADED-UUID>.glb' \
   --output-dir output/media-recovery-project
 ```
 
-The generated bot and sitting waypoint positions are provisional and must be checked visually before publishing to
-a new test room. The command performs no upload and makes no cluster changes.
+The generated bot and sitting waypoint positions and its two recovery lights are provisional and must be checked
+visually before publishing to a new test room. The command performs no upload and makes no cluster changes.
+
+The functional recovery completed on 2026-07-14 is:
+
+| Artifact | Identifier / URL |
+|----------|------------------|
+| Verified source upload | scene `fuWfRdF` |
+| Editable Spoke project | `https://meta-hubs.org/spoke/projects/qa3U3Ke` |
+| Published recovery scene | `https://meta-hubs.org/scenes/f6VKtim` |
+| Functional test room | `https://meta-hubs.org/XesSAqd/prickly-nice-huddle` |
+
+The room contains one spawn, eight `spawbot-recovery-*` patrol points and two `Disable motion` sitting waypoints.
+Live smoke testing confirmed three ghost bots, movement, hidden runner identity, first/third-person toggle and the bot
+chat endpoint. The scene is a functional reconstruction, not an exact byte-for-byte copy of the lost Spoke project.
+
+The nine recovered avatar GLBs can be reimported from Admin at `https://meta-hubs.org/admin#/import`. Do not use the
+trailing-slash form `/admin/`; it is not a valid route in this deployment. The preferred flow is `Upload Avatars from
+Disk`. The current Hubs/Reticulum images allow a standalone GLB to bootstrap without a historical base parent and
+space avatar creation requests by 1100 ms to respect Reticulum's 1 TPS rate limit.
+
+`deployment/verify-live-reactivation.sh` reports the known storage gap as a warning, not as a healthy full restore:
+the restored database currently references 127 active owned files while `ret-pvc` contains 34 matched blob/metadata
+pairs from the functional reconstruction. A zero-volume or mismatched blob/metadata count remains a hard failure.
+
+For disaster recovery when the native file selector is unavailable, render fresh thumbnails and use the tracked API
+import helper. Supply a short-lived admin token through the environment; never put it in Git or command history:
+
+```bash
+/Applications/Blender.app/Contents/MacOS/Blender --background \
+  --python deployment/render-avatar-thumbnails.py -- \
+  --input-dir /path/to/avatar-glbs \
+  --output-dir /path/to/avatar-thumbnails
+
+YENHUBS_AUTH_TOKEN='<temporary-admin-token>' \
+node deployment/import-local-avatars.mjs \
+  --base-url https://meta-hubs.org \
+  --thumbnail-dir /path/to/avatar-thumbnails \
+  --featured --base base.glb --default base.glb \
+  /path/to/avatar-glbs/*.glb
+```
+
+The helper preserves PostgREST 64-bit IDs, detects RPM/full-body skeleton names, generates active listings and marks
+avatars reviewed. It also reuses an unreviewed parentless avatar left by an interrupted attempt. It is a recovery
+tool, not the normal day-to-day import path.
 
 After restoring `retdb`, invalidate assumptions about browser login state. A stale Spoke token may still render a
 `Logout` link while `/api/v1/projects` returns `401` (sometimes labelled as a possible CORS error by the UI). Log out

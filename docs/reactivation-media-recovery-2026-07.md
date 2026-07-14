@@ -66,12 +66,14 @@ exacta.
    ```bash
    cd /Users/Shared/Gits/YenHubs
    node deployment/generate-recovery-spoke-project.js \
-     --scene-url 'https://meta-hubs.org/api/v1/media/<URL-DEVUELTA>' \
+     --scene-url 'https://meta-hubs.org/files/<UUID-DEVUELTO>.glb' \
      --output-dir output/reactivation-20260714-003330/recovery-project-final
    ```
 
 5. Importar `recovery-scene.spoke` en Spoke y recolocar visualmente el spawn, los ocho `spawbot-recovery-*` y los dos
-   asientos. Las posiciones generadas son deliberadamente provisionales porque el proyecto Spoke final se perdio.
+   asientos. Verificar tambien las dos luces de recuperacion y reducirlas o eliminarlas si los lightmaps ya iluminan
+   correctamente en runtime. Las posiciones e iluminacion generadas son deliberadamente provisionales porque el
+   proyecto Spoke final se perdio.
 6. Comprobar que el modelo conserva `collidable` y `walkable`, los bots conservan el prefijo `spawbot-*` y los
    asientos tienen `Disable motion` y `Can be occupied`.
 7. Publicar la escena y asignarla primero a un hub de prueba, no al hub historico.
@@ -82,7 +84,51 @@ exacta.
 
 Sin `--scene-url`, el generador produce una plantilla con el marcador `__RECOVERED_SCENE_ASSET_URL__`. Esa variante
 sirve para inspeccion local, pero no debe importarse en Spoke hasta sustituir el marcador por una URL real. El script
-es determinista, valida 13 entidades e incluye manifiesto y hashes de sus salidas. No hace peticiones de red ni escribe
+es determinista, valida 15 entidades e incluye manifiesto y hashes de sus salidas. No hace peticiones de red ni escribe
 en DigitalOcean.
 
-No se ha escrito contenido reconstruido en produccion durante este analisis.
+## Estado final de la recuperacion funcional
+
+El 14 de julio de 2026 se completo una reconstruccion funcional, sin afirmar que sea una copia exacta del contenido
+perdido:
+
+- Upload fuente verificado: escena `fuWfRdF`.
+- Proyecto editable de Spoke: `qa3U3Ke`, disponible en
+  `https://meta-hubs.org/spoke/projects/qa3U3Ke`.
+- Escena publicada: `f6VKtim`, `YenHubs Recuperacion Funcional`.
+- Sala de prueba: `XesSAqd`, `https://meta-hubs.org/XesSAqd/prickly-nice-huddle`.
+- La escena contiene 15 entidades: root, modelo, dos luces, un spawn, ocho `spawbot-recovery-*` y dos waypoints de
+  asiento con `Disable motion` y `Can be occupied`.
+- El ghost runner reconoce 11 waypoints, usa 8 para spawn/patrulla y crea los 3 bots configurados. No aparece como
+  usuario en `Personas`.
+
+Tambien se reconstruyeron miniaturas reales y se importaron nueve avatares mediante los endpoints normales de
+Reticulum. `base` quedo como base/default (`5J1OZx-`) y los ocho modelos full-body quedaron featured:
+
+| Nombre | Listing featured |
+|--------|------------------|
+| Bata | `84PKFaQ` |
+| Bata2 | `y_GoczU` |
+| CamisaNegra | `x0h-wd0` |
+| CamisaNegra2 | `f8zTm-g` |
+| CamisaVaqueros | `mKOnfC8` |
+| CamisaVaqueros2 | `t_zomhE` |
+| Camiseta | `3LVfOJj` |
+| modelT | `FC4sbP3` |
+
+Los nueve endpoints de avatar y `avatar.gltf` responden HTTP 200. Los dos listings historicos featured que apuntaban
+a bytes perdidos (`vCCjKkl` y `omfp69L`) se conservaron, pero se les retiro solamente el tag `featured` para impedir
+que los bots seleccionen assets rotos.
+
+Smoke test final:
+
+- sala y escena 3D visibles;
+- tres bots con avatares recuperados y movimiento entre waypoints;
+- `Personas (1)`, por lo que runner y bots no consumen identidades visibles;
+- tercera persona activa y vuelve a primera persona;
+- endpoint de chat privado del bot responde mediante el backend;
+- base/default y ocho featured aparecen en las APIs de catalogo.
+
+La perdida restante afecta a la copia exacta del antiguo proyecto/miniaturas y a otros medios historicos que no
+estaban entre los diez GLB recuperados. No bloquea las funcionalidades personalizadas ni el inicio de la auditoria,
+pero debe conservarse esta limitacion en cualquier informe futuro.

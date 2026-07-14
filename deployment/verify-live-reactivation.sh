@@ -174,6 +174,10 @@ if [[ -n "$reticulum_pod" && "${active_owned_files:-}" =~ ^[0-9]+$ ]]; then
   if [[ "$active_owned_files" -gt 0 && "$storage_blobs" == "$active_owned_files" &&
     "$storage_meta" == "$active_owned_files" ]]; then
     pass "ret-pvc completo: blobs=$storage_blobs metadata=$storage_meta"
+  elif [[ "$storage_blobs" =~ ^[0-9]+$ && "$storage_meta" =~ ^[0-9]+$ &&
+    "$storage_blobs" -gt 0 && "$storage_blobs" == "$storage_meta" &&
+    "$storage_blobs" -lt "$active_owned_files" ]]; then
+    warn "ret-pvc contiene la recuperacion funcional, pero faltan medios historicos: active_owned_files=$active_owned_files blobs=$storage_blobs metadata=$storage_meta"
   else
     fail "ret-pvc no coincide con DB: active_owned_files=$active_owned_files blobs=${storage_blobs:-?} metadata=${storage_meta:-?}"
   fi

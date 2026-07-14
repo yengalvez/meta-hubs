@@ -10,6 +10,8 @@ const path = require("path");
 const PLACEHOLDER_URL = "__RECOVERED_SCENE_ASSET_URL__";
 const ROOT_ID = "C6D9A0A8-7C70-4B9D-907F-DADE6BC34401";
 const IDS = {
+  ambientLight: "09F41F9B-03C0-4BC3-91F0-3A178D808A10",
+  directionalLight: "1752A741-0E56-474B-825A-B4E5D81659D1",
   model: "E401511E-83B0-47A8-885D-1F4BEE94D3B0",
   spawn: "1B7A2E95-D2C6-4233-82B8-F6D0BCB96D29",
   bots: [
@@ -135,6 +137,33 @@ function buildProject(sceneUrl) {
   };
 
   let index = 0;
+  entities[IDS.ambientLight] = {
+    name: "Recovery Ambient Light - VERIFY INTENSITY",
+    components: [visible(), editorSettings(), { name: "ambient-light", props: { color: "#dbeafe", intensity: 0.8 } }],
+    parent: ROOT_ID,
+    index: index++
+  };
+  entities[IDS.directionalLight] = {
+    name: "Recovery Directional Light - VERIFY INTENSITY",
+    components: [
+      transform(-6, 8, 4, 0.45),
+      visible(),
+      editorSettings(),
+      {
+        name: "directional-light",
+        props: {
+          color: "#ffffff",
+          intensity: 1.8,
+          castShadow: false,
+          shadowMapResolution: [1024, 1024],
+          shadowBias: -0.00003,
+          shadowRadius: 1
+        }
+      }
+    ],
+    parent: ROOT_ID,
+    index: index++
+  };
   entities[IDS.model] = {
     name: "RECOVERED OFFICE SCENE",
     components: [
@@ -152,7 +181,7 @@ function buildProject(sceneUrl) {
   };
   entities[IDS.spawn] = {
     name: "Spawn Point - POSITION MUST BE VERIFIED",
-    components: [transform(), visible(), editorSettings(), { name: "spawn-point", props: {} }],
+    components: [transform(4, 0, 2, -Math.PI / 2), visible(), editorSettings(), { name: "spawn-point", props: {} }],
     parent: ROOT_ID,
     index: index++
   };
@@ -178,15 +207,15 @@ function buildProject(sceneUrl) {
   });
 
   const seatPositions = [
-    [-1, 0, 2],
-    [1, 0, 2]
+    [-1.631, 0, 1.123, 1.378],
+    [1.434, 0, 0.44, -1.852]
   ];
   IDS.seats.forEach((id, i) => {
-    const [x, y, z] = seatPositions[i];
+    const [x, y, z, rotationY] = seatPositions[i];
     entities[id] = {
       name: `Seat recovery ${i + 1} - REPOSITION`,
       components: [
-        transform(x, y, z),
+        transform(x, y, z, rotationY),
         visible(),
         editorSettings(),
         waypoint({ canBeOccupied: true, willDisableMotion: true, willMaintainInitialOrientation: true })
@@ -214,10 +243,11 @@ function buildProject(sceneUrl) {
 function validateProject(project) {
   const entries = Object.entries(project.entities);
   if (project.version !== 9) throw new Error("Unexpected Spoke project version");
-  if (entries.length !== 13 || !project.entities[project.root]) throw new Error("Unexpected entity structure");
+  if (entries.length !== 15 || !project.entities[project.root]) throw new Error("Unexpected entity structure");
 
   const children = [];
   let models = 0;
+  let lights = 0;
   let botWaypoints = 0;
   let sittingWaypoints = 0;
   for (const [id, entity] of entries) {
@@ -228,6 +258,7 @@ function validateProject(project) {
     children.push(entity);
     const componentNames = new Set(entity.components.map(component => component.name));
     if (componentNames.has("gltf-model")) models++;
+    if (componentNames.has("ambient-light") || componentNames.has("directional-light")) lights++;
     if (entity.name.startsWith("spawbot-")) botWaypoints++;
     const waypointComponent = entity.components.find(component => component.name === "waypoint");
     if (waypointComponent && waypointComponent.props.willDisableMotion) sittingWaypoints++;
@@ -235,7 +266,7 @@ function validateProject(project) {
 
   const indexes = children.map(entity => entity.index).sort((a, b) => a - b);
   if (indexes.some((value, i) => value !== i)) throw new Error("Child indexes are not contiguous");
-  if (models !== 1 || botWaypoints !== 8 || sittingWaypoints !== 2) {
+  if (models !== 1 || lights !== 2 || botWaypoints !== 8 || sittingWaypoints !== 2) {
     throw new Error("Recovery model/waypoint counts are invalid");
   }
 }
@@ -263,11 +294,12 @@ function writeOutputs(outputDir, project) {
 3. Upload the recovered source GLB through Spoke/Reticulum before importing this project.
 4. Visually verify and reposition the Spawn Point, every spawbot-recovery-* waypoint,
    and both Seat recovery waypoints before publishing.
-5. Positions are provisional because the final published Spoke project was stored in
+5. Verify the two recovery lights and reduce/remove them if the runtime lightmaps already provide enough illumination.
+6. Positions are provisional because the final published Spoke project was stored in
    the missing Reticulum volume and cannot be reconstructed exactly.
-6. Bot waypoints must keep the spawbot-* prefix.
-7. Sitting waypoints use Disable Motion + Can Be Occupied.
-8. Publish as a NEW recovery scene and assign it only to a test room first.
+7. Bot waypoints must keep the spawbot-* prefix.
+8. Sitting waypoints use Disable Motion + Can Be Occupied.
+9. Publish as a NEW recovery scene and assign it only to a test room first.
 `;
 
   fs.mkdirSync(outputDir, { recursive: true });
