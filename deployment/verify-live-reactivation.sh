@@ -132,6 +132,111 @@ for deployment in "${deployments[@]}"; do
   fi
 done
 
+printf '\nRuntime hardening\n'
+deployments_json="$(kubectl get deployment -n "$NAMESPACE" -o json 2>/dev/null || true)"
+container_count="$(printf '%s' "$deployments_json" | jq '[.items[].spec.template.spec.containers[]] | length' 2>/dev/null || true)"
+budgeted_count="$(
+  printf '%s' "$deployments_json" | jq '
+    [.items[].spec.template.spec.containers[] |
+      select(.resources.requests.cpu and .resources.requests.memory and .resources.limits.memory and
+        (.resources.limits.cpu | not))] | length
+  ' 2>/dev/null || true
+)"
+if [[ "$container_count" == "13" && "$budgeted_count" == "$container_count" ]]; then
+  pass "Los 13 contenedores tienen requests y limite de memoria, sin CPU limits"
+else
+  fail "Resource budgets incompletos: budgeted=${budgeted_count:-?} containers=${container_count:-?}"
+fi
+
+mutable_images="$(
+  printf '%s' "$deployments_json" | jq -r '
+    [.items[] as $deployment | $deployment.spec.template.spec.containers[] |
+      select((.image | test("@sha256:[a-fA-F0-9]{64}$")) | not) |
+      ($deployment.metadata.name + "/" + .name)] | join(",")
+  ' 2>/dev/null || true
+)"
+if [[ -z "$mutable_images" ]]; then
+  pass "Todas las imagenes de Deployment estan fijadas por digest"
+else
+  fail "Imagenes mutables: $mutable_images"
+fi
+
+unsafe_strategies="$(
+  printf '%s' "$deployments_json" | jq -r '
+    [.items[] | select((.metadata.name == "pgsql" or .metadata.name == "reticulum" or
+      .metadata.name == "dialog" or .metadata.name == "coturn") and .spec.strategy.type != "Recreate") |
+      .metadata.name] | join(",")
+  ' 2>/dev/null || true
+)"
+if [[ -z "$unsafe_strategies" ]]; then
+  pass "PostgreSQL, Reticulum, Dialog y Coturn usan Recreate"
+else
+  fail "Estrategia insegura en: $unsafe_strategies"
+fi
+
+ret_security="$(
+  printf '%s' "$deployments_json" | jq -r '
+    .items[] | select(.metadata.name == "reticulum") |
+    .spec.template.spec.containers[] | select(.name == "reticulum") | .securityContext |
+    [(.privileged != true), (.allowPrivilegeEscalation == false),
+      ((.capabilities.drop // []) | index("ALL") != null), (.seccompProfile.type == "RuntimeDefault")] |
+    all
+  ' 2>/dev/null || true
+)"
+ret_mount_propagation="$(
+  printf '%s' "$deployments_json" | jq -r '
+    .items[] | select(.metadata.name == "reticulum") |
+    .spec.template.spec.containers[] | select(.name == "reticulum") |
+    [.volumeMounts[]? | select(.name == "storage") | .mountPropagation] | map(select(. != null)) | length
+  ' 2>/dev/null || true
+)"
+if [[ "$ret_security" == "true" && "$ret_mount_propagation" == "0" ]]; then
+  pass "Reticulum no es privilegiado, elimina capabilities y usa seccomp"
+else
+  fail "El securityContext de Reticulum no coincide con el baseline auditado"
+fi
+
+ret_bot_checksum="$(
+  printf '%s' "$deployments_json" | jq -r '
+    .items[] | select(.metadata.name == "reticulum") |
+    .spec.template.metadata.annotations["yenhubs.org/bot-access-key-checksum"] // ""
+  ' 2>/dev/null || true
+)"
+orchestrator_bot_checksum="$(
+  printf '%s' "$deployments_json" | jq -r '
+    .items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.metadata.annotations["yenhubs.org/bot-access-key-checksum"] // ""
+  ' 2>/dev/null || true
+)"
+if [[ "$ret_bot_checksum" =~ ^[a-fA-F0-9]{64}$ && "$ret_bot_checksum" == "$orchestrator_bot_checksum" ]]; then
+  pass "Reticulum y bot-orchestrator comparten la huella de rotacion"
+else
+  fail "La huella de BOT_ACCESS_KEY falta o no coincide"
+fi
+
+policy_summary="$(
+  kubectl get networkpolicy -n "$NAMESPACE" -o json 2>/dev/null | jq -r '
+    .items[] |
+    [.metadata.name, .spec.podSelector.matchLabels.app,
+      ([.spec.ingress[].from[]?.podSelector.matchLabels.app] | sort | join(",")),
+      ([.spec.ingress[].ports[]? | ((.protocol // "TCP") + ":" + (.port | tostring))] | sort | join(","))] |
+    @tsv
+  ' 2>/dev/null | sort || true
+)"
+expected_policy_summary="$(cat <<'EOF'
+bot-orchestrator-ingress	bot-orchestrator	reticulum	TCP:5001
+pgbouncer-ingress	pgbouncer	reticulum	TCP:5432
+pgbouncer-t-ingress	pgbouncer-t	reticulum	TCP:5432
+pgsql-ingress	pgsql	pgbouncer,pgbouncer-t	TCP:5432
+photomnemonic-ingress	photomnemonic	reticulum	TCP:5000
+EOF
+)"
+if [[ "$policy_summary" == "$expected_policy_summary" ]]; then
+  pass "Las cinco NetworkPolicies internas coinciden con la matriz auditada"
+else
+  fail "Las NetworkPolicies live no coinciden con la matriz auditada"
+fi
+
 printf '\nDatabase\n'
 pgsql_pod="$(kubectl get pod -n "$NAMESPACE" -l app=pgsql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
 if [[ -n "$pgsql_pod" ]]; then

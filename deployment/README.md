@@ -103,6 +103,18 @@ Persistent/exclusive workloads have explicit safe update strategies:
 - Reticulum: no privileged mode or bidirectional mount propagation; it disables privilege escalation, drops every
   Linux capability and uses the runtime-default seccomp profile.
 
+Runtime capacity and isolation baseline (measured and accepted on 2026-07-14):
+
+- all 13 containers declare CPU/memory requests and a memory limit;
+- application requests total 665 mCPU and 2,944 MiB; with DOKS system pods the node reserves 1,297 mCPU (33%) and
+  3,746 MiB (58%);
+- no application has a CPU limit, so this guardrail does not introduce CFS throttling or an artificial CCU cap;
+- memory limits are deliberately overcommitted (146% including system pods) to retain burst headroom. They protect
+  individual runaway processes but do not prove capacity; run a staged room/WebRTC load test before promising 75 CCU;
+- five Cilium NetworkPolicies isolate bot-orchestrator, PostgreSQL, both PgBouncer pools and Photomnemonic to their
+  exact same-namespace callers and ports. Egress remains open for TURN, SMTP, OpenAI and media proxies; there is no
+  unsafe namespace-wide `default-deny` yet.
+
 Important deployment distinction:
 
 - Hubs runs the July recovery commit `ee75980ad`; Reticulum runs the audited commit `7ae357f`.
@@ -347,6 +359,8 @@ invariants hold:
 - Reticulum is non-privileged, drops every capability and has no propagated host mount;
 - Reticulum and bot-orchestrator carry the same bot-key checksum annotation;
 - HAProxy has startup, readiness and liveness probes on `/healthz:1042`;
+- all 13 containers have audited requests/memory limits and no CPU limit;
+- the five internal NetworkPolicies keep the exact audited caller/port matrix;
 - HAProxy RBAC contains CRD and Gateway API permissions;
 - no obsolete self-signed bootstrap secret or unresolved placeholder remains;
 - exactly one `LoadBalancer` service and two 10 GiB DigitalOcean PVCs are generated.
