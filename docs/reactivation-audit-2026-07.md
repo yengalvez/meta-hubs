@@ -241,10 +241,14 @@ La auditoria empieza solo despues del punto de confirmacion del propietario.
 
 ## 10. Estado del punto de control
 
-- Auditoria: autorizada e iniciada.
+- Reactivacion de infraestructura: completada; la recuperacion funcional de contenido sigue en curso.
+- Revision tecnica preliminar: realizada para preparar el entorno y corregir bloqueos de reactivacion.
+- Auditoria integral y fase sistematica de correcciones: no iniciada; requiere confirmacion explicita del propietario
+  despues de validar una sala de recuperacion y el baseline funcional.
 - Coste DigitalOcean: autorizado para la topologia estimada de 62 USD/mes y `HA=false`.
 - Credenciales operativas: `doctl` y Mailtrap preparados localmente sin versionar secretos.
-- Siguiente puerta: preflight completo y creacion exacta del cluster no-HA de un nodo.
+- Siguiente puerta: publicar la escena recuperada en una sala de prueba, reimportar avatares y completar los smoke
+  tests de third-person, sitting y ghost bots.
 - Informe vivo: `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`.
 
 ## Referencias oficiales

@@ -749,6 +749,19 @@ empty. The current recovery inventory and locally recovered source files are doc
 /Users/Shared/Gits/YenHubs/docs/reactivation-media-recovery-2026-07.md
 ```
 
+For this specific incomplete March freeze, do not fabricate files under `/storage/owned` or copy GLBs into the PVC.
+Reticulum owned files are encrypted and coupled to database metadata. Reconstruct the content through normal
+Spoke/Admin upload paths. A deterministic local Spoke starting point can be generated with:
+
+```bash
+node deployment/generate-recovery-spoke-project.js \
+  --scene-url 'https://meta-hubs.org/api/v1/media/<UPLOADED-ASSET>' \
+  --output-dir output/media-recovery-project
+```
+
+The generated bot and sitting waypoint positions are provisional and must be checked visually before publishing to
+a new test room. The command performs no upload and makes no cluster changes.
+
 ### Restore the Reticulum database
 
 The database is named `retdb`. A plain `pg_dump` does not include cluster-level roles, but the restored grants need
