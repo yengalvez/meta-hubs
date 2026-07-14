@@ -27,7 +27,7 @@ Candidatos actuales desplegados, todavia sin promover a las ramas base:
 
 - Superproyecto `codex/audit-2026`: rama de integracion activa; comprobar su HEAD con `git rev-parse HEAD`.
 - `hubs/codex/audit-2026`: `99f1e9cad07a51e1c156952936a522265028a12d`.
-- `hubs-cloud/codex/audit-2026`: `3ce47c9ae86736a0cfc7ed2ede5122edab78f014`.
+- `hubs-cloud/codex/audit-2026`: `4eb743b1ebec741d1888ee0ce62f9cdeb4c87f8f`.
 
 El superproyecto de preparacion fija esos dos commits de submodulo. Antes de crear ramas nuevas, comprobar siempre
 `git submodule status` para no trabajar sobre un commit distinto al fijado por el superproyecto.
@@ -47,7 +47,7 @@ Pruebas de merge sin modificar las ramas:
 
 - `hubs/codex/audit-2026` + `prod-2026-03-11`: merge limpio, sin conflictos.
 - `hubs/codex/audit-2026` + ultimo `master` oficial: 15 commits oficiales pendientes; no debe tratarse como release.
-- `hubs-cloud/codex/audit-2026` + `2.1.0`: 58 commits propios y 6 oficiales pendientes. La simulacion solo
+- `hubs-cloud/codex/audit-2026` + `2.1.0`: 60 commits propios y 6 oficiales pendientes. La simulacion solo
   encuentra un conflicto `modify/delete` en `community-edition/input-values.yaml`: upstream lo modifica y YenHubs lo
   elimino del historial para que los secretos permanezcan en una copia local ignorada. La resolucion correcta es
   conservarlo fuera de Git; no es un bloqueo del generador.
@@ -134,6 +134,7 @@ El archivo local fija actualmente las imagenes live de recuperacion:
 - `ghcr.io/yengalvez/hubs@sha256:1746ba9f367871d17a7bc7e5c2b1fd512bb76769936a64a3b361811fcc453edb`
 - `ghcr.io/yengalvez/reticulum@sha256:fd4cfca70b63ddfe369d1fe48a8c4cd9bb4b5f5910728a9fbee16d121a665b53`
 - `ghcr.io/yengalvez/bot-orchestrator@sha256:0c2f0fb16828ee93dea0a9dc42f49928ed4e161a51d9ca02866fc02ab8c99ab8`
+- `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23`
 
 Las diez referencias auxiliares tambien estan fijadas por digest. El generador rechaza tags mutables, y `pgsql`,
 `reticulum`, `dialog` y `coturn` usan `Recreate` para no solapar PVC o host ports exclusivos. El checkpoint previo a
@@ -143,6 +144,11 @@ El bot-orchestrator auditado se publico por GitHub Actions `29374198198` y se de
 de marzo `ghost-fullsync-20260307-e38b70d-latest` se conserva como rollback. Tras el rollout pasaron rehidratacion de
 dos salas, contrato de chat live y carga tardia en navegador con tres bots moviendose y sin runner visible. El runtime
 actual usa UID/GID 1000, cero capabilities, `NoNewPrivs` y seccomp RuntimeDefault.
+
+Dialog se publico por GitHub Actions `29375052801` y se desplego por el mismo flujo normal. Usa Node 22, Mediasoup
+3.19.22, cero advisories de produccion, UID/GID 1000 y sondas TCP/4443. El checkpoint previo esta en
+`output/audit-dialog-node22-20260715-0105/`. Dos navegadores aislados completaron publicacion y consumo de audio con
+transports/ICE conectados y trafico RTP creciente en ambas direcciones.
 
 ## 5. Controles antes de reactivar DigitalOcean
 

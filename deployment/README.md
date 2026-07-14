@@ -79,6 +79,7 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 | Hubs client | `ghcr.io/yengalvez/hubs:recovery-avatarfix-20260714-ee75980ad-latest` | `29347365972` |
 | Reticulum | `ghcr.io/yengalvez/reticulum:audit-retlog-20260714-7ae357f-latest` | `29365678444` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:0c2f0fb16828ee93dea0a9dc42f49928ed4e161a51d9ca02866fc02ab8c99ab8` | `29374198198` |
+| Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` | `29375052801` |
 | Coturn | `ghcr.io/yengalvez/coturn@sha256:c2ad335349d477d342d5b17c82b513bfebc8c17b8e6b4e27a3049f3478207780` | `29371663849` |
 
 The July bot-orchestrator hardening was promoted through 2026-07-15 after the recovery checkpoint. Production uses
@@ -123,11 +124,16 @@ Runtime capacity and isolation baseline (measured and accepted on 2026-07-14):
   writes `/etc/turnserver.conf` as mode `0600`. The previous known-leaky digest is rejected by manifest verification.
 - bot-orchestrator runs as UID/GID 1000 with no effective capabilities, privilege escalation disabled and the
   RuntimeDefault seccomp profile. Both generated and live verifiers enforce this baseline.
+- Dialog uses Node 22 and Mediasoup 3.19.22, has zero production npm advisories, and runs as UID/GID 1000 with no
+  capabilities, no privilege escalation, RuntimeDefault seccomp and TCP startup/readiness/liveness probes on 4443.
+  Keep Mediasoup below 3.20 until the Dialog SCTP option contract is migrated deliberately; 3.20 changes that API.
 
 Important deployment distinction:
 
 - Hubs runs the July recovery commit `ee75980ad`; Reticulum runs the audited commit `7ae357f`.
 - Bot orchestrator runs the July audit commit `3ce47c9`, published by Actions run `29374198198`.
+- Dialog runs cloud commit `4eb743b` (runtime change in `08a0cf3`), published by Actions run `29375052801` and pinned
+  to digest `sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23`.
 - Coturn runs the credential-safe commit `98f9b1c`, published by Actions run `29371663849` and pinned to digest
   `sha256:c2ad335349d477d342d5b17c82b513bfebc8c17b8e6b4e27a3049f3478207780`.
 - The moderated, rate-limited, `store:false` OpenAI path and hardened same-origin scene loader are live. This reduces
@@ -141,6 +147,7 @@ The pre-rollout runtime digests and the post-rollout bot digest/evidence capture
 /Users/Shared/Gits/YenHubs/output/audit-checkpoint-20260714-210044/postdeploy-botguard.txt
 /Users/Shared/Gits/YenHubs/output/audit-imagepin-20260714-215632/
 /Users/Shared/Gits/YenHubs/output/audit-db-rotation-20260714-235659/
+/Users/Shared/Gits/YenHubs/output/audit-dialog-node22-20260715-0105/
 ```
 
 This ignored checkpoint also contains a fresh database dump, the 34 physical blob/metadata pairs currently present,

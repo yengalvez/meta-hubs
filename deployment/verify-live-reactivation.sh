@@ -212,6 +212,30 @@ else
   fail "El securityContext de bot-orchestrator no coincide con el baseline auditado"
 fi
 
+dialog_security="$(
+  printf '%s' "$deployments_json" | jq -r '
+    .items[] | select(.metadata.name == "dialog") |
+    .spec.template.spec.containers[] | select(.name == "dialog") | .securityContext |
+    [(.runAsNonRoot == true), (.runAsUser == 1000), (.runAsGroup == 1000),
+      (.allowPrivilegeEscalation == false),
+      ((.capabilities.drop // []) | index("ALL") != null), (.seccompProfile.type == "RuntimeDefault")] |
+    all
+  ' 2>/dev/null || true
+)"
+dialog_probes="$(
+  printf '%s' "$deployments_json" | jq -r '
+    .items[] | select(.metadata.name == "dialog") |
+    .spec.template.spec.containers[] | select(.name == "dialog") |
+    [(.startupProbe.tcpSocket.port == 4443), (.readinessProbe.tcpSocket.port == 4443),
+      (.livenessProbe.tcpSocket.port == 4443)] | all
+  ' 2>/dev/null || true
+)"
+if [[ "$dialog_security" == "true" && "$dialog_probes" == "true" ]]; then
+  pass "Dialog usa UID/GID 1000, elimina capabilities, usa seccomp y prueba TCP/4443"
+else
+  fail "El runtime de Dialog no coincide con el baseline auditado"
+fi
+
 ret_bot_checksum="$(
   printf '%s' "$deployments_json" | jq -r '
     .items[] | select(.metadata.name == "reticulum") |
