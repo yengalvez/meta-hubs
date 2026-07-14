@@ -77,13 +77,18 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 | Component | Live image | Actions run |
 |-----------|-----------------|-------------|
 | Hubs client | `ghcr.io/yengalvez/hubs:recovery-avatarfix-20260714-ee75980ad-latest` | `29347365972` |
-| Reticulum | `ghcr.io/yengalvez/reticulum:recovery-retfix-20260714-19c56f6-latest` | `29347365956` |
+| Reticulum | `ghcr.io/yengalvez/reticulum:audit-retlog-20260714-7ae357f-latest` | `29365678444` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator:audit-botguard-20260714-7de9b5c-latest` | `29362366946` |
 
 The July bot-orchestrator hardening was promoted on 2026-07-14 after the recovery checkpoint. Production uses
 `RUNNER_BACKEND=ghost`, `MAX_ACTIVE_ROOMS=5` and `MAX_BOTS_PER_ROOM=10`. The exact live digest is
 `sha256:1f71222a824870c52636775df4da0dfade5daf9c9840f3d660440d33b7032cc8`; the March `ghost-fullsync` image remains
 available only as the tested rollback.
+
+Reticulum was subsequently promoted from commit `7ae357f` and is pinned live at
+`sha256:f4a8c5d9fa2a19acbed03fcaae9cf0bab1eefd6046a4d63a35a92fdf9bb481d2`. This revision filters bot credentials and
+other token/password/secret parameters before Phoenix writes HTTP, socket or channel metadata to logs. The internal
+bot key was rotated after this filter was accepted in production; the previous value is no longer valid.
 
 After that rollout, all 13 live containers were changed from mutable tags to the exact digests they were already
 running. `npm run gen-hcce` now rejects every Deployment image that is not in `repository@sha256:<64 hex>` form.
@@ -95,10 +100,12 @@ Persistent/exclusive workloads have explicit safe update strategies:
 - `dialog` and `coturn`: `Recreate`, so two revisions never compete for host ports `4443`/`5349` on the single node.
 - HAProxy: startup, readiness and liveness checks on `/healthz:1042`; startup has up to 120 seconds before liveness
   may restart it.
+- Reticulum: no privileged mode or bidirectional mount propagation; it disables privilege escalation, drops every
+  Linux capability and uses the runtime-default seccomp profile.
 
 Important deployment distinction:
 
-- Hubs and Reticulum run the July recovery commits (`ee75980ad` and `19c56f6f`).
+- Hubs runs the July recovery commit `ee75980ad`; Reticulum runs the audited commit `7ae357f`.
 - Bot orchestrator runs the July audit commit `7de9b5c` built by the standard GitHub Actions workflow.
 - The moderated, rate-limited, `store:false` OpenAI path and hardened same-origin scene loader are live. This reduces
   YenHubs-side retention but is **not** a claim of OpenAI Zero Data Retention; provider abuse-monitoring retention
@@ -292,13 +299,29 @@ Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
 - `OVERRIDE_HUBS_IMAGE` - set this to the digest-pinned custom client image when you ship client-side features
   (official `hubsfoundation/hubs:*` images do not include local code changes)
 - `OVERRIDE_BOT_ORCHESTRATOR_IMAGE` - set this to the digest-pinned custom bot image when room bots/chat are enabled
-- `BOT_ACCESS_KEY` - random shared key used by Reticulum <-> bot-orchestrator internal calls
+- `BOT_ACCESS_KEY` - random shared key used by Reticulum <-> bot-orchestrator internal calls; rotate it only in the
+  ignored local values and then regenerate/apply the manifest
 - `OPENAI_API_KEY` - API key used by bot-orchestrator for LLM chat (model defaults to `gpt-5-nano`)
 - `OVERRIDE_HAPROXY_IMAGE` - set to the approved digest for HAProxyTech 3.2 on modern Kubernetes
 
 Every `OVERRIDE_*_IMAGE` used by a Deployment must be `repository@sha256:<digest>`. After an Actions build, resolve
 the published tag to its registry digest, update the ignored local values and regenerate. The verifier deliberately
 fails on `stable-latest`, `*-latest` and version tags, even when they currently point at the expected bytes.
+
+### Rotate the internal bot key safely
+
+`BOT_ACCESS_KEY` must never be printed, committed or copied into a command argument. Replace it with a new random
+value in `deployment/input-values.local.yaml`, copy that file to the ignored
+`hubs-cloud/community-edition/input-values.yaml`, run `npm run gen-hcce` and apply the generated manifest.
+
+The generator derives a SHA-256 checksum annotation from the key for both Reticulum and bot-orchestrator. The
+manifest verifier requires the two annotations to match, and Kubernetes restarts both pod templates automatically
+when the key changes. Do not compensate with a manual one-sided rollout: both processes must start with the same
+Secret revision.
+
+After rotation, validate by hash rather than echoing the value. Phoenix logs must contain `[FILTERED]` for
+`bot_access_key`, and a search for the live value must return no match. The key was last rotated and this behavior was
+accepted live on 2026-07-14.
 
 ### Step 7: Generate hcce.yaml
 
@@ -319,6 +342,11 @@ invariants hold:
 - every application ingress selects `haproxy` through `spec.ingressClassName`;
 - global SSL redirect is disabled so ACME HTTP-01 solver ingresses remain reachable;
 - HAProxy does not use the legacy Mozilla image or security context;
+- every Deployment image is pinned by an exact SHA-256 digest;
+- PostgreSQL, Reticulum, Dialog and Coturn use `Recreate` for single-writer storage or exclusive host ports;
+- Reticulum is non-privileged, drops every capability and has no propagated host mount;
+- Reticulum and bot-orchestrator carry the same bot-key checksum annotation;
+- HAProxy has startup, readiness and liveness probes on `/healthz:1042`;
 - HAProxy RBAC contains CRD and Gateway API permissions;
 - no obsolete self-signed bootstrap secret or unresolved placeholder remains;
 - exactly one `LoadBalancer` service and two 10 GiB DigitalOcean PVCs are generated.
