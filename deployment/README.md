@@ -762,6 +762,10 @@ node deployment/generate-recovery-spoke-project.js \
 The generated bot and sitting waypoint positions are provisional and must be checked visually before publishing to
 a new test room. The command performs no upload and makes no cluster changes.
 
+After restoring `retdb`, invalidate assumptions about browser login state. A stale Spoke token may still render a
+`Logout` link while `/api/v1/projects` returns `401` (sometimes labelled as a possible CORS error by the UI). Log out
+and request a fresh magic link before diagnosing the API or ingress.
+
 ### Restore the Reticulum database
 
 The database is named `retdb`. A plain `pg_dump` does not include cluster-level roles, but the restored grants need

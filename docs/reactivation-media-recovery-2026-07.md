@@ -57,8 +57,11 @@ exacta.
 ## Ruta segura de recuperacion
 
 1. Mantener intacta la base restaurada y el `ret-pvc` vacio hasta elegir estrategia.
-2. Subir `Escena_Principal_Ligthmap_New.glb` por el flujo normal de Spoke/Reticulum y guardar la URL devuelta.
-3. Generar el proyecto Spoke reproducible con esa URL:
+2. Cerrar cualquier sesion antigua de Spoke y volver a entrar por magic link. Tras restaurar la base, el navegador
+   puede mostrar `Logout` pero recibir `401` en `/api/v1/projects`; no es un fallo CORS, sino una credencial anterior
+   que ya no es valida.
+3. Subir `Escena_Principal_Ligthmap_New.glb` por el flujo normal de Spoke/Reticulum y guardar la URL devuelta.
+4. Generar el proyecto Spoke reproducible con esa URL:
 
    ```bash
    cd /Users/Shared/Gits/YenHubs
@@ -67,15 +70,15 @@ exacta.
      --output-dir output/reactivation-20260714-003330/recovery-project-final
    ```
 
-4. Importar `recovery-scene.spoke` en Spoke y recolocar visualmente el spawn, los ocho `spawbot-recovery-*` y los dos
+5. Importar `recovery-scene.spoke` en Spoke y recolocar visualmente el spawn, los ocho `spawbot-recovery-*` y los dos
    asientos. Las posiciones generadas son deliberadamente provisionales porque el proyecto Spoke final se perdio.
-5. Comprobar que el modelo conserva `collidable` y `walkable`, los bots conservan el prefijo `spawbot-*` y los
+6. Comprobar que el modelo conserva `collidable` y `walkable`, los bots conservan el prefijo `spawbot-*` y los
    asientos tienen `Disable motion` y `Can be occupied`.
-6. Publicar la escena y asignarla primero a un hub de prueba, no al hub historico.
-7. Reimportar los GLB originales desde Admin y comprobar rig, thumbnails y tags featured.
-8. Validar third-person, sitting y ghost bots en dos navegadores.
-9. Solo despues, reasignar los hubs historicos y retirar listings rotos si el propietario lo aprueba.
-10. Crear inmediatamente un dump nuevo y ejecutar `deployment/backup-ret-storage.sh`.
+7. Publicar la escena y asignarla primero a un hub de prueba, no al hub historico.
+8. Reimportar los GLB originales desde Admin y comprobar rig, thumbnails y tags featured.
+9. Validar third-person, sitting y ghost bots en dos navegadores.
+10. Solo despues, reasignar los hubs historicos y retirar listings rotos si el propietario lo aprueba.
+11. Crear inmediatamente un dump nuevo y ejecutar `deployment/backup-ret-storage.sh`.
 
 Sin `--scene-url`, el generador produce una plantilla con el marcador `__RECOVERED_SCENE_ASSET_URL__`. Esa variante
 sirve para inspeccion local, pero no debe importarse en Spoke hasta sustituir el marcador por una URL real. El script
