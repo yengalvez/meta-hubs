@@ -2,6 +2,10 @@
 
 This document is the recovery guide for restarting YenHubs without relying on chat history.
 
+> **Correction discovered in July 2026:** the March bundle was not a complete content backup. It contains the
+> PostgreSQL database but no archive of `ret-pvc`, where Reticulum stores the actual scene, Spoke project, avatar and
+> thumbnail bytes. The cluster can be reconstructed, but historical media cannot be restored from this bundle alone.
+
 ## What was frozen
 
 - Superproject: `/Users/Shared/Gits/YenHubs`
@@ -40,6 +44,15 @@ Important files inside:
 - `git-heads.env` - repo heads recorded before final merge/shutdown
 - `input-values.local.yaml` - local deployment values copy (sensitive, not for git)
 - `input-values.working-copy.yaml` - working copy used by `gen-hcce`
+
+Missing from this bundle:
+
+- `ret-pvc` / `/storage/owned` archive
+- encrypted `.blob` and `.meta.json` pairs for Reticulum `owned_files`
+
+Do not call this bundle a full backup. See
+`/Users/Shared/Gits/YenHubs/docs/reactivation-media-recovery-2026-07.md` for the exact July inventory and recovered
+local source files.
 
 ## Sensitive configuration that stays local
 
@@ -92,7 +105,9 @@ The authoritative full list is in `deployment-images.txt` inside the backup fold
     - Use `/Users/Shared/Gits/YenHubs/deployment/restore-retdb.sh`.
     - Run its `RESTORE_DRY_RUN=1` mode first.
     - The script creates the missing cluster-level `ret_admin` role before loading the plain SQL dump.
-11. Validate:
+11. Restore the matching Reticulum media archive with `deployment/restore-ret-storage.sh`.
+    - The March 2026 freeze has no such archive; use the recovery plan instead of pretending the DB dump is enough.
+12. Validate:
    - home page
    - room entry
    - avatar selection/upload
@@ -114,6 +129,7 @@ The authoritative full list is in `deployment-images.txt` inside the backup fold
 - The cheapest full stop is deleting the cluster, not scaling to zero.
 - Bots were left on `ghost` specifically to avoid Chromium cost.
 - If rooms break after rebuild, first verify the manifest verifier passed, deployed image tags, `PERMS_KEY` consistency and the preserved local values file.
+- Never delete a cluster until `backup-ret-storage.sh` succeeds and the DB dump plus storage archive are copied off-cluster.
 
 ## July 2026 recovery update
 

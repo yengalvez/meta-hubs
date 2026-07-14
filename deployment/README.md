@@ -4,9 +4,12 @@ Hubs Community Edition 2.0.0 on DigitalOcean Kubernetes with automated SSL via c
 
 > **Last updated**: July 2026 | **Cluster**: `hubs-ce` active on DOKS `1.34.8-do.2`, `HA=false` | **Region**: AMS3
 >
-> The March baseline and database are restored. Mailtrap uses the `info@meta-hubs.org` account; Reticulum derives
-> the sender as `noreply@<HUB_DOMAIN>` and has no `SMTP_FROM` input. DNS/TLS validation is the remaining reactivation
-> gate before switching from the frozen images to the July audited candidates.
+> The March baseline and database are restored. Authoritative DNS and TLS are configured, although some public
+> resolver caches may temporarily retain the old delegation. Mailtrap uses the
+> `info@meta-hubs.org` account; Reticulum derives the sender as `noreply@<HUB_DOMAIN>` and has no `SMTP_FROM` input.
+> The March freeze did **not** contain the `ret-pvc` media files. The database therefore has valid room/avatar
+> metadata but the restored storage volume is empty. Do not promote the July candidate images or start the full
+> audit until the recovery decision in `docs/reactivation-media-recovery-2026-07.md` is resolved.
 
 ---
 
@@ -706,16 +709,25 @@ Fix:
 ## Backups
 
 ```bash
-# Database backup (do this BEFORE any risky changes)
+# 1. Database metadata backup (do this BEFORE any risky changes).
 PGSQL_POD=$(kubectl get pod -n hcce -l app=pgsql -o jsonpath='{.items[0].metadata.name}')
-kubectl exec $PGSQL_POD -n hcce -- pg_dump -U postgres retdb > backup_$(date +%Y%m%d).sql
+kubectl exec $PGSQL_POD -n hcce -- \
+  sh -ec 'pg_dump -U "$POSTGRES_USER" retdb' | gzip -c > retdb_$(date +%Y%m%d).sql.gz
 
-# Built-in backup script (if available in your version)
-cd hubs-cloud/community-edition
-npm run backup
+# 2. Durable media backup. This fails unless every active DB owned_file has
+# both its encrypted blob and metadata file in ret-pvc.
+./deployment/backup-ret-storage.sh ret-storage_$(date +%Y%m%d).tar.gz
+
+# 3. Validate both artifacts before deleting or replacing infrastructure.
+gzip -t retdb_$(date +%Y%m%d).sql.gz
+gzip -t ret-storage_$(date +%Y%m%d).tar.gz
 ```
 
-For the project freeze performed in March 2026, a full local snapshot was also saved outside the cluster at:
+> A Reticulum backup is complete only when it contains **both** the PostgreSQL dump and the `ret-pvc` archive.
+> PostgreSQL stores UUIDs, keys and relationships; the actual scenes, Spoke projects, avatars and thumbnails are
+> encrypted files in `ret-pvc`. A database-only dump cannot restore user content.
+
+For the project freeze performed in March 2026, a local snapshot was saved outside the cluster at:
 
 ```bash
 /Users/Shared/Gits/YenHubs/output/project-freeze-20260316-090114/
@@ -728,6 +740,14 @@ That snapshot contains:
 - cluster metadata from `doctl`
 - Kubernetes manifests/state exports
 - local working deployment values copies kept out of git history
+
+It does **not** contain a `ret-pvc` archive. This was discovered during the July 2026 restoration. The database dump
+contains 93 active `owned_files` rows (about 439 MB of referenced historical content), but the recreated volume is
+empty. The current recovery inventory and locally recovered source files are documented in:
+
+```text
+/Users/Shared/Gits/YenHubs/docs/reactivation-media-recovery-2026-07.md
+```
 
 ### Restore the Reticulum database
 
@@ -749,6 +769,23 @@ CONFIRM_RESTORE=retdb ./deployment/restore-retdb.sh \
 If the restore fails, consumers intentionally remain at zero. Diagnose the restore before scaling them back or
 reapplying the validated manifest.
 
+### Restore Reticulum media storage
+
+Restore the database first, then validate and restore the matching storage archive:
+
+```bash
+# Read-only validation. Counts in the archive must match active owned_files.
+RESTORE_STORAGE_DRY_RUN=1 ./deployment/restore-ret-storage.sh \
+  /path/to/ret-storage-YYYYMMDD.tar.gz
+
+# Destructive restore into a fresh/empty ret-pvc only.
+CONFIRM_RESTORE_STORAGE=ret-pvc ./deployment/restore-ret-storage.sh \
+  /path/to/ret-storage-YYYYMMDD.tar.gz
+```
+
+The restore script refuses unsafe archive paths, a DB/archive count mismatch and a non-empty destination. On a
+failure after Reticulum is stopped, Reticulum intentionally remains at zero for inspection.
+
 ## Cost Savings
 
 ```bash
@@ -769,8 +806,10 @@ kubectl get pods -n hcce -w  # Wait for all Running
 Use this path if you are pausing the project for weeks or months and want DigitalOcean cost as close to zero as possible:
 
 ```bash
-# 1. Confirm backups already exist
-ls -lh /Users/Shared/Gits/YenHubs/output/project-freeze-20260316-090114/
+# 1. Confirm a matching DB dump and ret-pvc archive both exist and validate.
+gzip -t /path/to/retdb-YYYYMMDD.sql.gz
+RESTORE_STORAGE_DRY_RUN=1 ./deployment/restore-ret-storage.sh \
+  /path/to/ret-storage-YYYYMMDD.tar.gz
 
 # 2. Confirm cluster and LB that will be removed
 doctl kubernetes cluster list
@@ -808,7 +847,8 @@ When resuming the project:
 5. Run `npm ci && npm run gen-hcce`; the command verifies TLS, ingress class, RBAC and the single-LB invariant.
 6. Apply the generated file unchanged with `kubectl apply -f hcce.yaml`.
 7. Restore the database dump into the new `pgsql` pod.
-8. Validate `meta-hubs.org`, TLS, room entry, avatar flow, and bots (`ghost` backend).
+8. Restore the matching `ret-pvc` archive with `deployment/restore-ret-storage.sh`.
+9. Validate `meta-hubs.org`, TLS, room entry, avatar flow, and bots (`ghost` backend).
 
 The short handoff checklist for this rebuild is maintained in:
 

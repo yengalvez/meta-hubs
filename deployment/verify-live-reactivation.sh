@@ -142,19 +142,43 @@ select count(*) from information_schema.tables
 where table_schema in ('\''ret0'\'', '\''ret0_admin'\'', '\''coturn'\'');
 select count(*) from ret0.schema_migrations;
 select count(*) from ret0.hubs;
+select count(*) from ret0.owned_files where state::text = '\''active'\'';
 SQL' 2>/dev/null || true
   )"
   schema_tables="$(printf '%s\n' "$database_counts" | sed -n '1p')"
   migrations="$(printf '%s\n' "$database_counts" | sed -n '2p')"
   hubs="$(printf '%s\n' "$database_counts" | sed -n '3p')"
-  if [[ "$schema_tables" =~ ^[0-9]+$ && "$migrations" =~ ^[0-9]+$ && "$hubs" =~ ^[0-9]+$ ]] &&
+  active_owned_files="$(printf '%s\n' "$database_counts" | sed -n '4p')"
+  if [[ "$schema_tables" =~ ^[0-9]+$ && "$migrations" =~ ^[0-9]+$ && "$hubs" =~ ^[0-9]+$ &&
+    "$active_owned_files" =~ ^[0-9]+$ ]] &&
     [[ "$schema_tables" -ge 356 && "$migrations" -ge 94 && "$hubs" -ge 17 ]]; then
-    pass "Restore validado: schema=$schema_tables migrations=$migrations hubs=$hubs"
+    pass "Restore validado: schema=$schema_tables migrations=$migrations hubs=$hubs owned_files=$active_owned_files"
   else
     fail "Conteos inferiores al baseline: schema=${schema_tables:-?} migrations=${migrations:-?} hubs=${hubs:-?}"
   fi
 else
   fail "No se encontro el pod PostgreSQL"
+fi
+
+printf '\nReticulum storage\n'
+reticulum_pod="$(kubectl get pod -n "$NAMESPACE" -l app=reticulum -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+if [[ -n "$reticulum_pod" && "${active_owned_files:-}" =~ ^[0-9]+$ ]]; then
+  storage_counts="$(
+    kubectl exec -n "$NAMESPACE" -c reticulum "$reticulum_pod" -- sh -ec '
+      find /storage/owned -type f -name "*.blob" 2>/dev/null | wc -l
+      find /storage/owned -type f -name "*.meta.json" 2>/dev/null | wc -l
+    ' 2>/dev/null || true
+  )"
+  storage_blobs="$(printf '%s\n' "$storage_counts" | sed -n '1p' | tr -d ' ')"
+  storage_meta="$(printf '%s\n' "$storage_counts" | sed -n '2p' | tr -d ' ')"
+  if [[ "$active_owned_files" -gt 0 && "$storage_blobs" == "$active_owned_files" &&
+    "$storage_meta" == "$active_owned_files" ]]; then
+    pass "ret-pvc completo: blobs=$storage_blobs metadata=$storage_meta"
+  else
+    fail "ret-pvc no coincide con DB: active_owned_files=$active_owned_files blobs=${storage_blobs:-?} metadata=${storage_meta:-?}"
+  fi
+else
+  fail "No se pudo validar ret-pvc contra la base"
 fi
 
 printf '\nHTTPS\n'

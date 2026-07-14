@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VALUES_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 BACKUP_DIR="${BACKUP_DIR:-$ROOT_DIR/output/project-freeze-20260316-090114}"
+RET_STORAGE_ARCHIVE="${RET_STORAGE_ARCHIVE:-}"
 DOCTL_CONTEXT="${DOCTL_CONTEXT:-yenhubs}"
 CLUSTER_NAME="${CLUSTER_NAME:-hubs-ce}"
 
@@ -112,7 +113,7 @@ check_ghcr_image() {
 printf 'YenHubs reactivation preflight\n'
 printf 'Root: %s\n\n' "$ROOT_DIR"
 
-for command_name in git node npm doctl kubectl helm jq curl openssl gzip; do
+for command_name in git node npm doctl kubectl helm jq curl openssl gzip tar; do
   check_command "$command_name"
 done
 
@@ -148,6 +149,23 @@ if gzip -t "$BACKUP_DIR/retdb-20260316-090114.sql.gz" 2>/dev/null; then
   pass "Dump PostgreSQL gzip integro"
 else
   fail "Dump PostgreSQL gzip corrupto o ilegible"
+fi
+
+if [[ -z "$RET_STORAGE_ARCHIVE" ]]; then
+  RET_STORAGE_ARCHIVE="$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'ret-storage*.tar.gz' -print 2>/dev/null | head -1)"
+fi
+
+if [[ -n "$RET_STORAGE_ARCHIVE" && -s "$RET_STORAGE_ARCHIVE" ]] &&
+  gzip -t "$RET_STORAGE_ARCHIVE" 2>/dev/null; then
+  storage_blobs="$(gzip -cd "$RET_STORAGE_ARCHIVE" | tar -tf - | awk '/\.blob$/ { count++ } END { print count + 0 }')"
+  storage_meta="$(gzip -cd "$RET_STORAGE_ARCHIVE" | tar -tf - | awk '/\.meta\.json$/ { count++ } END { print count + 0 }')"
+  if [[ "$storage_blobs" -gt 0 && "$storage_blobs" == "$storage_meta" ]]; then
+    pass "Backup ret-pvc integro: blobs=$storage_blobs metadata=$storage_meta"
+  else
+    fail "Backup ret-pvc incompleto: blobs=$storage_blobs metadata=$storage_meta"
+  fi
+else
+  fail "Falta el backup ret-pvc; un dump PostgreSQL no contiene escenas ni avatares"
 fi
 
 printf '\nConfiguracion local\n'

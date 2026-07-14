@@ -2,9 +2,10 @@
 
 Este documento fija el punto de partida comprobado para reactivar YenHubs y, despues, auditarlo sin depender del historial de una conversacion.
 
-> Estado: preparacion de auditoria iniciada y gasto de reactivacion autorizado el 13 de julio de 2026. Las correcciones
-> locales estan en ramas `codex/audit-2026`. El cluster no-HA, el manifiesto congelado y la base de datos ya estan
-> restaurados; falta actualizar DNS en IONOS, emitir TLS y completar los smoke tests antes del rollout auditado.
+> Estado: infraestructura, DNS, TLS, manifiesto congelado y base de datos restaurados. Las correcciones locales estan
+> en ramas `codex/audit-2026`. La validacion funcional esta detenida antes de la auditoria porque el backup de marzo
+> no incluyo `ret-pvc`; la base conserva metadata, pero faltan los bytes de escenas y avatares. La recuperacion se
+> documenta en `docs/reactivation-media-recovery-2026-07.md`.
 
 ## 1. Que proyecto es realmente
 
@@ -88,7 +89,7 @@ Herramientas locales preparadas:
 
 ## 4. Backup y artefactos recuperables
 
-Backup principal:
+Backup principal de marzo:
 
 ```text
 /Users/Shared/Gits/YenHubs/output/project-freeze-20260316-090114/
@@ -98,6 +99,11 @@ Validaciones:
 
 - `retdb-20260316-090114.sql.gz` pasa `gzip -t` y tiene un tamano comprimido coherente para el contenido existente (~41 KiB).
 - Estan guardados los manifiestos, estado de Kubernetes, imagenes desplegadas, valores locales y commits de cierre.
+- **No esta guardado `ret-pvc`.** El dump contiene 93 filas activas en `ret0.owned_files` (439,216,786 bytes de
+  contenido historico), pero el volumen recreado solo contiene `lost+found`.
+- Solo 44 archivos siguen referenciados por objetos activos (148,718,557 bytes). Los GLB fuente de la sala y de los
+  avatares RPM se localizaron en el Mac y se preservaron en un bundle local ignorado por Git. El proyecto Spoke y el
+  GLB publicado final de la sala no tienen copia exacta localizada.
 - Las tres imagenes privadas principales responden correctamente en GHCR con la credencial local:
   - `ghcr.io/yengalvez/hubs:runtime-fix-20260219-5e1344b00-55`
   - `ghcr.io/yengalvez/reticulum:ret-cspfix-20260219-984ba9a-latest`
@@ -163,7 +169,8 @@ La reactivacion debe demostrar primero que el backup sigue funcionando, sin mezc
 9. Restaurar `retdb` desde el dump.
 10. Configurar/verificar DNS y TLS.
 11. Ejecutar smoke tests del estado conocido: home, login, creacion/entrada en sala, Spoke, audio/WebRTC, avatares, tercera persona, sitting y bots ghost.
-12. Crear un dump nuevo antes de probar una actualizacion.
+12. Resolver la recuperacion de contenido y crear un backup conjunto DB + `ret-pvc`.
+13. Crear un dump nuevo antes de probar una actualizacion.
 
 No se debe actualizar Hubs y restaurar infraestructura en el mismo paso: si algo falla, hay que poder distinguir si falla la recuperacion o la actualizacion.
 

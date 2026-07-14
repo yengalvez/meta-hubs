@@ -38,6 +38,7 @@
 - Keep `PERMS_KEY` stable across deploys by **setting it in** `deployment/input-values.local.yaml` (and copying into `hubs-cloud/community-edition/input-values.yaml`). If it is missing, `gen-hcce` will generate a new key and **rooms can break** after partial restarts (typical symptom: `Imposible conectarse a esta sala` with `JsonWebTokenError: invalid signature`). If this happens, restart both `reticulum` and `dialog` so they load the same key material.
 - Runtime hotpatches, local/in-cluster image builds, `kubectl cp` and `kubectl set image` are not standard methods. Do not use them unless the owner explicitly approves a named emergency exception after the normal path fails.
 - Never edit generated `hcce.yaml` or reapply manual RBAC patches. Fix the tracked generator, rerun `npm run gen-hcce`, require the manifest verifier to pass, then apply the generated file unchanged.
+- A project freeze is not complete with `pg_dump` alone. Require both a DB dump and a successful `deployment/backup-ret-storage.sh` archive before deleting DOKS or its volumes; validate restores with `deployment/restore-retdb.sh` and `deployment/restore-ret-storage.sh`.
 
 ## Code Standards
 - Maintain documentation for every new feature in `features/`.
