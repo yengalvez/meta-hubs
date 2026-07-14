@@ -196,6 +196,22 @@ else
   fail "El securityContext de Reticulum no coincide con el baseline auditado"
 fi
 
+bot_security="$(
+  printf '%s' "$deployments_json" | jq -r '
+    .items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.containers[] | select(.name == "bot-orchestrator") | .securityContext |
+    [(.runAsNonRoot == true), (.runAsUser == 1000), (.runAsGroup == 1000),
+      (.allowPrivilegeEscalation == false),
+      ((.capabilities.drop // []) | index("ALL") != null), (.seccompProfile.type == "RuntimeDefault")] |
+    all
+  ' 2>/dev/null || true
+)"
+if [[ "$bot_security" == "true" ]]; then
+  pass "Bot orchestrator usa UID/GID 1000, elimina capabilities y usa seccomp"
+else
+  fail "El securityContext de bot-orchestrator no coincide con el baseline auditado"
+fi
+
 ret_bot_checksum="$(
   printf '%s' "$deployments_json" | jq -r '
     .items[] | select(.metadata.name == "reticulum") |

@@ -78,12 +78,12 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 |-----------|-----------------|-------------|
 | Hubs client | `ghcr.io/yengalvez/hubs:recovery-avatarfix-20260714-ee75980ad-latest` | `29347365972` |
 | Reticulum | `ghcr.io/yengalvez/reticulum:audit-retlog-20260714-7ae357f-latest` | `29365678444` |
-| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator:audit-botguard-20260714-7de9b5c-latest` | `29362366946` |
+| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:0c2f0fb16828ee93dea0a9dc42f49928ed4e161a51d9ca02866fc02ab8c99ab8` | `29374198198` |
 | Coturn | `ghcr.io/yengalvez/coturn@sha256:c2ad335349d477d342d5b17c82b513bfebc8c17b8e6b4e27a3049f3478207780` | `29371663849` |
 
-The July bot-orchestrator hardening was promoted on 2026-07-14 after the recovery checkpoint. Production uses
+The July bot-orchestrator hardening was promoted through 2026-07-15 after the recovery checkpoint. Production uses
 `RUNNER_BACKEND=ghost`, `MAX_ACTIVE_ROOMS=5` and `MAX_BOTS_PER_ROOM=10`. The exact live digest is
-`sha256:1f71222a824870c52636775df4da0dfade5daf9c9840f3d660440d33b7032cc8`; the March `ghost-fullsync` image remains
+`sha256:0c2f0fb16828ee93dea0a9dc42f49928ed4e161a51d9ca02866fc02ab8c99ab8`; the March `ghost-fullsync` image remains
 available only as the tested rollback.
 
 Reticulum was subsequently promoted from commit `7ae357f` and is pinned live at
@@ -121,11 +121,13 @@ Runtime capacity and isolation baseline (measured and accepted on 2026-07-14):
   credential rotation cannot leave consumers on stale environment variables;
 - Coturn uses the audited wrapper image, never logs `PSQL`, keeps the database URI out of process arguments and
   writes `/etc/turnserver.conf` as mode `0600`. The previous known-leaky digest is rejected by manifest verification.
+- bot-orchestrator runs as UID/GID 1000 with no effective capabilities, privilege escalation disabled and the
+  RuntimeDefault seccomp profile. Both generated and live verifiers enforce this baseline.
 
 Important deployment distinction:
 
 - Hubs runs the July recovery commit `ee75980ad`; Reticulum runs the audited commit `7ae357f`.
-- Bot orchestrator runs the July audit commit `7de9b5c` built by the standard GitHub Actions workflow.
+- Bot orchestrator runs the July audit commit `3ce47c9`, published by Actions run `29374198198`.
 - Coturn runs the credential-safe commit `98f9b1c`, published by Actions run `29371663849` and pinned to digest
   `sha256:c2ad335349d477d342d5b17c82b513bfebc8c17b8e6b4e27a3049f3478207780`.
 - The moderated, rate-limited, `store:false` OpenAI path and hardened same-origin scene loader are live. This reduces
@@ -367,6 +369,7 @@ invariants hold:
 - every Deployment image is pinned by an exact SHA-256 digest;
 - PostgreSQL, Reticulum, Dialog and Coturn use `Recreate` for single-writer storage or exclusive host ports;
 - Reticulum is non-privileged, drops every capability and has no propagated host mount;
+- bot-orchestrator runs as UID/GID 1000, drops every capability and uses RuntimeDefault seccomp;
 - Reticulum and bot-orchestrator carry the same bot-key checksum annotation;
 - Reticulum, both PgBouncer pools and Coturn carry one matching DB-credential checksum;
 - every Deployment except HAProxy disables service-account token automounting;

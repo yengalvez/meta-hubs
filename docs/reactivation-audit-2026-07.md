@@ -26,8 +26,8 @@ Commits estables congelados de marzo:
 Candidatos actuales desplegados, todavia sin promover a las ramas base:
 
 - Superproyecto `codex/audit-2026`: rama de integracion activa; comprobar su HEAD con `git rev-parse HEAD`.
-- `hubs/codex/audit-2026`: `ee75980ad095ec522f3f056bc0eed7158c6c59c7`.
-- `hubs-cloud/codex/audit-2026`: `f896ba1cd5bbcbc479684295aa2c4963ca4719c6`.
+- `hubs/codex/audit-2026`: `99f1e9cad07a51e1c156952936a522265028a12d`.
+- `hubs-cloud/codex/audit-2026`: `3ce47c9ae86736a0cfc7ed2ede5122edab78f014`.
 
 El superproyecto de preparacion fija esos dos commits de submodulo. Antes de crear ramas nuevas, comprobar siempre
 `git submodule status` para no trabajar sobre un commit distinto al fijado por el superproyecto.
@@ -39,7 +39,7 @@ Comprobado de nuevo contra los repositorios oficiales el 14 de julio de 2026:
 - El fork usa el generador Hubs CE `2.0.0`.
 - El `hubs-cloud` oficial esta en `2.1.0`.
 - La ultima etiqueta de produccion identificada del cliente es `prod-2026-03-11` (`e3b9cc749`).
-- El fork del cliente parte de `prod-2025-12-17` (`55ae9ec20`); la rama auditada tiene 56 commits propios y esta solo 2 commits por detras de `prod-2026-03-11`.
+- El fork del cliente parte de `prod-2025-12-17` (`55ae9ec20`); la rama auditada tiene 57 commits propios y esta solo 2 commits por detras de `prod-2026-03-11`.
 - Esos 2 commits oficiales corrigen PDFs en VR movil.
 - La rama oficial `master` contiene cambios posteriores de CI, seguridad, documentacion y retirada de branding, pero no debe confundirse automaticamente con una release de produccion.
 
@@ -47,7 +47,7 @@ Pruebas de merge sin modificar las ramas:
 
 - `hubs/codex/audit-2026` + `prod-2026-03-11`: merge limpio, sin conflictos.
 - `hubs/codex/audit-2026` + ultimo `master` oficial: 15 commits oficiales pendientes; no debe tratarse como release.
-- `hubs-cloud/codex/audit-2026` + `2.1.0`: 55 commits propios y 6 oficiales pendientes. La simulacion solo
+- `hubs-cloud/codex/audit-2026` + `2.1.0`: 58 commits propios y 6 oficiales pendientes. La simulacion solo
   encuentra un conflicto `modify/delete` en `community-edition/input-values.yaml`: upstream lo modifica y YenHubs lo
   elimino del historial para que los secretos permanezcan en una copia local ignorada. La resolucion correcta es
   conservarlo fuera de Git; no es un bloqueo del generador.
@@ -133,15 +133,16 @@ El archivo local fija actualmente las imagenes live de recuperacion:
 
 - `ghcr.io/yengalvez/hubs@sha256:1746ba9f367871d17a7bc7e5c2b1fd512bb76769936a64a3b361811fcc453edb`
 - `ghcr.io/yengalvez/reticulum@sha256:fd4cfca70b63ddfe369d1fe48a8c4cd9bb4b5f5910728a9fbee16d121a665b53`
-- `ghcr.io/yengalvez/bot-orchestrator@sha256:1f71222a824870c52636775df4da0dfade5daf9c9840f3d660440d33b7032cc8`
+- `ghcr.io/yengalvez/bot-orchestrator@sha256:0c2f0fb16828ee93dea0a9dc42f49928ed4e161a51d9ca02866fc02ab8c99ab8`
 
 Las diez referencias auxiliares tambien estan fijadas por digest. El generador rechaza tags mutables, y `pgsql`,
 `reticulum`, `dialog` y `coturn` usan `Recreate` para no solapar PVC o host ports exclusivos. El checkpoint previo a
 esa normalizacion esta en `output/audit-imagepin-20260714-215632/`.
 
-El bot-orchestrator auditado se publico por GitHub Actions `29362366946` y se desplego por el flujo normal. La imagen
+El bot-orchestrator auditado se publico por GitHub Actions `29374198198` y se desplego por el flujo normal. La imagen
 de marzo `ghost-fullsync-20260307-e38b70d-latest` se conserva como rollback. Tras el rollout pasaron rehidratacion de
-dos salas, contrato de chat live y carga tardia en navegador con tres bots moviendose y sin runner visible.
+dos salas, contrato de chat live y carga tardia en navegador con tres bots moviendose y sin runner visible. El runtime
+actual usa UID/GID 1000, cero capabilities, `NoNewPrivs` y seccomp RuntimeDefault.
 
 ## 5. Controles antes de reactivar DigitalOcean
 
