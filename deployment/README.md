@@ -79,6 +79,7 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 | Hubs client | `ghcr.io/yengalvez/hubs:recovery-avatarfix-20260714-ee75980ad-latest` | `29347365972` |
 | Reticulum | `ghcr.io/yengalvez/reticulum:audit-retlog-20260714-7ae357f-latest` | `29365678444` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator:audit-botguard-20260714-7de9b5c-latest` | `29362366946` |
+| Coturn | `ghcr.io/yengalvez/coturn@sha256:c2ad335349d477d342d5b17c82b513bfebc8c17b8e6b4e27a3049f3478207780` | `29371663849` |
 
 The July bot-orchestrator hardening was promoted on 2026-07-14 after the recovery checkpoint. Production uses
 `RUNNER_BACKEND=ghost`, `MAX_ACTIVE_ROOMS=5` and `MAX_BOTS_PER_ROOM=10`. The exact live digest is
@@ -114,11 +115,19 @@ Runtime capacity and isolation baseline (measured and accepted on 2026-07-14):
 - five Cilium NetworkPolicies isolate bot-orchestrator, PostgreSQL, both PgBouncer pools and Photomnemonic to their
   exact same-namespace callers and ports. Egress remains open for TURN, SMTP, OpenAI and media proxies; there is no
   unsafe namespace-wide `default-deny` yet.
+- all 11 non-controller Deployments set `automountServiceAccountToken: false`; only HAProxy keeps a token and uses
+  the dedicated `haproxy-sa` account because it must watch Kubernetes resources;
+- Reticulum, both PgBouncer pools and Coturn share a generated DB-credential checksum annotation, so a local
+  credential rotation cannot leave consumers on stale environment variables;
+- Coturn uses the audited wrapper image, never logs `PSQL`, keeps the database URI out of process arguments and
+  writes `/etc/turnserver.conf` as mode `0600`. The previous known-leaky digest is rejected by manifest verification.
 
 Important deployment distinction:
 
 - Hubs runs the July recovery commit `ee75980ad`; Reticulum runs the audited commit `7ae357f`.
 - Bot orchestrator runs the July audit commit `7de9b5c` built by the standard GitHub Actions workflow.
+- Coturn runs the credential-safe commit `98f9b1c`, published by Actions run `29371663849` and pinned to digest
+  `sha256:c2ad335349d477d342d5b17c82b513bfebc8c17b8e6b4e27a3049f3478207780`.
 - The moderated, rate-limited, `store:false` OpenAI path and hardened same-origin scene loader are live. This reduces
   YenHubs-side retention but is **not** a claim of OpenAI Zero Data Retention; provider abuse-monitoring retention
   remains governed by the OpenAI account policy.
@@ -129,6 +138,7 @@ The pre-rollout runtime digests and the post-rollout bot digest/evidence capture
 /Users/Shared/Gits/YenHubs/output/audit-checkpoint-20260714-210044/runtime-image-digests.txt
 /Users/Shared/Gits/YenHubs/output/audit-checkpoint-20260714-210044/postdeploy-botguard.txt
 /Users/Shared/Gits/YenHubs/output/audit-imagepin-20260714-215632/
+/Users/Shared/Gits/YenHubs/output/audit-db-rotation-20260714-235659/
 ```
 
 This ignored checkpoint also contains a fresh database dump, the 34 physical blob/metadata pairs currently present,
@@ -358,6 +368,9 @@ invariants hold:
 - PostgreSQL, Reticulum, Dialog and Coturn use `Recreate` for single-writer storage or exclusive host ports;
 - Reticulum is non-privileged, drops every capability and has no propagated host mount;
 - Reticulum and bot-orchestrator carry the same bot-key checksum annotation;
+- Reticulum, both PgBouncer pools and Coturn carry one matching DB-credential checksum;
+- every Deployment except HAProxy disables service-account token automounting;
+- Coturn does not use the known credential-leaking image;
 - HAProxy has startup, readiness and liveness probes on `/healthz:1042`;
 - all 13 containers have audited requests/memory limits and no CPU limit;
 - the five internal NetworkPolicies keep the exact audited caller/port matrix;

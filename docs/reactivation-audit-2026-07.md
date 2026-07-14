@@ -27,7 +27,7 @@ Candidatos actuales desplegados, todavia sin promover a las ramas base:
 
 - Superproyecto `codex/audit-2026`: rama de integracion activa; comprobar su HEAD con `git rev-parse HEAD`.
 - `hubs/codex/audit-2026`: `ee75980ad095ec522f3f056bc0eed7158c6c59c7`.
-- `hubs-cloud/codex/audit-2026`: `b2cfd27facdbe2686a9ef304147abd53fd786bf2`.
+- `hubs-cloud/codex/audit-2026`: `f896ba1cd5bbcbc479684295aa2c4963ca4719c6`.
 
 El superproyecto de preparacion fija esos dos commits de submodulo. Antes de crear ramas nuevas, comprobar siempre
 `git submodule status` para no trabajar sobre un commit distinto al fijado por el superproyecto.
@@ -47,7 +47,7 @@ Pruebas de merge sin modificar las ramas:
 
 - `hubs/codex/audit-2026` + `prod-2026-03-11`: merge limpio, sin conflictos.
 - `hubs/codex/audit-2026` + ultimo `master` oficial: 15 commits oficiales pendientes; no debe tratarse como release.
-- `hubs-cloud/codex/audit-2026` + `2.1.0`: 47 commits propios y 6 oficiales pendientes. La simulacion solo
+- `hubs-cloud/codex/audit-2026` + `2.1.0`: 55 commits propios y 6 oficiales pendientes. La simulacion solo
   encuentra un conflicto `modify/delete` en `community-edition/input-values.yaml`: upstream lo modifica y YenHubs lo
   elimino del historial para que los secretos permanezcan en una copia local ignorada. La resolucion correcta es
   conservarlo fuera de Git; no es un bloqueo del generador.
@@ -266,6 +266,8 @@ El propietario autorizo la auditoria. Este alcance se ejecuta por lotes y mantie
 - Auditoria integral y correcciones: autorizadas y en curso.
 - Coste DigitalOcean: autorizado para la topologia estimada de 62 USD/mes y `HA=false`.
 - Credenciales operativas: `doctl` y Mailtrap preparados localmente sin versionar secretos.
+- Credencial DB: rotada el 15 de julio tras corregir la fuga de Coturn; el checkpoint restaurable previo esta en
+  `output/audit-db-rotation-20260714-235659/` y el valor real solo existe en los YAML locales ignorados/Kubernetes.
 - Siguiente puerta: endurecer por imagen los contenedores root que sigan necesitandolo y clasificar dependencias;
   despues ejecutar audio/WebRTC, sitting multiusuario, movil/VR, Spoke, rollback, carga y auditoria visual antes de
   integrar las dos ramas oficiales.

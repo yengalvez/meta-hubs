@@ -214,6 +214,53 @@ else
   fail "La huella de BOT_ACCESS_KEY falta o no coincide"
 fi
 
+database_checksum_summary="$(
+  printf '%s' "$deployments_json" | jq -r '
+    [.items[] | select(.metadata.name == "reticulum" or .metadata.name == "pgbouncer" or
+      .metadata.name == "pgbouncer-t" or .metadata.name == "coturn") |
+      .spec.template.metadata.annotations["yenhubs.org/db-credential-checksum"] // ""] |
+    {count: length, unique: unique}
+  ' 2>/dev/null || true
+)"
+database_checksum_count="$(printf '%s' "$database_checksum_summary" | jq -r '.count // 0' 2>/dev/null || true)"
+database_checksum_unique="$(printf '%s' "$database_checksum_summary" | jq -r '.unique | length' 2>/dev/null || true)"
+database_checksum="$(printf '%s' "$database_checksum_summary" | jq -r '.unique[0] // ""' 2>/dev/null || true)"
+if [[ "$database_checksum_count" == "4" && "$database_checksum_unique" == "1" &&
+  "$database_checksum" =~ ^[a-fA-F0-9]{64}$ ]]; then
+  pass "Los cuatro consumidores DB comparten la huella de rotacion"
+else
+  fail "La huella DB falta o no coincide entre Reticulum, PgBouncer y Coturn"
+fi
+
+token_mount_violations="$(
+  printf '%s' "$deployments_json" | jq -r '
+    [.items[] | select(.metadata.name != "haproxy" and
+      .spec.template.spec.automountServiceAccountToken != false) | .metadata.name] | join(",")
+  ' 2>/dev/null || true
+)"
+haproxy_service_account="$(
+  printf '%s' "$deployments_json" | jq -r '
+    .items[] | select(.metadata.name == "haproxy") | .spec.template.spec.serviceAccountName // ""
+  ' 2>/dev/null || true
+)"
+if [[ -z "$token_mount_violations" && "$haproxy_service_account" == "haproxy-sa" ]]; then
+  pass "Solo HAProxy conserva un token de Kubernetes y usa su cuenta dedicada"
+else
+  fail "Montaje de token Kubernetes inesperado: ${token_mount_violations:-haproxy-sa ausente}"
+fi
+
+coturn_image="$(
+  printf '%s' "$deployments_json" | jq -r '
+    .items[] | select(.metadata.name == "coturn") | .spec.template.spec.containers[0].image // ""
+  ' 2>/dev/null || true
+)"
+credential_leaking_coturn_image="docker.io/mozillareality/coturn@sha256:8380269c7bb2dc369f4126251199f0d603711debe8537b22cb7be470a50c51ce"
+if [[ -n "$coturn_image" && "$coturn_image" != "$credential_leaking_coturn_image" ]]; then
+  pass "Coturn no usa la imagen que registraba su conexion PostgreSQL"
+else
+  fail "Coturn usa una imagen con fuga conocida de credenciales"
+fi
+
 policy_summary="$(
   kubectl get networkpolicy -n "$NAMESPACE" -o json 2>/dev/null | jq -r '
     .items[] |
