@@ -85,6 +85,17 @@ The July bot-orchestrator hardening was promoted on 2026-07-14 after the recover
 `sha256:1f71222a824870c52636775df4da0dfade5daf9c9840f3d660440d33b7032cc8`; the March `ghost-fullsync` image remains
 available only as the tested rollback.
 
+After that rollout, all 13 live containers were changed from mutable tags to the exact digests they were already
+running. `npm run gen-hcce` now rejects every Deployment image that is not in `repository@sha256:<64 hex>` form.
+The ignored local values are therefore the authoritative image lock, not the readable tags in the table.
+
+Persistent/exclusive workloads have explicit safe update strategies:
+
+- `pgsql` and `reticulum`: `Recreate`, so two revisions never write the same single-writer PVC.
+- `dialog` and `coturn`: `Recreate`, so two revisions never compete for host ports `4443`/`5349` on the single node.
+- HAProxy: startup, readiness and liveness checks on `/healthz:1042`; startup has up to 120 seconds before liveness
+  may restart it.
+
 Important deployment distinction:
 
 - Hubs and Reticulum run the July recovery commits (`ee75980ad` and `19c56f6f`).
@@ -98,6 +109,7 @@ The pre-rollout runtime digests and the post-rollout bot digest/evidence capture
 ```text
 /Users/Shared/Gits/YenHubs/output/audit-checkpoint-20260714-210044/runtime-image-digests.txt
 /Users/Shared/Gits/YenHubs/output/audit-checkpoint-20260714-210044/postdeploy-botguard.txt
+/Users/Shared/Gits/YenHubs/output/audit-imagepin-20260714-215632/
 ```
 
 This ignored checkpoint also contains a fresh database dump, the 34 physical blob/metadata pairs currently present,
@@ -277,11 +289,16 @@ Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
 - `SMTP_*` - your SMTP credentials
 - `NODE_COOKIE`, `GUARDIAN_KEY`, `PHX_KEY` - **generate random 32+ character strings** (use `openssl rand -base64 48`)
 - `PERSISTENT_VOLUME_STORAGE_CLASS` - `do-block-storage` for DigitalOcean
-- `OVERRIDE_HUBS_IMAGE` - set this to your custom client image when you ship client-side features (official `hubsfoundation/hubs:*` images do not include local code changes)
-- `OVERRIDE_BOT_ORCHESTRATOR_IMAGE` - set this to your custom bot orchestrator image when room bots/chat are enabled
+- `OVERRIDE_HUBS_IMAGE` - set this to the digest-pinned custom client image when you ship client-side features
+  (official `hubsfoundation/hubs:*` images do not include local code changes)
+- `OVERRIDE_BOT_ORCHESTRATOR_IMAGE` - set this to the digest-pinned custom bot image when room bots/chat are enabled
 - `BOT_ACCESS_KEY` - random shared key used by Reticulum <-> bot-orchestrator internal calls
 - `OPENAI_API_KEY` - API key used by bot-orchestrator for LLM chat (model defaults to `gpt-5-nano`)
-- `OVERRIDE_HAPROXY_IMAGE` - set to `haproxytech/kubernetes-ingress:3.2` for modern K8s compatibility
+- `OVERRIDE_HAPROXY_IMAGE` - set to the approved digest for HAProxyTech 3.2 on modern Kubernetes
+
+Every `OVERRIDE_*_IMAGE` used by a Deployment must be `repository@sha256:<digest>`. After an Actions build, resolve
+the published tag to its registry digest, update the ignored local values and regenerate. The verifier deliberately
+fails on `stable-latest`, `*-latest` and version tags, even when they currently point at the expected bytes.
 
 ### Step 7: Generate hcce.yaml
 
@@ -525,7 +542,8 @@ The cheapest and most reliable loop is:
 
 1. Push code to GitHub.
 2. Build + push the image in **GitHub Actions** (no DO CPU/RAM usage, avoids in-cluster OOM builds).
-3. Update `OVERRIDE_HUBS_IMAGE` in the local values file.
+3. Resolve the published registry digest and update `OVERRIDE_HUBS_IMAGE` as `repository@sha256:<digest>` in the local
+   values file.
 4. Run `npm run gen-hcce`, review the diff, and deploy with `kubectl apply`.
 5. Verify the rollout and restart Reticulum to refresh page-origin HTML.
 
@@ -645,7 +663,7 @@ kubectl patch deployment hubs -n hcce --type='json' \
 
 If hubs rollout gets stuck with `ErrImagePull` / `ImagePullBackOff`:
 
-1. Restore the previous known-good `OVERRIDE_HUBS_IMAGE` in `deployment/input-values.local.yaml`.
+1. Restore the previous known-good digest-pinned `OVERRIDE_HUBS_IMAGE` in `deployment/input-values.local.yaml`.
 2. Copy values, run `npm run gen-hcce`, apply and verify through the standard flow.
 3. Do not fall back to an official image: it does not contain YenHubs features and can desynchronize CSP/assets.
 
@@ -666,7 +684,7 @@ DigitalOcean blocks outbound ports 25, 465, and 587. Use alternative ports:
 - Scaleway: port **2587**
 
 ### Why not mozillareality/haproxy?
-The official Hubs CE HAProxy image (`mozillareality/haproxy:stable-latest`) is based on `haproxytech/kubernetes-ingress:1.8.5` (2022), which only supports K8s 1.21-1.23. Since K8s 1.31 is no longer available on DigitalOcean, this image crashes on every available K8s version. We use `haproxytech/kubernetes-ingress:3.2` directly.
+The official Hubs CE HAProxy image (`mozillareality/haproxy:stable-latest`) is based on `haproxytech/kubernetes-ingress:1.8.5` (2022), which only supports K8s 1.21-1.23. Since K8s 1.31 is no longer available on DigitalOcean, this image crashes on every available K8s version. We use the captured HAProxyTech 3.2 digest directly; the readable `3.2` tag is documentation, not the runtime pin.
 
 ### Why not npm run gen-ssl?
 The built-in SSL script (`npm run gen-ssl`) deploys a certbot pod that creates temporary ingresses for ACME challenges. This doesn't work with `haproxytech/kubernetes-ingress:3.2` because the routing priorities differ from the original 1.8.5. cert-manager solves this properly and also handles auto-renewal.

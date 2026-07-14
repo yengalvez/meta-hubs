@@ -27,7 +27,7 @@ Candidatos actuales desplegados, todavia sin promover a las ramas base:
 
 - Superproyecto `codex/audit-2026`: rama de integracion activa; comprobar su HEAD con `git rev-parse HEAD`.
 - `hubs/codex/audit-2026`: `ee75980ad095ec522f3f056bc0eed7158c6c59c7`.
-- `hubs-cloud/codex/audit-2026`: `7de9b5c171fdc8ce977cc9d22d22aec52281471d`.
+- `hubs-cloud/codex/audit-2026`: `43f5733a12d69a9cc0f1734590ddd68f7a8d144f`.
 
 El superproyecto de preparacion fija esos dos commits de submodulo. Antes de crear ramas nuevas, comprobar siempre
 `git submodule status` para no trabajar sobre un commit distinto al fijado por el superproyecto.
@@ -47,7 +47,7 @@ Pruebas de merge sin modificar las ramas:
 
 - `hubs/codex/audit-2026` + `prod-2026-03-11`: merge limpio, sin conflictos.
 - `hubs/codex/audit-2026` + ultimo `master` oficial: 15 commits oficiales pendientes; no debe tratarse como release.
-- `hubs-cloud/codex/audit-2026` + `2.1.0`: 35 commits propios y 6 oficiales pendientes. La simulacion solo
+- `hubs-cloud/codex/audit-2026` + `2.1.0`: 39 commits propios y 6 oficiales pendientes. La simulacion solo
   encuentra un conflicto `modify/delete` en `community-edition/input-values.yaml`: upstream lo modifica y YenHubs lo
   elimino del historial para que los secretos permanezcan en una copia local ignorada. La resolucion correcta es
   conservarlo fuera de Git; no es un bloqueo del generador.
@@ -131,9 +131,13 @@ se ha aplicado a produccion.
 
 El archivo local fija actualmente las imagenes live de recuperacion:
 
-- `ghcr.io/yengalvez/hubs:recovery-avatarfix-20260714-ee75980ad-latest`
-- `ghcr.io/yengalvez/reticulum:recovery-retfix-20260714-19c56f6-latest`
-- `ghcr.io/yengalvez/bot-orchestrator:audit-botguard-20260714-7de9b5c-latest`
+- `ghcr.io/yengalvez/hubs@sha256:1746ba9f367871d17a7bc7e5c2b1fd512bb76769936a64a3b361811fcc453edb`
+- `ghcr.io/yengalvez/reticulum@sha256:fd4cfca70b63ddfe369d1fe48a8c4cd9bb4b5f5910728a9fbee16d121a665b53`
+- `ghcr.io/yengalvez/bot-orchestrator@sha256:1f71222a824870c52636775df4da0dfade5daf9c9840f3d660440d33b7032cc8`
+
+Las diez referencias auxiliares tambien estan fijadas por digest. El generador rechaza tags mutables, y `pgsql`,
+`reticulum`, `dialog` y `coturn` usan `Recreate` para no solapar PVC o host ports exclusivos. El checkpoint previo a
+esa normalizacion esta en `output/audit-imagepin-20260714-215632/`.
 
 El bot-orchestrator auditado se publico por GitHub Actions `29362366946` y se desplego por el flujo normal. La imagen
 de marzo `ghost-fullsync-20260307-e38b70d-latest` se conserva como rollback. Tras el rollout pasaron rehidratacion de
