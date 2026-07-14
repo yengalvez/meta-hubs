@@ -27,7 +27,7 @@ Candidatos actuales desplegados, todavia sin promover a las ramas base:
 
 - Superproyecto `codex/audit-2026`: rama de integracion activa; comprobar su HEAD con `git rev-parse HEAD`.
 - `hubs/codex/audit-2026`: `99f1e9cad07a51e1c156952936a522265028a12d`.
-- `hubs-cloud/codex/audit-2026`: `4eb743b1ebec741d1888ee0ce62f9cdeb4c87f8f`.
+- `hubs-cloud/codex/audit-2026`: `e670a4a2e55f5bbbf2dadaf827a728a853ec0433`.
 
 El superproyecto de preparacion fija esos dos commits de submodulo. Antes de crear ramas nuevas, comprobar siempre
 `git submodule status` para no trabajar sobre un commit distinto al fijado por el superproyecto.
@@ -47,7 +47,7 @@ Pruebas de merge sin modificar las ramas:
 
 - `hubs/codex/audit-2026` + `prod-2026-03-11`: merge limpio, sin conflictos.
 - `hubs/codex/audit-2026` + ultimo `master` oficial: 15 commits oficiales pendientes; no debe tratarse como release.
-- `hubs-cloud/codex/audit-2026` + `2.1.0`: 60 commits propios y 6 oficiales pendientes. La simulacion solo
+- `hubs-cloud/codex/audit-2026` + `2.1.0`: 62 commits propios y 6 oficiales pendientes. La simulacion solo
   encuentra un conflicto `modify/delete` en `community-edition/input-values.yaml`: upstream lo modifica y YenHubs lo
   elimino del historial para que los secretos permanezcan en una copia local ignorada. La resolucion correcta es
   conservarlo fuera de Git; no es un bloqueo del generador.
@@ -149,6 +149,13 @@ Dialog se publico por GitHub Actions `29375052801` y se desplego por el mismo fl
 3.19.22, cero advisories de produccion, UID/GID 1000 y sondas TCP/4443. El checkpoint previo esta en
 `output/audit-dialog-node22-20260715-0105/`. Dos navegadores aislados completaron publicacion y consumo de audio con
 transports/ICE conectados y trafico RTP creciente en ambas direcciones.
+
+Photomnemonic se publico por GitHub Actions `29376531637` y esta fijado a
+`sha256:aef369b82212429d01c0f1f554b16c34a99cf4bbb75e0693e190c796b33012f2`. Usa Node 22, Chromium 149 y Puppeteer
+Core 25.1, tiene cero advisories de produccion y valida cada URL, redireccion y peticion del navegador. Su politica
+egress solo permite kube-dns y destinos web IPv4 publicos; loopback, metadata, red privada y puertos no web se
+rechazaron tanto en un pod aislado como en produccion. Evidencia local: `output/audit-photomnemonic-20260715/` y
+`output/audit-photomnemonic-predeploy-20260715-0138/`.
 
 ## 5. Controles antes de reactivar DigitalOcean
 

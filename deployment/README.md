@@ -80,6 +80,7 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 | Reticulum | `ghcr.io/yengalvez/reticulum:audit-retlog-20260714-7ae357f-latest` | `29365678444` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:0c2f0fb16828ee93dea0a9dc42f49928ed4e161a51d9ca02866fc02ab8c99ab8` | `29374198198` |
 | Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` | `29375052801` |
+| Photomnemonic | `ghcr.io/yengalvez/photomnemonic@sha256:aef369b82212429d01c0f1f554b16c34a99cf4bbb75e0693e190c796b33012f2` | `29376531637` |
 | Coturn | `ghcr.io/yengalvez/coturn@sha256:c2ad335349d477d342d5b17c82b513bfebc8c17b8e6b4e27a3049f3478207780` | `29371663849` |
 
 The July bot-orchestrator hardening was promoted through 2026-07-15 after the recovery checkpoint. Production uses
@@ -108,14 +109,15 @@ Persistent/exclusive workloads have explicit safe update strategies:
 Runtime capacity and isolation baseline (measured and accepted on 2026-07-14):
 
 - all 13 containers declare CPU/memory requests and a memory limit;
-- application requests total 665 mCPU and 2,944 MiB; with DOKS system pods the node reserves 1,297 mCPU (33%) and
-  3,746 MiB (58%);
+- application requests total 665 mCPU and 3,200 MiB; with DOKS system pods the node reserves 1,297 mCPU (33%) and
+  4,002 MiB (62%);
 - no application has a CPU limit, so this guardrail does not introduce CFS throttling or an artificial CCU cap;
-- memory limits are deliberately overcommitted (146% including system pods) to retain burst headroom. They protect
+- memory limits are deliberately overcommitted (150% including system pods) to retain burst headroom. They protect
   individual runaway processes but do not prove capacity; run a staged room/WebRTC load test before promising 75 CCU;
-- five Cilium NetworkPolicies isolate bot-orchestrator, PostgreSQL, both PgBouncer pools and Photomnemonic to their
-  exact same-namespace callers and ports. Egress remains open for TURN, SMTP, OpenAI and media proxies; there is no
-  unsafe namespace-wide `default-deny` yet.
+- five Cilium ingress NetworkPolicies isolate bot-orchestrator, PostgreSQL, both PgBouncer pools and Photomnemonic to
+  their exact same-namespace callers and ports. A sixth policy limits Photomnemonic egress to cluster DNS and public
+  IPv4 HTTP/HTTPS while excluding private, loopback, link-local, metadata and reserved ranges. Egress remains open for
+  TURN, SMTP, OpenAI and other media proxies; there is no unsafe namespace-wide `default-deny` yet.
 - all 11 non-controller Deployments set `automountServiceAccountToken: false`; only HAProxy keeps a token and uses
   the dedicated `haproxy-sa` account because it must watch Kubernetes resources;
 - Reticulum, both PgBouncer pools and Coturn share a generated DB-credential checksum annotation, so a local
@@ -127,6 +129,11 @@ Runtime capacity and isolation baseline (measured and accepted on 2026-07-14):
 - Dialog uses Node 22 and Mediasoup 3.19.22, has zero production npm advisories, and runs as UID/GID 1000 with no
   capabilities, no privilege escalation, RuntimeDefault seccomp and TCP startup/readiness/liveness probes on 4443.
   Keep Mediasoup below 3.20 until the Dialog SCTP option contract is migrated deliberately; 3.20 changes that API.
+- Photomnemonic uses Node 22, Puppeteer Core 25.1 and Chromium 149 with zero production npm advisories. It validates
+  the initial URL, every redirect and every browser request against public HTTP/HTTPS destinations, permits one
+  screenshot at a time, omits paths/queries from logs and always closes pages. Production runs as UID/GID 1000 with
+  no capabilities, no privilege escalation, RuntimeDefault seccomp and HTTP probes. Its measured post-capture RSS was
+  about 400 MiB, so its request/limit are 384/768 MiB rather than the unsafe previous 512 MiB limit.
 
 Important deployment distinction:
 
@@ -134,6 +141,8 @@ Important deployment distinction:
 - Bot orchestrator runs the July audit commit `3ce47c9`, published by Actions run `29374198198`.
 - Dialog runs cloud commit `4eb743b` (runtime change in `08a0cf3`), published by Actions run `29375052801` and pinned
   to digest `sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23`.
+- Photomnemonic runs cloud commit `e670a4a` (runtime change in `662035c`), published by Actions run `29376531637` and
+  pinned to digest `sha256:aef369b82212429d01c0f1f554b16c34a99cf4bbb75e0693e190c796b33012f2`.
 - Coturn runs the credential-safe commit `98f9b1c`, published by Actions run `29371663849` and pinned to digest
   `sha256:c2ad335349d477d342d5b17c82b513bfebc8c17b8e6b4e27a3049f3478207780`.
 - The moderated, rate-limited, `store:false` OpenAI path and hardened same-origin scene loader are live. This reduces
@@ -148,6 +157,8 @@ The pre-rollout runtime digests and the post-rollout bot digest/evidence capture
 /Users/Shared/Gits/YenHubs/output/audit-imagepin-20260714-215632/
 /Users/Shared/Gits/YenHubs/output/audit-db-rotation-20260714-235659/
 /Users/Shared/Gits/YenHubs/output/audit-dialog-node22-20260715-0105/
+/Users/Shared/Gits/YenHubs/output/audit-photomnemonic-20260715/
+/Users/Shared/Gits/YenHubs/output/audit-photomnemonic-predeploy-20260715-0138/
 ```
 
 This ignored checkpoint also contains a fresh database dump, the 34 physical blob/metadata pairs currently present,
@@ -377,6 +388,8 @@ invariants hold:
 - PostgreSQL, Reticulum, Dialog and Coturn use `Recreate` for single-writer storage or exclusive host ports;
 - Reticulum is non-privileged, drops every capability and has no propagated host mount;
 - bot-orchestrator runs as UID/GID 1000, drops every capability and uses RuntimeDefault seccomp;
+- Photomnemonic runs as UID/GID 1000, drops every capability, uses RuntimeDefault seccomp and exposes only its
+  audited HTTP health probes;
 - Reticulum and bot-orchestrator carry the same bot-key checksum annotation;
 - Reticulum, both PgBouncer pools and Coturn carry one matching DB-credential checksum;
 - every Deployment except HAProxy disables service-account token automounting;
@@ -384,6 +397,8 @@ invariants hold:
 - HAProxy has startup, readiness and liveness probes on `/healthz:1042`;
 - all 13 containers have audited requests/memory limits and no CPU limit;
 - the five internal NetworkPolicies keep the exact audited caller/port matrix;
+- the Photomnemonic egress policy permits only kube-dns and public IPv4 TCP/80,443 while excluding private/reserved
+  destinations;
 - HAProxy RBAC contains CRD and Gateway API permissions;
 - no obsolete self-signed bootstrap secret or unresolved placeholder remains;
 - exactly one `LoadBalancer` service and two 10 GiB DigitalOcean PVCs are generated.

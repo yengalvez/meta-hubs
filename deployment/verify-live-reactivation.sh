@@ -236,6 +236,25 @@ else
   fail "El runtime de Dialog no coincide con el baseline auditado"
 fi
 
+photomnemonic_security="$(
+  printf '%s' "$deployments_json" | jq -r '
+    .items[] | select(.metadata.name == "photomnemonic") |
+    .spec.template.spec.containers[] | select(.name == "photomnemonic") |
+    [(.securityContext.runAsNonRoot == true), (.securityContext.runAsUser == 1000),
+      (.securityContext.runAsGroup == 1000), (.securityContext.allowPrivilegeEscalation == false),
+      ((.securityContext.capabilities.drop // []) | index("ALL") != null),
+      (.securityContext.seccompProfile.type == "RuntimeDefault"),
+      (.startupProbe.httpGet.path == "/_readyz"), (.startupProbe.httpGet.port == 5000),
+      (.readinessProbe.httpGet.path == "/_readyz"), (.readinessProbe.httpGet.port == 5000),
+      (.livenessProbe.httpGet.path == "/_healthz"), (.livenessProbe.httpGet.port == 5000)] | all
+  ' 2>/dev/null || true
+)"
+if [[ "$photomnemonic_security" == "true" ]]; then
+  pass "Photomnemonic usa UID/GID 1000, elimina capabilities, usa seccomp y tiene sondas HTTP"
+else
+  fail "El runtime de Photomnemonic no coincide con el baseline auditado"
+fi
+
 ret_bot_checksum="$(
   printf '%s' "$deployments_json" | jq -r '
     .items[] | select(.metadata.name == "reticulum") |
@@ -303,7 +322,7 @@ fi
 
 policy_summary="$(
   kubectl get networkpolicy -n "$NAMESPACE" -o json 2>/dev/null | jq -r '
-    .items[] |
+    .items[] | select((.spec.policyTypes // []) | index("Ingress")) |
     [.metadata.name, .spec.podSelector.matchLabels.app,
       ([.spec.ingress[].from[]?.podSelector.matchLabels.app] | sort | join(",")),
       ([.spec.ingress[].ports[]? | ((.protocol // "TCP") + ":" + (.port | tostring))] | sort | join(","))] |
@@ -322,6 +341,26 @@ if [[ "$policy_summary" == "$expected_policy_summary" ]]; then
   pass "Las cinco NetworkPolicies internas coinciden con la matriz auditada"
 else
   fail "Las NetworkPolicies live no coinciden con la matriz auditada"
+fi
+
+photomnemonic_egress="$(
+  kubectl get networkpolicy photomnemonic-egress -n "$NAMESPACE" -o json 2>/dev/null | jq -r '
+    ["0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+      "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24",
+      "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24",
+      "224.0.0.0/4", "240.0.0.0/4"] as $expected_except |
+    (.spec.podSelector.matchLabels.app == "photomnemonic") and
+    (.spec.policyTypes == ["Egress"]) and
+    ((.spec.egress // []) | length == 2) and
+    ([.spec.egress[] | select(any(.to[]?; .namespaceSelector.matchLabels["kubernetes.io/metadata.name"] == "kube-system" and .podSelector.matchLabels["k8s-app"] == "kube-dns")) | .ports[] | ((.protocol // "TCP") + ":" + (.port | tostring))] | sort == ["TCP:53", "UDP:53"]) and
+    ([.spec.egress[] | select(any(.to[]?; .ipBlock.cidr == "0.0.0.0/0")) | .ports[] | ((.protocol // "TCP") + ":" + (.port | tostring))] | sort == ["TCP:443", "TCP:80"]) and
+    ([.spec.egress[].to[]? | select(.ipBlock.cidr == "0.0.0.0/0") | .ipBlock.except[]] | sort == ($expected_except | sort))
+  ' 2>/dev/null || true
+)"
+if [[ "$photomnemonic_egress" == "true" ]]; then
+  pass "Photomnemonic solo puede resolver DNS y acceder a web publica TCP/80,443"
+else
+  fail "La politica egress de Photomnemonic no coincide con el baseline auditado"
 fi
 
 printf '\nDatabase\n'
