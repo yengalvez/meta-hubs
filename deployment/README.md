@@ -77,7 +77,7 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 | Component | Live image | Actions run |
 |-----------|-----------------|-------------|
 | Hubs client | `ghcr.io/yengalvez/hubs@sha256:64953f6323ba4c87e0408fba73a9784a6a45f68c4a4608494d419a48aefbff5a` | `29410309085` |
-| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:033c9cb2cc61e7ab31d14c0b4229873193ee13af21a731c06f54fdb842556990` | CI `29404978302`; build `29405028046` |
+| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:5afd810973aa2f54d863ec524fa2320f83b74d210abb7e5b15df62a708233651` | CI `29432345676`; build `29432642364` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:c914bd51a3c81b4332a4ce126bea4a2cd91dead36044c434ca5dc4ceccfcd527` | `29405025982` |
 | Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` | `29375052801` |
 | Photomnemonic | `ghcr.io/yengalvez/photomnemonic@sha256:aef369b82212429d01c0f1f554b16c34a99cf4bbb75e0693e190c796b33012f2` | `29376531637` |
@@ -102,12 +102,12 @@ API request. Its tests/build must run with Node `16.13.2`, matching the Spoke Do
 aborts under Node 22 before executing tests. Run the complete suite as `npx ava 'test/unit/**/*.test.js'`: the unquoted
 package-script glob only selects part of the nested suite in some shells.
 
-Reticulum was subsequently modernized through cloud commits `1ec6163`/`623e4ce`/`2811408` and is pinned live at
-`sha256:033c9cb2cc61e7ab31d14c0b4229873193ee13af21a731c06f54fdb842556990`. It uses Elixir 1.18.4, OTP 27.3.4.14,
+Reticulum was subsequently modernized and hardened through cloud commit `dfc248f6bd` and is pinned live at
+`sha256:5afd810973aa2f54d863ec524fa2320f83b74d210abb7e5b15df62a708233651`. It uses Elixir 1.18.4, OTP 27.3.4.14,
 Phoenix 1.6.17, Plug 1.16.6, Cowboy 2.15, Ecto 3.14 and Postgrex 0.22.3. In addition to credential filtering, this
 revision closes the audited CORS proxy rebinding/header issues, scopes entity operations to their room, fixes account
-deletion ownership and replaces blocking Statix calls. CI, an isolated PostgreSQL 12/storage canary and production
-rollout all passed before this digest became the lock.
+deletion ownership, replaces blocking Statix calls and reconciles abandoned Spoke files in two delayed stages. CI on
+PostgreSQL 12/14, isolated storage tests and the production rollout passed before this digest became the lock.
 
 After that rollout, all 13 live containers were changed from mutable tags to the exact digests they were already
 running. `npm run gen-hcce` now rejects every Deployment image that is not in `repository@sha256:<64 hex>` form.
@@ -882,7 +882,9 @@ mkdir -p "$CHECKPOINT"
 ```
 
 El primer script verifica esquema y migraciones; el segundo exige que cada `owned_file` activo tenga su par
-`.blob`/`.meta.json`. Un checkpoint no se considera completo si falta cualquiera de los dos artefactos.
+`.blob`/`.meta.json` y que no exista ningun par fisico incompleto. Puede incluir pares completos adicionales en estado
+diferido: Reticulum los conserva durante la ventana de gracia de 24 horas antes de moverlos a `expiring`. Un checkpoint
+no se considera completo si falta cualquiera de los dos artefactos.
 
 Checkpoint coherente aceptado despues de recuperar el contenido y antes de desplegar Reticulum moderno:
 
@@ -894,6 +896,18 @@ output/audit-retmodern-predeploy-20260715-103120/ret-storage-COHERENT.tar.gz
 `SHA256SUMS-POST-COHERENT` fija ambos hashes. El estado esperado es PostgreSQL 12.19, 94 migraciones, 34
 `owned_files` activos, 93 historicos inactivos y exactamente 34 blobs + 34 metadatos. Los 93 bytes historicos que ya
 faltaban no son recuperables desde este checkpoint; no volver a marcar esas filas como activas.
+
+Checkpoint previo al reconciliador de owned files desplegado el 15 de julio:
+
+```text
+output/audit-spoke-reconcile-predeploy-20260715-182804/retdb.sql.gz
+output/audit-spoke-reconcile-predeploy-20260715-182804/ret-storage.tar.gz
+```
+
+`SHA256SUMS` valida ambos artefactos. El estado contiene 34 filas activas y 38 pares fisicos completos: los cuatro pares
+extra son versiones sustituidas por dos guardados reales de Spoke y permanecen deliberadamente diferidos. Backup y
+restore validan UUIDs activos, no solo cantidades; no deben rechazarse ni borrarse pares diferidos completos durante
+su ventana de gracia.
 
 El equivalente manual de referencia es:
 
@@ -1032,8 +1046,9 @@ CONFIRM_RESTORE_STORAGE=ret-pvc ./deployment/restore-ret-storage.sh \
   /path/to/ret-storage-YYYYMMDD.tar.gz
 ```
 
-The restore script refuses unsafe archive paths, a DB/archive count mismatch and a non-empty destination. On a
-failure after Reticulum is stopped, Reticulum intentionally remains at zero for inspection.
+The restore script refuses unsafe archive paths, missing active UUIDs, incomplete blob/metadata pairs and a non-empty
+destination. Complete deferred pairs are restored with the active set so Reticulum can finish its normal grace-period
+cleanup. On a failure after Reticulum is stopped, Reticulum intentionally remains at zero for inspection.
 
 ## Cost Savings
 

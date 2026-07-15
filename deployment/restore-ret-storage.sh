@@ -34,8 +34,14 @@ fi
 
 ARCHIVE_BLOB_COUNT="$(gzip -cd "$ARCHIVE_PATH" | tar -tf - | awk '/\.blob$/ { count++ } END { print count + 0 }')"
 ARCHIVE_META_COUNT="$(gzip -cd "$ARCHIVE_PATH" | tar -tf - | awk '/\.meta\.json$/ { count++ } END { print count + 0 }')"
+ARCHIVE_BLOB_UUIDS="$(gzip -cd "$ARCHIVE_PATH" | tar -tf - | sed -n 's#^.*/\([^/]*\)\.blob$#\1#p' | sort -u)"
+ARCHIVE_META_UUIDS="$(gzip -cd "$ARCHIVE_PATH" | tar -tf - | sed -n 's#^.*/\([^/]*\)\.meta\.json$#\1#p' | sort -u)"
+ARCHIVE_INCOMPLETE_PAIRS="$(comm -3 \
+  <(printf '%s\n' "$ARCHIVE_BLOB_UUIDS" | sed '/^$/d' | sort -u) \
+  <(printf '%s\n' "$ARCHIVE_META_UUIDS" | sed '/^$/d' | sort -u))"
 
-if [[ "$ARCHIVE_BLOB_COUNT" -eq 0 || "$ARCHIVE_BLOB_COUNT" -ne "$ARCHIVE_META_COUNT" ]]; then
+if [[ "$ARCHIVE_BLOB_COUNT" -eq 0 || "$ARCHIVE_BLOB_COUNT" -ne "$ARCHIVE_META_COUNT" ||
+      -n "$ARCHIVE_INCOMPLETE_PAIRS" ]]; then
   printf 'Invalid storage archive: blobs=%s metadata=%s.\n' "$ARCHIVE_BLOB_COUNT" "$ARCHIVE_META_COUNT" >&2
   exit 1
 fi
@@ -49,16 +55,31 @@ DB_ACTIVE_COUNT="$(
   kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
     'psql -U "$POSTGRES_USER" -d retdb -Atc "select count(*) from ret0.owned_files where state = '\''active'\''"'
 )"
+DB_ACTIVE_UUIDS="$(
+  kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
+    'psql -U "$POSTGRES_USER" -d retdb -Atc "select owned_file_uuid from ret0.owned_files where state = '\''active'\'' order by owned_file_uuid"' \
+    | tr -d '\r'
+)"
+MISSING_ACTIVE_BLOBS="$(comm -23 \
+  <(printf '%s\n' "$DB_ACTIVE_UUIDS" | sed '/^$/d' | sort -u) \
+  <(printf '%s\n' "$ARCHIVE_BLOB_UUIDS" | sed '/^$/d' | sort -u))"
+MISSING_ACTIVE_META="$(comm -23 \
+  <(printf '%s\n' "$DB_ACTIVE_UUIDS" | sed '/^$/d' | sort -u) \
+  <(printf '%s\n' "$ARCHIVE_META_UUIDS" | sed '/^$/d' | sort -u))"
 
-if [[ "$ARCHIVE_BLOB_COUNT" -ne "$DB_ACTIVE_COUNT" ]]; then
-  printf 'Archive/database mismatch: DB active files=%s archive files=%s.\n' \
-    "$DB_ACTIVE_COUNT" "$ARCHIVE_BLOB_COUNT" >&2
+if [[ "$ARCHIVE_BLOB_COUNT" -lt "$DB_ACTIVE_COUNT" || -n "$MISSING_ACTIVE_BLOBS" ||
+      -n "$MISSING_ACTIVE_META" ]]; then
+  printf 'Archive/database mismatch: DB active files=%s archive files=%s missing_active_blobs=%s missing_active_metadata=%s.\n' \
+    "$DB_ACTIVE_COUNT" "$ARCHIVE_BLOB_COUNT" \
+    "$(printf '%s\n' "$MISSING_ACTIVE_BLOBS" | sed '/^$/d' | wc -l | tr -d ' ')" \
+    "$(printf '%s\n' "$MISSING_ACTIVE_META" | sed '/^$/d' | wc -l | tr -d ' ')" >&2
   exit 1
 fi
 
 if [[ "$DRY_RUN" == "1" ]]; then
-  printf 'Storage restore preflight passed: archive=%s files=%s namespace=%s pvc=ret-pvc\n' \
-    "$ARCHIVE_PATH" "$ARCHIVE_BLOB_COUNT" "$NAMESPACE"
+  printf 'Storage restore preflight passed: archive=%s active_files=%s complete_pairs=%s deferred_pairs=%s namespace=%s pvc=ret-pvc\n' \
+    "$ARCHIVE_PATH" "$DB_ACTIVE_COUNT" "$ARCHIVE_BLOB_COUNT" \
+    "$((ARCHIVE_BLOB_COUNT - DB_ACTIVE_COUNT))" "$NAMESPACE"
   exit 0
 fi
 
@@ -123,8 +144,29 @@ RESTORED_COUNTS="$(
 )"
 RESTORED_BLOBS="$(printf '%s\n' "$RESTORED_COUNTS" | sed -n '1p' | tr -d ' ')"
 RESTORED_META="$(printf '%s\n' "$RESTORED_COUNTS" | sed -n '2p' | tr -d ' ')"
+RESTORED_BLOB_UUIDS="$(
+  kubectl exec -n "$NAMESPACE" "$RESTORE_POD" -- sh -ec \
+    'find /storage/owned -type f -name "*.blob" -exec basename {} .blob \; 2>/dev/null | sort -u' \
+    | tr -d '\r'
+)"
+RESTORED_META_UUIDS="$(
+  kubectl exec -n "$NAMESPACE" "$RESTORE_POD" -- sh -ec \
+    'find /storage/owned -type f -name "*.meta.json" -exec basename {} .meta.json \; 2>/dev/null | sort -u' \
+    | tr -d '\r'
+)"
+RESTORED_MISSING_ACTIVE_BLOBS="$(comm -23 \
+  <(printf '%s\n' "$DB_ACTIVE_UUIDS" | sed '/^$/d' | sort -u) \
+  <(printf '%s\n' "$RESTORED_BLOB_UUIDS" | sed '/^$/d' | sort -u))"
+RESTORED_MISSING_ACTIVE_META="$(comm -23 \
+  <(printf '%s\n' "$DB_ACTIVE_UUIDS" | sed '/^$/d' | sort -u) \
+  <(printf '%s\n' "$RESTORED_META_UUIDS" | sed '/^$/d' | sort -u))"
+RESTORED_INCOMPLETE_PAIRS="$(comm -3 \
+  <(printf '%s\n' "$RESTORED_BLOB_UUIDS" | sed '/^$/d' | sort -u) \
+  <(printf '%s\n' "$RESTORED_META_UUIDS" | sed '/^$/d' | sort -u))"
 
-if [[ "$RESTORED_BLOBS" -ne "$DB_ACTIVE_COUNT" || "$RESTORED_META" -ne "$DB_ACTIVE_COUNT" ]]; then
+if [[ "$RESTORED_BLOBS" -ne "$ARCHIVE_BLOB_COUNT" || "$RESTORED_META" -ne "$ARCHIVE_META_COUNT" ||
+      -n "$RESTORED_MISSING_ACTIVE_BLOBS" || -n "$RESTORED_MISSING_ACTIVE_META" ||
+      -n "$RESTORED_INCOMPLETE_PAIRS" ]]; then
   printf 'Storage restore verification failed: DB=%s blobs=%s metadata=%s.\n' \
     "$DB_ACTIVE_COUNT" "$RESTORED_BLOBS" "$RESTORED_META" >&2
   printf 'The Reticulum deployment remains at zero for inspection.\n' >&2
@@ -136,5 +178,5 @@ trap - EXIT
 kubectl scale deployment reticulum -n "$NAMESPACE" --replicas="$RET_REPLICAS" >/dev/null
 kubectl rollout status deployment/reticulum -n "$NAMESPACE" --timeout=5m >/dev/null
 
-printf 'Reticulum storage restore completed: files=%s namespace=%s pvc=ret-pvc\n' \
-  "$DB_ACTIVE_COUNT" "$NAMESPACE"
+printf 'Reticulum storage restore completed: active_files=%s complete_pairs=%s deferred_pairs=%s namespace=%s pvc=ret-pvc\n' \
+  "$DB_ACTIVE_COUNT" "$RESTORED_BLOBS" "$((RESTORED_BLOBS - DB_ACTIVE_COUNT))" "$NAMESPACE"

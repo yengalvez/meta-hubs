@@ -380,6 +380,11 @@ SQL' 2>/dev/null || true
   migrations="$(printf '%s\n' "$database_counts" | sed -n '2p')"
   hubs="$(printf '%s\n' "$database_counts" | sed -n '3p')"
   active_owned_files="$(printf '%s\n' "$database_counts" | sed -n '4p')"
+  active_owned_file_uuids="$(
+    kubectl exec -n "$NAMESPACE" "$pgsql_pod" -- sh -ec \
+      'psql -U "$POSTGRES_USER" -d retdb -Atc "select owned_file_uuid from ret0.owned_files where state::text = '\''active'\'' order by owned_file_uuid"' \
+      2>/dev/null || true
+  )"
   if [[ "$schema_tables" =~ ^[0-9]+$ && "$migrations" =~ ^[0-9]+$ && "$hubs" =~ ^[0-9]+$ &&
     "$active_owned_files" =~ ^[0-9]+$ ]] &&
     [[ "$schema_tables" -ge 356 && "$migrations" -ge 94 && "$hubs" -ge 17 ]]; then
@@ -402,15 +407,39 @@ if [[ -n "$reticulum_pod" && "${active_owned_files:-}" =~ ^[0-9]+$ ]]; then
   )"
   storage_blobs="$(printf '%s\n' "$storage_counts" | sed -n '1p' | tr -d ' ')"
   storage_meta="$(printf '%s\n' "$storage_counts" | sed -n '2p' | tr -d ' ')"
-  if [[ "$active_owned_files" -gt 0 && "$storage_blobs" == "$active_owned_files" &&
-    "$storage_meta" == "$active_owned_files" ]]; then
-    pass "ret-pvc completo: blobs=$storage_blobs metadata=$storage_meta"
-  elif [[ "$storage_blobs" =~ ^[0-9]+$ && "$storage_meta" =~ ^[0-9]+$ &&
-    "$storage_blobs" -gt 0 && "$storage_blobs" == "$storage_meta" &&
-    "$storage_blobs" -lt "$active_owned_files" ]]; then
-    warn "ret-pvc contiene la recuperacion funcional, pero faltan medios historicos: active_owned_files=$active_owned_files blobs=$storage_blobs metadata=$storage_meta"
+  storage_blob_uuids="$(
+    kubectl exec -n "$NAMESPACE" -c reticulum "$reticulum_pod" -- sh -ec \
+      'find /storage/owned -type f -name "*.blob" -exec basename {} .blob \; 2>/dev/null | sort' \
+      2>/dev/null || true
+  )"
+  storage_meta_uuids="$(
+    kubectl exec -n "$NAMESPACE" -c reticulum "$reticulum_pod" -- sh -ec \
+      'find /storage/owned -type f -name "*.meta.json" -exec basename {} .meta.json \; 2>/dev/null | sort' \
+      2>/dev/null || true
+  )"
+  missing_active_blobs="$(
+    comm -23 \
+      <(printf '%s\n' "$active_owned_file_uuids" | sed '/^$/d' | sort) \
+      <(printf '%s\n' "$storage_blob_uuids" | sed '/^$/d' | sort)
+  )"
+  missing_active_meta="$(
+    comm -23 \
+      <(printf '%s\n' "$active_owned_file_uuids" | sed '/^$/d' | sort) \
+      <(printf '%s\n' "$storage_meta_uuids" | sed '/^$/d' | sort)
+  )"
+  incomplete_pairs="$(
+    comm -3 \
+      <(printf '%s\n' "$storage_blob_uuids" | sed '/^$/d' | sort) \
+      <(printf '%s\n' "$storage_meta_uuids" | sed '/^$/d' | sort)
+  )"
+
+  if [[ "$active_owned_files" -gt 0 && "$storage_blobs" =~ ^[0-9]+$ &&
+    "$storage_meta" =~ ^[0-9]+$ && "$storage_blobs" == "$storage_meta" &&
+    -z "$missing_active_blobs" && -z "$missing_active_meta" && -z "$incomplete_pairs" ]]; then
+    deferred_owned_files=$((storage_blobs - active_owned_files))
+    pass "ret-pvc completo: activos=$active_owned_files pares=$storage_blobs diferidos=$deferred_owned_files"
   else
-    fail "ret-pvc no coincide con DB: active_owned_files=$active_owned_files blobs=${storage_blobs:-?} metadata=${storage_meta:-?}"
+    fail "ret-pvc incoherente: activos=$active_owned_files blobs=${storage_blobs:-?} metadata=${storage_meta:-?} missing_blob=$(printf '%s' "$missing_active_blobs" | wc -l | tr -d ' ') missing_meta=$(printf '%s' "$missing_active_meta" | wc -l | tr -d ' ') pares_incompletos=$(printf '%s' "$incomplete_pairs" | wc -l | tr -d ' ')"
   fi
 else
   fail "No se pudo validar ret-pvc contra la base"
