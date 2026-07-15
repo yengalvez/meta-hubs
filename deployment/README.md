@@ -77,7 +77,7 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 | Component | Live image | Actions run |
 |-----------|-----------------|-------------|
 | Hubs client | `ghcr.io/yengalvez/hubs:recovery-avatarfix-20260714-ee75980ad-latest` | `29347365972` |
-| Reticulum | `ghcr.io/yengalvez/reticulum:audit-retlog-20260714-7ae357f-latest` | `29365678444` |
+| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:0d671eb2013e11ba2110998e7f25ed849c67fc9e9945894d2c5a71b77e23f595` | CI `29403210817`; build `29403433612` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:0c2f0fb16828ee93dea0a9dc42f49928ed4e161a51d9ca02866fc02ab8c99ab8` | `29374198198` |
 | Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` | `29375052801` |
 | Photomnemonic | `ghcr.io/yengalvez/photomnemonic@sha256:aef369b82212429d01c0f1f554b16c34a99cf4bbb75e0693e190c796b33012f2` | `29376531637` |
@@ -88,10 +88,12 @@ The July bot-orchestrator hardening was promoted through 2026-07-15 after the re
 `sha256:0c2f0fb16828ee93dea0a9dc42f49928ed4e161a51d9ca02866fc02ab8c99ab8`; the March `ghost-fullsync` image remains
 available only as the tested rollback.
 
-Reticulum was subsequently promoted from commit `7ae357f` and is pinned live at
-`sha256:f4a8c5d9fa2a19acbed03fcaae9cf0bab1eefd6046a4d63a35a92fdf9bb481d2`. This revision filters bot credentials and
-other token/password/secret parameters before Phoenix writes HTTP, socket or channel metadata to logs. The internal
-bot key was rotated after this filter was accepted in production; the previous value is no longer valid.
+Reticulum was subsequently modernized through cloud commits `1ec6163`/`623e4ce` and is pinned live at
+`sha256:0d671eb2013e11ba2110998e7f25ed849c67fc9e9945894d2c5a71b77e23f595`. It uses Elixir 1.18.4, OTP 27.3.4.14,
+Phoenix 1.6.17, Plug 1.16.6, Cowboy 2.15, Ecto 3.14 and Postgrex 0.22.3. In addition to credential filtering, this
+revision closes the audited CORS proxy rebinding/header issues, scopes entity operations to their room, fixes account
+deletion ownership and replaces blocking Statix calls. CI, an isolated PostgreSQL 12/storage canary and production
+rollout all passed before this digest became the lock.
 
 After that rollout, all 13 live containers were changed from mutable tags to the exact digests they were already
 running. `npm run gen-hcce` now rejects every Deployment image that is not in `repository@sha256:<64 hex>` form.
@@ -137,7 +139,7 @@ Runtime capacity and isolation baseline (measured and accepted on 2026-07-14):
 
 Important deployment distinction:
 
-- Hubs runs the July recovery commit `ee75980ad`; Reticulum runs the audited commit `7ae357f`.
+- Hubs runs the July recovery commit `ee75980ad`; Reticulum runs the audited commit `623e4ce`.
 - Bot orchestrator runs the July audit commit `3ce47c9`, published by Actions run `29374198198`.
 - Dialog runs cloud commit `4eb743b` (runtime change in `08a0cf3`), published by Actions run `29375052801` and pinned
   to digest `sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23`.
@@ -161,10 +163,11 @@ The pre-rollout runtime digests and the post-rollout bot digest/evidence capture
 /Users/Shared/Gits/YenHubs/output/audit-photomnemonic-predeploy-20260715-0138/
 ```
 
-This ignored checkpoint also contains a fresh database dump, the 34 physical blob/metadata pairs currently present,
-a redacted manifest inventory and a second coherent database candidate that was restored twice in isolation. The raw
-production snapshot remains intentionally labelled `INCOMPLETE`: production has 127 active `owned_files` rows but
-only 34 corresponding physical pairs. See the checkpoint `README.txt` before any restore.
+The 2026-07-14 ignored checkpoint contains the pre-reconciliation database, the 34 physical blob/metadata pairs, a
+redacted manifest inventory and the coherent candidate that was restored twice in isolation. Its raw snapshot remains
+intentionally labelled `INCOMPLETE` because it records the former 127-active/34-physical mismatch. Do not restore that
+raw dump over the current environment. The authoritative coherent pair is the post-change dump plus storage archive
+under `output/audit-retmodern-predeploy-20260715-103120/`.
 
 ## Cost
 
@@ -203,6 +206,16 @@ deployment path unless the owner explicitly approves an emergency exception.
 - **DigitalOcean account** with payment method
 - **Domain name** with DNS access
 - **SMTP service** (Mailtrap, Scaleway, etc.)
+
+Reticulum development and release validation require the exact versions in `hubs-cloud/community-edition/services/reticulum/.tool-versions`.
+On this Mac they are managed with `mise`:
+
+```bash
+brew install mise
+cd hubs-cloud/community-edition/services/reticulum
+mise install
+mise exec -- mix --version
+```
 
 Before recreating a frozen deployment, run the read-only preflight from the repository root:
 
@@ -843,6 +856,31 @@ Fix:
 
 ## Backups
 
+Para checkpoints nuevos, usar los scripts validados en lugar de reconstruir comandos manuales:
+
+```bash
+CHECKPOINT="output/checkpoint-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$CHECKPOINT"
+./deployment/backup-retdb.sh "$CHECKPOINT/retdb.sql.gz"
+./deployment/backup-ret-storage.sh "$CHECKPOINT/ret-storage.tar.gz"
+```
+
+El primer script verifica esquema y migraciones; el segundo exige que cada `owned_file` activo tenga su par
+`.blob`/`.meta.json`. Un checkpoint no se considera completo si falta cualquiera de los dos artefactos.
+
+Checkpoint coherente aceptado despues de recuperar el contenido y antes de desplegar Reticulum moderno:
+
+```text
+output/audit-retmodern-predeploy-20260715-103120/retdb-POST-COHERENT.sql.gz
+output/audit-retmodern-predeploy-20260715-103120/ret-storage-COHERENT.tar.gz
+```
+
+`SHA256SUMS-POST-COHERENT` fija ambos hashes. El estado esperado es PostgreSQL 12.19, 94 migraciones, 34
+`owned_files` activos, 93 historicos inactivos y exactamente 34 blobs + 34 metadatos. Los 93 bytes historicos que ya
+faltaban no son recuperables desde este checkpoint; no volver a marcar esas filas como activas.
+
+El equivalente manual de referencia es:
+
 ```bash
 # 1. Database metadata backup (do this BEFORE any risky changes).
 PGSQL_POD=$(kubectl get pod -n hcce -l app=pgsql -o jsonpath='{.items[0].metadata.name}')
@@ -915,9 +953,9 @@ trailing-slash form `/admin/`; it is not a valid route in this deployment. The p
 Disk`. The current Hubs/Reticulum images allow a standalone GLB to bootstrap without a historical base parent and
 space avatar creation requests by 1100 ms to respect Reticulum's 1 TPS rate limit.
 
-`deployment/verify-live-reactivation.sh` reports the known storage gap as a warning, not as a healthy full restore:
-the restored database currently references 127 active owned files while `ret-pvc` contains 34 matched blob/metadata
-pairs from the functional reconstruction. A zero-volume or mismatched blob/metadata count remains a hard failure.
+`deployment/verify-live-reactivation.sh` must now report a coherent 34 active owned files and 34 matched
+blob/metadata pairs. A zero-volume or mismatched count is a hard failure. If a restore reports 127 active rows, the
+wrong pre-reconciliation dump was used; stop and restore `retdb-POST-COHERENT.sql.gz` instead.
 
 For disaster recovery when the native file selector is unavailable, render fresh thumbnails and use the tracked API
 import helper. Supply a short-lived admin token through the environment; never put it in Git or command history:

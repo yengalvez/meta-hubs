@@ -27,7 +27,7 @@ Candidatos actuales desplegados, todavia sin promover a las ramas base:
 
 - Superproyecto `codex/audit-2026`: rama de integracion activa; comprobar su HEAD con `git rev-parse HEAD`.
 - `hubs/codex/audit-2026`: `99f1e9cad07a51e1c156952936a522265028a12d`.
-- `hubs-cloud/codex/audit-2026`: `e670a4a2e55f5bbbf2dadaf827a728a853ec0433`.
+- `hubs-cloud/codex/audit-2026`: `623e4ce49dd01f760b7ad8a02989afdafea87f4f`.
 
 El superproyecto de preparacion fija esos dos commits de submodulo. Antes de crear ramas nuevas, comprobar siempre
 `git submodule status` para no trabajar sobre un commit distinto al fijado por el superproyecto.
@@ -124,15 +124,24 @@ Checkpoint posterior a la recuperacion funcional:
 /Users/Shared/Gits/YenHubs/output/audit-checkpoint-20260714-210044/
 ```
 
-Incluye el dump exacto de produccion, los 34 pares fisicos disponibles, manifiesto sin Secrets, digests y una prueba
-de restauracion. Tambien incluye un candidato coherente generado solo en aislamiento: marca inactivos los 93
-`owned_files` historicos cuyos bytes ya no existen y apunta `VJopCY3` a la escena recuperada `f6VKtim`. Ese ajuste no
-se ha aplicado a produccion.
+Incluye el dump exacto anterior a la reconciliacion, los 34 pares fisicos disponibles, manifiesto sin Secrets,
+digests y pruebas de restauracion. El ajuste coherente se restauro dos veces en PostgreSQL 12 aislado y despues se
+aplico a produccion en una unica transaccion: los 93 `owned_files` sin bytes quedan inactivos, los 34 pares presentes
+siguen activos y `VJopCY3` apunta a `f6VKtim`. No se borro ningun registro ni archivo.
+
+Checkpoint coherente posterior a la aplicacion:
+
+```text
+/Users/Shared/Gits/YenHubs/output/audit-retmodern-predeploy-20260715-103120/
+```
+
+Los artefactos restaurables son `retdb-POST-COHERENT.sql.gz` y `ret-storage-COHERENT.tar.gz`; sus hashes estan en
+`SHA256SUMS-POST-COHERENT`. Ambos pasan los validadores de restore en modo dry-run.
 
 El archivo local fija actualmente las imagenes live de recuperacion:
 
 - `ghcr.io/yengalvez/hubs@sha256:1746ba9f367871d17a7bc7e5c2b1fd512bb76769936a64a3b361811fcc453edb`
-- `ghcr.io/yengalvez/reticulum@sha256:fd4cfca70b63ddfe369d1fe48a8c4cd9bb4b5f5910728a9fbee16d121a665b53`
+- `ghcr.io/yengalvez/reticulum@sha256:0d671eb2013e11ba2110998e7f25ed849c67fc9e9945894d2c5a71b77e23f595`
 - `ghcr.io/yengalvez/bot-orchestrator@sha256:0c2f0fb16828ee93dea0a9dc42f49928ed4e161a51d9ca02866fc02ab8c99ab8`
 - `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23`
 
@@ -282,9 +291,15 @@ El propietario autorizo la auditoria. Este alcance se ejecuta por lotes y mantie
 - Credenciales operativas: `doctl` y Mailtrap preparados localmente sin versionar secretos.
 - Credencial DB: rotada el 15 de julio tras corregir la fuga de Coturn; el checkpoint restaurable previo esta en
   `output/audit-db-rotation-20260714-235659/` y el valor real solo existe en los YAML locales ignorados/Kubernetes.
-- Siguiente puerta: endurecer por imagen los contenedores root que sigan necesitandolo y clasificar dependencias;
-  despues ejecutar audio/WebRTC, sitting multiusuario, movil/VR, Spoke, rollback, carga y auditoria visual antes de
-  integrar las dos ramas oficiales.
+- Reticulum moderno: commit `623e4ce` en `hubs-cloud/codex/audit-2026`; CI `29403210817`, build `29403433612` y
+  digest live `sha256:0d671eb2013e11ba2110998e7f25ed849c67fc9e9945894d2c5a71b77e23f595`. Paso 278 pruebas,
+  PostgreSQL 12.19/14.23, release, canary aislado con storage real, rollout `Recreate` y smoke post-deploy.
+- Produccion coherente: PostgreSQL 12.19, 94 migraciones, 34 ficheros activos, 93 historicos inactivos, 34 blobs,
+  34 metadatos y sala principal en `f6VKtim`. El dump y storage posteriores estan en el checkpoint de las 10:31.
+- Ghost runner post-rollout: salud `ok`, backend global `ghost`, dos salas activas sin cola y cinco bots visibles y
+  moviendose en `VJopCY3` desde un navegador real.
+- Siguiente puerta: completar sitting multiusuario, Avaturn privado, movil/VR, Spoke, rollback, carga, guardarrailes IA
+  adversariales y auditoria visual antes de integrar las ramas oficiales.
 - Informe vivo: `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`.
 
 ## Referencias oficiales
