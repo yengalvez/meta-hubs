@@ -41,6 +41,8 @@ aceptacion de este documento.
 - `npm run check`: correcto.
 - `npm test`: lint JS/HTML y 4 pruebas unitarias correctas.
 - `npm run build`: correcto, con los warnings de tamano ya registrados en `AUD-015`.
+- Storybook Actions `29433550837`: correcto.
+- Imagen candidata Actions `29434015549`: `ghcr.io/yengalvez/hubs@sha256:fa72e5ea526704337ed0eef182b0005899d559cae775a2c9761c13577d909786`.
 - El arbol no cambio al registrar la release como ancestro despues de probar el fix oficial.
 
 ### Hubs CE
@@ -76,6 +78,5 @@ aceptacion de este documento.
 
 ## Siguiente gate
 
-Crear imagenes candidatas por GitHub Actions sin mover produccion, desplegarlas primero en un entorno/canary aislado y
-ejecutar la checklist anterior. Solo tras esa aceptacion se propone un diff de produccion y se solicita autorizacion de
-rollout.
+Desplegar el digest candidato ya construido primero en un entorno/canary aislado y ejecutar la checklist anterior. Solo
+tras esa aceptacion se propone un diff de produccion y se solicita autorizacion de rollout.
