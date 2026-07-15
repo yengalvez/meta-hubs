@@ -76,12 +76,13 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 
 | Component | Live image | Actions run |
 |-----------|-----------------|-------------|
-| Hubs client | `ghcr.io/yengalvez/hubs@sha256:7171f00792264f18b6e92d8ab6dac28894a69bdb0d0bb7257314aea2f294c3a0` | `29406729718` |
+| Hubs client | `ghcr.io/yengalvez/hubs@sha256:64953f6323ba4c87e0408fba73a9784a6a45f68c4a4608494d419a48aefbff5a` | `29410309085` |
 | Reticulum | `ghcr.io/yengalvez/reticulum@sha256:033c9cb2cc61e7ab31d14c0b4229873193ee13af21a731c06f54fdb842556990` | CI `29404978302`; build `29405028046` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:c914bd51a3c81b4332a4ce126bea4a2cd91dead36044c434ca5dc4ceccfcd527` | `29405025982` |
 | Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` | `29375052801` |
 | Photomnemonic | `ghcr.io/yengalvez/photomnemonic@sha256:aef369b82212429d01c0f1f554b16c34a99cf4bbb75e0693e190c796b33012f2` | `29376531637` |
 | Coturn | `ghcr.io/yengalvez/coturn@sha256:c2ad335349d477d342d5b17c82b513bfebc8c17b8e6b4e27a3049f3478207780` | `29371663849` |
+| Spoke | `ghcr.io/yengalvez/spoke@sha256:f5120264938e189e702f835182ed4a28a5ce20b140d7262bc2a3074e6d0b6657` | `29410656894` |
 
 The July bot-orchestrator hardening was promoted through 2026-07-15 after the recovery checkpoint. Production uses
 `RUNNER_BACKEND=ghost`, `MAX_ACTIVE_ROOMS=5` and `MAX_BOTS_PER_ROOM=10`. Cloud commit `2811408` aggregates chat rate
@@ -89,8 +90,17 @@ limits by account and room even when users rotate between bots; Hubs commit `d52
 privacy notice. The exact bot digest is `sha256:c914bd51a3c81b4332a4ce126bea4a2cd91dead36044c434ca5dc4ceccfcd527`;
 the March `ghost-fullsync` image remains available only as the tested rollback.
 
-Hubs commit `26bea43d2` also closes a packaging defect: Webpack asset URLs embedded in JavaScript now receive the same
+Hubs commit `26bea43d2` closes a packaging defect: Webpack asset URLs embedded in JavaScript now receive the same
 runtime `BASE_ASSETS_PATH` substitution as HTML/CSS, and the container refuses to start if a placeholder remains.
+The current image also includes `6e0092252`, which clears sitting state on movement and ownership loss in both loaders,
+and `7f016c986`, which rejects stale preview loads and prevents private Avaturn save until a compatible upper-body
+skeleton and thumbnail-ready preview have loaded. The Avaturn UI and guide were accepted live without saving a file.
+
+Spoke commit `cc5c831` fixes the publish authentication retry without repeating exports/uploads and wires cancellation
+to the main GLB upload. Commit `56afaee` additionally treats expired or malformed local JWTs as signed out before an
+API request. Its tests/build must run with Node `16.13.2`, matching the Spoke Dockerfile; the legacy `esm` test loader
+aborts under Node 22 before executing tests. Run the complete suite as `npx ava 'test/unit/**/*.test.js'`: the unquoted
+package-script glob only selects part of the nested suite in some shells.
 
 Reticulum was subsequently modernized through cloud commits `1ec6163`/`623e4ce`/`2811408` and is pinned live at
 `sha256:033c9cb2cc61e7ab31d14c0b4229873193ee13af21a731c06f54fdb842556990`. It uses Elixir 1.18.4, OTP 27.3.4.14,

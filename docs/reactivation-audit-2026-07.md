@@ -313,7 +313,14 @@ El propietario autorizo la auditoria. Este alcance se ejecuta por lotes y mantie
   moviendose en `VJopCY3` desde un navegador real.
 - Privacidad de bots: commit cloud `2811408`, build `29405025982`, rate limit cuenta+sala, filtros de `message`/`prompt`,
   pruebas adversariales live y aviso de sesion temporal desplegado. Falta decidir ZDR/politica legal y carga prolongada.
-- Siguiente puerta: completar sitting multiusuario, Avaturn privado, movil/VR, Spoke, rollback, carga y auditoria visual
+- Hubs auditado en sitting/Avaturn: commits `6e0092252`/`7f016c986`, build `29410309085` y digest live
+  `sha256:64953f6323ba4c87e0408fba73a9784a6a45f68c4a4608494d419a48aefbff5a`; sit/stand basico, UI Avaturn y guia
+  pasaron en un navegador autenticado. La carrera sitting multiusuario y el save Avaturn real siguen tras checkpoint.
+- Spoke auditado: commits cloud `cc5c831`/`56afaee`, build `29410656894` y digest live
+  `sha256:f5120264938e189e702f835182ed4a28a5ce20b140d7262bc2a3074e6d0b6657`; reintento tras login, cancelacion GLB y
+  rechazo temprano de JWT caducado pasan pruebas, build, rollout, HTTPS y verificacion sin drift. La prueba mutable de
+  publish queda tras checkpoint.
+- Siguiente puerta: completar sitting multiusuario, save Avaturn, movil/VR, rollback, carga y auditoria visual
   antes de integrar las ramas oficiales.
 - Informe vivo: `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`.
 
