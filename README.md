@@ -1,10 +1,12 @@
-# YenHubs - Hubs CE 2.0.0 Custom Deployment
+# YenHubs - Custom Hubs CE Deployment
 
-> Recovery note (July 2026): the March freeze has been restored to a new non-HA DigitalOcean cluster. DNS/TLS and
-> live smoke tests remain before the audited July images are rolled out. For the recovery order and shutdown notes,
+> Recovery note (July 2026): the March freeze has been restored to a new non-HA DigitalOcean cluster. DNS/TLS,
+> persistent media, rooms, avatars, ghost bots and the audited July images are live and verified. For recovery notes,
 > see `/Users/Shared/Gits/YenHubs/docs/project-freeze-2026-03.md` and `/Users/Shared/Gits/YenHubs/deployment/README.md`.
 
-> Audit note (July 2026): the audit and estimated DigitalOcean spend are approved. Findings and fixes are tracked in `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`. Reactivation uses the frozen non-HA topology before any upstream upgrade.
+> Upgrade note (July 2026): production remains on the accepted `codex/audit-2026` baseline. Official Hubs
+> `prod-2026-03-11` and Hubs CE `2.1.0` are integrated only on isolated upgrade branches and are not deployed yet.
+> See `/Users/Shared/Gits/YenHubs/docs/upgrade-stable-2026.md`.
 
 Custom deployment of [Hubs Foundation Community Edition](https://hubsfoundation.org/) on DigitalOcean Kubernetes.
 
@@ -12,6 +14,8 @@ Custom deployment of [Hubs Foundation Community Edition](https://hubsfoundation.
 
 - **Third-person camera** - Toggle between first and third person view ([docs](features/third-person/doc-thirdperson.md))
 - **ReadyPlayer.me GLB avatars** - Pre-downloaded full-body avatars with validation ([docs](features/rpm-avatars/README.md))
+- **Private Avaturn GLB avatars** - Per-account upload flow with skeleton validation
+- **Sitting** - Disable-motion waypoints with replicated sit/stand animation ([docs](features/sitting/README.md))
 - **Bots with ghost runner** - Room bots with lower-cost Node-based orchestration ([docs](features/bots/README.md))
 - **Automated SSL** - Let's Encrypt certificates via cert-manager with auto-renewal
 - **Cost-optimized** - DigitalOcean deployment at ~$62/month
@@ -61,7 +65,8 @@ YenHubs/
 │       └── Avaturn/    # Avaturn avatar editor (not active)
 └── docs/               # Project maintenance documentation
     ├── reactivation-audit-2026-07.md  # Rebuild baseline, versions, cost and blockers
-    └── audit-2026-07.md               # Findings, fixes and remaining acceptance tests
+    ├── audit-2026-07.md               # Findings, fixes and remaining acceptance tests
+    └── upgrade-stable-2026.md         # Isolated official-release upgrade state and gates
 ```
 
 ## Cost Estimate
