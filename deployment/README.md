@@ -76,20 +76,21 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 
 | Component | Live image | Actions run |
 |-----------|-----------------|-------------|
-| Hubs client | `ghcr.io/yengalvez/hubs:recovery-avatarfix-20260714-ee75980ad-latest` | `29347365972` |
-| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:0d671eb2013e11ba2110998e7f25ed849c67fc9e9945894d2c5a71b77e23f595` | CI `29403210817`; build `29403433612` |
-| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:0c2f0fb16828ee93dea0a9dc42f49928ed4e161a51d9ca02866fc02ab8c99ab8` | `29374198198` |
+| Hubs client | `ghcr.io/yengalvez/hubs@sha256:3e3e250145a95d144ea1d7b78c9904be809fdd2b8562a4c60a85caea428192ff` | `29405023919` |
+| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:033c9cb2cc61e7ab31d14c0b4229873193ee13af21a731c06f54fdb842556990` | CI `29404978302`; build `29405028046` |
+| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:c914bd51a3c81b4332a4ce126bea4a2cd91dead36044c434ca5dc4ceccfcd527` | `29405025982` |
 | Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` | `29375052801` |
 | Photomnemonic | `ghcr.io/yengalvez/photomnemonic@sha256:aef369b82212429d01c0f1f554b16c34a99cf4bbb75e0693e190c796b33012f2` | `29376531637` |
 | Coturn | `ghcr.io/yengalvez/coturn@sha256:c2ad335349d477d342d5b17c82b513bfebc8c17b8e6b4e27a3049f3478207780` | `29371663849` |
 
 The July bot-orchestrator hardening was promoted through 2026-07-15 after the recovery checkpoint. Production uses
-`RUNNER_BACKEND=ghost`, `MAX_ACTIVE_ROOMS=5` and `MAX_BOTS_PER_ROOM=10`. The exact live digest is
-`sha256:0c2f0fb16828ee93dea0a9dc42f49928ed4e161a51d9ca02866fc02ab8c99ab8`; the March `ghost-fullsync` image remains
-available only as the tested rollback.
+`RUNNER_BACKEND=ghost`, `MAX_ACTIVE_ROOMS=5` and `MAX_BOTS_PER_ROOM=10`. Cloud commit `2811408` aggregates chat rate
+limits by account and room even when users rotate between bots; Hubs commit `d529f36c2` adds the visible temporary-chat
+privacy notice. The exact bot digest is `sha256:c914bd51a3c81b4332a4ce126bea4a2cd91dead36044c434ca5dc4ceccfcd527`;
+the March `ghost-fullsync` image remains available only as the tested rollback.
 
-Reticulum was subsequently modernized through cloud commits `1ec6163`/`623e4ce` and is pinned live at
-`sha256:0d671eb2013e11ba2110998e7f25ed849c67fc9e9945894d2c5a71b77e23f595`. It uses Elixir 1.18.4, OTP 27.3.4.14,
+Reticulum was subsequently modernized through cloud commits `1ec6163`/`623e4ce`/`2811408` and is pinned live at
+`sha256:033c9cb2cc61e7ab31d14c0b4229873193ee13af21a731c06f54fdb842556990`. It uses Elixir 1.18.4, OTP 27.3.4.14,
 Phoenix 1.6.17, Plug 1.16.6, Cowboy 2.15, Ecto 3.14 and Postgrex 0.22.3. In addition to credential filtering, this
 revision closes the audited CORS proxy rebinding/header issues, scopes entity operations to their room, fixes account
 deletion ownership and replaces blocking Statix calls. CI, an isolated PostgreSQL 12/storage canary and production
@@ -161,6 +162,8 @@ The pre-rollout runtime digests and the post-rollout bot digest/evidence capture
 /Users/Shared/Gits/YenHubs/output/audit-dialog-node22-20260715-0105/
 /Users/Shared/Gits/YenHubs/output/audit-photomnemonic-20260715/
 /Users/Shared/Gits/YenHubs/output/audit-photomnemonic-predeploy-20260715-0138/
+/Users/Shared/Gits/YenHubs/output/audit-retmodern-predeploy-20260715-103120/
+/Users/Shared/Gits/YenHubs/output/audit-botprivacy-predeploy-20260715-114137/
 ```
 
 The 2026-07-14 ignored checkpoint contains the pre-reconciliation database, the 34 physical blob/metadata pairs, a

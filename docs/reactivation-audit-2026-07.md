@@ -138,21 +138,31 @@ Checkpoint coherente posterior a la aplicacion:
 Los artefactos restaurables son `retdb-POST-COHERENT.sql.gz` y `ret-storage-COHERENT.tar.gz`; sus hashes estan en
 `SHA256SUMS-POST-COHERENT`. Ambos pasan los validadores de restore en modo dry-run.
 
+Checkpoint coherente previo al rollout de privacidad de bots:
+
+```text
+/Users/Shared/Gits/YenHubs/output/audit-botprivacy-predeploy-20260715-114137/
+```
+
+Contiene dump, 34 pares de storage y `SHA256SUMS`; la base conserva 356 objetos de esquema, 94 migraciones, 34
+ficheros activos y la escena recuperada.
+
 El archivo local fija actualmente las imagenes live de recuperacion:
 
-- `ghcr.io/yengalvez/hubs@sha256:1746ba9f367871d17a7bc7e5c2b1fd512bb76769936a64a3b361811fcc453edb`
-- `ghcr.io/yengalvez/reticulum@sha256:0d671eb2013e11ba2110998e7f25ed849c67fc9e9945894d2c5a71b77e23f595`
-- `ghcr.io/yengalvez/bot-orchestrator@sha256:0c2f0fb16828ee93dea0a9dc42f49928ed4e161a51d9ca02866fc02ab8c99ab8`
+- `ghcr.io/yengalvez/hubs@sha256:3e3e250145a95d144ea1d7b78c9904be809fdd2b8562a4c60a85caea428192ff`
+- `ghcr.io/yengalvez/reticulum@sha256:033c9cb2cc61e7ab31d14c0b4229873193ee13af21a731c06f54fdb842556990`
+- `ghcr.io/yengalvez/bot-orchestrator@sha256:c914bd51a3c81b4332a4ce126bea4a2cd91dead36044c434ca5dc4ceccfcd527`
 - `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23`
 
 Las diez referencias auxiliares tambien estan fijadas por digest. El generador rechaza tags mutables, y `pgsql`,
 `reticulum`, `dialog` y `coturn` usan `Recreate` para no solapar PVC o host ports exclusivos. El checkpoint previo a
 esa normalizacion esta en `output/audit-imagepin-20260714-215632/`.
 
-El bot-orchestrator auditado se publico por GitHub Actions `29374198198` y se desplego por el flujo normal. La imagen
-de marzo `ghost-fullsync-20260307-e38b70d-latest` se conserva como rollback. Tras el rollout pasaron rehidratacion de
-dos salas, contrato de chat live y carga tardia en navegador con tres bots moviendose y sin runner visible. El runtime
-actual usa UID/GID 1000, cero capabilities, `NoNewPrivs` y seccomp RuntimeDefault.
+El bot-orchestrator auditado se republico por GitHub Actions `29405025982` desde cloud commit `2811408` y se desplego
+por el flujo normal. La imagen de marzo `ghost-fullsync-20260307-e38b70d-latest` se conserva como rollback. Tras el
+rollout pasaron rehidratacion de dos salas, moderacion, prompt injection, rate limit concurrente entre bots, logs sin
+texto privado y carga tardia en navegador con cinco bots moviendose y sin runner visible. El runtime actual usa UID/GID
+1000, cero capabilities, `NoNewPrivs` y seccomp RuntimeDefault.
 
 Dialog se publico por GitHub Actions `29375052801` y se desplego por el mismo flujo normal. Usa Node 22, Mediasoup
 3.19.22, cero advisories de produccion, UID/GID 1000 y sondas TCP/4443. El checkpoint previo esta en
@@ -291,15 +301,20 @@ El propietario autorizo la auditoria. Este alcance se ejecuta por lotes y mantie
 - Credenciales operativas: `doctl` y Mailtrap preparados localmente sin versionar secretos.
 - Credencial DB: rotada el 15 de julio tras corregir la fuga de Coturn; el checkpoint restaurable previo esta en
   `output/audit-db-rotation-20260714-235659/` y el valor real solo existe en los YAML locales ignorados/Kubernetes.
-- Reticulum moderno: commit `623e4ce` en `hubs-cloud/codex/audit-2026`; CI `29403210817`, build `29403433612` y
-  digest live `sha256:0d671eb2013e11ba2110998e7f25ed849c67fc9e9945894d2c5a71b77e23f595`. Paso 278 pruebas,
+- Hubs auditado: commit `d529f36c2`, build `29405023919` y digest live
+  `sha256:3e3e250145a95d144ea1d7b78c9904be809fdd2b8562a4c60a85caea428192ff`; el aviso de privacidad del chat bot se
+  verifico en un navegador real.
+- Reticulum moderno: commit `2811408` en `hubs-cloud/codex/audit-2026`; CI `29404978302`, build `29405028046` y
+  digest live `sha256:033c9cb2cc61e7ab31d14c0b4229873193ee13af21a731c06f54fdb842556990`. Paso 278 pruebas,
   PostgreSQL 12.19/14.23, release, canary aislado con storage real, rollout `Recreate` y smoke post-deploy.
 - Produccion coherente: PostgreSQL 12.19, 94 migraciones, 34 ficheros activos, 93 historicos inactivos, 34 blobs,
   34 metadatos y sala principal en `f6VKtim`. El dump y storage posteriores estan en el checkpoint de las 10:31.
 - Ghost runner post-rollout: salud `ok`, backend global `ghost`, dos salas activas sin cola y cinco bots visibles y
   moviendose en `VJopCY3` desde un navegador real.
-- Siguiente puerta: completar sitting multiusuario, Avaturn privado, movil/VR, Spoke, rollback, carga, guardarrailes IA
-  adversariales y auditoria visual antes de integrar las ramas oficiales.
+- Privacidad de bots: commit cloud `2811408`, build `29405025982`, rate limit cuenta+sala, filtros de `message`/`prompt`,
+  pruebas adversariales live y aviso de sesion temporal desplegado. Falta decidir ZDR/politica legal y carga prolongada.
+- Siguiente puerta: completar sitting multiusuario, Avaturn privado, movil/VR, Spoke, rollback, carga y auditoria visual
+  antes de integrar las ramas oficiales.
 - Informe vivo: `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`.
 
 ## Referencias oficiales
