@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VALUES_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 NAMESPACE="${NAMESPACE:-hcce}"
 LOCAL_BOT_PORT="${LOCAL_BOT_PORT:-15001}"
+ROOM_SMOKE_PATH="${ROOM_SMOKE_PATH:-/VJopCY3/inicio}"
 
 failures=0
 warnings=0
@@ -460,6 +461,17 @@ if [[ "$dns_ready" == "1" && "$certificates_ready" == "1" ]]; then
   done
 else
   warn "HTTPS publico no se prueba hasta que DNS y TLS esten listos"
+fi
+
+printf '\nPage assets and CSP\n'
+if [[ "$dns_ready" == "1" && "$certificates_ready" == "1" ]]; then
+  if node "$SCRIPT_DIR/verify-page-assets.mjs" "https://$domain/" "https://$domain$ROOM_SMOKE_PATH"; then
+    pass "Portada y sala tienen assets disponibles y CSP compatible"
+  else
+    fail "El contrato Hubs/Reticulum de assets o CSP no es compatible"
+  fi
+else
+  warn "El contrato de assets/CSP no se prueba hasta que DNS y TLS esten listos"
 fi
 
 printf '\nGhost runner\n'
