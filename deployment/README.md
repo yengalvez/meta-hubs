@@ -76,7 +76,7 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 
 | Component | Live image | Actions run |
 |-----------|-----------------|-------------|
-| Hubs client | `ghcr.io/yengalvez/hubs@sha256:3e3e250145a95d144ea1d7b78c9904be809fdd2b8562a4c60a85caea428192ff` | `29405023919` |
+| Hubs client | `ghcr.io/yengalvez/hubs@sha256:7171f00792264f18b6e92d8ab6dac28894a69bdb0d0bb7257314aea2f294c3a0` | `29406729718` |
 | Reticulum | `ghcr.io/yengalvez/reticulum@sha256:033c9cb2cc61e7ab31d14c0b4229873193ee13af21a731c06f54fdb842556990` | CI `29404978302`; build `29405028046` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:c914bd51a3c81b4332a4ce126bea4a2cd91dead36044c434ca5dc4ceccfcd527` | `29405025982` |
 | Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` | `29375052801` |
@@ -88,6 +88,9 @@ The July bot-orchestrator hardening was promoted through 2026-07-15 after the re
 limits by account and room even when users rotate between bots; Hubs commit `d529f36c2` adds the visible temporary-chat
 privacy notice. The exact bot digest is `sha256:c914bd51a3c81b4332a4ce126bea4a2cd91dead36044c434ca5dc4ceccfcd527`;
 the March `ghost-fullsync` image remains available only as the tested rollback.
+
+Hubs commit `26bea43d2` also closes a packaging defect: Webpack asset URLs embedded in JavaScript now receive the same
+runtime `BASE_ASSETS_PATH` substitution as HTML/CSS, and the container refuses to start if a placeholder remains.
 
 Reticulum was subsequently modernized through cloud commits `1ec6163`/`623e4ce`/`2811408` and is pinned live at
 `sha256:033c9cb2cc61e7ab31d14c0b4229873193ee13af21a731c06f54fdb842556990`. It uses Elixir 1.18.4, OTP 27.3.4.14,

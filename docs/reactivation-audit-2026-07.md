@@ -39,7 +39,7 @@ Comprobado de nuevo contra los repositorios oficiales el 14 de julio de 2026:
 - El fork usa el generador Hubs CE `2.0.0`.
 - El `hubs-cloud` oficial esta en `2.1.0`.
 - La ultima etiqueta de produccion identificada del cliente es `prod-2026-03-11` (`e3b9cc749`).
-- El fork del cliente parte de `prod-2025-12-17` (`55ae9ec20`); la rama auditada tiene 57 commits propios y esta solo 2 commits por detras de `prod-2026-03-11`.
+- El fork del cliente parte de `prod-2025-12-17` (`55ae9ec20`); la rama auditada tiene 59 commits propios y esta solo 2 commits por detras de `prod-2026-03-11`.
 - Esos 2 commits oficiales corrigen PDFs en VR movil.
 - La rama oficial `master` contiene cambios posteriores de CI, seguridad, documentacion y retirada de branding, pero no debe confundirse automaticamente con una release de produccion.
 
@@ -47,7 +47,7 @@ Pruebas de merge sin modificar las ramas:
 
 - `hubs/codex/audit-2026` + `prod-2026-03-11`: merge limpio, sin conflictos.
 - `hubs/codex/audit-2026` + ultimo `master` oficial: 15 commits oficiales pendientes; no debe tratarse como release.
-- `hubs-cloud/codex/audit-2026` + `2.1.0`: 62 commits propios y 6 oficiales pendientes. La simulacion solo
+- `hubs-cloud/codex/audit-2026` + `2.1.0`: 65 commits propios y 6 oficiales pendientes. La simulacion solo
   encuentra un conflicto `modify/delete` en `community-edition/input-values.yaml`: upstream lo modifica y YenHubs lo
   elimino del historial para que los secretos permanezcan en una copia local ignorada. La resolucion correcta es
   conservarlo fuera de Git; no es un bloqueo del generador.
@@ -149,7 +149,7 @@ ficheros activos y la escena recuperada.
 
 El archivo local fija actualmente las imagenes live de recuperacion:
 
-- `ghcr.io/yengalvez/hubs@sha256:3e3e250145a95d144ea1d7b78c9904be809fdd2b8562a4c60a85caea428192ff`
+- `ghcr.io/yengalvez/hubs@sha256:7171f00792264f18b6e92d8ab6dac28894a69bdb0d0bb7257314aea2f294c3a0`
 - `ghcr.io/yengalvez/reticulum@sha256:033c9cb2cc61e7ab31d14c0b4229873193ee13af21a731c06f54fdb842556990`
 - `ghcr.io/yengalvez/bot-orchestrator@sha256:c914bd51a3c81b4332a4ce126bea4a2cd91dead36044c434ca5dc4ceccfcd527`
 - `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23`
@@ -301,9 +301,9 @@ El propietario autorizo la auditoria. Este alcance se ejecuta por lotes y mantie
 - Credenciales operativas: `doctl` y Mailtrap preparados localmente sin versionar secretos.
 - Credencial DB: rotada el 15 de julio tras corregir la fuga de Coturn; el checkpoint restaurable previo esta en
   `output/audit-db-rotation-20260714-235659/` y el valor real solo existe en los YAML locales ignorados/Kubernetes.
-- Hubs auditado: commit `d529f36c2`, build `29405023919` y digest live
-  `sha256:3e3e250145a95d144ea1d7b78c9904be809fdd2b8562a4c60a85caea428192ff`; el aviso de privacidad del chat bot se
-  verifico en un navegador real.
+- Hubs auditado: commit `26bea43d2`, build `29406729718` y digest live
+  `sha256:7171f00792264f18b6e92d8ab6dac28894a69bdb0d0bb7257314aea2f294c3a0`; el aviso de privacidad del chat bot, el
+  hero servido desde assets y el layout movil a 390 px se verificaron en un navegador real.
 - Reticulum moderno: commit `2811408` en `hubs-cloud/codex/audit-2026`; CI `29404978302`, build `29405028046` y
   digest live `sha256:033c9cb2cc61e7ab31d14c0b4229873193ee13af21a731c06f54fdb842556990`. Paso 278 pruebas,
   PostgreSQL 12.19/14.23, release, canary aislado con storage real, rollout `Recreate` y smoke post-deploy.
