@@ -716,13 +716,16 @@ Registry auth for GHCR:
 - Do not pass a PAT through `Override_Registry_Password`: workflow-dispatch inputs are retained in the run event. Store it as the masked repository secret `REGISTRY_PASSWORD` instead.
 - The automatic `GITHUB_TOKEN` is acceptable only when the target GHCR package grants the repository Actions access. Existing packages such as `bot-orchestrator` may reject it even when the workflow declares `packages: write`.
 
-Current audit warning (2026-07-16): the credential stored in the live
-`ghcr-pull` secret is expired/revoked (`GitHub API 401`, GHCR 403). Existing
-pods are healthy because their images were already pulled, but a fresh node or
-reschedule can fail. Before any rollout:
+Current credential state (2026-07-16): registry authentication was renewed in
+the macOS Keychain (`YenHubs-GHCR`), both repositories' masked Actions secrets
+and `Secret/ghcr-pull`. Pull by digest succeeds for Hubs, Reticulum and
+bot-orchestrator, and the credential can initiate a GHCR upload. The complete
+preflight reports 0 failures and 0 warnings.
+
+For the next rotation:
 
 ```bash
-# Supply through the environment, never commit it.
+# Supply through the environment or Keychain, never commit it.
 export GITHUBTOKEN='<new token with read:packages>'
 
 # Recreate the namespace pull secret without printing the token.
@@ -738,8 +741,8 @@ kubectl patch serviceaccount default -n hcce --type=merge \
 ./deployment/preflight-reactivation.sh
 ```
 
-Do not restart nodes or deployments until the preflight proves that all private
-digests can be pulled.
+Do not restart nodes or deployments after a future rotation until the preflight
+proves that all private digests can be pulled.
 
 Common failures:
 

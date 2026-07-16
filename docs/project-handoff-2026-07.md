@@ -66,15 +66,15 @@ El inventario completo esta en el checkpoint y en el cluster; no usar tags `late
 Checkpoint completo mas reciente:
 
 ```text
-output/backups/20260716-183112/
+output/checkpoints/20260716-215518/
 ```
 
 Contenido validado:
 
 - DB comprimida: 49 KiB, SHA-256
-  `1ae3d7a76d317484b646c3e6f0fd25598f5f80161d1ecf55b84a84ac3d1fc5de`.
+  `bddfdcb4d69c210908b76660cb6949586f307aeac3390ac72967614a0ed5c5f1`.
 - Storage comprimido: 183 MiB, SHA-256
-  `c071c02d7945b2bdba06585304113e730d085097855c98b1d4096417acc1f349`.
+  `8c34c803b41ba4217fa620ae4472fbb604b028c49e573651466227893b222102`.
 - 356 de schema, 94 migraciones, 33 archivos activos.
 - 47 pares fisicos completos, 14 diferidos validos.
 - commits, imagenes, Kubernetes, DigitalOcean y presencia de configuracion.
@@ -83,28 +83,33 @@ Contenido validado:
 `output/latest-backup-path.txt` apunta al checkpoint vigente y esta ignorado. Mantener una segunda copia cifrada fuera
 del Mac antes de retirar infraestructura.
 
-## Riesgos bloqueantes actuales
+## Credenciales operativas
 
 ### 1. Pull de paquetes GHCR
 
-El token contenido en el `imagePullSecret` actual devuelve `401/403`. Los pods live siguen funcionando porque las
-imagenes ya estaban descargadas, pero un nodo nuevo, reschedule o nueva imagen privada puede fallar con
-`ImagePullBackOff`.
+La credencial se renovo el 16 de julio de 2026 y se distribuyo sin imprimirla a:
 
-Antes de reiniciar nodos o desplegar:
+- llavero macOS, servicio `YenHubs-GHCR`;
+- secretos `REGISTRY_USERNAME`/`REGISTRY_PASSWORD` de `yengalvez/hubs`;
+- secretos `REGISTRY_USERNAME`/`REGISTRY_PASSWORD` de `yengalvez/hubs-cloud`;
+- `Secret/ghcr-pull` y `ServiceAccount/default` del namespace `hcce`.
 
-1. crear/renovar un token GitHub con `read:packages` y acceso a los paquetes privados;
-2. configurar `REGISTRY_USERNAME`/`REGISTRY_PASSWORD` en Actions para pushes;
-3. renovar `ghcr-pull` en Kubernetes;
-4. ejecutar `deployment/preflight-reactivation.sh` hasta que las tres imagenes prueben pull.
-
-No almacenar el PAT en inputs de workflow ni YAML trackeado.
+Se comprobo pull de los tres digests privados y permiso de inicio de upload en
+GHCR; `deployment/preflight-reactivation.sh` termino con 0 fallos y 0 avisos.
+No almacenar esta credencial en inputs de workflow ni YAML trackeado.
 
 ### 2. Clave OpenAI historica
 
-Una clave encontrada en la historia Git antigua sigue respondiendo. No es la clave live actual y no puede eliminarse
-con la API normal de proyecto. Debe revocarse en el panel OpenAI. La historia Git no se reescribio porque es una
-operacion destructiva; Gitleaks del entregable actual esta limpio.
+La clave encontrada en la historia Git era tambien la clave live anterior. El
+16 de julio de 2026 se creo una clave distinta, se valido contra Models,
+Moderation y Responses, se desplego mediante el manifiesto estandar y el chat
+live respondio con `gpt-5-nano`. La clave nueva solo se conserva en el llavero
+macOS (`YenHubs-OpenAI`) y en los valores locales/Secret ignorados.
+
+La clave anterior sigue pendiente de revocacion en el panel OpenAI porque una
+clave normal de proyecto no puede eliminarse mediante la API administrativa.
+La historia Git no se reescribio porque es una operacion destructiva; Gitleaks
+del entregable actual esta limpio.
 
 ### 3. Capacidad no certificada
 
@@ -189,12 +194,11 @@ factura. Para alta, congelacion, restauracion o baja de un cliente usar
 
 1. Leer `AGENTS.md` y este handoff.
 2. Revocar la clave OpenAI historica.
-3. Renovar credenciales GitHub/GHCR.
-4. Ejecutar `deployment/preflight-reactivation.sh`.
-5. Confirmar arboles limpios y ramas base.
-6. Crear checkpoint si se va a mutar produccion.
-7. Usar una rama por feature o upgrade.
-8. Ejecutar los gates y desplegar solo por el metodo estandar.
+3. Ejecutar `deployment/preflight-reactivation.sh`.
+4. Confirmar arboles limpios y ramas base.
+5. Crear checkpoint si se va a mutar produccion.
+6. Usar una rama por feature o upgrade.
+7. Ejecutar los gates y desplegar solo por el metodo estandar.
 
 ## Indice
 
