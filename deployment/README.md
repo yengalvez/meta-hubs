@@ -78,7 +78,7 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 
 | Component | Live image | Actions run |
 |-----------|-----------------|-------------|
-| Hubs client | `ghcr.io/yengalvez/hubs@sha256:e61d253ea651280f75800a717cb24f66af35949266cd316402526d520766f103` | `29494554300` |
+| Hubs client | `ghcr.io/yengalvez/hubs@sha256:b568a9c8565f7983018c2a72d9e13b7bdb32b552381b79a32fdc904bc5e0097c` | `29499784485` |
 | Reticulum | `ghcr.io/yengalvez/reticulum@sha256:0b1f8104a520a15828f92ac1428c98a8f45846dcf49d0c99e8ea929f26dad317` | CI `29480369600`; build `29480568375` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:1ab1e66b63aa3ae08bf78b285ba52f46ec555fedb2924ed5aea906f44b28f3b5` | `29459396773` |
 | Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` | `29375052801` |
@@ -91,11 +91,11 @@ applies room config changes to a live ghost process and commit `66fc4c0` contain
 The exact bot digest is `sha256:1ab1e66b63aa3ae08bf78b285ba52f46ec555fedb2924ed5aea906f44b28f3b5`;
 the March `ghost-fullsync` image remains available only as the tested rollback.
 
-Hubs commit `c679151ed` includes the official `prod-2026-03-11` release, dependency hardening, safe cookie migration,
+Hubs commit `1f569385d` includes the official `prod-2026-03-11` release, dependency hardening, safe cookie migration,
 mobile viewport containment, sitting feedback, bot privacy copy, responsive avatar UI, fully localized profile
-placeholders and the accepted Obsidian Aurora interface. It also retains runtime asset substitution,
-full-body/Avaturn validation, third-person, sitting and bot features accepted during the audit. The live toolbar
-bundle badge for this image is `785aa63d`.
+placeholders, the accepted Obsidian Aurora room interface and the Obsidian Aurora portal landing. It also retains
+runtime asset substitution, full-body/Avaturn validation, third-person, sitting and bot features accepted during the
+audit. The landing contract and upgrade checks live in `features/landing-aurora/README.md`.
 
 Spoke commit `cc5c831` fixes the publish authentication retry without repeating exports/uploads and wires cancellation
 to the main GLB upload. Commit `56afaee` additionally treats expired or malformed local JWTs as signed out before an
@@ -158,7 +158,7 @@ Runtime capacity and isolation baseline (measured and accepted on 2026-07-14):
 
 Important deployment distinction:
 
-- Hubs runs commit `c679151ed`, published by Actions run `29494554300`; Reticulum runs commit `9781d06`.
+- Hubs runs commit `1f569385d`, published by Actions run `29499784485`; Reticulum runs commit `9781d06`.
 - Bot orchestrator runs the July audit commit `3ce47c9`, published by Actions run `29374198198`.
 - Dialog runs cloud commit `4eb743b` (runtime change in `08a0cf3`), published by Actions run `29375052801` and pinned
   to digest `sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23`.

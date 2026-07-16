@@ -33,7 +33,7 @@ subrepo esta en su rama base y el puntero queda registrado en `meta-hubs/main`.
 
 Estado consolidado actual:
 
-- `hubs/master`: `c679151ed1fb02616bdebf9b32ac65a9b9a4d20e`.
+- `hubs/master`: `1f569385d78ce86233d13764f3f02cfd0b13296b`.
 - `hubs-cloud/master`: `9781d061203745568d70948239c9810fa010bfc8`.
 
 ## Funcionalidad personalizada estable
@@ -89,7 +89,7 @@ La fuente de verdad operativa es `deployment/input-values.local.yaml`, siempre c
 
 | Servicio | Imagen final |
 | --- | --- |
-| Hubs | `ghcr.io/yengalvez/hubs@sha256:e61d253ea651280f75800a717cb24f66af35949266cd316402526d520766f103` |
+| Hubs | `ghcr.io/yengalvez/hubs@sha256:b568a9c8565f7983018c2a72d9e13b7bdb32b552381b79a32fdc904bc5e0097c` |
 | Reticulum | `ghcr.io/yengalvez/reticulum@sha256:0b1f8104a520a15828f92ac1428c98a8f45846dcf49d0c99e8ea929f26dad317` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:1ab1e66b63aa3ae08bf78b285ba52f46ec555fedb2924ed5aea906f44b28f3b5` |
 | Spoke | `ghcr.io/yengalvez/spoke@sha256:f5120264938e189e702f835182ed4a28a5ce20b140d7262bc2a3074e6d0b6657` |

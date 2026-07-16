@@ -91,7 +91,14 @@ Configuracion (Kubernetes env vars en `bot-orchestrator`):
 - Capacidad global por defecto: `5` salas activas con runner a la vez (`MAX_ACTIVE_ROOMS`).
 - Con backend `chromium`, se recomienda limitar a 1 sala activa (por coste) y usar `ghost` para escalar.
 - El raycast no usa navmesh: solo evita `box-collider` detectados entre waypoints.
+- Si la escena no exporta ningun `box-collider`, el ghost runner permite los trayectos rectos y los bots pueden
+  atravesar estructuras.
+- `low` no es un modo inmovil: el futuro modo de bots quietos debe implementarse como `mobility: static`.
 - Los bots no estan implementados para el cliente bitECS.
+
+El analisis completo de navegacion, coste y capacidad esta en
+`docs/bots-cost-capacity-analysis-2026-07.md`. La opcion recomendada para evitar estructuras sin volver a Chromium es
+usar el navmesh de la escena y calcular rutas A* en el ghost runner.
 
 ## Privacidad y seguridad del chat IA
 
