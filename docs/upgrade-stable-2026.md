@@ -1,5 +1,10 @@
 # Actualizacion estable de Hubs - Julio 2026
 
+> Documento historico de la integracion estable. El pulido Obsidian Aurora posterior sustituyo solo la imagen Hubs
+> aceptada: commit `c679151ed`, Actions `29494554300`, digest
+> `sha256:e61d253ea651280f75800a717cb24f66af35949266cd316402526d520766f103`.
+> El estado operativo vigente esta en `docs/project-handoff-2026-07.md`.
+
 ## Objetivo
 
 Integrar las ultimas releases estables oficiales sobre el baseline YenHubs ya recuperado y auditado, sin mezclar la

@@ -31,6 +31,11 @@ Cluster/contexto: `hubs-ce` / `do-ams3-hubs-ce`
 El superproyecto fija los commits exactos de ambos submodulos. Una feature no esta integrada hasta que el commit del
 subrepo esta en su rama base y el puntero queda registrado en `meta-hubs/main`.
 
+Estado consolidado actual:
+
+- `hubs/master`: `c679151ed1fb02616bdebf9b32ac65a9b9a4d20e`.
+- `hubs-cloud/master`: `9781d061203745568d70948239c9810fa010bfc8`.
+
 ## Funcionalidad personalizada estable
 
 - Camara primera/tercera persona, con primera persona forzada en VR.
@@ -41,7 +46,7 @@ subrepo esta en su rama base y el puntero queda registrado en `meta-hubs/main`.
 - Bots por sala con 0..10 instancias, movilidad, featured avatars, patrulla `spawbot-*`, chat privado y acciones de
   navegacion allowlist.
 - Ghost runner de bajo consumo, sincronizacion de late joiners y reconciliacion dinamica sin reiniciar procesos.
-- UI oscura glass en espanol, responsive para desktop, tablet y movil.
+- UI Obsidian Aurora en espanol, responsive para desktop, tablet y movil.
 - Badge de version del bundle en la toolbar.
 
 ## Bots e IA
@@ -84,7 +89,7 @@ La fuente de verdad operativa es `deployment/input-values.local.yaml`, siempre c
 
 | Servicio | Imagen final |
 | --- | --- |
-| Hubs | `ghcr.io/yengalvez/hubs@sha256:c5e2ee4eb125535b8b8ca55a369f24e2e2c5bcf2882158e53996bf5df3c030f3` |
+| Hubs | `ghcr.io/yengalvez/hubs@sha256:e61d253ea651280f75800a717cb24f66af35949266cd316402526d520766f103` |
 | Reticulum | `ghcr.io/yengalvez/reticulum@sha256:0b1f8104a520a15828f92ac1428c98a8f45846dcf49d0c99e8ea929f26dad317` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:1ab1e66b63aa3ae08bf78b285ba52f46ec555fedb2924ed5aea906f44b28f3b5` |
 | Spoke | `ghcr.io/yengalvez/spoke@sha256:f5120264938e189e702f835182ed4a28a5ce20b140d7262bc2a3074e6d0b6657` |

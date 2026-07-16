@@ -78,7 +78,7 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 
 | Component | Live image | Actions run |
 |-----------|-----------------|-------------|
-| Hubs client | `ghcr.io/yengalvez/hubs@sha256:c5e2ee4eb125535b8b8ca55a369f24e2e2c5bcf2882158e53996bf5df3c030f3` | `29464896181` |
+| Hubs client | `ghcr.io/yengalvez/hubs@sha256:e61d253ea651280f75800a717cb24f66af35949266cd316402526d520766f103` | `29494554300` |
 | Reticulum | `ghcr.io/yengalvez/reticulum@sha256:0b1f8104a520a15828f92ac1428c98a8f45846dcf49d0c99e8ea929f26dad317` | CI `29480369600`; build `29480568375` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:1ab1e66b63aa3ae08bf78b285ba52f46ec555fedb2924ed5aea906f44b28f3b5` | `29459396773` |
 | Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` | `29375052801` |
@@ -91,10 +91,11 @@ applies room config changes to a live ghost process and commit `66fc4c0` contain
 The exact bot digest is `sha256:1ab1e66b63aa3ae08bf78b285ba52f46ec555fedb2924ed5aea906f44b28f3b5`;
 the March `ghost-fullsync` image remains available only as the tested rollback.
 
-Hubs commit `e22520dda` includes the official `prod-2026-03-11` release, dependency hardening, safe cookie migration,
+Hubs commit `c679151ed` includes the official `prod-2026-03-11` release, dependency hardening, safe cookie migration,
 mobile viewport containment, sitting feedback, bot privacy copy, responsive avatar UI, fully localized profile
-placeholders and glass tooltips. It also retains the runtime asset substitution, full-body/Avaturn validation,
-third-person, sitting and bot features accepted during the audit.
+placeholders and the accepted Obsidian Aurora interface. It also retains runtime asset substitution,
+full-body/Avaturn validation, third-person, sitting and bot features accepted during the audit. The live toolbar
+bundle badge for this image is `785aa63d`.
 
 Spoke commit `cc5c831` fixes the publish authentication retry without repeating exports/uploads and wires cancellation
 to the main GLB upload. Commit `56afaee` additionally treats expired or malformed local JWTs as signed out before an
@@ -157,7 +158,7 @@ Runtime capacity and isolation baseline (measured and accepted on 2026-07-14):
 
 Important deployment distinction:
 
-- Hubs runs the July recovery commit `ee75980ad`; Reticulum runs the audited commit `623e4ce`.
+- Hubs runs commit `c679151ed`, published by Actions run `29494554300`; Reticulum runs commit `9781d06`.
 - Bot orchestrator runs the July audit commit `3ce47c9`, published by Actions run `29374198198`.
 - Dialog runs cloud commit `4eb743b` (runtime change in `08a0cf3`), published by Actions run `29375052801` and pinned
   to digest `sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23`.

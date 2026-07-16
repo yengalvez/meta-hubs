@@ -28,8 +28,8 @@ Candidatos desplegados en aquel checkpoint, ya sustituidos y promovidos posterio
 - `hubs/codex/audit-2026`: `99f1e9cad07a51e1c156952936a522265028a12d`.
 - `hubs-cloud/codex/audit-2026`: `623e4ce49dd01f760b7ad8a02989afdafea87f4f`.
 
-El estado actual ya no usa esos candidatos. `meta-hubs/main` fija `hubs/master` en `cbded5883` y
-`hubs-cloud/master` en `cc43df4`. Antes de crear ramas nuevas, comprobar siempre `git submodule status` para no
+El estado actual ya no usa esos candidatos. `meta-hubs/main` fija `hubs/master` en `c679151ed` y
+`hubs-cloud/master` en `9781d06`. Antes de crear ramas nuevas, comprobar siempre `git submodule status` para no
 trabajar sobre un commit distinto al fijado por el superproyecto.
 
 ## 2. Estado de la version y upstream
