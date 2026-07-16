@@ -1,12 +1,11 @@
 # YenHubs - Custom Hubs CE Deployment
 
-> Recovery note (July 2026): the March freeze has been restored to a new non-HA DigitalOcean cluster. DNS/TLS,
-> persistent media, rooms, avatars, ghost bots and the audited July images are live and verified. For recovery notes,
-> see `/Users/Shared/Gits/YenHubs/docs/project-freeze-2026-03.md` and `/Users/Shared/Gits/YenHubs/deployment/README.md`.
+> Estado (julio 2026): el proyecto esta recuperado, auditado y actualizado. Hubs `prod-2026-03-11`, Hubs CE `2.1.0`,
+> Reticulum modernizado, media, salas, avatares y ghost bots estan live y verificados. Empezar por
+> `/Users/Shared/Gits/YenHubs/docs/project-handoff-2026-07.md`.
 
-> Upgrade note (July 2026): production remains on the accepted `codex/audit-2026` baseline. Official Hubs
-> `prod-2026-03-11` and Hubs CE `2.1.0` are integrated only on isolated upgrade branches and are not deployed yet.
-> See `/Users/Shared/Gits/YenHubs/docs/upgrade-stable-2026.md`.
+> La auditoria, los riesgos residuales y la evidencia de la actualizacion estable estan en
+> `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md` y `/Users/Shared/Gits/YenHubs/docs/upgrade-stable-2026.md`.
 
 Custom deployment of [Hubs Foundation Community Edition](https://hubsfoundation.org/) on DigitalOcean Kubernetes.
 
@@ -64,9 +63,9 @@ YenHubs/
 │   └── future/         # Features for potential future implementation
 │       └── Avaturn/    # Avaturn avatar editor (not active)
 └── docs/               # Project maintenance documentation
-    ├── reactivation-audit-2026-07.md  # Rebuild baseline, versions, cost and blockers
-    ├── audit-2026-07.md               # Findings, fixes and remaining acceptance tests
-    └── upgrade-stable-2026.md         # Isolated official-release upgrade state and gates
+    ├── project-handoff-2026-07.md     # Punto de entrada para continuar el proyecto
+    ├── audit-2026-07.md               # Hallazgos, correcciones y riesgos residuales
+    └── upgrade-stable-2026.md         # Evidencia de la actualizacion oficial aceptada
 ```
 
 ## Cost Estimate

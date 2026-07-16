@@ -1,6 +1,6 @@
 # YenHubs Deployment Guide
 
-Hubs Community Edition 2.0.0 on DigitalOcean Kubernetes with automated SSL via cert-manager.
+Hubs Community Edition 2.1.0 on DigitalOcean Kubernetes with automated SSL via cert-manager.
 
 > **Last updated**: July 2026 | **Cluster**: `hubs-ce` active on DOKS `1.34.8-do.2`, `HA=false` | **Region**: AMS3
 >
@@ -8,8 +8,8 @@ Hubs Community Edition 2.0.0 on DigitalOcean Kubernetes with automated SSL via c
 > uses the `info@meta-hubs.org` account; Reticulum derives the sender as `noreply@<HUB_DOMAIN>` and has no
 > `SMTP_FROM` input. The March freeze did **not** contain the original `ret-pvc` bytes, so exact historical media
 > recovery is impossible. A functional replacement scene, Spoke project, test room and the nine locally recovered
-> avatars were rebuilt through normal application APIs on 2026-07-14. The integral audit is now authorized and in
-> progress; see `docs/audit-2026-07.md` and `docs/reactivation-media-recovery-2026-07.md`.
+> avatars were rebuilt through normal application APIs on 2026-07-14. The audit and stable upgrade are complete; start
+> from `docs/project-handoff-2026-07.md`, then use this guide for operations.
 
 ---
 
@@ -69,32 +69,30 @@ Final runtime notes before the project freeze:
 - Hubs-cloud repo base branch: `master`
 - Superproject base branch: `main`
 
-## Live Recovery Checkpoint (July 2026)
+## Accepted Live State (July 2026)
 
 These images were built by the approved GitHub Actions workflows, deployed with the standard `gen-hcce` plus
 `kubectl apply` flow and validated in DOKS. They are pinned in the ignored local values file:
 
 | Component | Live image | Actions run |
 |-----------|-----------------|-------------|
-| Hubs client | `ghcr.io/yengalvez/hubs@sha256:64953f6323ba4c87e0408fba73a9784a6a45f68c4a4608494d419a48aefbff5a` | `29410309085` |
-| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:5afd810973aa2f54d863ec524fa2320f83b74d210abb7e5b15df62a708233651` | CI `29432345676`; build `29432642364` |
-| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:c914bd51a3c81b4332a4ce126bea4a2cd91dead36044c434ca5dc4ceccfcd527` | `29405025982` |
+| Hubs client | `ghcr.io/yengalvez/hubs@sha256:c5e2ee4eb125535b8b8ca55a369f24e2e2c5bcf2882158e53996bf5df3c030f3` | `29464896181` |
+| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:0543dffbcd107637c188a7c46e15fac0af6daea10402d86f2fd7987f478e756a` | `29459862753` |
+| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:1ab1e66b63aa3ae08bf78b285ba52f46ec555fedb2924ed5aea906f44b28f3b5` | `29459396773` |
 | Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` | `29375052801` |
 | Photomnemonic | `ghcr.io/yengalvez/photomnemonic@sha256:aef369b82212429d01c0f1f554b16c34a99cf4bbb75e0693e190c796b33012f2` | `29376531637` |
 | Coturn | `ghcr.io/yengalvez/coturn@sha256:c2ad335349d477d342d5b17c82b513bfebc8c17b8e6b4e27a3049f3478207780` | `29371663849` |
 | Spoke | `ghcr.io/yengalvez/spoke@sha256:f5120264938e189e702f835182ed4a28a5ce20b140d7262bc2a3074e6d0b6657` | `29410656894` |
 
-The July bot-orchestrator hardening was promoted through 2026-07-15 after the recovery checkpoint. Production uses
-`RUNNER_BACKEND=ghost`, `MAX_ACTIVE_ROOMS=5` and `MAX_BOTS_PER_ROOM=10`. Cloud commit `2811408` aggregates chat rate
-limits by account and room even when users rotate between bots; Hubs commit `d529f36c2` adds the visible temporary-chat
-privacy notice. The exact bot digest is `sha256:c914bd51a3c81b4332a4ce126bea4a2cd91dead36044c434ca5dc4ceccfcd527`;
+Production uses `RUNNER_BACKEND=ghost`, `MAX_ACTIVE_ROOMS=5` and `MAX_BOTS_PER_ROOM=10`. Cloud commit `923f6a9`
+applies room config changes to a live ghost process and commit `66fc4c0` contains the final prompt/runtime guardrails.
+The exact bot digest is `sha256:1ab1e66b63aa3ae08bf78b285ba52f46ec555fedb2924ed5aea906f44b28f3b5`;
 the March `ghost-fullsync` image remains available only as the tested rollback.
 
-Hubs commit `26bea43d2` closes a packaging defect: Webpack asset URLs embedded in JavaScript now receive the same
-runtime `BASE_ASSETS_PATH` substitution as HTML/CSS, and the container refuses to start if a placeholder remains.
-The current image also includes `6e0092252`, which clears sitting state on movement and ownership loss in both loaders,
-and `7f016c986`, which rejects stale preview loads and prevents private Avaturn save until a compatible upper-body
-skeleton and thumbnail-ready preview have loaded. The Avaturn UI and guide were accepted live without saving a file.
+Hubs commit `e22520dda` includes the official `prod-2026-03-11` release, dependency hardening, safe cookie migration,
+mobile viewport containment, sitting feedback, bot privacy copy, responsive avatar UI, fully localized profile
+placeholders and glass tooltips. It also retains the runtime asset substitution, full-body/Avaturn validation,
+third-person, sitting and bot features accepted during the audit.
 
 Spoke commit `cc5c831` fixes the publish authentication retry without repeating exports/uploads and wires cancellation
 to the main GLB upload. Commit `56afaee` additionally treats expired or malformed local JWTs as signed out before an
@@ -102,12 +100,13 @@ API request. Its tests/build must run with Node `16.13.2`, matching the Spoke Do
 aborts under Node 22 before executing tests. Run the complete suite as `npx ava 'test/unit/**/*.test.js'`: the unquoted
 package-script glob only selects part of the nested suite in some shells.
 
-Reticulum was subsequently modernized and hardened through cloud commit `dfc248f6bd` and is pinned live at
-`sha256:5afd810973aa2f54d863ec524fa2320f83b74d210abb7e5b15df62a708233651`. It uses Elixir 1.18.4, OTP 27.3.4.14,
+Reticulum was modernized and hardened through cloud commit `cc43df4` and is pinned live at
+`sha256:0543dffbcd107637c188a7c46e15fac0af6daea10402d86f2fd7987f478e756a`. It uses Elixir 1.18.4, OTP 27.3.4.14,
 Phoenix 1.6.17, Plug 1.16.6, Cowboy 2.15, Ecto 3.14 and Postgrex 0.22.3. In addition to credential filtering, this
 revision closes the audited CORS proxy rebinding/header issues, scopes entity operations to their room, fixes account
-deletion ownership, replaces blocking Statix calls and reconciles abandoned Spoke files in two delayed stages. CI on
-PostgreSQL 12/14, isolated storage tests and the production rollout passed before this digest became the lock.
+deletion ownership, replaces blocking Statix calls, reconciles abandoned Spoke files and validates avatar uploads
+server-side. CI on PostgreSQL 12/14, isolated storage tests and the production rollout passed before this digest became
+the lock.
 
 After that rollout, all 13 live containers were changed from mutable tags to the exact digests they were already
 running. `npm run gen-hcce` now rejects every Deployment image that is not in `repository@sha256:<64 hex>` form.
@@ -674,6 +673,18 @@ kubectl -n hcce rollout status deployment/reticulum --timeout=300s
 
 curl -sI https://meta-hubs.org | head -n 1
 ```
+
+The HTTP/CSP verifier is necessary but not sufficient. After the Reticulum restart, perform a cache-disabled cold load
+of the room in a real browser and verify all of the following before accepting the rollout:
+
+- `window.APP` and `window.AFRAME` exist in the page's main execution context;
+- the lobby/scene renders instead of a blank page;
+- the console has no first-party `Runtime.exceptionThrown` event;
+- the room HTML references the new `hub-*.js` hash;
+- desktop, tablet and mobile layouts do not create document-level horizontal overflow.
+
+This gate caught the `js-cookie` 2 -> 3 runtime incompatibility even though every asset returned 200 and CSP was
+valid. Never accept a Hubs rollout using only `curl` or `verify-page-assets.mjs`.
 
 The verifier ensures reapplying the manifest does not lose RBAC or TLS settings. This flow does not create additional
 DigitalOcean resources because the manifest is constrained to one `LoadBalancer` service.

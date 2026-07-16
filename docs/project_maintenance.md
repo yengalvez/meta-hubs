@@ -71,7 +71,9 @@ order:
 4. Integrate a tagged Hubs CE release in a separate branch.
 5. Modernize Reticulum/toolchain separately with migration and rollback tests.
 
-Current findings and upgrade candidates are tracked in `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`.
+The accepted July 2026 baseline and residual risks are tracked in
+`/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`. Start future work from
+`/Users/Shared/Gits/YenHubs/docs/project-handoff-2026-07.md`.
 
 ## Secrets and operational invariants
 
@@ -86,4 +88,5 @@ Current findings and upgrade candidates are tracked in `/Users/Shared/Gits/YenHu
 - Deployment and reactivation: `/Users/Shared/Gits/YenHubs/deployment/README.md`
 - Frozen backup handoff: `/Users/Shared/Gits/YenHubs/docs/project-freeze-2026-03.md`
 - Audit register: `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md`
+- Current project handoff: `/Users/Shared/Gits/YenHubs/docs/project-handoff-2026-07.md`
 - Feature docs: `/Users/Shared/Gits/YenHubs/features/`
