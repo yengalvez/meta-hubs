@@ -1014,6 +1014,27 @@ remained `f6VKtim` and now points to model
 `https://meta-hubs.org/files/749efd34-73a0-496c-8584-3958b01ef186.bin`. The GLB contains a node named `navMesh`
 with the `nav-mesh` component, and a cold room load confirmed one runtime nav mesh and no browser errors.
 
+Later on 2026-07-16 the two sitting waypoints were corrected so that they are both `Disable motion` and `Clickable`.
+The scene SID remains `f6VKtim`; its current model is
+`https://meta-hubs.org/files/beadd397-5ade-4105-ae24-2e7189edea9e.glb`. The current editable project is still
+`qa3U3Ke`. Production verification found 10 waypoints, exactly two sitting waypoints, exactly two clickable sitting
+waypoints, and both `navMesh` and `Floor Plan` nodes. Holding Space after fully entering the room shows two white
+waypoint targets. `Mirar` leaves the user in the lobby and is not a valid test of entered-room waypoint interaction.
+
+Waypoint property distinction:
+
+- `Disable motion`: YenHubs treats the waypoint as a seat and applies the sitting state/animation.
+- `Clickable`: Hubs renders a target for that waypoint while the entered user holds Space.
+- A seat can work through the toolbar proximity flow without being visible on Space if only `Disable motion` is set.
+
+Ownership is also split between room and content records. The current account for `info@virtualmente.com` owns scene
+`f6VKtim` and project `qa3U3Ke`. Room `VJopCY3` retains its historical creator and additionally grants that current
+account an owner membership. Therefore:
+
+- room settings and lifecycle controls are available in Hubs after a fresh authenticated room join;
+- permanent geometry, waypoints and publishing are available through the direct Spoke project URL;
+- placing temporary media/objects inside a room is not the same operation as editing and republishing the scene.
+
 This distinction is mandatory for recovered scenes:
 
 - `walkable`/`collidable` on the imported office model describes the model but does not generate player navigation.
@@ -1024,6 +1045,12 @@ This distinction is mandatory for recovered scenes:
 
 Before republishing a live scene, create a matching DB and `ret-pvc` checkpoint. The checkpoint for this repair is
 `output/magiclink-scene-prepublish-20260716-093347/`, with hashes in `SHA256SUMS`.
+
+The checkpoint immediately before the room-ownership and clickable-seat correction is
+`output/room-seat-ownership-prechange-20260716-114047/`. It contains a compressed Reticulum database dump, the
+Reticulum storage archive and checksums. The nested `seat-clickable-publish/` directory records the downloaded
+pre-change files, exact pre/post hashes and authenticated publication responses; temporary auth material is ignored
+and must never be committed.
 
 The nine recovered avatar GLBs can be reimported from Admin at `https://meta-hubs.org/admin#/import`. Do not use the
 trailing-slash form `/admin/`; it is not a valid route in this deployment. The preferred flow is `Upload Avatars from
@@ -1058,6 +1085,12 @@ tool, not the normal day-to-day import path.
 After restoring `retdb`, invalidate assumptions about browser login state. A stale Spoke token may still render a
 `Logout` link while `/api/v1/projects` returns `401` (sometimes labelled as a possible CORS error by the UI). Log out
 and request a fresh magic link for `info@virtualmente.com` before diagnosing the API or ingress.
+
+Do not run `/ret/bin/ret eval` or `/ret/bin/ret rpc` inside the production Reticulum container. Both release helpers
+start enough BEAM runtime state to exceed the live container budget on this topology and can restart the service.
+Use the authenticated Reticulum APIs, SQL through PostgreSQL or a separate isolated pod/canary. If a diagnostic
+command does restart Reticulum, stop all mutations, wait for `reticulum` to return `2/2`, and require public HTTP 200
+before continuing.
 
 ### Restore the Reticulum database
 

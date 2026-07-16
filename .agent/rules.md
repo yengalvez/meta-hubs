@@ -9,7 +9,7 @@
 ## Technology Stack
 - **Client**: Mozilla Hubs (React + A-Frame + Three.js + BitECS).
 - **Infrastructure**: DigitalOcean Kubernetes (DOKS) + kubectl.
-- **Deployment**: Official Hubs CE 2.0.0 method via `hubs-cloud/community-edition/` scripts (`npm run gen-hcce && kubectl apply -f hcce.yaml`).
+- **Deployment**: Hubs CE 2.1.0 method via `hubs-cloud/community-edition/` scripts (`npm run gen-hcce && kubectl apply -f hcce.yaml`).
 
 ## Documentation Convention
 - **Session changelog lives only in** `docs/session-changelog.md`.
@@ -37,8 +37,20 @@
 - When writing global feature flags into `ret0.app_configs`, `value` must be stored as a JSON object wrapper (`{"value": <...>}`), not a raw primitive (`true`/`false`), or Reticulum readiness can fail with `cannot load ... as type :map`.
 - Keep `PERMS_KEY` stable across deploys by **setting it in** `deployment/input-values.local.yaml` (and copying into `hubs-cloud/community-edition/input-values.yaml`). If it is missing, `gen-hcce` will generate a new key and **rooms can break** after partial restarts (typical symptom: `Imposible conectarse a esta sala` with `JsonWebTokenError: invalid signature`). If this happens, restart both `reticulum` and `dialog` so they load the same key material.
 - Runtime hotpatches, local/in-cluster image builds, `kubectl cp` and `kubectl set image` are not standard methods. Do not use them unless the owner explicitly approves a named emergency exception after the normal path fails.
+- Never run `/ret/bin/ret eval`, `/ret/bin/ret rpc` or another release helper inside the live Reticulum pod. On the single
+  8 GiB node the helper VM can exceed the container limit and restart Reticulum. Use normal authenticated APIs, SQL
+  through the PostgreSQL pod or an isolated canary instead.
 - Never edit generated `hcce.yaml` or reapply manual RBAC patches. Fix the tracked generator, rerun `npm run gen-hcce`, require the manifest verifier to pass, then apply the generated file unchanged.
 - A project freeze is not complete with `pg_dump` alone. Require both a DB dump and a successful `deployment/backup-ret-storage.sh` archive before deleting DOKS or its volumes; validate restores with `deployment/restore-retdb.sh` and `deployment/restore-ret-storage.sh`.
+
+## Room and Spoke Content Rules
+- The live room `VJopCY3` and the editable Spoke project `qa3U3Ke` are separate ownership records. The account for
+  `info@virtualmente.com` owns the Spoke project/scene and is an additional owner of the room.
+- Permanent scene geometry and waypoint properties are edited in Spoke:
+  `https://meta-hubs.org/spoke/projects/qa3U3Ke`. In-room object placement is not a replacement for publishing Spoke.
+- For sitting waypoints, `Disable motion` identifies the seat. `Clickable` is additionally required if the waypoint
+  must appear as a white target while the user holds Space. Space targets are tested after fully entering the room,
+  not while using the lobby-only `Mirar` mode.
 
 ## Code Standards
 - Maintain documentation for every new feature in `features/`.

@@ -157,6 +157,10 @@ el dump raw de marzo sobre el estado actual: contenia 93 referencias activas cuy
 - Ghost runner: late join, movimiento, cinco bots visibles, config live 5 -> 10 -> 5 sin reiniciar proceso.
 - Magic link real entregado a `info@virtualmente.com`, verificacion Hubs completada y Spoke autenticado.
 - Escena `f6VKtim` republicada con un `nav-mesh` nativo; la sala carga exactamente un nav mesh sin errores.
+- Las dos sillas de la escena son waypoints `Disable motion` y `Clickable`; tras entrar completamente, mantener
+  Espacio muestra exactamente dos objetivos blancos.
+- La cuenta actual de `info@virtualmente.com` abre y publica el proyecto Spoke `qa3U3Ke` y es propietaria adicional
+  de la sala `VJopCY3`, sin eliminar su creador historico.
 - Carga fria de Hubs en navegador real.
 - Capturas y layout sin overflow a 1440x900, 1024x1366 y 390x844.
 - Flujo de entrada movil completo, toolbar oculta durante el modal y badge de version visible tras entrar.
@@ -177,6 +181,32 @@ No presentar estos puntos como ya probados:
 - El bundle Hubs sigue siendo grande; es deuda de rendimiento, no una regresion funcional.
 - La escena recuperada ya tiene `nav-mesh` y no permite el fallo vertical causado por su ausencia. Conserva avisos
   A-Frame/MeshBVH y no tiene `box-collider`; el raycast de bots queda en fallback.
+- Las posiciones de las dos sillas siguen siendo las posiciones provisionales de recuperacion y deben ajustarse
+  visualmente en Spoke si no coinciden con las sillas finales del decorado.
+
+## Propiedad, Spoke y waypoints
+
+- Sala principal: `https://meta-hubs.org/VJopCY3/inicio`.
+- Proyecto editable: `https://meta-hubs.org/spoke/projects/qa3U3Ke`.
+- Escena publicada: `f6VKtim`.
+- Administrador operativo: `info@virtualmente.com`.
+
+La sala y el proyecto son registros distintos. El proyecto/escena pertenece a la cuenta actual del administrador; la
+sala conserva un creador historico diferente y otorga a la cuenta actual una membresia adicional de propietario.
+Tras iniciar sesion de nuevo y recargar la sala deben aparecer `Configuracion de sala`, `Informacion y ajustes de
+sala` y `Cerrar sala`.
+
+La geometria permanente y los waypoints se editan y publican desde Spoke. La sala permite colocar objetos/media
+durante la sesion, pero eso no equivale a modificar la escena base.
+
+Para las sillas:
+
+- `Disable motion` significa asiento para la feature Sitting.
+- `Clickable` hace visible el objetivo blanco al mantener Espacio.
+- La prueba de Espacio requiere pulsar `Entrar a la sala`; `Mirar` mantiene al usuario en el vestibulo.
+
+Checkpoint previo a esta correccion:
+`output/room-seat-ownership-prechange-20260716-114047/`.
 
 ## Secretos y configuracion local
 
