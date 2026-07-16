@@ -1,10 +1,10 @@
-# Bots en YenHubs (MVP)
+# Bots en YenHubs
 
-> Estado de auditoria del 14 de julio de 2026: backend `ghost`, capacidad `MAX_ACTIVE_ROOMS=5` y
-> `MAX_BOTS_PER_ROOM=10`. Produccion usa
-> `ghcr.io/yengalvez/bot-orchestrator:audit-botguard-20260714-7de9b5c-latest`, publicado por GitHub Actions
-> `29362366946`. Rehidratacion, chat estructurado y carga tardia con tres bots en movimiento pasaron; la imagen de
-> marzo `ghost-fullsync-20260307-e38b70d-latest` queda solo como rollback.
+> Arquitectura aceptada: backend `ghost` sin Chromium, capacidad `MAX_ACTIVE_ROOMS=5` y
+> `MAX_BOTS_PER_ROOM=10`. El digest y la ejecucion de GitHub Actions activos se mantienen en
+> `deployment/README.md`; no copies aqui un tag mutable como fuente de verdad.
+> Aceptacion del 16 de julio de 2026: `navmesh_preferred` activo en dos salas, modo `static` inmovil, restauracion a
+> `low`, chat neutral y `go_to_waypoint` verificados en produccion sin drift.
 
 Esta feature permite añadir bots por sala, con movilidad configurable y chat privado por proximidad.
 
@@ -15,7 +15,8 @@ Esta feature permite añadir bots por sala, con movilidad configurable y chat pr
 ## Que hace
 
 - Bots visibles en sala con avatar.
-- Movimiento automatico entre puntos (`spawbot-*`) con ciclos `idle -> walk -> idle`.
+- Movimiento automatico entre puntos (`spawbot-*`) mediante rutas A* sobre el navmesh de la escena.
+- Modo `static` para mantener los bots inmoviles en su punto asignado.
 - Chat privado por bot con IA (`gpt-5-nano`).
 - Accion opcional de movimiento por chat: `go_to_waypoint(spawbot-...)`.
 - Prompt de comportamiento configurable por sala (maximo 1500 caracteres).
@@ -34,10 +35,10 @@ Esta feature permite añadir bots por sala, con movilidad configurable y chat pr
 ## Guia rapida para admins
 
 1. Abre `Room Settings`.
-2. Activa:
+2. Configura:
 - `Enable bots`
 - `Bot Count` (0 a 10)
-- `Mobility` (`low`, `medium`, `high`)
+- `Mobility` (`static`, `low`, `medium`, `high`)
 - `Enable bot chat` (si quieres chat privado)
 3. Guarda cambios.
 4. En Spoke, crea **waypoints** en los puntos por donde quieres que se muevan (recomendado: 6-12).
@@ -46,7 +47,9 @@ Esta feature permite añadir bots por sala, con movilidad configurable y chat pr
 - `spawbot-2`
 - `spawbot-lobby`
   Nota: el sufijo puede ser cualquier cosa (no hace falta numero).
-6. Publica la escena y prueba en sala.
+6. Añade o conserva un **Floor Plan** que cubra toda la zona transitable. Spoke genera a partir de el el componente
+   `nav-mesh` que usa el ghost runner para rodear paredes.
+7. Publica la escena y prueba en sala.
 
 ### Waypoint vs "Spawn point" (Spoke)
 - En Spoke, **un spawn point es un waypoint** con la opcion de spawn activada.
@@ -54,9 +57,24 @@ Esta feature permite añadir bots por sala, con movilidad configurable y chat pr
   - Si existen waypoints `spawbot-*`, se usan como prioridad para spawn y patrulla.
   - Si no existen `spawbot-*`, los bots usan **cualquier waypoint** para spawn y patrulla.
   - Si no hay waypoints en la escena, el fallback es aparecer en el origen (0,0,0) y moverse cerca.
+- No hace falta activar `Spawn Point` en un waypoint llamado `spawbot-*`.
+- Coloca los puntos sobre la superficie azul/transitable del Floor Plan. Un punto que quede a mas de
+  `GHOST_NAVMESH_MAX_SNAP_DISTANCE_M` del navmesh no es valido para rutas.
+
+### Como navegan
+
+1. El ghost runner descarga solo el JSON del GLB y los `bufferView` necesarios para el navmesh.
+2. Proyecta waypoints y bots sobre la malla.
+3. Calcula una ruta A* al elegir destino.
+4. Publica varios segmentos `bot-path` consecutivos; el cliente los reproduce con su reloj sincronizado.
+5. Si dos zonas del navmesh no estan conectadas, el bot descarta ese destino y permanece `idle`.
+
+El radio de agente configurado en el Floor Plan de Spoke ya se aplica al generar el navmesh. No se debe sumar otro
+margen artificial en runtime porque estrecharia dos veces puertas y pasillos.
 
 ## Como interpretar mobility
 
+- `static`: el bot permanece inmovil en su punto de spawn, conserva chat y rechaza navegacion automatica o por LLM.
 - `low`: mas tiempo quietos, menos desplazamientos.
 - `medium`: equilibrio entre quietud y movimiento.
 - `high`: se mueven con mas frecuencia.
@@ -83,6 +101,10 @@ Configuracion (Kubernetes env vars en `bot-orchestrator`):
 - `GHOST_SCENE_MAX_BYTES`: tamano maximo declarado/cargado, 64 MiB por defecto.
 - `GHOST_SCENE_MAX_JSON_BYTES`: JSON glTF maximo, 4 MiB por defecto.
 - `GHOST_SCENE_MAX_NODES` / `GHOST_SCENE_MAX_EDGES`: 50.000 / 200.000 por defecto.
+- `GHOST_NAVIGATION_MODE`: debe ser `navmesh_preferred` en produccion.
+- `GHOST_NAVMESH_MAX_TRIANGLES`: limite de seguridad al parsear la malla; `50000` por defecto.
+- `GHOST_NAVMESH_MAX_ROUTE_POINTS`: maximo de vertices publicados por ruta; `64` por defecto.
+- `GHOST_NAVMESH_MAX_SNAP_DISTANCE_M`: distancia maxima para proyectar un punto; `3` metros por defecto.
 - Si el backend default es `chromium`, se recomienda cap adicional (por coste) con `MAX_CHROMIUM_ROOMS`.
 
 ## Limites del MVP (intencionales)
@@ -90,15 +112,15 @@ Configuracion (Kubernetes env vars en `bot-orchestrator`):
 - Maximo `10` bots por sala (clamp en backend).
 - Capacidad global por defecto: `5` salas activas con runner a la vez (`MAX_ACTIVE_ROOMS`).
 - Con backend `chromium`, se recomienda limitar a 1 sala activa (por coste) y usar `ghost` para escalar.
-- El raycast no usa navmesh: solo evita `box-collider` detectados entre waypoints.
-- Si la escena no exporta ningun `box-collider`, el ghost runner permite los trayectos rectos y los bots pueden
-  atravesar estructuras.
-- `low` no es un modo inmovil: el futuro modo de bots quietos debe implementarse como `mobility: static`.
+- La navegacion preferida usa navmesh+A*. Los `box-collider` quedan como fallback compatible para escenas antiguas
+  sin navmesh valido.
+- Si no existe ni navmesh valido ni collider, el fallback historico permite el trayecto recto. Produccion debe tratar
+  el log `No valid navmesh` como una incidencia de authoring, no como un estado aceptado.
+- `static` es inmovilidad real; `low` sigue siendo una movilidad automatica lenta.
 - Los bots no estan implementados para el cliente bitECS.
 
 El analisis completo de navegacion, coste y capacidad esta en
-`docs/bots-cost-capacity-analysis-2026-07.md`. La opcion recomendada para evitar estructuras sin volver a Chromium es
-usar el navmesh de la escena y calcular rutas A* en el ghost runner.
+`docs/bots-cost-capacity-analysis-2026-07.md`.
 
 ## Privacidad y seguridad del chat IA
 
@@ -140,9 +162,11 @@ monitoreo de abuso del proveedor pueden contener prompts/respuestas y conservars
 ## No se mueven o se mueven raro
 
 1. Asegura que la escena tenga **al menos 2 waypoints** separados entre si.
-2. El bloqueo por obstaculos (raycast) es best-effort:
-- En `ghost` runner, el raycast MVP usa `box-collider` de Spoke. Si tu escena no tiene colliders, no se bloquearan caminos.
-3. Verifica que la sala no este en cola de capacidad por limite global del runner (`MAX_ACTIVE_ROOMS`).
+2. Comprueba que `Mobility` no sea `static`.
+3. Comprueba en Spoke que exista un Floor Plan y que los waypoints esten sobre su zona transitable.
+4. Revisa el log del orquestador. El estado sano incluye `Navmesh ready` con triangulos y grupos. `No valid navmesh`
+   significa que se ha activado el fallback.
+5. Verifica que la sala no este en cola de capacidad por limite global del runner (`MAX_ACTIVE_ROOMS`).
 
 ## Animaciones / avatares
 - Los bots intentan usar avatares `featured` con tags `fullbody` o `rpm` (si existen).
@@ -152,3 +176,40 @@ monitoreo de abuso del proveedor pueden contener prompts/respuestas y conservars
 
 - Es esperado si la capacidad global esta limitada.
 - Si el maximo de runners esta ocupado, otra sala puede quedar en cola hasta liberar.
+
+## Superficie custom y auditoria de upgrades
+
+Baseline de esta implementacion:
+
+- Hubs: `prod-2026-03-11`.
+- Hubs Community Edition: `2.1.0`.
+
+Superficie custom que debe revisarse al actualizar upstream:
+
+- `hubs/src/react-components/room/RoomSettingsSidebar.js`: opcion `static`.
+- `hubs/src/systems/bot-runner-system.js`: compatibilidad del fallback Chromium.
+- `hubs-cloud/community-edition/services/reticulum/lib/ret/hub.ex` y controladores/canal de bots: contrato persistido
+  de movilidad.
+- `hubs-cloud/community-edition/services/bot-orchestrator/app.js`: normalizacion, chat y bloqueo de acciones en
+  `static`.
+- `hubs-cloud/community-edition/services/bot-orchestrator/run-ghost-runner.js`: parser GLB parcial, navmesh,
+  proyeccion, A* y segmentos de ruta.
+- `hubs-cloud/community-edition/generate_script/`: variables y verificaciones fail-closed.
+
+Riesgos de upgrade:
+
+- cambios en `MOZ_hubs_components["nav-mesh"]`, transforms GLTF o export de Floor Plan;
+- cambios en `networked-aframe`, Phoenix o el contrato `bot-path`;
+- cambios en `hub.user_data.bots` o en la UI de Room Settings;
+- incompatibilidad de `three`/`three-pathfinding` con el Node del contenedor.
+
+Gate minimo tras cada upgrade:
+
+1. Suites completas de Hubs, Reticulum y bot-orchestrator.
+2. Generador de 44 recursos sin placeholders ni imagenes mutables.
+3. Parseo de la escena real: navmesh, ocho `spawbot-*` y rutas entre todos los pares conectados.
+4. Prueba live de `static`, `low/medium/high`, late join, chat y `go_to_waypoint`.
+5. Confirmar que el runner sigue oculto y que no se ha reactivado Chromium.
+
+Rollback: volver a los tres digests anteriores de Hubs, Reticulum y bot-orchestrator en
+`deployment/input-values.local.yaml`, regenerar el manifiesto y aplicarlo por el flujo estandar.

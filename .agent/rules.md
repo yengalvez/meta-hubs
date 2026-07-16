@@ -83,6 +83,15 @@
 - For sitting waypoints, `Disable motion` identifies the seat. `Clickable` is additionally required if the waypoint
   must appear as a white target while the user holds Space. Space targets are tested after fully entering the room,
   not while using the lobby-only `Mirar` mode.
+- Production bots use the Node `ghost` backend with `GHOST_NAVIGATION_MODE=navmesh_preferred`; Chromium is diagnostic
+  fallback only. Bot scenes must publish a Spoke Floor Plan/navmesh, and `spawbot-*` waypoints should sit on its
+  walkable surface. `mobility=static` means no autonomous or LLM-triggered movement.
+- Treat the bot navmesh parser and `bot-path` protocol as an explicit upstream-upgrade surface. Re-run the real-scene
+  navmesh extraction/routing test whenever Hubs, Spoke, Three.js, networked-aframe or Hubs CE is updated. Colliders
+  are compatibility fallback only, not the accepted production navigation mode.
+- Never edit `deployment/input-values.local.yaml` or the ignored generated copy in place with Perl/Ruby interpolation.
+  In particular, `@sha256` can be interpreted by Perl and destroy an image reference. Write a restricted temporary
+  file, validate required keys, PEM material, image digests and generated Secret parity, then replace atomically.
 
 ## Code Standards
 - Maintain documentation for every new feature in `features/`.

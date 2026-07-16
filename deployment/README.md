@@ -78,24 +78,30 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 
 | Component | Live image | Actions run |
 |-----------|-----------------|-------------|
-| Hubs client | `ghcr.io/yengalvez/hubs@sha256:b568a9c8565f7983018c2a72d9e13b7bdb32b552381b79a32fdc904bc5e0097c` | `29499784485` |
-| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:0b1f8104a520a15828f92ac1428c98a8f45846dcf49d0c99e8ea929f26dad317` | CI `29480369600`; build `29480568375` |
-| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:1ab1e66b63aa3ae08bf78b285ba52f46ec555fedb2924ed5aea906f44b28f3b5` | `29459396773` |
+| Hubs client | `ghcr.io/yengalvez/hubs@sha256:cff099ef4759c8ec8e8d6010ae9268c6b6e99f29ff5ecb50f6e50ce884d20a8c` | `29506573351` |
+| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:9ae6712fa5cd4380048ec559cbf75596507ae91cdbd653cac1978b685254faef` | CI `29506498175`; build `29506780044` |
+| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:325c5c10e4ee039518693771c0974a0e5c876dcf54c443295e84490f4fa8ec53` | `29506574473` |
 | Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` | `29375052801` |
 | Photomnemonic | `ghcr.io/yengalvez/photomnemonic@sha256:aef369b82212429d01c0f1f554b16c34a99cf4bbb75e0693e190c796b33012f2` | `29376531637` |
 | Coturn | `ghcr.io/yengalvez/coturn@sha256:c2ad335349d477d342d5b17c82b513bfebc8c17b8e6b4e27a3049f3478207780` | `29371663849` |
 | Spoke | `ghcr.io/yengalvez/spoke@sha256:f5120264938e189e702f835182ed4a28a5ce20b140d7262bc2a3074e6d0b6657` | `29410656894` |
 
-Production uses `RUNNER_BACKEND=ghost`, `MAX_ACTIVE_ROOMS=5` and `MAX_BOTS_PER_ROOM=10`. Cloud commit `923f6a9`
-applies room config changes to a live ghost process and commit `66fc4c0` contains the final prompt/runtime guardrails.
-The exact bot digest is `sha256:1ab1e66b63aa3ae08bf78b285ba52f46ec555fedb2924ed5aea906f44b28f3b5`;
+Final acceptance on 2026-07-16 reported 12/12 Deployments Ready, four Ready certificates, HTTP 200, zero manifest
+drift, DB schema 356 with 94 migrations and 33 active owned files, and storage with 47 complete pairs of which 14
+were deferred. These are current live counts, not a replacement for the historical checkpoint counts below.
+
+Production uses `RUNNER_BACKEND=ghost`, `GHOST_NAVIGATION_MODE=navmesh_preferred`, `MAX_ACTIVE_ROOMS=5` and
+`MAX_BOTS_PER_ROOM=10`. Cloud commit `5a82de5` adds `mobility=static`, safe partial GLB loading and A* navigation over
+the Spoke navmesh while retaining the room config and prompt/runtime guardrails from the earlier audit.
+The exact bot digest is `sha256:325c5c10e4ee039518693771c0974a0e5c876dcf54c443295e84490f4fa8ec53`;
 the March `ghost-fullsync` image remains available only as the tested rollback.
 
-Hubs commit `1f569385d` includes the official `prod-2026-03-11` release, dependency hardening, safe cookie migration,
+Hubs commit `a7214eb88` includes the official `prod-2026-03-11` release, dependency hardening, safe cookie migration,
 mobile viewport containment, sitting feedback, bot privacy copy, responsive avatar UI, fully localized profile
-placeholders, the accepted Obsidian Aurora room interface and the Obsidian Aurora portal landing. It also retains
-runtime asset substitution, full-body/Avaturn validation, third-person, sitting and bot features accepted during the
-audit. The landing contract and upgrade checks live in `features/landing-aurora/README.md`.
+placeholders, the accepted Obsidian Aurora room interface, the Obsidian Aurora portal landing and the `static` bot
+mobility control. It also retains runtime asset substitution, full-body/Avaturn validation, third-person, sitting and
+bot features accepted during the audit. The landing contract and upgrade checks live in
+`features/landing-aurora/README.md`.
 
 Spoke commit `cc5c831` fixes the publish authentication retry without repeating exports/uploads and wires cancellation
 to the main GLB upload. Commit `56afaee` additionally treats expired or malformed local JWTs as signed out before an
@@ -104,8 +110,9 @@ aborts under Node 22 before executing tests. Run the complete suite as `npx ava 
 package-script glob only selects part of the nested suite in some shells.
 
 Reticulum was modernized and hardened through cloud commit `cc43df4`; commit `9781d06` adds the OTP 27 compatibility
-fix required by the legacy Bamboo/gen_smtp adapter and correct delivery metrics. It is pinned live at
-`sha256:0b1f8104a520a15828f92ac1428c98a8f45846dcf49d0c99e8ea929f26dad317`. It uses Elixir 1.18.4, OTP 27.3.4.14,
+fix required by the legacy Bamboo/gen_smtp adapter and correct delivery metrics, and commit `5a82de5` accepts
+`mobility=static` across the persisted bot contract. It is pinned live at
+`sha256:9ae6712fa5cd4380048ec559cbf75596507ae91cdbd653cac1978b685254faef`. It uses Elixir 1.18.4, OTP 27.3.4.14,
 Phoenix 1.6.17, Plug 1.16.6, Cowboy 2.15, Ecto 3.14 and Postgrex 0.22.3. In addition to credential filtering, this
 revision closes the audited CORS proxy rebinding/header issues, scopes entity operations to their room, fixes account
 deletion ownership, replaces blocking Statix calls, reconciles abandoned Spoke files and validates avatar uploads
@@ -158,8 +165,9 @@ Runtime capacity and isolation baseline (measured and accepted on 2026-07-14):
 
 Important deployment distinction:
 
-- Hubs runs commit `1f569385d`, published by Actions run `29499784485`; Reticulum runs commit `9781d06`.
-- Bot orchestrator runs the July audit commit `3ce47c9`, published by Actions run `29374198198`.
+- Hubs runs commit `a7214eb88`, published by Actions run `29506573351`.
+- Reticulum and bot-orchestrator run cloud commit `5a82de5`; CI is `29506498175`, the Reticulum image build is
+  `29506780044` and the bot-orchestrator image build is `29506574473`.
 - Dialog runs cloud commit `4eb743b` (runtime change in `08a0cf3`), published by Actions run `29375052801` and pinned
   to digest `sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23`.
 - Photomnemonic runs cloud commit `e670a4a` (runtime change in `662035c`), published by Actions run `29376531637` and
@@ -378,11 +386,25 @@ Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
 - `BOT_ACCESS_KEY` - random shared key used by Reticulum <-> bot-orchestrator internal calls; rotate it only in the
   ignored local values and then regenerate/apply the manifest
 - `OPENAI_API_KEY` - API key used by bot-orchestrator for LLM chat (model defaults to `gpt-5-nano`)
+- `GHOST_NAVIGATION_MODE` - keep `navmesh_preferred` in production; the old collider/direct mode is fallback only
+- `GHOST_NAVMESH_MAX_TRIANGLES` - navmesh parser cap, default `50000`
+- `GHOST_NAVMESH_MAX_ROUTE_POINTS` - route publication cap, default `64`
+- `GHOST_NAVMESH_MAX_SNAP_DISTANCE_M` - maximum waypoint projection distance, default `3`
 - `OVERRIDE_HAPROXY_IMAGE` - set to the approved digest for HAProxyTech 3.2 on modern Kubernetes
 
 Every `OVERRIDE_*_IMAGE` used by a Deployment must be `repository@sha256:<digest>`. After an Actions build, resolve
 the published tag to its registry digest, update the ignored local values and regenerate. The verifier deliberately
 fails on `stable-latest`, `*-latest` and version tags, even when they currently point at the expected bytes.
+
+Do not modify either secret-bearing values file with an in-place Perl/Ruby command. A replacement containing
+`@sha256` can be interpolated and corrupt the file. Use this safe pattern instead:
+
+1. Copy the source to a mode `0600` temporary file.
+2. Update the temporary file with a parser that treats values literally.
+3. Validate all required keys, exact image digest syntax and the `PERMS_KEY` PEM.
+4. Generate `hcce.yaml` and compare the generated `Secret/configs` keys and values with the live Secret when
+   preserving an existing environment.
+5. Atomically move the validated file into place.
 
 ### Rotate the internal bot key safely
 
@@ -610,6 +632,10 @@ Bot-orchestrator security gate before promotion:
 - `scene.model_url` is same-origin by default. Add a CDN only through `GHOST_SCENE_ALLOWED_HOSTS`; never disable the
   allowlist to fix a scene.
 - The generated manifest fixes a 10 s timeout, 64 MiB scene limit, 4 MiB JSON limit, 50,000 nodes and 200,000 edges.
+- Production must also expose `GHOST_NAVIGATION_MODE=navmesh_preferred`, a 50,000-triangle navmesh cap, 64 route
+  points and a 3 m projection cap. `verify-generated-manifest.js` and `verify-live-reactivation.sh` enforce this.
+- Before promotion, parse the current production GLB and require a valid navmesh plus routes between its expected
+  `spawbot-*` points. A log such as `No valid navmesh` means the scene has fallen back and is not accepted.
 - Validate one neutral chat message (`action=null`) and one explicit `go_to_waypoint` command after rollout.
 - `store:false` is not Zero Data Retention. Confirm the OpenAI organization policy and publish a privacy notice before
   real public conversations.
@@ -1039,10 +1065,10 @@ account an owner membership. Therefore:
 This distinction is mandatory for recovered scenes:
 
 - `walkable`/`collidable` on the imported office model describes the model but does not generate player navigation.
-- A Spoke `Floor Plan` generates the `nav-mesh` used by the Hubs character controller to constrain walking to the
-  floor.
-- `box-collider` remains optional and is useful for bot line-of-sight/obstacle checks; it is not a replacement for
-  the player nav mesh.
+- A Spoke `Floor Plan` generates the `nav-mesh` used both by the Hubs character controller and by the ghost runner.
+  Bots project `spawbot-*` waypoints onto this mesh and use A* to route around structures.
+- `box-collider` remains optional as compatibility fallback for old scenes. It is not a replacement for the navmesh
+  and cannot calculate a route around an obstacle.
 
 Before republishing a live scene, create a matching DB and `ret-pvc` checkpoint. The checkpoint for this repair is
 `output/magiclink-scene-prepublish-20260716-093347/`, with hashes in `SHA256SUMS`.

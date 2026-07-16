@@ -1,17 +1,20 @@
 # Bots, coste y capacidad: analisis de julio de 2026
 
+> Actualizacion del 16 de julio de 2026: las dos recomendaciones de runtime de este informe ya estan implementadas,
+> desplegadas y aceptadas en produccion: `mobility: static` y navegacion navmesh+A* en el ghost runner. La parte de
+> 300/10.000 CCU sigue siendo solo analisis de arquitectura; no se ha implementado.
+
 ## Resumen ejecutivo
 
 - La infraestructura actual cuesta aproximadamente **62 USD/mes** antes de impuestos, uso extra de red, snapshots,
   registro de contenedores y consumo de OpenAI.
 - El `ghost runner` es la decision correcta para los bots: dos salas activas consumen en conjunto unos **134 MiB**
   de memoria de cgroup y una fraccion pequena de CPU. Volver a Chromium empeoraria mucho el coste por sala.
-- Los bots atraviesan estructuras porque las escenas activas tienen **cero `box-collider`**. El runner actual solo
-  comprueba esos colliders y, cuando no encuentra ninguno, permite todos los trayectos.
-- La solucion recomendada a largo plazo es conservar el ghost runner y navegar sobre el **navmesh de la escena**,
-  proyectando los waypoints y calculando rutas con A*. Es mas robusto que anadir fisica o volver a un navegador.
-- Debe anadirse una movilidad `static` para bots inmoviles. `low` no sirve como sustituto porque sigue generando
-  trayectos.
+- El diagnostico inicial encontro **cero `box-collider`** y trayectos rectos que atravesaban estructuras.
+- La solucion implementada conserva el ghost runner y navega sobre el **navmesh de la escena**, proyectando puntos y
+  calculando rutas A*. Los colliders quedan solo como fallback de compatibilidad.
+- `mobility: static` mantiene bots inmoviles y rechaza acciones de navegacion. `low` conserva su significado de
+  movilidad lenta.
 - La instalacion actual no debe prometer 300 CCU. Hubs recomienda 25 personas dentro de una sala y documenta
   problemas en moviles por encima de 10. Treinta puede ser un objetivo de pruebas controladas; 100 avatares activos
   en una sola sala requeriria redisenar partes importantes del producto.
@@ -58,7 +61,7 @@ Fuentes oficiales consultadas:
 - <https://docs.digitalocean.com/products/networking/load-balancers/details/pricing/>
 - <https://docs.digitalocean.com/products/volumes/details/pricing/>
 
-## Por que los bots atraviesan estructuras
+## Diagnostico historico: por que atravesaban estructuras
 
 El ghost runner:
 
@@ -75,9 +78,9 @@ No box-colliders found in scene. Raycast fallback -> allow.
 Waypoints: all=11 spawn=8 patrol=8 colliders=0
 ```
 
-El navmesh que evita que los usuarios atraviesen el suelo no se usa actualmente para los bots. Los bots reciben un
-segmento recto entre dos waypoints; por eso una pared colocada entre ambos se atraviesa si no existe un collider que
-la represente.
+Ese era el comportamiento anterior. El ghost runner nuevo usa el `nav-mesh` generado por el Floor Plan, calcula una
+ruta A* y publica sus tramos consecutivos. Solo cae al comportamiento de collider/directo cuando la escena no contiene
+un navmesh valido.
 
 ## Opciones para corregir la navegacion
 
@@ -116,7 +119,7 @@ Limitaciones:
 - Trabajo manual por escena.
 - Spoke no ofrece hoy una UX nativa para enlazarlos; haria falta convencion o metadata propia.
 
-### Opcion C: navmesh + A* en el ghost runner (recomendada)
+### Opcion C: navmesh + A* en el ghost runner (implementada)
 
 1. Extraer el navmesh existente del GLB.
 2. Proyectar cada waypoint y posicion de bot sobre el navmesh.
@@ -132,12 +135,16 @@ Ventajas:
 - El calculo ocurre al escoger ruta, no cada frame.
 - Escala bien para 5 salas y 10 bots si se cachea el navmesh por escena.
 
-Riesgos que hay que probar:
+Validacion realizada sobre la escena live recuperada:
 
-- Formato exacto del navmesh exportado por las versiones de Spoke usadas.
-- Escaleras, desniveles, enlaces desconectados y waypoints fuera de la malla.
-- Radio/altura del agente y zonas estrechas.
-- Invalidacion de cache cuando cambia la escena.
+- 350 triangulos y 11 grupos de navmesh parseados.
+- 11 waypoints y 8 `spawbot-*` proyectados.
+- 56 de 56 rutas dirigidas entre los ocho puntos disponibles.
+- Descarga parcial por HTTP Range del JSON GLB y los buffers necesarios.
+- Limites fail-closed de triangulos, puntos por ruta y distancia de proyeccion.
+
+Siguen siendo casos de regresion para futuras escenas: escaleras, enlaces desconectados, waypoints fuera de malla e
+invalidacion al publicar una version nueva.
 
 ### Opcion D: raycast sobre triangulos/BVH
 
@@ -151,7 +158,7 @@ authoring. Chromium debe quedar solo como fallback de diagnostico.
 
 ## Bots inmoviles
 
-La implementacion futura debe anadir `mobility: "static"` de extremo a extremo:
+`mobility: "static"` esta implementado de extremo a extremo:
 
 - `Room Settings`
 - validacion de Reticulum
@@ -159,7 +166,7 @@ La implementacion futura debe anadir `mobility: "static"` de extremo a extremo:
 - ghost runner
 - documentacion y pruebas
 
-Comportamiento recomendado:
+Comportamiento actual:
 
 - El bot aparece en su `spawbot-*` asignado.
 - No selecciona destinos automaticos.
@@ -167,7 +174,7 @@ Comportamiento recomendado:
 - Sigue permitiendo chat.
 - Una accion LLM `go_to_waypoint` se rechaza por defecto mientras sea estatico.
 
-Como segunda iteracion conviene permitir configuracion por bot:
+Como segunda iteracion futura conviene permitir configuracion por bot:
 
 ```json
 {
@@ -253,8 +260,8 @@ migracion transparente.
 ## Recomendacion de hoja de ruta
 
 1. Mantener `ghost` y prohibir Chromium en produccion salvo diagnostico.
-2. Implementar `mobility: static`.
-3. Hacer un prototipo navmesh + A* en una copia de la escena actual.
-4. Validar trayectos, pendientes y separacion con 10 bots.
+2. `Completado`: implementar `mobility: static`.
+3. `Completado`: implementar y probar navmesh+A* contra la escena actual.
+4. `Completado`: aceptar en vivo trayectos, modo estatico y restauracion de movilidad tras el rollout estandar.
 5. Instalar metricas y ejecutar pruebas controladas de 10, 20, 25 y 30 usuarios.
 6. Solo despues disenar el escalado a 300 CCU y el allocator de salas.

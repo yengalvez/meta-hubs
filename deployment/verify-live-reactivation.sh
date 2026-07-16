@@ -499,11 +499,11 @@ if [[ "$bot_desired" == "1" && "${bot_ready:-0}" == "1" ]]; then
   done
 
   if [[ -n "$health" ]] && printf '%s' "$health" | jq -e \
-    '.ok == true and .runner_backend_default == "ghost" and .max_bots_per_room == 10' >/dev/null 2>&1; then
+    '.ok == true and .runner_backend_default == "ghost" and .ghost_navigation_mode == "navmesh_preferred" and .max_bots_per_room == 10' >/dev/null 2>&1; then
     active_rooms="$(printf '%s' "$health" | jq -r '.active_rooms // 0')"
-    pass "Orchestrator healthy, backend ghost, max bots 10, active rooms $active_rooms"
+    pass "Orchestrator healthy, backend ghost, navmesh preferred, max bots 10, active rooms $active_rooms"
   else
-    fail "El health del bot-orchestrator no confirma backend ghost saludable"
+    fail "El health del bot-orchestrator no confirma backend ghost/navmesh saludable"
   fi
 else
   fail "bot-orchestrator no esta Ready 1/1"
