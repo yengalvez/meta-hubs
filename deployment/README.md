@@ -4,9 +4,11 @@ Hubs Community Edition 2.1.0 on DigitalOcean Kubernetes with automated SSL via c
 
 > **Last updated**: July 2026 | **Cluster**: `hubs-ce` active on DOKS `1.34.8-do.2`, `HA=false` | **Region**: AMS3
 >
-> The March baseline and database are restored. Authoritative DNS, TLS and Mailtrap SMTP are operational. Mailtrap
-> uses the `info@meta-hubs.org` account; Reticulum derives the sender as `noreply@<HUB_DOMAIN>` and has no
-> `SMTP_FROM` input. The March freeze did **not** contain the original `ret-pvc` bytes, so exact historical media
+> The March baseline and database are restored. Authoritative DNS, TLS and Mailtrap SMTP are operational. The Hubs
+> and Spoke administrator is `info@virtualmente.com`. Mailtrap account ownership is independent from that address;
+> use account ID `2385821` and the verified sender domain `meta-hubs.org` when locating the provider configuration.
+> Reticulum derives the sender as `noreply@<HUB_DOMAIN>` and has no `SMTP_FROM` input. The March freeze did **not**
+> contain the original `ret-pvc` bytes, so exact historical media
 > recovery is impossible. A functional replacement scene, Spoke project, test room and the nine locally recovered
 > avatars were rebuilt through normal application APIs on 2026-07-14. The audit and stable upgrade are complete; start
 > from `docs/project-handoff-2026-07.md`, then use this guide for operations.
@@ -77,7 +79,7 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 | Component | Live image | Actions run |
 |-----------|-----------------|-------------|
 | Hubs client | `ghcr.io/yengalvez/hubs@sha256:c5e2ee4eb125535b8b8ca55a369f24e2e2c5bcf2882158e53996bf5df3c030f3` | `29464896181` |
-| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:0543dffbcd107637c188a7c46e15fac0af6daea10402d86f2fd7987f478e756a` | `29459862753` |
+| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:0b1f8104a520a15828f92ac1428c98a8f45846dcf49d0c99e8ea929f26dad317` | CI `29480369600`; build `29480568375` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:1ab1e66b63aa3ae08bf78b285ba52f46ec555fedb2924ed5aea906f44b28f3b5` | `29459396773` |
 | Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` | `29375052801` |
 | Photomnemonic | `ghcr.io/yengalvez/photomnemonic@sha256:aef369b82212429d01c0f1f554b16c34a99cf4bbb75e0693e190c796b33012f2` | `29376531637` |
@@ -100,13 +102,16 @@ API request. Its tests/build must run with Node `16.13.2`, matching the Spoke Do
 aborts under Node 22 before executing tests. Run the complete suite as `npx ava 'test/unit/**/*.test.js'`: the unquoted
 package-script glob only selects part of the nested suite in some shells.
 
-Reticulum was modernized and hardened through cloud commit `cc43df4` and is pinned live at
-`sha256:0543dffbcd107637c188a7c46e15fac0af6daea10402d86f2fd7987f478e756a`. It uses Elixir 1.18.4, OTP 27.3.4.14,
+Reticulum was modernized and hardened through cloud commit `cc43df4`; commit `9781d06` adds the OTP 27 compatibility
+fix required by the legacy Bamboo/gen_smtp adapter and correct delivery metrics. It is pinned live at
+`sha256:0b1f8104a520a15828f92ac1428c98a8f45846dcf49d0c99e8ea929f26dad317`. It uses Elixir 1.18.4, OTP 27.3.4.14,
 Phoenix 1.6.17, Plug 1.16.6, Cowboy 2.15, Ecto 3.14 and Postgrex 0.22.3. In addition to credential filtering, this
 revision closes the audited CORS proxy rebinding/header issues, scopes entity operations to their room, fixes account
 deletion ownership, replaces blocking Statix calls, reconciles abandoned Spoke files and validates avatar uploads
-server-side. CI on PostgreSQL 12/14, isolated storage tests and the production rollout passed before this digest became
-the lock.
+server-side. STARTTLS remains mandatory, while certificate verification is disabled specifically for this old SMTP
+adapter because OTP 27 otherwise selects `verify_peer` without a CA bundle and fails before AUTH. CI on PostgreSQL
+12/14, isolated storage tests, a real delivered magic link and the production rollout passed before this digest
+became the lock.
 
 After that rollout, all 13 live containers were changed from mutable tags to the exact digests they were already
 running. `npm run gen-hcce` now rejects every Deployment image that is not in `repository@sha256:<64 hex>` form.
@@ -506,7 +511,7 @@ now eliminated from the generator.
 ### Step 14: Login and Verify
 
 1. Open `https://yourdomain.com` - should show Hubs with green padlock
-2. Enter your admin email > check email for magic link > click it
+2. Enter the admin email `info@virtualmente.com` > check email for magic link > click it
 3. Access admin panel at `https://yourdomain.com/admin`
 
 Run the tracked read-only verifier from the repository root. It checks all four DNS records and certificates,
@@ -842,6 +847,21 @@ kubectl exec $RET_POD -c reticulum -n hcce -- nc -zv your-smtp-server your-port
 # If closed: wrong port, or DO is blocking it
 ```
 
+For this deployment, the administrator login is `info@virtualmente.com`; it is not necessarily the identity used to
+sign in to the Mailtrap dashboard. Locate the provider configuration by Mailtrap account ID `2385821` and verified
+domain `meta-hubs.org`.
+
+If Reticulum logs an error equivalent to:
+
+```text
+{error,{options,incompatible,[{verify,verify_peer},{cacerts,undefined}]}}
+```
+
+the network and credentials may be correct. Bamboo's legacy `gen_smtp` adapter inherits `verify_peer` on OTP 27 but
+does not receive a CA bundle. Keep `tls: :always`, `ssl: false` and `tls_verify: :verify_none` together in
+`community-edition/services/reticulum/config/prod.exs`. Do not remove STARTTLS and do not report the email as sent
+unless `Ret.Mailer.deliver_now/1` returns success.
+
 ### Pod evictions / OOMKilled
 ```bash
 kubectl top pods -n hcce          # Requires metrics-server
@@ -989,6 +1009,22 @@ The room contains one spawn, eight `spawbot-recovery-*` patrol points and two `D
 Live smoke testing confirmed three ghost bots, movement, hidden runner identity, first/third-person toggle and the bot
 chat endpoint. The scene is a functional reconstruction, not an exact byte-for-byte copy of the lost Spoke project.
 
+On 2026-07-16 the same Spoke project was republished after adding a native `Floor Plan`. The published scene SID
+remained `f6VKtim` and now points to model
+`https://meta-hubs.org/files/749efd34-73a0-496c-8584-3958b01ef186.bin`. The GLB contains a node named `navMesh`
+with the `nav-mesh` component, and a cold room load confirmed one runtime nav mesh and no browser errors.
+
+This distinction is mandatory for recovered scenes:
+
+- `walkable`/`collidable` on the imported office model describes the model but does not generate player navigation.
+- A Spoke `Floor Plan` generates the `nav-mesh` used by the Hubs character controller to constrain walking to the
+  floor.
+- `box-collider` remains optional and is useful for bot line-of-sight/obstacle checks; it is not a replacement for
+  the player nav mesh.
+
+Before republishing a live scene, create a matching DB and `ret-pvc` checkpoint. The checkpoint for this repair is
+`output/magiclink-scene-prepublish-20260716-093347/`, with hashes in `SHA256SUMS`.
+
 The nine recovered avatar GLBs can be reimported from Admin at `https://meta-hubs.org/admin#/import`. Do not use the
 trailing-slash form `/admin/`; it is not a valid route in this deployment. The preferred flow is `Upload Avatars from
 Disk`. The current Hubs/Reticulum images allow a standalone GLB to bootstrap without a historical base parent and
@@ -1021,7 +1057,7 @@ tool, not the normal day-to-day import path.
 
 After restoring `retdb`, invalidate assumptions about browser login state. A stale Spoke token may still render a
 `Logout` link while `/api/v1/projects` returns `401` (sometimes labelled as a possible CORS error by the UI). Log out
-and request a fresh magic link before diagnosing the API or ingress.
+and request a fresh magic link for `info@virtualmente.com` before diagnosing the API or ingress.
 
 ### Restore the Reticulum database
 

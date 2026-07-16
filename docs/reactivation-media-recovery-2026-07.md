@@ -74,8 +74,9 @@ exacta.
    asientos. Verificar tambien las dos luces de recuperacion y reducirlas o eliminarlas si los lightmaps ya iluminan
    correctamente en runtime. Las posiciones e iluminacion generadas son deliberadamente provisionales porque el
    proyecto Spoke final se perdio.
-6. Comprobar que el modelo conserva `collidable` y `walkable`, los bots conservan el prefijo `spawbot-*` y los
-   asientos tienen `Disable motion` y `Can be occupied`.
+6. Comprobar que el modelo conserva `collidable` y `walkable`, añadir un `Floor Plan` que cubra toda la superficie
+   transitable, comprobar que la exportacion contiene `nav-mesh`, verificar que los bots conservan el prefijo
+   `spawbot-*` y que los asientos tienen `Disable motion` y `Can be occupied`.
 7. Publicar la escena y asignarla primero a un hub de prueba, no al hub historico.
 8. Reimportar los GLB originales desde Admin y comprobar rig, thumbnails y tags featured.
 9. Validar third-person, sitting y ghost bots en dos navegadores.
@@ -97,10 +98,15 @@ perdido:
   `https://meta-hubs.org/spoke/projects/qa3U3Ke`.
 - Escena publicada: `f6VKtim`, `YenHubs Recuperacion Funcional`.
 - Sala de prueba: `XesSAqd`, `https://meta-hubs.org/XesSAqd/prickly-nice-huddle`.
-- La escena contiene 15 entidades: root, modelo, dos luces, un spawn, ocho `spawbot-recovery-*` y dos waypoints de
-  asiento con `Disable motion` y `Can be occupied`.
+- La reconstruccion inicial contenia 15 entidades: root, modelo, dos luces, un spawn, ocho
+  `spawbot-recovery-*` y dos waypoints de asiento con `Disable motion` y `Can be occupied`. El proyecto publicado
+  actual anade ademas el `Floor Plan`.
 - El ghost runner reconoce 11 waypoints, usa 8 para spawn/patrulla y crea los 3 bots configurados. No aparece como
   usuario en `Personas`.
+- El 16 de julio se anadio un `Floor Plan` nativo y se republico la misma escena `f6VKtim`. El modelo publicado
+  `749efd34-73a0-496c-8584-3958b01ef186.bin` contiene un nodo `navMesh` con componente `nav-mesh`. Marcar el modelo
+  importado como `walkable`/`collidable` no sustituye este paso: sin nav mesh el controlador puede permitir movimiento
+  vertical y atravesar el suelo.
 
 Tambien se reconstruyeron miniaturas reales y se importaron nueve avatares mediante los endpoints normales de
 Reticulum. `base` quedo como base/default (`5J1OZx-`) y los ocho modelos full-body quedaron featured:

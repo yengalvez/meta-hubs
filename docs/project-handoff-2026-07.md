@@ -85,7 +85,7 @@ La fuente de verdad operativa es `deployment/input-values.local.yaml`, siempre c
 | Servicio | Imagen final |
 | --- | --- |
 | Hubs | `ghcr.io/yengalvez/hubs@sha256:c5e2ee4eb125535b8b8ca55a369f24e2e2c5bcf2882158e53996bf5df3c030f3` |
-| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:0543dffbcd107637c188a7c46e15fac0af6daea10402d86f2fd7987f478e756a` |
+| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:0b1f8104a520a15828f92ac1428c98a8f45846dcf49d0c99e8ea929f26dad317` |
 | Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:1ab1e66b63aa3ae08bf78b285ba52f46ec555fedb2924ed5aea906f44b28f3b5` |
 | Spoke | `ghcr.io/yengalvez/spoke@sha256:f5120264938e189e702f835182ed4a28a5ce20b140d7262bc2a3074e6d0b6657` |
 | Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` |
@@ -128,8 +128,16 @@ Incluye:
 - inventario de deployments, commits e imagenes;
 - evidencia del verificador.
 
-El estado coherente esperado es 34 archivos activos, 34 blobs y 34 metadatos. Hay cuatro pares completos diferidos por
-la reconciliacion de Spoke; no son corrupcion.
+En ese checkpoint final previo habia 34 archivos activos, 34 blobs activos, 34 metadatos activos y cuatro pares
+completos diferidos por la reconciliacion de Spoke; no eran corrupcion.
+
+Checkpoint previo a la reparacion SMTP/publicacion de escena:
+
+`output/magiclink-scene-prepublish-20260716-093347/`
+
+Incluye un dump, un archivo de storage y copias original/modificada del proyecto Spoke con checksums. En ese momento
+habia 34 archivos activos y 38 pares fisicos completos. Tras publicar el nuevo `Floor Plan`, el estado live conserva
+34 activos y 43 pares completos, de los cuales nueve son diferidos validos pendientes de la reconciliacion normal.
 
 Rollback de Hubs probado:
 
@@ -147,6 +155,8 @@ el dump raw de marzo sobre el estado actual: contenia 93 referencias activas cuy
 - Audio real entre dos navegadores por Dialog/WebRTC.
 - DNS, TLS, 12 deployments, hardening, DB/storage, HTTPS, assets y CSP.
 - Ghost runner: late join, movimiento, cinco bots visibles, config live 5 -> 10 -> 5 sin reiniciar proceso.
+- Magic link real entregado a `info@virtualmente.com`, verificacion Hubs completada y Spoke autenticado.
+- Escena `f6VKtim` republicada con un `nav-mesh` nativo; la sala carga exactamente un nav mesh sin errores.
 - Carga fria de Hubs en navegador real.
 - Capturas y layout sin overflow a 1440x900, 1024x1366 y 390x844.
 - Flujo de entrada movil completo, toolbar oculta durante el modal y badge de version visible tras entrar.
@@ -165,12 +175,16 @@ No presentar estos puntos como ya probados:
 - Los secretos que aparecieron historicamente en Git fueron rotados, pero la historia publica no se reescribio porque
   es una operacion destructiva para clones y referencias.
 - El bundle Hubs sigue siendo grande; es deuda de rendimiento, no una regresion funcional.
-- La escena recuperada conserva avisos A-Frame/MeshBVH y no tiene `box-collider`; el raycast de bots queda en fallback.
+- La escena recuperada ya tiene `nav-mesh` y no permite el fallo vertical causado por su ausencia. Conserva avisos
+  A-Frame/MeshBVH y no tiene `box-collider`; el raycast de bots queda en fallback.
 
 ## Secretos y configuracion local
 
 - Fuente local real: `deployment/input-values.local.yaml`.
 - Copia runtime ignorada: `hubs-cloud/community-edition/input-values.yaml`.
+- Administrador Hubs/Spoke: `info@virtualmente.com`.
+- Mailtrap se identifica operativamente por account ID `2385821` y dominio verificado `meta-hubs.org`; la cuenta del
+  proveedor no debe inferirse a partir del correo administrador.
 - Nunca versionar ni imprimir tokens, claves SMTP/OpenAI, `PERMS_KEY`, `BOT_ACCESS_KEY` o passwords DB.
 - Mantener `PERMS_KEY` identico en Reticulum y Dialog.
 - GitHub usa secretos `REGISTRY_USERNAME` y `REGISTRY_PASSWORD` para GHCR.
