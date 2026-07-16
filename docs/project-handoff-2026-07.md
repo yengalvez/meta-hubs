@@ -106,10 +106,11 @@ Moderation y Responses, se desplego mediante el manifiesto estandar y el chat
 live respondio con `gpt-5-nano`. La clave nueva solo se conserva en el llavero
 macOS (`YenHubs-OpenAI`) y en los valores locales/Secret ignorados.
 
-La clave anterior sigue pendiente de revocacion en el panel OpenAI porque una
-clave normal de proyecto no puede eliminarse mediante la API administrativa.
-La historia Git no se reescribio porque es una operacion destructiva; Gitleaks
-del entregable actual esta limpio.
+La clave anterior se revoco en el panel OpenAI el 16 de julio de 2026. Una
+comprobacion posterior devolvio HTTP 401, mientras la clave nueva siguio
+respondiendo HTTP 200. Su copia temporal se elimino del llavero. La historia Git
+no se reescribio porque es una operacion destructiva; Gitleaks del entregable
+actual esta limpio.
 
 ### 3. Capacidad no certificada
 
@@ -193,12 +194,11 @@ factura. Para alta, congelacion, restauracion o baja de un cliente usar
 ## Orden para continuar
 
 1. Leer `AGENTS.md` y este handoff.
-2. Revocar la clave OpenAI historica.
-3. Ejecutar `deployment/preflight-reactivation.sh`.
-4. Confirmar arboles limpios y ramas base.
-5. Crear checkpoint si se va a mutar produccion.
-6. Usar una rama por feature o upgrade.
-7. Ejecutar los gates y desplegar solo por el metodo estandar.
+2. Ejecutar `deployment/preflight-reactivation.sh`.
+3. Confirmar arboles limpios y ramas base.
+4. Crear checkpoint si se va a mutar produccion.
+5. Usar una rama por feature o upgrade.
+6. Ejecutar los gates y desplegar solo por el metodo estandar.
 
 ## Indice
 
