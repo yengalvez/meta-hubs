@@ -375,3 +375,11 @@ Time reference: Europe/Madrid (CEST).
 | 2026-07-16 21:50-21:56 | El primer checkpoint de la sesion exporto la DB pero una interrupcion transitoria de `kubectl exec` trunco el stream de storage; el script rechazo correctamente el resultado. Repetimos desde cero y creamos `output/checkpoints/20260716-215518/`. | Checkpoint valido: DB 49 KiB, storage 183 MiB, 356 de schema, 94 migraciones, 33 activos, 47 pares completos y 14 diferidos. `SHA256SUMS`, gzip y restore dry-run pasan; el intento incompleto se elimino. |
 | 2026-07-16 22:00-22:10 | Creamos una clave OpenAI nueva desde el panel, la guardamos en llavero, validamos Models/Moderation/Responses con `gpt-5-nano`, sustituimos el valor local de forma atomica y generamos los 44 recursos. La comparacion previa mostro que solo cambiaba `OPENAI_API_KEY`; el resto del manifiesto tenia diff cero. | Aplicamos el manifiesto estandar, reiniciamos solo bot-orchestrator y confirmamos por huella que cargo la clave nueva. `/health` muestra ghost, dos salas y GPT-5 Nano; un chat live respondio sin fallback. El verificador final termina 0/0. La clave anterior queda pendiente de revocacion en el panel sin mover la sesion visible del usuario. |
 | 2026-07-16 22:35-22:36 | El propietario revoco en el panel la clave OpenAI historica `Meta-Hubs`. Comprobamos la credencial anterior desde terminal sin imprimirla y eliminamos su copia temporal del llavero. | La clave antigua devuelve HTTP 401 y la nueva sigue devolviendo HTTP 200. La rotacion OpenAI queda completamente cerrada. |
+
+## 2026-07-17 (Hardening local de recuperacion)
+
+Time reference: Europe/Madrid (CEST).
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-07-17 | Endurecimos backup y restore sin tocar produccion: contexto y UID de namespace exactos, confirmaciones destructivas ligadas al destino, espera fail-closed de pods, permisos `0600` y validacion offline cruzada entre `ret0.owned_files` y pares del tar antes de checksums. | Fixtures y stubs locales de `kubectl` cubren preflight, contexto/UID incorrectos, timeout, pods remanentes, activos ausentes, pares incompletos y modos de fichero. No se uso ningun cluster ni se leyo configuracion sensible. |

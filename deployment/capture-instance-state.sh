@@ -4,6 +4,7 @@
 # instance. Run this before a risky rollout or before deleting infrastructure.
 
 set -euo pipefail
+umask 077
 
 if [[ $# -ne 1 ]]; then
   printf 'Usage: %s /path/to/checkpoint-directory\n' "$0" >&2
@@ -17,6 +18,8 @@ NAMESPACE="${NAMESPACE:-hcce}"
 CLUSTER_NAME="${CLUSTER_NAME:-hubs-ce}"
 DOCTL_CONTEXT="${DOCTL_CONTEXT:-yenhubs}"
 VALUES_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
+# shellcheck source=deployment/lib/recovery-safety.sh
+source "$SCRIPT_DIR/lib/recovery-safety.sh"
 
 for command_name in git kubectl doctl jq shasum; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -24,6 +27,8 @@ for command_name in git kubectl doctl jq shasum; do
     exit 1
   fi
 done
+
+recovery_require_cluster_identity
 
 mkdir -p "$OUTPUT_DIR"
 chmod 700 "$OUTPUT_DIR"
@@ -49,7 +54,7 @@ done
   printf 'submodules=%q\n' "$(git -C "$ROOT_DIR" submodule status | tr '\n' ';')"
 } >"$OUTPUT_DIR/git-state.txt"
 
-kubectl get deployment -n "$NAMESPACE" -o json |
+recovery_kubectl get deployment -n "$NAMESPACE" -o json |
   jq -r '
     .items[]
     | .metadata.name as $deployment
@@ -58,7 +63,7 @@ kubectl get deployment -n "$NAMESPACE" -o json |
     | @tsv
   ' | sort >"$OUTPUT_DIR/deployment-images.txt"
 
-kubectl get \
+recovery_kubectl get \
   deployment,service,configmap,ingress,certificate,pvc,networkpolicy,serviceaccount,role,rolebinding \
   -n "$NAMESPACE" -o yaml >"$OUTPUT_DIR/k8s-hcce-core.yaml"
 

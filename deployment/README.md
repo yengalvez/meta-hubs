@@ -929,13 +929,24 @@ Fix:
 Usar el comando compuesto, que crea DB, storage, inventario y checksums:
 
 ```bash
+export NAMESPACE=hcce
+export EXPECTED_KUBE_CONTEXT='<contexto-kubectl-exacto>'
+test "$(kubectl config current-context)" = "$EXPECTED_KUBE_CONTEXT"
+export EXPECTED_NAMESPACE_UID="$(
+  kubectl --context "$EXPECTED_KUBE_CONTEXT" get namespace "$NAMESPACE" \
+    -o jsonpath='{.metadata.uid}'
+)"
+test -n "$EXPECTED_NAMESPACE_UID"
 ./deployment/create-checkpoint.sh
 ```
 
 El primer script verifica esquema y migraciones; el segundo exige que cada `owned_file` activo tenga su par
 `.blob`/`.meta.json` y que no exista ningun par fisico incompleto. Puede incluir pares completos adicionales en estado
 diferido: Reticulum los conserva durante la ventana de gracia de 24 horas antes de moverlos a `expiring`. Un checkpoint
-no se considera completo si falta cualquiera de los dos artefactos.
+no se considera completo si falta cualquiera de los dos artefactos. Antes de
+crear `SHA256SUMS`, `validate-checkpoint.sh` vuelve a extraer los UUID activos
+del dump SQL y los compara offline con ambos miembros de cada par del tar.
+Todos los artefactos se crean con `umask 077` y permisos `0600`.
 
 Checkpoint completo vigente:
 
@@ -1069,36 +1080,42 @@ the internal NOLOGIN role `ret_admin`. Use the tracked restore script instead of
 empty database:
 
 ```bash
-# Read-only validation first.
-RESTORE_DRY_RUN=1 ./deployment/restore-retdb.sh \
+# Read-only preflight only; it does not execute or rehearse the SQL restore.
+RESTORE_PREFLIGHT=1 ./deployment/restore-retdb.sh \
   output/backups/20260716-183112/retdb-20260716-183112.sql.gz
 
-# Destructive restore. This temporarily scales DB consumers to zero, recreates
-# retdb, creates ret_admin if needed, restores with ON_ERROR_STOP and verifies counts.
-CONFIRM_RESTORE=retdb ./deployment/restore-retdb.sh \
+# Destructive restore. The confirmation is valid only for this exact context,
+# namespace and immutable namespace UID.
+CONFIRM_RESTORE="retdb:${EXPECTED_KUBE_CONTEXT}:${NAMESPACE}:${EXPECTED_NAMESPACE_UID}" \
+  ./deployment/restore-retdb.sh \
   output/backups/20260716-183112/retdb-20260716-183112.sql.gz
 ```
 
 If the restore fails, consumers intentionally remain at zero. Diagnose the restore before scaling them back or
-reapplying the validated manifest.
+reapplying the validated manifest. A pod-deletion timeout or any remaining
+consumer pod stops the script before it drops or recreates the database.
 
 ### Restore Reticulum media storage
 
 Restore the database first, then validate and restore the matching storage archive:
 
 ```bash
-# Read-only validation. Counts in the archive must match active owned_files.
-RESTORE_STORAGE_DRY_RUN=1 ./deployment/restore-ret-storage.sh \
+# Read-only preflight. Counts in the archive must match active owned_files; no
+# PVC bytes are written.
+RESTORE_STORAGE_PREFLIGHT=1 ./deployment/restore-ret-storage.sh \
   /path/to/ret-storage-YYYYMMDD.tar.gz
 
 # Destructive restore into a fresh/empty ret-pvc only.
-CONFIRM_RESTORE_STORAGE=ret-pvc ./deployment/restore-ret-storage.sh \
+CONFIRM_RESTORE_STORAGE="ret-pvc:${EXPECTED_KUBE_CONTEXT}:${NAMESPACE}:${EXPECTED_NAMESPACE_UID}" \
+  ./deployment/restore-ret-storage.sh \
   /path/to/ret-storage-YYYYMMDD.tar.gz
 ```
 
 The restore script refuses unsafe archive paths, missing active UUIDs, incomplete blob/metadata pairs and a non-empty
 destination. Complete deferred pairs are restored with the active set so Reticulum can finish its normal grace-period
-cleanup. On a failure after Reticulum is stopped, Reticulum intentionally remains at zero for inspection.
+cleanup. A timeout or remaining Reticulum pod blocks creation of the restore
+pod and any PVC write. On a failure after Reticulum is stopped, Reticulum
+intentionally remains at zero for inspection.
 
 ## Cost Savings
 
@@ -1122,12 +1139,14 @@ Use this path if you are pausing the project for weeks or months and want Digita
 The complete client lifecycle and offboarding checklist is maintained in
 `deployment/client-instance-lifecycle.md`. Do not delete infrastructure from
 this abbreviated sequence unless the complete checkpoint has passed both
-restore dry-runs and exists in a second encrypted location.
+restore preflights and exists in a second encrypted location.
 
 ```bash
 # 1. Confirm a matching DB dump and ret-pvc archive both exist and validate.
 gzip -t /path/to/retdb-YYYYMMDD.sql.gz
-RESTORE_STORAGE_DRY_RUN=1 ./deployment/restore-ret-storage.sh \
+./deployment/validate-checkpoint.sh \
+  /path/to/retdb-YYYYMMDD.sql.gz /path/to/ret-storage-YYYYMMDD.tar.gz
+RESTORE_STORAGE_PREFLIGHT=1 ./deployment/restore-ret-storage.sh \
   /path/to/ret-storage-YYYYMMDD.tar.gz
 
 # 2. Confirm cluster and LB that will be removed

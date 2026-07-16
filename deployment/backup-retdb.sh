@@ -4,6 +4,7 @@
 # The resulting format is consumed by restore-retdb.sh.
 
 set -euo pipefail
+umask 077
 
 if [[ $# -ne 1 ]]; then
   printf 'Usage: %s /path/to/retdb-YYYYMMDD-HHMMSS.sql.gz\n' "$0" >&2
@@ -12,16 +13,19 @@ fi
 
 OUTPUT_PATH="$1"
 NAMESPACE="${NAMESPACE:-hcce}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=deployment/lib/recovery-safety.sh
+source "$SCRIPT_DIR/lib/recovery-safety.sh"
 
 if [[ -e "$OUTPUT_PATH" ]]; then
   printf 'Refusing to overwrite existing backup: %s\n' "$OUTPUT_PATH" >&2
   exit 1
 fi
 
-kubectl get namespace "$NAMESPACE" >/dev/null
-kubectl rollout status deployment/pgsql -n "$NAMESPACE" --timeout=5m >/dev/null
+recovery_require_cluster_identity
+recovery_kubectl rollout status deployment/pgsql -n "$NAMESPACE" --timeout=5m >/dev/null
 
-PGSQL_POD="$(kubectl get pod -n "$NAMESPACE" -l app=pgsql -o jsonpath='{.items[0].metadata.name}')"
+PGSQL_POD="$(recovery_kubectl get pod -n "$NAMESPACE" -l app=pgsql -o jsonpath='{.items[0].metadata.name}')"
 if [[ -z "$PGSQL_POD" ]]; then
   printf 'No PostgreSQL pod found in namespace %s.\n' "$NAMESPACE" >&2
   exit 1
@@ -30,7 +34,7 @@ fi
 COUNTS="$(
   # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
   # shellcheck disable=SC2016
-  kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
+  recovery_kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
     'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d retdb -At <<'\''SQL'\''
 select count(*) from information_schema.tables
 where table_schema in ('\''ret0'\'', '\''ret0_admin'\'', '\''coturn'\'');
@@ -49,15 +53,17 @@ if [[ -z "$SCHEMA_TABLES" || "$SCHEMA_TABLES" -eq 0 || -z "$MIGRATIONS" || "$MIG
 fi
 
 mkdir -p "$(dirname "$OUTPUT_PATH")"
-PARTIAL_PATH="${OUTPUT_PATH}.partial"
-SQL_CHECK_PATH="${OUTPUT_PATH}.verify.sql"
+PARTIAL_PATH="$(mktemp "${OUTPUT_PATH}.partial.XXXXXX")"
+SQL_CHECK_PATH="$(mktemp "${OUTPUT_PATH}.verify.XXXXXX.sql")"
 trap 'rm -f "$PARTIAL_PATH" "$SQL_CHECK_PATH"' EXIT
 
+recovery_require_cluster_identity
 # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
 # shellcheck disable=SC2016
-kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- \
+recovery_kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- \
   sh -ec 'pg_dump -U "$POSTGRES_USER" --format=plain retdb' |
   gzip -9 > "$PARTIAL_PATH"
+chmod 600 "$PARTIAL_PATH"
 
 gzip -t "$PARTIAL_PATH"
 gzip -cd "$PARTIAL_PATH" > "$SQL_CHECK_PATH"
@@ -69,6 +75,7 @@ if ! grep -Eq '^CREATE SCHEMA (ret0|ret0_admin);' "$SQL_CHECK_PATH" ||
 fi
 
 mv "$PARTIAL_PATH" "$OUTPUT_PATH"
+chmod 600 "$OUTPUT_PATH"
 rm -f "$SQL_CHECK_PATH"
 trap - EXIT
 

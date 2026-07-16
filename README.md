@@ -72,6 +72,10 @@ Los dos ultimos comandos requieren el contexto de infraestructura correcto. No d
 
 ## Backup
 
+Fijar antes `EXPECTED_KUBE_CONTEXT` y `EXPECTED_NAMESPACE_UID` como describe
+`deployment/client-instance-lifecycle.md`; los scripts no aceptan un destino
+Kubernetes implicito.
+
 ```bash
 ./deployment/create-checkpoint.sh
 ```

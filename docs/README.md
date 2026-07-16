@@ -36,6 +36,8 @@ conserva en `OLD/` y nunca debe usarse como entrada operativa.
 ./deployment/create-checkpoint.sh
 ```
 
+Antes del checkpoint, exportar `EXPECTED_KUBE_CONTEXT` y
+`EXPECTED_NAMESPACE_UID` siguiendo `deployment/client-instance-lifecycle.md`.
 No ejecutar los dos ultimos comandos sin acceso al cluster correcto. El
 checkpoint incluye base de datos y storage; un dump de PostgreSQL por si solo
 no recupera escenas, proyectos, avatares o thumbnails.

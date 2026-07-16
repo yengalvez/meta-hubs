@@ -62,9 +62,11 @@ git -C "$ROOT_DIR/hubs-cloud" diff --check
 actionlint -shellcheck=shellcheck -color=false "$ROOT_DIR/.github/workflows/"*.yml
 actionlint -shellcheck=shellcheck -color=false "$ROOT_DIR/hubs/.github/workflows/"*.yml
 actionlint -shellcheck=shellcheck -color=false "$ROOT_DIR/hubs-cloud/.github/workflows/"*.yml
-shellcheck "$ROOT_DIR/deployment/"*.sh
+shellcheck "$ROOT_DIR/deployment/"*.sh "$ROOT_DIR/deployment/lib/"*.sh
 shellcheck "$ROOT_DIR/scripts/"*.sh
+shellcheck "$ROOT_DIR/tests/recovery/"*.sh
 shellcheck "$ROOT_DIR/hubs-cloud/community-edition/services/coturn/"*.sh
+"$ROOT_DIR/tests/recovery/test-recovery-safety.sh"
 scan_worktree "$ROOT_DIR"
 scan_worktree "$ROOT_DIR/hubs"
 scan_worktree "$ROOT_DIR/hubs-cloud" ".gitleaks.toml"

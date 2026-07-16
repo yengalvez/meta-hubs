@@ -4,11 +4,17 @@
 # files, non-secret infrastructure inventory, exact image refs and checksums.
 
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
 OUTPUT_DIR="${1:-$ROOT_DIR/output/checkpoints/$TIMESTAMP}"
+NAMESPACE="${NAMESPACE:-hcce}"
+# shellcheck source=deployment/lib/recovery-safety.sh
+source "$SCRIPT_DIR/lib/recovery-safety.sh"
+
+recovery_require_cluster_identity
 
 if [[ -e "$OUTPUT_DIR" ]]; then
   printf 'Refusing to reuse checkpoint directory: %s\n' "$OUTPUT_DIR" >&2
@@ -20,6 +26,9 @@ chmod 700 "$OUTPUT_DIR"
 
 "$SCRIPT_DIR/backup-retdb.sh" "$OUTPUT_DIR/retdb-$TIMESTAMP.sql.gz"
 "$SCRIPT_DIR/backup-ret-storage.sh" "$OUTPUT_DIR/ret-storage-$TIMESTAMP.tar.gz"
+"$SCRIPT_DIR/validate-checkpoint.sh" \
+  "$OUTPUT_DIR/retdb-$TIMESTAMP.sql.gz" \
+  "$OUTPUT_DIR/ret-storage-$TIMESTAMP.tar.gz"
 "$SCRIPT_DIR/capture-instance-state.sh" "$OUTPUT_DIR"
 
 CHECKSUM_TMP="$(mktemp /tmp/yenhubs-checksums.XXXXXX)"

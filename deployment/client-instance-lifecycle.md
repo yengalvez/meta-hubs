@@ -94,7 +94,7 @@ Completar tambien:
 - avatar normal/full-body;
 - sitting;
 - bots y chat;
-- backup/restore dry-run.
+- backup y restore preflight de solo lectura.
 
 ## Operacion y cambios
 
@@ -132,6 +132,24 @@ corto, no para una pausa de semanas.
 
 ## Congelacion de una instancia
 
+Fijar primero la identidad exacta. No usar un contexto implicito ni reutilizar
+el UID despues de recrear el namespace:
+
+```bash
+export NAMESPACE=hcce
+export EXPECTED_KUBE_CONTEXT='<contexto-kubectl-exacto>'
+test "$(kubectl config current-context)" = "$EXPECTED_KUBE_CONTEXT"
+export EXPECTED_NAMESPACE_UID="$(
+  kubectl --context "$EXPECTED_KUBE_CONTEXT" get namespace "$NAMESPACE" \
+    -o jsonpath='{.metadata.uid}'
+)"
+test -n "$EXPECTED_NAMESPACE_UID"
+```
+
+Los scripts de backup y restore vuelven a comparar ambos valores antes de usar
+el cluster. Un namespace recreado con el mismo nombre tiene otro UID y queda
+bloqueado.
+
 ### 1. Crear checkpoint completo
 
 ```bash
@@ -152,11 +170,20 @@ Debe contener:
 
 ```bash
 gzip -t /ruta/retdb-*.sql.gz
-RESTORE_DRY_RUN=1 ./deployment/restore-retdb.sh /ruta/retdb-*.sql.gz
-RESTORE_STORAGE_DRY_RUN=1 \
+./deployment/validate-checkpoint.sh \
+  /ruta/retdb-*.sql.gz /ruta/ret-storage-*.tar.gz
+RESTORE_PREFLIGHT=1 ./deployment/restore-retdb.sh /ruta/retdb-*.sql.gz
+RESTORE_STORAGE_PREFLIGHT=1 \
   ./deployment/restore-ret-storage.sh /ruta/ret-storage-*.tar.gz
 (cd /ruta/checkpoint && shasum -a 256 -c SHA256SUMS)
 ```
+
+`create-checkpoint.sh` ejecuta el validador de contenido antes de crear
+`SHA256SUMS`: extrae del dump los UUID activos de `ret0.owned_files` y exige
+que el tar contenga ambos ficheros `.blob`/`.meta.json`. Permite pares
+adicionales completos en estado diferido, pero no activos ausentes ni pares
+incompletos. Los modos `*_PREFLIGHT=1` son solo lectura; no crean una base
+temporal ni ensayan el restore real.
 
 Copiar el checkpoint a una segunda ubicacion cifrada. No borrar DigitalOcean
 hasta validar ambas copias.
@@ -193,11 +220,14 @@ que borrar el cluster elimina cualquier recurso de la cuenta.
 4. Ejecutar `deployment/preflight-reactivation.sh`.
 5. Recrear DOKS, cert-manager, ingress y DNS.
 6. Generar y aplicar el manifest.
-7. Restaurar primero PostgreSQL.
-8. Restaurar despues el archive correspondiente de `ret-pvc`.
-9. Reiniciar servicios dependientes.
-10. Validar migrations, active owned files y pares fisicos.
-11. Ejecutar el verificador y la aceptacion funcional completa.
+7. Volver a capturar `EXPECTED_NAMESPACE_UID` para el namespace recien creado.
+8. Restaurar primero PostgreSQL con confirmacion ligada a
+   `retdb:<contexto>:<namespace>:<uid>`.
+9. Restaurar despues el archive correspondiente de `ret-pvc`, con confirmacion
+   ligada a `ret-pvc:<contexto>:<namespace>:<uid>`.
+10. Reiniciar servicios dependientes.
+11. Validar migrations, active owned files y pares fisicos.
+12. Ejecutar el verificador y la aceptacion funcional completa.
 
 Nunca combinar un dump de una fecha con un storage de otra.
 
