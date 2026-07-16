@@ -7,14 +7,14 @@ actualizacion con cambios visuales ni desplegar antes de repetir la aceptacion f
 
 ## Fuente de verdad
 
-| Capa | Baseline aceptado | Candidato de upgrade | Release oficial integrada |
+| Capa | Baseline aceptado | Estado final consolidado | Release oficial integrada |
 | --- | --- | --- | --- |
-| Superproyecto | `codex/audit-2026` (`94433c3`) | `codex/upgrade-stable-2026` (`0850ce1` + cierre) | N/A |
-| Cliente Hubs | `codex/audit-2026` (`7f016c9869`) | `codex/upgrade-hubs-prod-2026-03-11` (`e22520dda`) | `prod-2026-03-11` (`e3b9cc749`) |
-| Hubs CE | `codex/audit-2026` (`dfc248f6bd`) | `codex/upgrade-hcce-2.1.0` (`cc43df4`) | `2.1.0` (`410bc52`) |
+| Superproyecto | `codex/audit-2026` (`94433c3`) | `main` (`9159b60` + esta correccion documental) | N/A |
+| Cliente Hubs | `codex/audit-2026` (`7f016c9869`) | `master` (`cbded5883`) | `prod-2026-03-11` (`e3b9cc749`) |
+| Hubs CE | `codex/audit-2026` (`dfc248f6bd`) | `master` (`cc43df4`) | `2.1.0` (`410bc52`) |
 
-El candidato final esta desplegado y aceptado. Tras el cierre documental, estas ramas se fusionan en `hubs/master`,
-`hubs-cloud/master` y `meta-hubs/main`.
+El candidato final esta desplegado, aceptado y fusionado por fast-forward en `hubs/master`, `hubs-cloud/master` y
+`meta-hubs/main`.
 
 ## Que se integro
 

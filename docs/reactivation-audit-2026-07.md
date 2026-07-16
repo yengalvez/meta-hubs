@@ -2,10 +2,9 @@
 
 Este documento fija el punto de partida comprobado para reactivar YenHubs y, despues, auditarlo sin depender del historial de una conversacion.
 
-> Estado vigente: infraestructura, DNS, TLS, Mailtrap y los 12 deployments estan operativos. La escena funcional,
-> el proyecto Spoke y nueve avatares se reconstruyeron; sala de prueba, tercera persona, bots ghost y chat basico
-> pasaron smoke tests. La auditoria integral ya fue autorizada y esta en curso. Este documento conserva la secuencia
-> de reactivacion; el estado de hallazgos actual vive en `docs/audit-2026-07.md`.
+> Documento historico del punto de reactivacion. La auditoria y la actualizacion estable terminaron el 16 de julio de
+> 2026; el estado vigente esta en `docs/project-handoff-2026-07.md` y los hallazgos finales en
+> `docs/audit-2026-07.md`.
 
 ## 1. Que proyecto es realmente
 
@@ -23,14 +22,15 @@ Commits estables congelados de marzo:
 - `hubs/master`: `7aa9a35f4d3d6e9ac48cdf3cebf4553073f43823`.
 - `hubs-cloud/master`: `832d8e39566e22768b816422bffc9417f9f5a53c`.
 
-Candidatos actuales desplegados, todavia sin promover a las ramas base:
+Candidatos desplegados en aquel checkpoint, ya sustituidos y promovidos posteriormente:
 
 - Superproyecto `codex/audit-2026`: rama de integracion activa; comprobar su HEAD con `git rev-parse HEAD`.
 - `hubs/codex/audit-2026`: `99f1e9cad07a51e1c156952936a522265028a12d`.
 - `hubs-cloud/codex/audit-2026`: `623e4ce49dd01f760b7ad8a02989afdafea87f4f`.
 
-El superproyecto de preparacion fija esos dos commits de submodulo. Antes de crear ramas nuevas, comprobar siempre
-`git submodule status` para no trabajar sobre un commit distinto al fijado por el superproyecto.
+El estado actual ya no usa esos candidatos. `meta-hubs/main` fija `hubs/master` en `cbded5883` y
+`hubs-cloud/master` en `cc43df4`. Antes de crear ramas nuevas, comprobar siempre `git submodule status` para no
+trabajar sobre un commit distinto al fijado por el superproyecto.
 
 ## 2. Estado de la version y upstream
 
