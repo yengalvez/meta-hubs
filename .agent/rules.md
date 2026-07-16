@@ -6,6 +6,38 @@
 - Develop features in short-lived branches in `hubs` (prefer `codex/<feature-name>`), then fast-forward/merge to `master`.
 - Update the parent repo `main` to point the `hubs` submodule to the desired commit (this is what actually pins what “version” of the client we ship).
 
+## Upstream Compatibility and Upgrade Auditing
+- Treat Mozilla Hubs and Hubs Community Edition as updateable upstream bases, not as code that YenHubs permanently
+  owns. Every implementation decision must consider how the customization will be reviewed, migrated or removed when
+  a newer upstream release is integrated.
+- Prefer isolated components, systems, utilities, feature flags and configuration over invasive edits to upstream
+  core. When a core modification is unavoidable, keep it as small and explicit as possible.
+- Every feature or base-code fix must document its custom patch surface in the relevant `features/<feature>/`
+  documentation, or in `docs/` for cross-cutting work. Record at least:
+  - upstream Hubs/Hubs CE version or tag used as the starting point;
+  - files, components, systems, schemas, APIs and persisted data contracts changed;
+  - why upstream behavior was insufficient and which YenHubs behavior must be preserved;
+  - tests and live acceptance needed to prove the customization still works;
+  - likely merge conflicts, upgrade risks and rollback path.
+- Add a concise entry to `docs/session-changelog.md` whenever upstream base code is modified. The changelog is history;
+  the feature document is the durable specification used during future upgrades.
+- Never mix a new feature, an upstream upgrade and unrelated infrastructure modernization in the same branch or
+  rollout. Upgrade Hubs and Hubs CE in separate isolated branches from the last accepted production baseline.
+- Before accepting an upstream update:
+  - fetch and identify the exact official tag/commit;
+  - compare the full YenHubs custom diff against that upstream point;
+  - audit every documented customization for deleted APIs, changed schemas and behavioral conflicts;
+  - run the complete local test/build suites and feature-specific acceptance checklists;
+  - build only through the approved GitHub Actions workflows;
+  - test the candidate without changing the accepted production image;
+  - deploy only after checkpoint, diff review, rollback preparation and explicit acceptance.
+- An upstream merge that compiles is not considered compatible. Third-person, sitting, RPM/Avaturn avatars, avatar
+  import, bots/ghost runner/chat privacy, Spanish glass UI, room ownership/content workflows and deployment security
+  must be revalidated explicitly when their underlying Hubs or Hubs CE areas change.
+- Do not delete compatibility notes after a successful upgrade. Update them with the new upstream baseline and mark
+  obsolete patches as removed or replaced so the next audit can distinguish active customizations from historical
+  ones.
+
 ## Technology Stack
 - **Client**: Mozilla Hubs (React + A-Frame + Three.js + BitECS).
 - **Infrastructure**: DigitalOcean Kubernetes (DOKS) + kubectl.
