@@ -27,10 +27,13 @@ scan_worktree() {
 
   tmp="$(mktemp -d /tmp/yenhubs-gitleaks.XXXXXX)"
   while IFS= read -r -d '' path; do
-    if [[ -f "$repo/$path" || -L "$repo/$path" ]]; then
+    if [[ -L "$repo/$path" ]]; then
       mkdir -p "$tmp/$(dirname "$path")"
-      COPYFILE_DISABLE=1 cp -P "$repo/$path" "$tmp/$path"
-      [[ -f "$tmp/$path" ]] && chmod u+r "$tmp/$path"
+      ln -s "$(readlink "$repo/$path")" "$tmp/$path"
+    elif [[ -f "$repo/$path" ]]; then
+      mkdir -p "$tmp/$(dirname "$path")"
+      cat "$repo/$path" > "$tmp/$path"
+      chmod u+r "$tmp/$path"
     fi
   done < <(git -C "$repo" ls-files -z --cached --others --exclude-standard)
   args+=(--source "$tmp")
@@ -38,6 +41,10 @@ scan_worktree() {
     args+=(--config "$repo/$config")
   fi
   gitleaks "${args[@]}"
+  if command -v chflags >/dev/null 2>&1; then
+    chflags -R nouchg "$tmp" 2>/dev/null || true
+  fi
+  chmod -R u+rwX "$tmp" 2>/dev/null || true
   find "$tmp" -type f -delete
   find "$tmp" -depth -type d -empty -delete
 }

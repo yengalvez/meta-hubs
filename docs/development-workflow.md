@@ -58,7 +58,7 @@ En el corte del 16 de julio de 2026:
 
 - Hubs esta 79 commits propios por delante de `prod-2026-03-11` y no le falta
   ningun commit de esa release;
-- Hubs CE esta 77 commits propios por delante de `2.1.0` y no le falta ningun
+- Hubs CE esta 79 commits propios por delante de `2.1.0` y no le falta ningun
   commit de esa release;
 - hay 13 commits Hubs y 5 Hubs CE no publicados en los respectivos `master`
   oficiales;

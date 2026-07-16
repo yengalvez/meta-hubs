@@ -7,7 +7,7 @@ Este es el punto de entrada para continuar el proyecto sin depender de una conve
 YenHubs esta operativo en <https://meta-hubs.org> y el verificador live informa 0 fallos y 0 avisos. La produccion usa:
 
 - Hubs `prod-2026-03-11` con 79 commits propios adicionales.
-- Hubs CE `2.1.0` con 77 commits propios adicionales.
+- Hubs CE `2.1.0` con 79 commits propios adicionales.
 - Reticulum sobre Elixir 1.18.4 / OTP 27.
 - Ghost runner Node, no Chromium, con navmesh+A*.
 - Un cluster DOKS no-HA `hubs-ce` en `ams3`.
@@ -29,7 +29,7 @@ Sala de aceptacion: <https://meta-hubs.org/VJopCY3/inicio>
 | --- | --- | --- | --- |
 | Root | `main` | commit que contiene este handoff | `a0a2b59cad80e0b07f9b2a2f82c2020781163570` |
 | `hubs/` | `master` | `492625c5791fa540e752cc8300018a4e8252d3f4` | `a7214eb882d19c98b2c8516489e0ed1fb7401c75` |
-| `hubs-cloud/` | `master` | `0e63d0fecb629d4ec49f1f5ab8fdc6236657b08b` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
+| `hubs-cloud/` | `master` | `4a1e3b9f2516851b015c17e968ea2cc4aabf4680` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
 
 Los commits finales de auditoria/CI estan publicados en Git, pero no cambian el
 runtime hasta construir nuevas imagenes por Actions y desplegarlas por digest.
@@ -138,6 +138,9 @@ Ver `docs/bots-cost-capacity-analysis-2026-07.md`.
 - Gitleaks, Actionlint, ShellCheck, SBOM y Trivy.
 - Navegador real desktop/movil: sin errores JS/HTTP, escena lista y cinco bots.
 - Live: 12 deployments Ready, TLS/DNS/DB/storage/assets/CSP/ghost runner, 0 fallos/avisos.
+- GitHub Actions de cierre: Hubs Security `29518981250`, Storybook
+  `29518980804`, cloud Security `29520235224`, Services `29520235446`,
+  Reticulum `29519815859` y root Security `29519331721`, todos correctos.
 
 Los cambios de auditoria anaden CI de seguridad, healthchecks y correcciones de calidad. No estan desplegados hasta que
 se construyan imagenes nuevas por Actions y se renueve GHCR.
