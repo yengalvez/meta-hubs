@@ -23,6 +23,7 @@ scan_worktree() {
   local repo="$1"
   local config="${2:-}"
   local tmp
+  local status=0
   local args=(detect --no-git --redact)
 
   tmp="$(mktemp -d /tmp/yenhubs-gitleaks.XXXXXX)"
@@ -40,13 +41,14 @@ scan_worktree() {
   if [[ -n "$config" ]]; then
     args+=(--config "$repo/$config")
   fi
-  gitleaks "${args[@]}"
+  gitleaks "${args[@]}" || status=$?
   if command -v chflags >/dev/null 2>&1; then
     chflags -R nouchg "$tmp" 2>/dev/null || true
   fi
   chmod -R u+rwX "$tmp" 2>/dev/null || true
   find "$tmp" -type f -delete
   find "$tmp" -depth -type d -empty -delete
+  return "$status"
 }
 
 for command in git actionlint shellcheck gitleaks npm node; do
@@ -87,12 +89,33 @@ printf '\n== Hubs client ==\n'
   npm run build
 )
 
+printf '\n== Root browser and capacity harnesses ==\n'
+(
+  cd "$ROOT_DIR/tests/browser"
+  npm ci
+  npm audit --omit=dev --audit-level=high
+  npm run test:unit
+  npm run test:sitting -- --list
+  npm run test:cold -- --list
+
+  cd "$ROOT_DIR/tests/capacity"
+  npm ci
+  npm audit --omit=dev --audit-level=high
+  npm test
+  npm run validate
+)
+
 printf '\n== Hubs CE Node services ==\n'
 (
   cd "$ROOT_DIR/hubs-cloud/community-edition"
   npm ci
   npm audit --omit=dev --audit-level=high
-  npm run gen-hcce
+  fixture_dir="$(mktemp -d /tmp/yenhubs-hcce-fixture.XXXXXX)"
+  fixture_manifest="$fixture_dir/hcce.yaml"
+  trap 'find "$fixture_dir" -type f -delete; rmdir "$fixture_dir"' EXIT
+  HCCE_INPUT_VALUES_PATH="$PWD/input-values.ci.yaml" \
+    HCCE_OUTPUT_PATH="$fixture_manifest" node generate_script/index.js
+  HCCE_MANIFEST_PATH="$fixture_manifest" node generate_script/verify-generated-manifest.js
 
   for service in bot-orchestrator dialog photomnemonic; do
     cd "$ROOT_DIR/hubs-cloud/community-edition/services/$service"
