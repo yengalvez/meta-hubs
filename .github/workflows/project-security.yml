@@ -15,9 +15,17 @@ concurrency:
 jobs:
   static-security:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Validate pinned submodule gitlinks
+        run: ./scripts/verify-gitlinks.sh
 
       - name: Install gitleaks
         env:
@@ -25,14 +33,50 @@ jobs:
           GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
         run: |
           archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSLO \
+          curl --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 -fsSLO \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
           echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum --check
           tar -xzf "$archive" gitleaks
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
 
-      - name: Scan tracked source for secrets
-        run: gitleaks detect --no-git --source . --redact
+      - name: Scan checked-out worktree for secrets
+        run: gitleaks detect --no-git --source . --redact --timeout 300
+
+      - name: Scan pushed Git range for secrets
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          log_opts="$(./scripts/ci-git-scan-range.sh \
+            "$EVENT_NAME" "$PR_BASE_SHA" "$PUSH_BEFORE_SHA" "$HEAD_SHA")"
+          printf 'Scanning Git range: %s\n' "$log_opts"
+          gitleaks git --redact --timeout 300 --log-opts="$log_opts" .
+
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SOURCE_SHA256: "454800bd4f854592bcfe79b161f71d56e35940eb7016e48a26dd356adc9d400a"
+        run: |
+          archive="actionlint-${ACTIONLINT_VERSION}.tar.gz"
+          curl --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 -fsSL \
+            -o "$archive" \
+            "https://github.com/rhysd/actionlint/archive/refs/tags/v${ACTIONLINT_VERSION}.tar.gz"
+          echo "${ACTIONLINT_SOURCE_SHA256}  ${archive}" | sha256sum --check
+          tar -xzf "$archive"
+          (cd "actionlint-${ACTIONLINT_VERSION}" && \
+            go build -trimpath -o ../actionlint ./cmd/actionlint)
+          sudo install -m 0755 actionlint /usr/local/bin/actionlint
+
+      - name: Validate GitHub Actions workflows
+        run: actionlint -shellcheck=shellcheck -color=false .github/workflows/*.yml
 
       - name: Validate operational shell scripts
-        run: shellcheck deployment/*.sh scripts/*.sh
+        run: |
+          while IFS= read -r -d '' script; do
+            shellcheck -x "$script"
+          done < <(find deployment scripts tests/scripts -type f -name '*.sh' -print0)
+
+      - name: Run security gate regression tests
+        run: bash tests/scripts/security-gates.test.sh

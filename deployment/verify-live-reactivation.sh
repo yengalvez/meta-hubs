@@ -6,6 +6,10 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=deployment/lib/reactivation-gate-functions.sh
+# shellcheck disable=SC1091
+# The dynamic source path is resolved relative to the repository at runtime.
+source "$SCRIPT_DIR/lib/reactivation-gate-functions.sh"
 VALUES_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 NAMESPACE="${NAMESPACE:-hcce}"
 LOCAL_BOT_PORT="${LOCAL_BOT_PORT:-15001}"
@@ -514,6 +518,6 @@ else
 fi
 
 printf '\nSummary: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
-if [[ "$failures" -gt 0 ]]; then
+if ! reactivation_live_result_is_clean "$failures" "$warnings"; then
   exit 1
 fi

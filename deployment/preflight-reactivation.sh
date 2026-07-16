@@ -7,12 +7,18 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=deployment/lib/reactivation-gate-functions.sh
+# shellcheck disable=SC1091
+# The dynamic source path is resolved relative to the repository at runtime.
+source "$SCRIPT_DIR/lib/reactivation-gate-functions.sh"
 VALUES_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 BACKUP_DIR="${BACKUP_DIR:-}"
 DUMP_PATH="${DUMP_PATH:-}"
 RET_STORAGE_ARCHIVE="${RET_STORAGE_ARCHIVE:-}"
 DOCTL_CONTEXT="${DOCTL_CONTEXT:-yenhubs}"
 CLUSTER_NAME="${CLUSTER_NAME:-hubs-ce}"
+
+reactivation_install_cleanup_traps
 
 if [[ -z "$BACKUP_DIR" && -s "$ROOT_DIR/output/latest-backup-path.txt" ]]; then
   BACKUP_DIR="$(cat "$ROOT_DIR/output/latest-backup-path.txt")"
@@ -101,7 +107,8 @@ check_ghcr_image() {
   else
     reference="latest"
   fi
-  auth_file="$(mktemp /tmp/yenhubs-ghcr-auth.XXXXXX)"
+  auth_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-ghcr-auth.XXXXXX")"
+  reactivation_register_temp_path "$auth_file"
   chmod 600 "$auth_file"
   if [[ -n "$github_token" ]]; then
     printf 'user = "%s:%s"\nsilent\nshow-error\n' "$owner" "$github_token" >"$auth_file"
@@ -207,15 +214,11 @@ else
 fi
 
 if [[ -f "$VALUES_FILE" ]]; then
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    values_mode="$(stat -f '%Lp' "$VALUES_FILE")"
-  else
-    values_mode="$(stat -c '%a' "$VALUES_FILE")"
-  fi
-  if [[ "$values_mode" == "600" ]]; then
+  values_mode="$(reactivation_file_mode "$VALUES_FILE")"
+  if reactivation_values_file_is_private "$VALUES_FILE"; then
     pass "Permisos de valores locales: 600"
   else
-    warn "Permisos de valores locales: $values_mode (recomendado 600)"
+    fail "Permisos inseguros de valores locales: $values_mode (requerido 600)"
   fi
 
   required_keys=(
