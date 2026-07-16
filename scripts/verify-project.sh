@@ -29,7 +29,7 @@ scan_worktree() {
   while IFS= read -r -d '' path; do
     if [[ -f "$repo/$path" || -L "$repo/$path" ]]; then
       mkdir -p "$tmp/$(dirname "$path")"
-      cp -P "$repo/$path" "$tmp/$path"
+      COPYFILE_DISABLE=1 cp -P "$repo/$path" "$tmp/$path"
       [[ -f "$tmp/$path" ]] && chmod u+r "$tmp/$path"
     fi
   done < <(git -C "$repo" ls-files -z --cached --others --exclude-standard)
