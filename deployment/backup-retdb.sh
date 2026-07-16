@@ -28,6 +28,8 @@ if [[ -z "$PGSQL_POD" ]]; then
 fi
 
 COUNTS="$(
+  # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
+  # shellcheck disable=SC2016
   kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
     'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d retdb -At <<'\''SQL'\''
 select count(*) from information_schema.tables
@@ -51,6 +53,8 @@ PARTIAL_PATH="${OUTPUT_PATH}.partial"
 SQL_CHECK_PATH="${OUTPUT_PATH}.verify.sql"
 trap 'rm -f "$PARTIAL_PATH" "$SQL_CHECK_PATH"' EXIT
 
+# Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
+# shellcheck disable=SC2016
 kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- \
   sh -ec 'pg_dump -U "$POSTGRES_USER" --format=plain retdb' |
   gzip -9 > "$PARTIAL_PATH"

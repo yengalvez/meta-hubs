@@ -4,14 +4,13 @@ Hubs Community Edition 2.1.0 on DigitalOcean Kubernetes with automated SSL via c
 
 > **Last updated**: July 2026 | **Cluster**: `hubs-ce` active on DOKS `1.34.8-do.2`, `HA=false` | **Region**: AMS3
 >
-> The March baseline and database are restored. Authoritative DNS, TLS and Mailtrap SMTP are operational. The Hubs
-> and Spoke administrator is `info@virtualmente.com`. Mailtrap account ownership is independent from that address;
-> use account ID `2385821` and the verified sender domain `meta-hubs.org` when locating the provider configuration.
-> Reticulum derives the sender as `noreply@<HUB_DOMAIN>` and has no `SMTP_FROM` input. The March freeze did **not**
-> contain the original `ret-pvc` bytes, so exact historical media
-> recovery is impossible. A functional replacement scene, Spoke project, test room and the nine locally recovered
-> avatars were rebuilt through normal application APIs on 2026-07-14. The audit and stable upgrade are complete; start
-> from `docs/project-handoff-2026-07.md`, then use this guide for operations.
+> DNS, TLS, Mailtrap SMTP and the 12 application deployments are operational.
+> The Hubs and Spoke administrator is `info@virtualmente.com`. Mailtrap account
+> ownership is independent from that address; use account ID `2385821` and the
+> verified sender domain `meta-hubs.org` when locating the provider
+> configuration. Start with `docs/project-handoff-2026-07.md`; use this file as
+> the only active deployment runbook and
+> `deployment/client-instance-lifecycle.md` for create/freeze/restore/retire.
 
 ---
 
@@ -45,32 +44,6 @@ cert-manager (namespace: cert-manager)
 - HTTP-01 challenges via HAProxy
 ```
 
-## Final Production State Before Freeze
-
-| Component | Version / Image |
-|-----------|----------------|
-| Kubernetes | 1.34.1-do.3 |
-| HAProxy | `haproxytech/kubernetes-ingress:3.2` |
-| Hubs client | `ghcr.io/yengalvez/hubs:runtime-fix-20260219-5e1344b00-55` |
-| Reticulum | `ghcr.io/yengalvez/reticulum:ret-cspfix-20260219-984ba9a-latest` |
-| Spoke | `hubsfoundation/spoke:stable-latest` |
-| Dialog | `ghcr.io/yengalvez/dialog:dialog-permsfix-20260213-1b23c9e-latest` |
-| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator:ghost-fullsync-20260307-e38b70d-latest` |
-| Coturn | `mozillareality/coturn:stable-latest` |
-| PostgreSQL | `mozillareality/postgres:stable-latest` |
-| cert-manager | v1.19.3 (Helm chart) |
-| Helm | v3.20.0 |
-
-Final runtime notes before the project freeze:
-
-- Domain: `meta-hubs.org`
-- Cluster name: `hubs-ce`
-- Namespace: `hcce`
-- Bots backend: `ghost`
-- Hubs repo base branch: `master`
-- Hubs-cloud repo base branch: `master`
-- Superproject base branch: `main`
-
 ## Accepted Live State (July 2026)
 
 These images were built by the approved GitHub Actions workflows, deployed with the standard `gen-hcce` plus
@@ -88,13 +61,12 @@ These images were built by the approved GitHub Actions workflows, deployed with 
 
 Final acceptance on 2026-07-16 reported 12/12 Deployments Ready, four Ready certificates, HTTP 200, zero manifest
 drift, DB schema 356 with 94 migrations and 33 active owned files, and storage with 47 complete pairs of which 14
-were deferred. These are current live counts, not a replacement for the historical checkpoint counts below.
+were deferred. The matching checkpoint is documented in the Backups section.
 
 Production uses `RUNNER_BACKEND=ghost`, `GHOST_NAVIGATION_MODE=navmesh_preferred`, `MAX_ACTIVE_ROOMS=5` and
 `MAX_BOTS_PER_ROOM=10`. Cloud commit `5a82de5` adds `mobility=static`, safe partial GLB loading and A* navigation over
 the Spoke navmesh while retaining the room config and prompt/runtime guardrails from the earlier audit.
-The exact bot digest is `sha256:325c5c10e4ee039518693771c0974a0e5c876dcf54c443295e84490f4fa8ec53`;
-the March `ghost-fullsync` image remains available only as the tested rollback.
+The exact bot digest is `sha256:325c5c10e4ee039518693771c0974a0e5c876dcf54c443295e84490f4fa8ec53`.
 
 Hubs commit `a7214eb88` includes the official `prod-2026-03-11` release, dependency hardening, safe cookie migration,
 mobile viewport containment, sitting feedback, bot privacy copy, responsive avatar UI, fully localized profile
@@ -744,6 +716,31 @@ Registry auth for GHCR:
 - Do not pass a PAT through `Override_Registry_Password`: workflow-dispatch inputs are retained in the run event. Store it as the masked repository secret `REGISTRY_PASSWORD` instead.
 - The automatic `GITHUB_TOKEN` is acceptable only when the target GHCR package grants the repository Actions access. Existing packages such as `bot-orchestrator` may reject it even when the workflow declares `packages: write`.
 
+Current audit warning (2026-07-16): the credential stored in the live
+`ghcr-pull` secret is expired/revoked (`GitHub API 401`, GHCR 403). Existing
+pods are healthy because their images were already pulled, but a fresh node or
+reschedule can fail. Before any rollout:
+
+```bash
+# Supply through the environment, never commit it.
+export GITHUBTOKEN='<new token with read:packages>'
+
+# Recreate the namespace pull secret without printing the token.
+kubectl create secret docker-registry ghcr-pull -n hcce \
+  --docker-server=ghcr.io \
+  --docker-username=yengalvez \
+  --docker-password="$GITHUBTOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl patch serviceaccount default -n hcce --type=merge \
+  -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+
+./deployment/preflight-reactivation.sh
+```
+
+Do not restart nodes or deployments until the preflight proves that all private
+digests can be pulled.
+
 Common failures:
 
 - `Username and password required`: registry username/password are missing (no secrets, no override inputs).
@@ -800,12 +797,8 @@ kubectl patch serviceaccount default -n hcce \
   -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
 ```
 
-If you must patch only one deployment instead:
-
-```bash
-kubectl patch deployment hubs -n hcce --type='json' \
-  -p='[{"op":"add","path":"/spec/template/spec/imagePullSecrets","value":[{"name":"ghcr-pull"}]}]'
-```
+Do not patch individual Deployments. Attach the secret to the default
+ServiceAccount so generated manifests and future workloads use the same policy.
 
 > Important: if `BASE_ASSETS_PATH` is not set during build, pages may reference `/assets/...` and return 404 in production domains that serve assets from `assets.<domain>/hubs/`.
 >
@@ -930,13 +923,10 @@ Fix:
 
 ## Backups
 
-Para checkpoints nuevos, usar los scripts validados en lugar de reconstruir comandos manuales:
+Usar el comando compuesto, que crea DB, storage, inventario y checksums:
 
 ```bash
-CHECKPOINT="output/checkpoint-$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$CHECKPOINT"
-./deployment/backup-retdb.sh "$CHECKPOINT/retdb.sql.gz"
-./deployment/backup-ret-storage.sh "$CHECKPOINT/ret-storage.tar.gz"
+./deployment/create-checkpoint.sh
 ```
 
 El primer script verifica esquema y migraciones; el segundo exige que cada `owned_file` activo tenga su par
@@ -944,75 +934,23 @@ El primer script verifica esquema y migraciones; el segundo exige que cada `owne
 diferido: Reticulum los conserva durante la ventana de gracia de 24 horas antes de moverlos a `expiring`. Un checkpoint
 no se considera completo si falta cualquiera de los dos artefactos.
 
-Checkpoint coherente aceptado despues de recuperar el contenido y antes de desplegar Reticulum moderno:
+Checkpoint completo vigente:
 
 ```text
-output/audit-retmodern-predeploy-20260715-103120/retdb-POST-COHERENT.sql.gz
-output/audit-retmodern-predeploy-20260715-103120/ret-storage-COHERENT.tar.gz
+output/backups/20260716-183112/
 ```
 
-`SHA256SUMS-POST-COHERENT` fija ambos hashes. El estado esperado es PostgreSQL 12.19, 94 migraciones, 34
-`owned_files` activos, 93 historicos inactivos y exactamente 34 blobs + 34 metadatos. Los 93 bytes historicos que ya
-faltaban no son recuperables desde este checkpoint; no volver a marcar esas filas como activas.
-
-Checkpoint previo al reconciliador de owned files desplegado el 15 de julio:
-
-```text
-output/audit-spoke-reconcile-predeploy-20260715-182804/retdb.sql.gz
-output/audit-spoke-reconcile-predeploy-20260715-182804/ret-storage.tar.gz
-```
-
-`SHA256SUMS` valida ambos artefactos. El estado contiene 34 filas activas y 38 pares fisicos completos: los cuatro pares
-extra son versiones sustituidas por dos guardados reales de Spoke y permanecen deliberadamente diferidos. Backup y
-restore validan UUIDs activos, no solo cantidades; no deben rechazarse ni borrarse pares diferidos completos durante
-su ventana de gracia.
-
-El equivalente manual de referencia es:
-
-```bash
-# 1. Database metadata backup (do this BEFORE any risky changes).
-PGSQL_POD=$(kubectl get pod -n hcce -l app=pgsql -o jsonpath='{.items[0].metadata.name}')
-kubectl exec $PGSQL_POD -n hcce -- \
-  sh -ec 'pg_dump -U "$POSTGRES_USER" retdb' | gzip -c > retdb_$(date +%Y%m%d).sql.gz
-
-# 2. Durable media backup. This fails unless every active DB owned_file has
-# both its encrypted blob and metadata file in ret-pvc.
-./deployment/backup-ret-storage.sh ret-storage_$(date +%Y%m%d).tar.gz
-
-# 3. Validate both artifacts before deleting or replacing infrastructure.
-gzip -t retdb_$(date +%Y%m%d).sql.gz
-gzip -t ret-storage_$(date +%Y%m%d).tar.gz
-```
+Contiene schema 356, 94 migraciones, 33 archivos activos, 47 pares completos y
+14 diferidos validos. Los dry-runs de restauracion y `SHA256SUMS` pasan.
 
 > A Reticulum backup is complete only when it contains **both** the PostgreSQL dump and the `ret-pvc` archive.
 > PostgreSQL stores UUIDs, keys and relationships; the actual scenes, Spoke projects, avatars and thumbnails are
 > encrypted files in `ret-pvc`. A database-only dump cannot restore user content.
 
-For the project freeze performed in March 2026, a local snapshot was saved outside the cluster at:
-
-```bash
-/Users/Shared/Gits/YenHubs/output/project-freeze-20260316-090114/
-```
-
-That snapshot contains:
-
-- `retdb-*.sql.gz`
-- current deployment image tags
-- cluster metadata from `doctl`
-- Kubernetes manifests/state exports
-- local working deployment values copies kept out of git history
-
-It does **not** contain a `ret-pvc` archive. This was discovered during the July 2026 restoration. The database dump
-contains 93 active `owned_files` rows (about 439 MB of referenced historical content), but the recreated volume is
-empty. The current recovery inventory and locally recovered source files are documented in:
-
-```text
-/Users/Shared/Gits/YenHubs/docs/reactivation-media-recovery-2026-07.md
-```
-
-For this specific incomplete March freeze, do not fabricate files under `/storage/owned` or copy GLBs into the PVC.
-Reticulum owned files are encrypted and coupled to database metadata. Reconstruct the content through normal
-Spoke/Admin upload paths. A deterministic local Spoke starting point can be generated with:
+The March 2026 DB-only freeze was incomplete and must not be used as a current
+restore source. Its forensic documentation is archived in `OLD/docs/`. Never
+fabricate files under `/storage/owned`; owned files are encrypted and coupled
+to DB metadata. A recovery project can still be generated for investigation:
 
 ```bash
 node deployment/generate-recovery-spoke-project.js \
@@ -1084,9 +1022,11 @@ trailing-slash form `/admin/`; it is not a valid route in this deployment. The p
 Disk`. The current Hubs/Reticulum images allow a standalone GLB to bootstrap without a historical base parent and
 space avatar creation requests by 1100 ms to respect Reticulum's 1 TPS rate limit.
 
-`deployment/verify-live-reactivation.sh` must now report a coherent 34 active owned files and 34 matched
-blob/metadata pairs. A zero-volume or mismatched count is a hard failure. If a restore reports 127 active rows, the
-wrong pre-reconciliation dump was used; stop and restore `retdb-POST-COHERENT.sql.gz` instead.
+`deployment/verify-live-reactivation.sh` must report a non-zero coherent active
+set and a physical pair for every active UUID. At the 2026-07-16 checkpoint the
+expected state is 33 active rows and 47 complete pairs, including 14 deferred
+pairs. A zero volume, missing active UUID or incomplete physical pair is a hard
+failure; stop instead of forcing DB rows active.
 
 For disaster recovery when the native file selector is unavailable, render fresh thumbnails and use the tracked API
 import helper. Supply a short-lived admin token through the environment; never put it in Git or command history:
@@ -1128,12 +1068,12 @@ empty database:
 ```bash
 # Read-only validation first.
 RESTORE_DRY_RUN=1 ./deployment/restore-retdb.sh \
-  output/project-freeze-20260316-090114/retdb-20260316-090114.sql.gz
+  output/backups/20260716-183112/retdb-20260716-183112.sql.gz
 
 # Destructive restore. This temporarily scales DB consumers to zero, recreates
 # retdb, creates ret_admin if needed, restores with ON_ERROR_STOP and verifies counts.
 CONFIRM_RESTORE=retdb ./deployment/restore-retdb.sh \
-  output/project-freeze-20260316-090114/retdb-20260316-090114.sql.gz
+  output/backups/20260716-183112/retdb-20260716-183112.sql.gz
 ```
 
 If the restore fails, consumers intentionally remain at zero. Diagnose the restore before scaling them back or
@@ -1176,6 +1116,11 @@ kubectl get pods -n hcce -w  # Wait for all Running
 
 Use this path if you are pausing the project for weeks or months and want DigitalOcean cost as close to zero as possible:
 
+The complete client lifecycle and offboarding checklist is maintained in
+`deployment/client-instance-lifecycle.md`. Do not delete infrastructure from
+this abbreviated sequence unless the complete checkpoint has passed both
+restore dry-runs and exists in a second encrypted location.
+
 ```bash
 # 1. Confirm a matching DB dump and ret-pvc archive both exist and validate.
 gzip -t /path/to/retdb-YYYYMMDD.sql.gz
@@ -1201,12 +1146,6 @@ Expected result:
 - DOKS node, managed LB, and attached block storage stop billing
 - local backups and docs remain the source of truth for future recovery
 
-This shutdown flow was executed successfully on `2026-03-16` and verified until:
-
-- `doctl kubernetes cluster list` returned no clusters
-- `doctl compute load-balancer list` returned no active load balancers
-- `doctl compute volume list` returned no remaining block volumes
-
 ## Rebuild After The Freeze
 
 When resuming the project:
@@ -1221,10 +1160,10 @@ When resuming the project:
 8. Restore the matching `ret-pvc` archive with `deployment/restore-ret-storage.sh`.
 9. Validate `meta-hubs.org`, TLS, room entry, avatar flow, and bots (`ghost` backend).
 
-The short handoff checklist for this rebuild is maintained in:
+The full lifecycle checklist for this rebuild is maintained in:
 
 ```bash
-/Users/Shared/Gits/YenHubs/docs/project-freeze-2026-03.md
+/Users/Shared/Gits/YenHubs/deployment/client-instance-lifecycle.md
 ```
 
 ## References

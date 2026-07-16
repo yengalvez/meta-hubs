@@ -1,89 +1,98 @@
-# YenHubs - Custom Hubs CE Deployment
+# YenHubs
 
-> Estado (julio 2026): el proyecto esta recuperado, auditado y actualizado. Hubs `prod-2026-03-11`, Hubs CE `2.1.0`,
-> Reticulum modernizado, media, salas, avatares y ghost bots estan live y verificados. Empezar por
-> `/Users/Shared/Gits/YenHubs/docs/project-handoff-2026-07.md`.
+Distribucion personalizada de Hubs Foundation Community Edition sobre DigitalOcean Kubernetes.
 
-> La auditoria, los riesgos residuales y la evidencia de la actualizacion estable estan en
-> `/Users/Shared/Gits/YenHubs/docs/audit-2026-07.md` y `/Users/Shared/Gits/YenHubs/docs/upgrade-stable-2026.md`.
+Estado de referencia: 16 de julio de 2026.
 
-Custom deployment of [Hubs Foundation Community Edition](https://hubsfoundation.org/) on DigitalOcean Kubernetes.
+- Hubs estable: `prod-2026-03-11`.
+- Hubs CE estable: `2.1.0`.
+- Produccion: <https://meta-hubs.org>.
+- Bots: ghost runner Node, navmesh+A*, hasta 10 por sala y modo estatico.
+- Interfaz: Obsidian Aurora en espanol, desktop/tablet/movil.
+- Infraestructura: DOKS no-HA de un nodo, coste base aproximado 62 USD/mes.
 
-## Features
+## Empezar
 
-- **Third-person camera** - Toggle between first and third person view ([docs](features/third-person/doc-thirdperson.md))
-- **ReadyPlayer.me GLB avatars** - Pre-downloaded full-body avatars with validation ([docs](features/rpm-avatars/README.md))
-- **Private Avaturn GLB avatars** - Per-account upload flow with skeleton validation
-- **Sitting** - Disable-motion waypoints with replicated sit/stand animation ([docs](features/sitting/README.md))
-- **Bots with ghost runner** - Room bots with lower-cost Node-based orchestration ([docs](features/bots/README.md))
-- **Automated SSL** - Let's Encrypt certificates via cert-manager with auto-renewal
-- **Cost-optimized** - DigitalOcean deployment at ~$62/month
+1. `AGENTS.md`: reglas de trabajo y despliegue.
+2. `docs/project-handoff-2026-07.md`: estado operativo y riesgos actuales.
+3. `docs/README.md`: indice documental.
+4. `deployment/README.md`: procedimiento completo de deploy.
+5. `docs/development-workflow.md`: features y actualizaciones upstream.
+6. `docs/customization-inventory.md`: contratos propios que hay que preservar.
 
-## Quick Start
+## Repositorios
 
-See [deployment/README.md](deployment/README.md) for the complete guide including cert-manager, HAProxy 3.2, and SSL setup.
+| Ruta | Fork | Rama base |
+| --- | --- | --- |
+| root | `yengalvez/meta-hubs` | `main` |
+| `hubs/` | `yengalvez/hubs` | `master` |
+| `hubs-cloud/` | `yengalvez/hubs-cloud` | `master` |
+
+El root fija los commits exactos de los dos submodulos. Una feature no esta integrada hasta que el subrepo esta en su
+rama base y el root registra el nuevo puntero.
+
+## Funcionalidad propia
+
+- Camara primera/tercera persona.
+- Avatares normales, RPM full-body y Avaturn privado no listado.
+- Import local/URL, previews y Featured.
+- Sitting con waypoints `Disable motion`.
+- Locomocion idle, frontal, lateral y hacia atras.
+- Bots por sala, featured avatars, `spawbot-*`, navmesh, chat privado y GPT-5 Nano.
+- Guardarrailes, moderacion, rate limit y sin historial persistido en YenHubs.
+- Landing y room UI responsive en espanol.
+- Admin, Spoke, WebRTC, SSL y backup DB+storage.
+
+## Estructura
+
+```text
+YenHubs/
+|-- AGENTS.md
+|-- hubs/                         # cliente y Admin
+|-- hubs-cloud/                   # CE, Reticulum y servicios
+|-- deployment/                   # deploy, backup, restore y ciclo de vida
+|-- docs/                         # handoff, auditoria y desarrollo
+|-- features/                     # contratos por feature
+|-- scripts/                      # auditoria upstream y gate integral
+|-- OLD/                          # archivo historico, nunca input operativo
+`-- output/                       # backups/evidencias locales, ignorado
+```
+
+## Verificacion
 
 ```bash
-# 1. Clone with submodules
-git clone --recurse-submodules https://github.com/yengalvez/meta-hubs.git
-cd meta-hubs
-
-# 2. Create the exact non-HA DOKS baseline (8GB node) + firewall
-# 3. Install cert-manager via Helm
-# 4. Apply IngressClass + ClusterIssuer
-kubectl apply -f deployment/ingress-class.yaml
-kubectl apply -f deployment/cluster-issuer.yaml
-
-# 5. Configure
-cp deployment/input-values.example.yaml hubs-cloud/community-edition/input-values.yaml
-# Edit input-values.yaml with your domain, SMTP, etc.
-
-# 6. Deploy
-cd hubs-cloud/community-edition
-npm ci && npm run gen-hcce
-# The generator verifies TLS, ingress class, RBAC and exactly one LoadBalancer.
-kubectl apply -f hcce.yaml
-# Configure DNS → SSL auto-provisions
+./scripts/audit-upstream.sh
+./scripts/verify-project.sh
+./scripts/verify-project.sh --full
+./deployment/preflight-reactivation.sh
+./deployment/verify-live-reactivation.sh
 ```
 
-## Project Structure
+Los dos ultimos comandos requieren el contexto de infraestructura correcto. No desplegar si el preflight falla.
 
-```
-YenHubs/
-├── hubs/               # Hubs client fork (submodule: yengalvez/hubs)
-├── hubs-cloud/         # Official deploy scripts (submodule: Hubs-Foundation/hubs-cloud)
-├── deployment/         # Deployment config, manifests, and guide
-│   ├── README.md              # Complete deployment guide
-│   ├── input-values.example.yaml  # Values template
-│   ├── cluster-issuer.yaml    # Let's Encrypt ClusterIssuer
-│   └── ingress-class.yaml     # HAProxy IngressClass
-├── features/
-│   ├── third-person/   # Third-person camera implementation
-│   ├── rpm-avatars/    # ReadyPlayer.me GLB avatar docs and validator
-│   └── future/         # Features for potential future implementation
-│       └── Avaturn/    # Avaturn avatar editor (not active)
-└── docs/               # Project maintenance documentation
-    ├── project-handoff-2026-07.md     # Punto de entrada para continuar el proyecto
-    ├── audit-2026-07.md               # Hallazgos, correcciones y riesgos residuales
-    └── upgrade-stable-2026.md         # Evidencia de la actualizacion oficial aceptada
+## Backup
+
+```bash
+./deployment/create-checkpoint.sh
 ```
 
-## Cost Estimate
+Un checkpoint valido incluye PostgreSQL y `ret-pvc`. Un dump de DB sin storage no recupera escenas, proyectos Spoke,
+avatares ni thumbnails.
 
-| Resource | Monthly |
-|----------|---------|
-| DOKS Node (8GB RAM, 4 vCPU) | $48 |
-| Load Balancer | $12 |
-| Block Storage (2x 10Gi) | ~$2 |
-| SMTP (Mailtrap) | $0-5 |
-| **Total** | **~$62** |
+## Coste base
 
-> The 4GB node ($24) is NOT enough for production. See [deployment/README.md](deployment/README.md) for details.
+| Recurso | Estimacion mensual |
+| --- | ---: |
+| Nodo Basic 4 vCPU / 8 GiB | 48 USD |
+| Load Balancer regional | 12 USD |
+| 2 x 10 GiB de volumen | 2 USD |
+| **Base** | **~62 USD** |
 
-## References
+Escalar pods a cero no elimina estos costes. Para una pausa larga, seguir
+`deployment/client-instance-lifecycle.md` y borrar la infraestructura solo despues de validar un checkpoint completo.
 
-- [Official Hubs CE Guide](https://docs.hubsfoundation.org/beginners-guide-to-CE.html)
-- [Hubs Foundation Docs](https://docs.hubsfoundation.org)
-- [Hubs GitHub](https://github.com/Hubs-Foundation/hubs)
-- [cert-manager Docs](https://cert-manager.io/docs/)
-- [HAProxy Ingress Controller](https://www.haproxy.com/documentation/kubernetes-ingress/community/)
+## Upstream
+
+- [Hubs Foundation Hubs](https://github.com/Hubs-Foundation/hubs)
+- [Hubs Community Edition](https://github.com/Hubs-Foundation/hubs-cloud)
+- [Documentacion Hubs Foundation](https://docs.hubsfoundation.org)

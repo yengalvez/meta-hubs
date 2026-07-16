@@ -368,6 +368,8 @@ printf '\nDatabase\n'
 pgsql_pod="$(kubectl get pod -n "$NAMESPACE" -l app=pgsql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
 if [[ -n "$pgsql_pod" ]]; then
   database_counts="$(
+    # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
+    # shellcheck disable=SC2016
     kubectl exec -n "$NAMESPACE" "$pgsql_pod" -- sh -ec \
       'psql -U "$POSTGRES_USER" -d retdb -At <<'\''SQL'\''
 select count(*) from information_schema.tables
@@ -382,6 +384,8 @@ SQL' 2>/dev/null || true
   hubs="$(printf '%s\n' "$database_counts" | sed -n '3p')"
   active_owned_files="$(printf '%s\n' "$database_counts" | sed -n '4p')"
   active_owned_file_uuids="$(
+    # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
+    # shellcheck disable=SC2016
     kubectl exec -n "$NAMESPACE" "$pgsql_pod" -- sh -ec \
       'psql -U "$POSTGRES_USER" -d retdb -Atc "select owned_file_uuid from ret0.owned_files where state::text = '\''active'\'' order by owned_file_uuid"' \
       2>/dev/null || true

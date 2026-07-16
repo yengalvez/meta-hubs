@@ -1,9 +1,9 @@
 # Actualizacion estable de Hubs - Julio 2026
 
-> Documento historico de la integracion estable. El pulido Obsidian Aurora posterior sustituyo solo la imagen Hubs
-> aceptada: commit `c679151ed`, Actions `29494554300`, digest
-> `sha256:e61d253ea651280f75800a717cb24f66af35949266cd316402526d520766f103`.
-> El estado operativo vigente esta en `docs/project-handoff-2026-07.md`.
+> Documento historico de la integracion estable. El estado operativo posterior
+> usa los digests construidos desde Hubs `a7214eb88` y Hubs CE `5a82de5`.
+> Las ramas fuente incorporan despues el cierre de auditoria en `492625c57` y
+> `0e63d0f`; consultar `docs/project-handoff-2026-07.md`.
 
 ## Objetivo
 
@@ -14,12 +14,13 @@ actualizacion con cambios visuales ni desplegar antes de repetir la aceptacion f
 
 | Capa | Baseline aceptado | Estado final consolidado | Release oficial integrada |
 | --- | --- | --- | --- |
-| Superproyecto | `codex/audit-2026` (`94433c3`) | `main` (`9159b60` + esta correccion documental) | N/A |
-| Cliente Hubs | `codex/audit-2026` (`7f016c9869`) | `master` (`cbded5883`) | `prod-2026-03-11` (`e3b9cc749`) |
-| Hubs CE | `codex/audit-2026` (`dfc248f6bd`) | `master` (`cc43df4`) | `2.1.0` (`410bc52`) |
+| Superproyecto | `codex/audit-2026` (`94433c3`) | `main` (`a0a2b59`) | N/A |
+| Cliente Hubs | `codex/audit-2026` (`7f016c9869`) | `master` (`492625c57`) | `prod-2026-03-11` (`e3b9cc749`) |
+| Hubs CE | `codex/audit-2026` (`dfc248f6bd`) | `master` (`0e63d0f`) | `2.1.0` (`410bc52`) |
 
-El candidato final esta desplegado, aceptado y fusionado por fast-forward en `hubs/master`, `hubs-cloud/master` y
-`meta-hubs/main`.
+El candidato de runtime se desplego y acepto antes del cierre. Las ramas
+`hubs/master` y `hubs-cloud/master` incorporan despues controles de auditoria y
+CI no desplegados; `meta-hubs/main` fija sus commits exactos.
 
 ## Que se integro
 

@@ -1,22 +1,25 @@
-# Third Person Camera Feature
+# Camara en tercera persona
 
 ## Overview
 
-This feature adds a toggleable "Third Person View" to Mozilla Hubs. It modifies the camera system to support a new mode where the camera follows the avatar from behind, allowing users to see their own avatar body.
+Esta feature esta integrada en YenHubs. El boton de toolbar alterna primera y
+tercera persona, la preferencia persiste y la camara sigue el avatar.
 
-Based on two reference implementations:
+La implementacion original se baso en:
 - **Farvel Space** - Commit d388fa3 ([source](https://github.com/farvel-space/space-client/commit/d388fa30cfbde9e836384dc61a98c9310ff91dc9))
 - **Hubs Foundation PR #5660** ([source](https://github.com/Hubs-Foundation/hubs/pull/5660))
 
-Both implementations share identical logic. The diffs for applying this feature are in the `commit/` directory.
+Los diffs historicos ya no son un mecanismo de instalacion y se conservan solo
+en `OLD/patches/third-person/`.
 
-## Files Modified
+## Archivos principales
 
 | File | Change |
 |------|--------|
 | `src/storage/store.js` | Add `enableThirdPersonView` preference |
 | `src/systems/camera-system.js` | New camera mode + positioning logic |
-| `src/react-components/preferences-screen.js` | UI toggle checkbox |
+| `src/react-components/preferences-screen.js` | Preferencia |
+| `src/react-components/ui-root.js` | Boton inmediato en toolbar |
 
 ## 1. Storage Schema
 
@@ -118,23 +121,30 @@ enableThirdPersonView: {
 
 The UI checkbox is auto-generated based on the store schema key matching the label key.
 
-## Known Constraints
+## Contrato actual
+
+- La preferencia es `preferences.enableThirdPersonView`.
+- El modo es `CAMERA_MODE_THIRD_PERSON_VIEW`.
+- `CameraSystem.setMode()` controla layers de primera/tercera persona.
+- El estado se aplica al entrar y al pulsar la toolbar.
+- VR fuerza primera persona y tiene prioridad sobre la preferencia.
+- Los avatares full-body son visibles y usan el IK/locomocion compartidos.
+
+## Pruebas de regresion
+
+1. primera -> tercera -> primera;
+2. movimiento y giro sin saltos;
+3. persistencia tras recarga;
+4. avatar normal y full-body;
+5. sit/stand;
+6. entrada VR mantiene primera persona.
+
+## Limitaciones conocidas
 
 - Camera positioning is fixed (z=1 offset) - no dynamic distance adjustment
 - No collision detection with walls - camera can clip through geometry
-- Third-person mode requires a full-body avatar with proper skeleton (see `features/rpm-avatars/`)
+- La distancia es fija y no hay camera collision contra paredes.
+- La aceptacion VR sigue requiriendo un casco fisico.
 
-## Applying the Feature
-
-The diff files in `commit/` can be applied to the Hubs client (submodule `hubs/`):
-
-```bash
-cd hubs
-git apply ../features/third-person/commit/store.js.diff
-git apply ../features/third-person/commit/camera-system.js.diff
-git apply ../features/third-person/commit/preferences-screen.js.diff
-# Optional: German translations
-git apply ../features/third-person/commit/de.json.diff
-```
-
-After applying, build and deploy following the instructions in `docs/project_maintenance.md`.
+No volver a aplicar parches. En un upgrade upstream se preservan los contratos
+anteriores y se ejecuta `scripts/verify-project.sh --full`.

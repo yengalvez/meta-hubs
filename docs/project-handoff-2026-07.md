@@ -1,236 +1,203 @@
-# Handoff de YenHubs - Julio 2026
+# Handoff de YenHubs - 16 de julio de 2026
 
-Fecha de corte: 16 de julio de 2026.
+Este es el punto de entrada para continuar el proyecto sin depender de una conversacion anterior.
 
-Este documento es el punto de entrada para continuar YenHubs. El procedimiento operativo completo esta en
-`deployment/README.md`; la evidencia y riesgos estan en `docs/audit-2026-07.md`.
+## Estado ejecutivo
 
-## Estado del proyecto
+YenHubs esta operativo en <https://meta-hubs.org> y el verificador live informa 0 fallos y 0 avisos. La produccion usa:
 
-YenHubs esta reactivado en DigitalOcean y usa las ultimas releases estables auditadas para este ciclo:
+- Hubs `prod-2026-03-11` con 79 commits propios adicionales.
+- Hubs CE `2.1.0` con 77 commits propios adicionales.
+- Reticulum sobre Elixir 1.18.4 / OTP 27.
+- Ghost runner Node, no Chromium, con navmesh+A*.
+- Un cluster DOKS no-HA `hubs-ce` en `ams3`.
 
-- Hubs `prod-2026-03-11` con las personalizaciones YenHubs.
-- Hubs Community Edition `2.1.0`.
-- Reticulum modernizado sobre Elixir 1.18.4 / OTP 27.3.4.14 y Phoenix 1.6.17.
-- Bots con ghost runner Node, no Chromium.
-- Spoke, Admin, Dialog, Coturn, Photomnemonic, PostgreSQL y almacenamiento persistente operativos.
-
-Produccion: <https://meta-hubs.org>
 Sala de aceptacion: <https://meta-hubs.org/VJopCY3/inicio>
-Namespace Kubernetes: `hcce`
-Cluster/contexto: `hubs-ce` / `do-ams3-hubs-ce`
 
-## Repositorios y ramas base
-
-| Ruta | Repositorio | Rama base |
-| --- | --- | --- |
-| `/Users/Shared/Gits/YenHubs` | `yengalvez/meta-hubs` | `main` |
-| `/Users/Shared/Gits/YenHubs/hubs` | `yengalvez/hubs` | `master` |
-| `/Users/Shared/Gits/YenHubs/hubs-cloud` | `yengalvez/hubs-cloud` | `master` |
-
-El superproyecto fija los commits exactos de ambos submodulos. Una feature no esta integrada hasta que el commit del
-subrepo esta en su rama base y el puntero queda registrado en `meta-hubs/main`.
-
-Estado consolidado actual:
-
-- `hubs/master`: `1f569385d78ce86233d13764f3f02cfd0b13296b`.
-- `hubs-cloud/master`: `9781d061203745568d70948239c9810fa010bfc8`.
-
-## Funcionalidad personalizada estable
-
-- Camara primera/tercera persona, con primera persona forzada en VR.
-- Avatares normales, RPM full-body y subida privada Avaturn no listada.
-- Importacion Admin local/URL, previews, featured y validacion de archivos en servidor.
-- Sitting con waypoints `Disable motion`, pose compartida y boton Sentarse/Levantarse.
-- Locomocion full-body idle, walk, lateral y atras.
-- Bots por sala con 0..10 instancias, movilidad, featured avatars, patrulla `spawbot-*`, chat privado y acciones de
-  navegacion allowlist.
-- Ghost runner de bajo consumo, sincronizacion de late joiners y reconciliacion dinamica sin reiniciar procesos.
-- UI Obsidian Aurora en espanol, responsive para desktop, tablet y movil.
-- Badge de version del bundle en la toolbar.
-
-## Bots e IA
-
-Reticulum es la autoridad de configuracion y acciones. `bot-orchestrator` ejecuta el ghost runner y llama a OpenAI
-`gpt-5-nano` desde backend.
-
-Garantias implementadas:
-
-- `store: false` en Responses API.
-- YenHubs no guarda conversaciones en DB, ficheros ni logs.
-- El historial del cliente vive solo en memoria y se pierde al salir de la sala.
-- Moderacion de entrada y salida.
-- Rate limit por cuenta y sala, incluso alternando bots.
-- Mensajes, prompt, salida y tokens limitados.
-- Structured Outputs estricto y acciones allowlist `go_to_waypoint`.
-- `safety_identifier` seudonimo; no se envia el ID de cuenta en claro a OpenAI.
-- La UI informa que la conversacion es temporal y que un proveedor procesa el mensaje.
-
-Limite externo: `store:false` no equivale a Zero Data Retention. OpenAI puede conservar datos de monitoreo de abuso
-hasta 30 dias salvo que la organizacion tenga ZDR aprobado. No pedir datos sensibles y revisar el aviso legal antes de
-un evento publico.
-
-## Infraestructura y coste
-
-Topologia intencionada de bajo coste:
-
-- Un cluster DOKS no-HA.
-- Un nodo `s-4vcpu-8gb` en `ams3`.
-- Un unico Load Balancer.
-- Dos PVC de 10 GiB.
-- Coste estimado aproximado: 62 USD/mes.
-
-No anadir nodos, LoadBalancers o ampliar PVC sin aprobacion de coste. Escalar pods a cero no elimina el coste del nodo,
-LB ni volumenes.
-
-## Imagenes finales
-
-La fuente de verdad operativa es `deployment/input-values.local.yaml`, siempre con `repository@sha256:digest`.
-
-| Servicio | Imagen final |
+| Elemento | Valor |
 | --- | --- |
-| Hubs | `ghcr.io/yengalvez/hubs@sha256:b568a9c8565f7983018c2a72d9e13b7bdb32b552381b79a32fdc904bc5e0097c` |
-| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:0b1f8104a520a15828f92ac1428c98a8f45846dcf49d0c99e8ea929f26dad317` |
-| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:1ab1e66b63aa3ae08bf78b285ba52f46ec555fedb2924ed5aea906f44b28f3b5` |
+| Namespace | `hcce` |
+| Contexto | `do-ams3-hubs-ce` |
+| Sala principal | `VJopCY3` |
+| Proyecto Spoke | `qa3U3Ke` |
+| Escena | `f6VKtim` |
+| Administrador operativo | `info@virtualmente.com` |
+
+## Repos y ramas
+
+| Ruta | Rama base | Fuente final auditada | Fuente del runtime live |
+| --- | --- | --- | --- |
+| Root | `main` | commit que contiene este handoff | `a0a2b59cad80e0b07f9b2a2f82c2020781163570` |
+| `hubs/` | `master` | `492625c5791fa540e752cc8300018a4e8252d3f4` | `a7214eb882d19c98b2c8516489e0ed1fb7401c75` |
+| `hubs-cloud/` | `master` | `0e63d0fecb629d4ec49f1f5ab8fdc6236657b08b` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
+
+Los commits finales de auditoria/CI estan publicados en Git, pero no cambian el
+runtime hasta construir nuevas imagenes por Actions y desplegarlas por digest.
+
+## Imagenes live
+
+| Deployment | Imagen |
+| --- | --- |
+| Hubs | `ghcr.io/yengalvez/hubs@sha256:cff099ef4759c8ec8e8d6010ae9268c6b6e99f29ff5ecb50f6e50ce884d20a8c` |
+| Reticulum | `ghcr.io/yengalvez/reticulum@sha256:9ae6712fa5cd4380048ec559cbf75596507ae91cdbd653cac1978b685254faef` |
+| Bot orchestrator | `ghcr.io/yengalvez/bot-orchestrator@sha256:325c5c10e4ee039518693771c0974a0e5c876dcf54c443295e84490f4fa8ec53` |
 | Spoke | `ghcr.io/yengalvez/spoke@sha256:f5120264938e189e702f835182ed4a28a5ce20b140d7262bc2a3074e6d0b6657` |
 | Dialog | `ghcr.io/yengalvez/dialog@sha256:95687f4765e7a68ef05a714b807bf5c80e0f9187e2715f3a5a96e2d664377a23` |
 | Photomnemonic | `ghcr.io/yengalvez/photomnemonic@sha256:aef369b82212429d01c0f1f554b16c34a99cf4bbb75e0693e190c796b33012f2` |
 | Coturn | `ghcr.io/yengalvez/coturn@sha256:c2ad335349d477d342d5b17c82b513bfebc8c17b8e6b4e27a3049f3478207780` |
 
-No usar un tag `latest` como unica referencia de rollback.
+El inventario completo esta en el checkpoint y en el cluster; no usar tags `latest` como rollback.
+
+## Funcionalidad aceptada
+
+- Entrada desktop/movil, landing y sala 3D.
+- Camara primera/tercera persona.
+- Avatares normales y RPM full-body.
+- Flujo Avaturn privado no listado y validacion client/server.
+- Import Admin, previews y Featured.
+- Sitting con `Disable motion`, animacion y salida del asiento.
+- Bots `static|low|medium|high`, 0..10, `spawbot-*`, navmesh+A* y late join.
+- Chat privado de bot con GPT-5 Nano, Structured Outputs, moderacion y acciones allowlist.
+- Historial de bot solo en memoria de la sesion; no hay persistencia de conversaciones en YenHubs.
+- Magic link Mailtrap, Admin, Spoke, Dialog/Coturn y audio multiusuario.
+
+## Backup vigente
+
+Checkpoint completo mas reciente:
+
+```text
+output/backups/20260716-183112/
+```
+
+Contenido validado:
+
+- DB comprimida: 49 KiB, SHA-256
+  `1ae3d7a76d317484b646c3e6f0fd25598f5f80161d1ecf55b84a84ac3d1fc5de`.
+- Storage comprimido: 183 MiB, SHA-256
+  `c071c02d7945b2bdba06585304113e730d085097855c98b1d4096417acc1f349`.
+- 356 de schema, 94 migraciones, 33 archivos activos.
+- 47 pares fisicos completos, 14 diferidos validos.
+- commits, imagenes, Kubernetes, DigitalOcean y presencia de configuracion.
+- `SHA256SUMS` y dry-runs de DB/storage correctos.
+
+`output/latest-backup-path.txt` apunta al checkpoint vigente y esta ignorado. Mantener una segunda copia cifrada fuera
+del Mac antes de retirar infraestructura.
+
+## Riesgos bloqueantes actuales
+
+### 1. Pull de paquetes GHCR
+
+El token contenido en el `imagePullSecret` actual devuelve `401/403`. Los pods live siguen funcionando porque las
+imagenes ya estaban descargadas, pero un nodo nuevo, reschedule o nueva imagen privada puede fallar con
+`ImagePullBackOff`.
+
+Antes de reiniciar nodos o desplegar:
+
+1. crear/renovar un token GitHub con `read:packages` y acceso a los paquetes privados;
+2. configurar `REGISTRY_USERNAME`/`REGISTRY_PASSWORD` en Actions para pushes;
+3. renovar `ghcr-pull` en Kubernetes;
+4. ejecutar `deployment/preflight-reactivation.sh` hasta que las tres imagenes prueben pull.
+
+No almacenar el PAT en inputs de workflow ni YAML trackeado.
+
+### 2. Clave OpenAI historica
+
+Una clave encontrada en la historia Git antigua sigue respondiendo. No es la clave live actual y no puede eliminarse
+con la API normal de proyecto. Debe revocarse en el panel OpenAI. La historia Git no se reescribio porque es una
+operacion destructiva; Gitleaks del entregable actual esta limpio.
+
+### 3. Capacidad no certificada
+
+La topologia actual no tiene Metrics Server ni una prueba de carga representativa. No prometer 75, 300 o 10.000 CCU
+basandose solo en requests. La recomendacion oficial de Hubs sigue siendo alrededor de 25 usuarios dentro de una sala.
+Ver `docs/bots-cost-capacity-analysis-2026-07.md`.
+
+## Riesgos no bloqueantes
+
+- VR fisico no probado.
+- Carrera de dos usuarios por el mismo asiento pendiente.
+- Guardado real de un Avaturn nuevo requiere checkpoint dedicado.
+- El bundle Hubs es grande (~8,4 MiB el entrypoint de sala).
+- Spoke conserva dependencias legacy y advisories; se valida con Node 16.13.2 y debe modernizarse como proyecto
+  separado, no con un upgrade masivo.
+- `cowlib 2.18.0` mantiene dos avisos upstream sin release corregida; cualquier aviso Hex adicional falla CI.
+- La imagen ghost contiene Chromium como fallback diagnostico, aunque no lo ejecuta en produccion. Separar una imagen
+  ghost-only puede reducir tamano/superficie, no es necesario para el consumo runtime actual.
+
+## Auditoria y pruebas realizadas
+
+- Hubs: check, lint, 12 unit tests, build; Hubs/Admin audit de produccion en 0.
+- Admin: tests, lint y build.
+- Hubs CE: generator y verificador de 44 recursos; audit en 0.
+- Reticulum: format, compile warnings-as-errors, 305 tests, 0 fallos, 3 excluidos.
+- Bot orchestrator: 22 tests y audit en 0.
+- Dialog: lint, 2 tests y audit en 0.
+- Photomnemonic: syntax/check, 7 tests y audit en 0.
+- Coturn: test de entrypoint.
+- Spoke: lint, unit y build con Node 16.13.2/Yarn 1.
+- Gitleaks, Actionlint, ShellCheck, SBOM y Trivy.
+- Navegador real desktop/movil: sin errores JS/HTTP, escena lista y cinco bots.
+- Live: 12 deployments Ready, TLS/DNS/DB/storage/assets/CSP/ghost runner, 0 fallos/avisos.
+
+Los cambios de auditoria anaden CI de seguridad, healthchecks y correcciones de calidad. No estan desplegados hasta que
+se construyan imagenes nuevas por Actions y se renueve GHCR.
+
+## Actualizacion upstream
+
+Ejecutar:
+
+```bash
+./scripts/audit-upstream.sh
+```
+
+Estado del corte:
+
+- no faltan commits de las releases estables aceptadas;
+- `upstream/master` tiene 13 commits Hubs y 5 Hubs CE no publicados;
+- los dry merges solo anticipan conflictos en workflows.
+
+No desplegar `upstream/master`. Seguir `docs/development-workflow.md` y preservar
+`docs/customization-inventory.md`.
 
 ## Deploy correcto
 
-Solo se aprueba este flujo:
+1. checkpoint;
+2. tests locales;
+3. commit/push;
+4. GitHub Actions;
+5. digest en values local;
+6. `npm run gen-hcce`;
+7. `kubectl diff` sin imprimir Secrets;
+8. `kubectl apply -f hcce.yaml` sin editarlo;
+9. rollout;
+10. si cambia Hubs, reiniciar Reticulum;
+11. carga fria real;
+12. `deployment/verify-live-reactivation.sh` con 0/0.
 
-1. Validar codigo localmente.
-2. Commit y push de la rama.
-3. Construir/publicar por el GitHub Actions estandar del repo.
-4. Resolver el digest publicado y actualizar `deployment/input-values.local.yaml`.
-5. Copiarlo al `input-values.yaml` ignorado de Hubs CE.
-6. Ejecutar `npm run gen-hcce`; debe validar 44 recursos.
-7. Revisar `kubectl diff` sin imprimir Secrets.
-8. Ejecutar `kubectl apply -f hcce.yaml`.
-9. Esperar el rollout.
-10. Si cambia Hubs, reiniciar Reticulum para refrescar HTML y hashes de assets.
-11. Hacer una carga fria en navegador real y confirmar que `APP`/`AFRAME` arrancan y no hay excepciones.
-12. Ejecutar `deployment/verify-live-reactivation.sh` y exigir 0 fallos/0 avisos.
+No usar `kubectl set image`, hotpatches, builds in-cluster, `kubectl cp` ni parches manuales como flujo normal.
 
-No usar builds locales/in-cluster, `kubectl set image`, copia de ficheros al pod, edicion manual del manifiesto ni parches
-RBAC posteriores sin autorizacion explicita.
+## Coste y ciclo de vida
 
-## Backup y rollback
-
-Checkpoint previo al rollout final:
-
-`output/final-candidate-predeploy-20260716-014319/`
-
-Incluye:
-
-- dump comprimido de Reticulum/PostgreSQL;
-- archivo de storage persistente;
-- checksums verificados;
-- inventario de deployments, commits e imagenes;
-- evidencia del verificador.
-
-En ese checkpoint final previo habia 34 archivos activos, 34 blobs activos, 34 metadatos activos y cuatro pares
-completos diferidos por la reconciliacion de Spoke; no eran corrupcion.
-
-Checkpoint previo a la reparacion SMTP/publicacion de escena:
-
-`output/magiclink-scene-prepublish-20260716-093347/`
-
-Incluye un dump, un archivo de storage y copias original/modificada del proyecto Spoke con checksums. En ese momento
-habia 34 archivos activos y 38 pares fisicos completos. Tras publicar el nuevo `Floor Plan`, el estado live conserva
-34 activos y 43 pares completos, de los cuales nueve son diferidos validos pendientes de la reconciliacion normal.
-
-Rollback de Hubs probado:
-
-`ghcr.io/yengalvez/hubs@sha256:aa703dc35b80e05a3ece28a9827375fd9d2d312dfa5a173991ebf54a3e978481`
-
-Para restaurar DB/storage seguir exclusivamente `deployment/README.md` y `deployment/restore-retdb.sh`. No restaurar
-el dump raw de marzo sobre el estado actual: contenia 93 referencias activas cuyos bytes ya no existian.
-
-## Validacion final realizada
-
-- Hubs: TypeScript, ESLint, 12 pruebas unitarias y build de produccion.
-- Hubs CE: generador 2.1.0 y verificacion de 44 recursos.
-- Reticulum: formato, compilacion estricta, 278 pruebas, properties y release.
-- Bot orchestrator: 19 pruebas y 0 advisories de produccion.
-- Audio real entre dos navegadores por Dialog/WebRTC.
-- DNS, TLS, 12 deployments, hardening, DB/storage, HTTPS, assets y CSP.
-- Ghost runner: late join, movimiento, cinco bots visibles, config live 5 -> 10 -> 5 sin reiniciar proceso.
-- Magic link real entregado a `info@virtualmente.com`, verificacion Hubs completada y Spoke autenticado.
-- Escena `f6VKtim` republicada con un `nav-mesh` nativo; la sala carga exactamente un nav mesh sin errores.
-- Las dos sillas de la escena son waypoints `Disable motion` y `Clickable`; tras entrar completamente, mantener
-  Espacio muestra exactamente dos objetivos blancos.
-- La cuenta actual de `info@virtualmente.com` abre y publica el proyecto Spoke `qa3U3Ke` y es propietaria adicional
-  de la sala `VJopCY3`, sin eliminar su creador historico.
-- Carga fria de Hubs en navegador real.
-- Capturas y layout sin overflow a 1440x900, 1024x1366 y 390x844.
-- Flujo de entrada movil completo, toolbar oculta durante el modal y badge de version visible tras entrar.
-
-Evidencia visual final: `output/final-acceptance-20260716/`.
-
-## Riesgos residuales conocidos
-
-No presentar estos puntos como ya probados:
-
-- VR real no se probo con casco fisico.
-- La carrera de dos usuarios intentando ocupar el mismo asiento no tuvo aceptacion multiusuario dedicada.
-- El guardado real de un nuevo Avaturn y un Publish/Delete aislado de Spoke requieren mutar DB/storage; no se hicieron
-  sin un checkpoint dedicado.
-- No se hizo una carga representativa de cinco salas con bots y alto CCU/WebRTC.
-- Los secretos que aparecieron historicamente en Git fueron rotados, pero la historia publica no se reescribio porque
-  es una operacion destructiva para clones y referencias.
-- El bundle Hubs sigue siendo grande; es deuda de rendimiento, no una regresion funcional.
-- La escena recuperada ya tiene `nav-mesh` y no permite el fallo vertical causado por su ausencia. Conserva avisos
-  A-Frame/MeshBVH y no tiene `box-collider`; el raycast de bots queda en fallback.
-- Las posiciones de las dos sillas siguen siendo las posiciones provisionales de recuperacion y deben ajustarse
-  visualmente en Spoke si no coinciden con las sillas finales del decorado.
-
-## Propiedad, Spoke y waypoints
-
-- Sala principal: `https://meta-hubs.org/VJopCY3/inicio`.
-- Proyecto editable: `https://meta-hubs.org/spoke/projects/qa3U3Ke`.
-- Escena publicada: `f6VKtim`.
-- Administrador operativo: `info@virtualmente.com`.
-
-La sala y el proyecto son registros distintos. El proyecto/escena pertenece a la cuenta actual del administrador; la
-sala conserva un creador historico diferente y otorga a la cuenta actual una membresia adicional de propietario.
-Tras iniciar sesion de nuevo y recargar la sala deben aparecer `Configuracion de sala`, `Informacion y ajustes de
-sala` y `Cerrar sala`.
-
-La geometria permanente y los waypoints se editan y publican desde Spoke. La sala permite colocar objetos/media
-durante la sesion, pero eso no equivale a modificar la escena base.
-
-Para las sillas:
-
-- `Disable motion` significa asiento para la feature Sitting.
-- `Clickable` hace visible el objetivo blanco al mantener Espacio.
-- La prueba de Espacio requiere pulsar `Entrar a la sala`; `Mirar` mantiene al usuario en el vestibulo.
-
-Checkpoint previo a esta correccion:
-`output/room-seat-ownership-prechange-20260716-114047/`.
-
-## Secretos y configuracion local
-
-- Fuente local real: `deployment/input-values.local.yaml`.
-- Copia runtime ignorada: `hubs-cloud/community-edition/input-values.yaml`.
-- Administrador Hubs/Spoke: `info@virtualmente.com`.
-- Mailtrap se identifica operativamente por account ID `2385821` y dominio verificado `meta-hubs.org`; la cuenta del
-  proveedor no debe inferirse a partir del correo administrador.
-- Nunca versionar ni imprimir tokens, claves SMTP/OpenAI, `PERMS_KEY`, `BOT_ACCESS_KEY` o passwords DB.
-- Mantener `PERMS_KEY` identico en Reticulum y Dialog.
-- GitHub usa secretos `REGISTRY_USERNAME` y `REGISTRY_PASSWORD` para GHCR.
+Coste base actual aproximado: 62 USD/mes (48 nodo + 12 LB + 2 storage). Escalar deployments a cero no elimina esa
+factura. Para alta, congelacion, restauracion o baja de un cliente usar
+`deployment/client-instance-lifecycle.md`.
 
 ## Orden para continuar
 
-1. Leer este handoff y `deployment/README.md`.
-2. Ejecutar `deployment/preflight-reactivation.sh`.
-3. Confirmar ramas, submodulos y arboles limpios.
-4. Crear un checkpoint DB+storage antes de cualquier cambio mutable.
-5. Crear una rama `codex/<feature>` en el subrepo afectado.
-6. No mezclar una feature, un upgrade upstream y una migracion backend en el mismo cambio.
-7. Validar, construir por Actions, desplegar por manifiesto generado y aceptar en navegador real.
-8. Actualizar `docs/session-changelog.md` y este handoff si cambia la arquitectura.
+1. Leer `AGENTS.md` y este handoff.
+2. Revocar la clave OpenAI historica.
+3. Renovar credenciales GitHub/GHCR.
+4. Ejecutar `deployment/preflight-reactivation.sh`.
+5. Confirmar arboles limpios y ramas base.
+6. Crear checkpoint si se va a mutar produccion.
+7. Usar una rama por feature o upgrade.
+8. Ejecutar los gates y desplegar solo por el metodo estandar.
+
+## Indice
+
+- Operacion: `deployment/README.md`.
+- Auditoria: `docs/audit-2026-07.md`.
+- Desarrollo/upstream: `docs/development-workflow.md`.
+- Personalizaciones: `docs/customization-inventory.md`.
+- Features: `features/`.
+- Archivo historico: `OLD/README.md`.

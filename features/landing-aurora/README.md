@@ -11,10 +11,13 @@ se conserva; el cambio es de estructura de presentacion, jerarquia visual y cont
 - Hubs Foundation: `prod-2026-03-11`
 - Baseline YenHubs anterior: commit `c679151ed`
 - Rama de implementacion: `codex/landing-aurora-portal`
-- Commit aceptado: `1f569385d`
+- Commit de la feature: `1f569385d`
 - GitHub Actions: `29499784485`
-- Imagen live:
+- Imagen aceptada en el rollout de la feature:
   `ghcr.io/yengalvez/hubs@sha256:b568a9c8565f7983018c2a72d9e13b7bdb32b552381b79a32fdc904bc5e0097c`
+
+La imagen live posterior que conserva esta landing es:
+`ghcr.io/yengalvez/hubs@sha256:cff099ef4759c8ec8e8d6010ae9268c6b6e99f29ff5ecb50f6e50ce884d20a8c`.
 
 ## Superficie personalizada
 

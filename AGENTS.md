@@ -1,0 +1,182 @@
+# YenHubs Repository Rules
+
+This is the single agent/rules file for the project. It contains durable
+operating rules only. Session history belongs exclusively in
+`docs/session-changelog.md`.
+
+## Repository Map
+
+- Root repository: `/Users/Shared/Gits/YenHubs`, base branch `main`.
+- Hubs client submodule: `hubs/`, fork `yengalvez/hubs`, base branch `master`.
+- Hubs CE and backend submodule: `hubs-cloud/`, fork `yengalvez/hubs-cloud`,
+  base branch `master`.
+- Runtime and recovery source of truth: `deployment/README.md`.
+- Current project handoff: `docs/project-handoff-2026-07.md`.
+- Current audit and residual risks: `docs/audit-2026-07.md`.
+- Upstream update procedure: `docs/development-workflow.md`.
+- Per-client create/freeze/restore lifecycle: `deployment/client-instance-lifecycle.md`.
+- Feature specifications: `features/<feature>/`.
+- `OLD/` is archive-only. Never use it as implementation or deployment input.
+
+The root repository pins exact submodule commits. A subrepo change is not fully
+integrated until its base branch contains the commit and root `main` records the
+new submodule pointer.
+
+## Upstream Baselines
+
+- Accepted Hubs release: `prod-2026-03-11`.
+- Accepted Hubs Community Edition release: `2.1.0`.
+- Stable release tags are the production baseline. `upstream/master` is only an
+  early conflict signal and must not be deployed merely because it is newer.
+- Run `scripts/audit-upstream.sh` before planning an update. It reports release
+  ancestry, custom commit counts and dry-merge conflicts.
+
+Treat both forks as updateable upstream bases. Prefer isolated components,
+systems, utilities, feature flags and configuration over invasive core edits.
+When a core edit is unavoidable, document:
+
+- upstream release/tag used as the baseline;
+- files, schemas, APIs and persisted contracts changed;
+- behavior that YenHubs must preserve;
+- feature-specific acceptance tests;
+- likely merge conflicts and rollback path.
+
+Never combine a feature, an upstream update and unrelated infrastructure
+modernization in one branch or rollout. An upstream merge that compiles is not
+accepted until third-person, sitting, RPM/Avaturn avatars, avatar import, bots,
+ghost runner, bot privacy, Spanish UI, Spoke ownership and deployment recovery
+have been revalidated where relevant.
+
+## Branch and Change Workflow
+
+1. Start from clean base branches and initialized submodules.
+2. Create short-lived `codex/<scope>` branches only in affected repositories.
+3. Create a DB and storage checkpoint before any production mutation.
+4. Implement one coherent change set.
+5. Update the relevant feature specification and `docs/session-changelog.md`.
+6. Run static and full validation.
+7. Build images through the approved GitHub Actions workflow.
+8. Deploy only by regenerating and applying the tracked Hubs CE manifest.
+9. Perform a cold-browser acceptance and the live verifier.
+10. Merge subrepos first, then update and merge the root pointers.
+
+Do not amend or rewrite published history unless the owner explicitly approves
+the disruption to existing clones and references.
+
+## Required Validation
+
+Run from the root:
+
+```bash
+./scripts/verify-project.sh
+./scripts/verify-project.sh --full
+```
+
+The full gate covers Hubs, Admin, Hubs CE generator, bot orchestrator, Dialog,
+Photomnemonic, Coturn, Spoke and Reticulum. Do not use `npm audit fix --force`
+or broad dependency upgrades to silence findings. Upgrade one compatibility
+surface at a time and retest it.
+
+After a live rollout:
+
+```bash
+./deployment/verify-live-reactivation.sh
+```
+
+Acceptance requires zero failures and zero warnings plus a real cold browser
+load proving `APP`, `AFRAME`, the scene and expected bots initialize without
+uncaught errors.
+
+## Deployment Rules
+
+- Standard path: GitHub Actions image build, digest pin,
+  `npm run gen-hcce`, `kubectl diff`, then `kubectl apply -f hcce.yaml`.
+- Never edit generated `hcce.yaml`. Fix the tracked generator and regenerate.
+- Never apply manual RBAC patches after generation.
+- If Actions, GHCR, generation or apply fails, stop and report the exact failure.
+  Do not switch to in-cluster builds, pod hotpatches, `kubectl cp`,
+  `kubectl set image` or manual asset replacement without explicit approval.
+- Export `BASE_ASSETS_PATH` and `RETICULUM_SERVER` for Hubs builds as documented.
+- After changing the Hubs image, restart Reticulum so cached HTML references the
+  new hashed assets.
+- Keep every active Deployment image pinned by digest.
+- Keep `PERMS_KEY` identical in Reticulum and Dialog.
+- Store global app config values as JSON object wrappers, not raw primitives.
+- Do not run `/ret/bin/ret eval` or `/ret/bin/ret rpc` inside the live pod.
+- Do not create DigitalOcean resources without an explicit cost gate. Keep
+  control-plane HA disabled for this low-cost topology.
+
+Known Actions failures and fixes are documented in `deployment/README.md`,
+including reusable-workflow `secrets.*` expressions and GHCR `403` errors.
+
+## Secrets and Supply Chain
+
+- Never commit or print real secrets.
+- Local runtime values live only in `deployment/input-values.local.yaml`
+  (`0600`, ignored by Git).
+- The generated Hubs CE values and manifest are ignored and may contain secrets.
+- GitHub package credentials must be supplied through GitHub Actions secrets,
+  an environment variable for preflight, or a Kubernetes image pull secret.
+  Do not put PATs in workflow inputs or tracked YAML.
+- Run Gitleaks on the current deliverable tree and Actionlint/ShellCheck before
+  commit. The root security workflow enforces the same baseline.
+- A secret found in Git history is compromised even after deleting the file.
+  Revoke it and record only the revocation status, never the value.
+- Reticulum currently acknowledges exactly two upstream `cowlib 2.18.0`
+  advisories with no fixed release. Any additional Hex advisory must fail CI.
+
+## Backup, Freeze and Restore
+
+A valid checkpoint always contains both PostgreSQL metadata and Reticulum media:
+
+```bash
+./deployment/create-checkpoint.sh
+```
+
+It produces:
+
+- `retdb-*.sql.gz`;
+- `ret-storage-*.tar.gz`;
+- exact commits and image digests;
+- non-secret Kubernetes and DigitalOcean inventory;
+- configured-key presence only;
+- `SHA256SUMS`.
+
+Validate restores in dry-run mode before deleting infrastructure. A DB-only
+backup is incomplete because scene, avatar, thumbnail and Spoke bytes live in
+`ret-pvc`. Follow `deployment/client-instance-lifecycle.md` for client closure
+or reconstruction.
+
+## Bots and AI
+
+- Production backend is Node ghost runner with
+  `GHOST_NAVIGATION_MODE=navmesh_preferred`; Chromium is diagnostic fallback.
+- Bot scenes need a published Floor Plan/navmesh. Name patrol points
+  `spawbot-*` and place them on the walkable surface.
+- `mobility=static` disables autonomous and LLM-triggered movement.
+- Re-test navmesh extraction/routing after Hubs, Spoke, Three.js,
+  networked-aframe or Hubs CE updates.
+- Bot chat is private to the current browser session. YenHubs must not persist
+  conversations or log message/prompt content.
+- OpenAI requests use `store:false`, moderation, bounded input/output,
+  pseudonymous safety IDs, structured output and allowlisted actions.
+- `store:false` is not Zero Data Retention; keep the user notice and review
+  provider retention requirements before public events.
+
+## Room and Spoke Content
+
+- Main room: `VJopCY3`.
+- Editable Spoke project: `qa3U3Ke`.
+- Published scene: `f6VKtim`.
+- Operational administrator: `info@virtualmente.com`.
+- Room ownership and Spoke project ownership are separate records.
+- Permanent geometry and waypoint changes must be published from Spoke.
+- Sitting uses `Disable motion`; add `Clickable` when the Space target must be
+  visible after fully entering the room.
+
+## Archive Policy
+
+Move obsolete research, superseded runbooks and historical patches into `OLD/`
+instead of deleting useful evidence. Every archived item must be listed in
+`OLD/README.md` with its replacement or reason. Active docs and scripts must not
+link to archived material as a required step.

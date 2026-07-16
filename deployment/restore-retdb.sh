@@ -66,6 +66,8 @@ trap restore_failed ERR
 
 # pg_dump does not include cluster-level roles. The restored grants require
 # ret_admin even though it is a NOLOGIN role.
+# Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
+# shellcheck disable=SC2016
 kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec '
   psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres -q <<'\''SQL'\''
 DO $do$
@@ -83,11 +85,15 @@ SQL
   createdb -U "$POSTGRES_USER" -O "$POSTGRES_USER" retdb
 ' >/dev/null
 
+# Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
+# shellcheck disable=SC2016
 gzip -cd "$DUMP_PATH" |
   kubectl exec -i -n "$NAMESPACE" "$PGSQL_POD" -- \
     sh -ec 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d retdb' >/dev/null
 
 RESTORE_COUNTS="$(
+  # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
+  # shellcheck disable=SC2016
   kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
     'psql -U "$POSTGRES_USER" -d retdb -At <<'\''SQL'\''
 select count(*) from information_schema.tables

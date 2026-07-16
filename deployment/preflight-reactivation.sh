@@ -8,10 +8,24 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VALUES_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
-BACKUP_DIR="${BACKUP_DIR:-$ROOT_DIR/output/project-freeze-20260316-090114}"
+BACKUP_DIR="${BACKUP_DIR:-}"
+DUMP_PATH="${DUMP_PATH:-}"
 RET_STORAGE_ARCHIVE="${RET_STORAGE_ARCHIVE:-}"
 DOCTL_CONTEXT="${DOCTL_CONTEXT:-yenhubs}"
 CLUSTER_NAME="${CLUSTER_NAME:-hubs-ce}"
+
+if [[ -z "$BACKUP_DIR" && -s "$ROOT_DIR/output/latest-backup-path.txt" ]]; then
+  BACKUP_DIR="$(cat "$ROOT_DIR/output/latest-backup-path.txt")"
+  [[ "$BACKUP_DIR" = /* ]] || BACKUP_DIR="$ROOT_DIR/$BACKUP_DIR"
+fi
+if [[ -z "$BACKUP_DIR" ]]; then
+  BACKUP_DIR="$(
+    find "$ROOT_DIR/output/checkpoints" "$ROOT_DIR/output/backups" \
+      -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null |
+      sort |
+      tail -1
+  )"
+fi
 
 failures=0
 warnings=0
@@ -69,20 +83,31 @@ check_ghcr_image() {
   local image="$1"
   local github_token="$2"
 
-  if [[ "$image" != ghcr.io/*:* ]]; then
+  if [[ "$image" != ghcr.io/* ]]; then
     warn "No se comprueba una imagen no-GHCR: ${image%%:*}"
     return
   fi
 
-  local without_registry owner repository tag auth_file bearer http_code
+  local without_registry owner repository reference auth_file bearer http_code
   without_registry="${image#ghcr.io/}"
   owner="${without_registry%%/*}"
   repository="${without_registry#*/}"
-  tag="${repository#*:}"
-  repository="${repository%%:*}"
+  if [[ "$repository" == *@* ]]; then
+    reference="${repository#*@}"
+    repository="${repository%@*}"
+  elif [[ "$repository" == *:* ]]; then
+    reference="${repository##*:}"
+    repository="${repository%:*}"
+  else
+    reference="latest"
+  fi
   auth_file="$(mktemp /tmp/yenhubs-ghcr-auth.XXXXXX)"
   chmod 600 "$auth_file"
-  printf 'user = "%s:%s"\nsilent\nshow-error\n' "$owner" "$github_token" >"$auth_file"
+  if [[ -n "$github_token" ]]; then
+    printf 'user = "%s:%s"\nsilent\nshow-error\n' "$owner" "$github_token" >"$auth_file"
+  else
+    printf 'silent\nshow-error\n' >"$auth_file"
+  fi
 
   bearer="$(
     curl --config "$auth_file" \
@@ -100,13 +125,13 @@ check_ghcr_image() {
     curl -sS -o /dev/null -w '%{http_code}' \
       -H "Authorization: Bearer $bearer" \
       -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-      "https://ghcr.io/v2/${owner}/${repository}/manifests/${tag}"
+      "https://ghcr.io/v2/${owner}/${repository}/manifests/${reference}"
   )"
 
   if [[ "$http_code" == "200" ]]; then
-    pass "Imagen accesible: ghcr.io/${owner}/${repository}:${tag}"
+    pass "Imagen accesible: $image"
   else
-    fail "Imagen no accesible: ghcr.io/${owner}/${repository}:${tag} (HTTP $http_code)"
+    fail "Imagen no accesible: $image (HTTP $http_code)"
   fi
 }
 
@@ -133,22 +158,20 @@ else
 fi
 
 printf '\nBackup\n'
-for backup_file in \
-  "$BACKUP_DIR/retdb-20260316-090114.sql.gz" \
-  "$BACKUP_DIR/deployment-images.txt" \
-  "$BACKUP_DIR/k8s-hcce-core.yaml" \
-  "$BACKUP_DIR/git-heads.env"; do
-  if [[ -s "$backup_file" ]]; then
-    pass "Backup presente: $(basename "$backup_file")"
-  else
-    fail "Backup ausente o vacio: $backup_file"
-  fi
-done
+if [[ -z "$BACKUP_DIR" || ! -d "$BACKUP_DIR" ]]; then
+  fail "No se encontro un directorio de backup. Define BACKUP_DIR explicitamente."
+else
+  pass "Directorio de backup: $BACKUP_DIR"
+fi
 
-if gzip -t "$BACKUP_DIR/retdb-20260316-090114.sql.gz" 2>/dev/null; then
+if [[ -z "$DUMP_PATH" && -d "$BACKUP_DIR" ]]; then
+  DUMP_PATH="$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'retdb*.sql.gz' -print | sort | tail -1)"
+fi
+
+if [[ -n "$DUMP_PATH" && -s "$DUMP_PATH" ]] && gzip -t "$DUMP_PATH" 2>/dev/null; then
   pass "Dump PostgreSQL gzip integro"
 else
-  fail "Dump PostgreSQL gzip corrupto o ilegible"
+  fail "Dump PostgreSQL ausente, corrupto o ilegible"
 fi
 
 if [[ -z "$RET_STORAGE_ARCHIVE" ]]; then
@@ -167,6 +190,14 @@ if [[ -n "$RET_STORAGE_ARCHIVE" && -s "$RET_STORAGE_ARCHIVE" ]] &&
 else
   fail "Falta el backup ret-pvc; un dump PostgreSQL no contiene escenas ni avatares"
 fi
+
+for state_file in deployment-images.txt k8s-hcce-core.yaml git-state.txt SHA256SUMS; do
+  if [[ -s "$BACKUP_DIR/$state_file" ]]; then
+    pass "Snapshot operativo presente: $state_file"
+  else
+    warn "Snapshot operativo opcional ausente: $state_file"
+  fi
+done
 
 printf '\nConfiguracion local\n'
 if [[ -f "$VALUES_FILE" ]]; then
@@ -189,7 +220,7 @@ if [[ -f "$VALUES_FILE" ]]; then
 
   required_keys=(
     HUB_DOMAIN ADM_EMAIL DB_USER DB_PASS SMTP_SERVER SMTP_PORT SMTP_USER SMTP_PASS
-    NODE_COOKIE GUARDIAN_KEY PHX_KEY PERMS_KEY BOT_ACCESS_KEY OPENAI_API_KEY GITHUBTOKEN
+    NODE_COOKIE GUARDIAN_KEY PHX_KEY PERMS_KEY BOT_ACCESS_KEY OPENAI_API_KEY
     OVERRIDE_HUBS_IMAGE OVERRIDE_RETICULUM_IMAGE OVERRIDE_BOT_ORCHESTRATOR_IMAGE
   )
   for key in "${required_keys[@]}"; do
@@ -210,23 +241,49 @@ else
 fi
 
 if [[ -f "$VALUES_FILE" ]]; then
-  github_token="$(yaml_value GITHUBTOKEN)"
+  github_token="${GITHUBTOKEN:-$(yaml_value GITHUBTOKEN)}"
+  github_token_source=""
   if [[ -n "$github_token" ]]; then
-    github_http="$(
-      curl -sS -o /dev/null -w '%{http_code}' \
-        -H "Authorization: Bearer $github_token" \
-        -H 'Accept: application/vnd.github+json' \
-        https://api.github.com/user
+    github_token_source="local"
+  elif kubectl get secret ghcr-pull -n hcce >/dev/null 2>&1; then
+    docker_config="$(
+      kubectl get secret ghcr-pull -n hcce -o jsonpath='{.data.\.dockerconfigjson}' |
+        base64 --decode
     )"
-    if [[ "$github_http" == "200" ]]; then
-      pass "GitHub autenticado"
-      check_ghcr_image "$(yaml_value OVERRIDE_HUBS_IMAGE)" "$github_token"
-      check_ghcr_image "$(yaml_value OVERRIDE_RETICULUM_IMAGE)" "$github_token"
-      check_ghcr_image "$(yaml_value OVERRIDE_BOT_ORCHESTRATOR_IMAGE)" "$github_token"
-    else
-      fail "GitHub no autenticado (HTTP $github_http)"
+    github_token="$(printf '%s' "$docker_config" | jq -r '.auths["ghcr.io"].password // empty')"
+    if [[ -z "$github_token" ]]; then
+      registry_auth="$(printf '%s' "$docker_config" | jq -r '.auths["ghcr.io"].auth // empty')"
+      if [[ -n "$registry_auth" ]]; then
+        github_token="$(printf '%s' "$registry_auth" | base64 --decode | cut -d: -f2-)"
+      fi
     fi
+    unset docker_config registry_auth
+    [[ -z "$github_token" ]] || github_token_source="cluster"
   fi
+
+  if [[ -n "$github_token" ]]; then
+    if [[ "$github_token_source" == "local" ]]; then
+      github_http="$(
+        curl -sS -o /dev/null -w '%{http_code}' \
+          -H "Authorization: Bearer $github_token" \
+          -H 'Accept: application/vnd.github+json' \
+          https://api.github.com/user
+      )"
+      if [[ "$github_http" == "200" ]]; then
+        pass "GitHub autenticado con credencial local"
+      else
+        fail "GitHub no autenticado (HTTP $github_http)"
+      fi
+    else
+      pass "Credencial GHCR disponible en el imagePullSecret del cluster"
+    fi
+  else
+    warn "Sin credencial GHCR. En una reconstruccion nueva exporta GITHUBTOKEN antes del preflight."
+  fi
+  check_ghcr_image "$(yaml_value OVERRIDE_HUBS_IMAGE)" "$github_token"
+  check_ghcr_image "$(yaml_value OVERRIDE_RETICULUM_IMAGE)" "$github_token"
+  check_ghcr_image "$(yaml_value OVERRIDE_BOT_ORCHESTRATOR_IMAGE)" "$github_token"
+  unset github_token
 fi
 
 printf '\nCost gate\n'

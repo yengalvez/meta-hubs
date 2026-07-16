@@ -52,10 +52,14 @@ kubectl rollout status deployment/pgsql -n "$NAMESPACE" --timeout=5m >/dev/null
 
 PGSQL_POD="$(kubectl get pod -n "$NAMESPACE" -l app=pgsql -o jsonpath='{.items[0].metadata.name}')"
 DB_ACTIVE_COUNT="$(
+  # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
+  # shellcheck disable=SC2016
   kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
     'psql -U "$POSTGRES_USER" -d retdb -Atc "select count(*) from ret0.owned_files where state = '\''active'\''"'
 )"
 DB_ACTIVE_UUIDS="$(
+  # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
+  # shellcheck disable=SC2016
   kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
     'psql -U "$POSTGRES_USER" -d retdb -Atc "select owned_file_uuid from ret0.owned_files where state = '\''active'\'' order by owned_file_uuid"' \
     | tr -d '\r'
