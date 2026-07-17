@@ -1,54 +1,66 @@
-import { isIP } from "node:net";
 import { invalid } from "./errors.mjs";
+import { validatePlan } from "./plan-contract.mjs";
+import {
+  validateCollectorEndpoint as validateBoundCollector,
+  validateTarget
+} from "./security.mjs";
+import { assertPhysicalExecutionReady } from "./physical-readiness.mjs";
 
-const PRODUCTION_HOST_SUFFIXES = ["meta-hubs.org"];
-const STAGING_HOST_MARKER = /(^|[.-])(staging|stage|test|testing|qa|preview|sandbox|dev)([.-]|$)/i;
+export { validateTarget };
 
-function replaceRoomToken(target) {
-  return target.replaceAll("{room}", "capacity-room-placeholder");
+function displayOrigin(origin) {
+  return origin.replace(/^https?:\/\//, "").replace(/^wss?:\/\//, "");
 }
 
-export function validateTarget(target, { roomCount = 1 } = {}) {
-  if (typeof target !== "string" || target.trim() === "") {
-    throw invalid("No capacity target is configured by default; pass --target explicitly", "TARGET_REQUIRED");
-  }
-  if (target !== target.trim()) throw invalid("Target must not contain surrounding whitespace", "TARGET_INVALID");
-  if (roomCount > 1 && !target.includes("{room}")) {
-    throw invalid("Multi-room scenarios require a literal {room} target placeholder", "ROOM_TEMPLATE_REQUIRED", { roomCount });
-  }
-
-  let url;
-  try {
-    url = new URL(replaceRoomToken(target));
-  } catch {
-    throw invalid("Target must be an absolute URL", "TARGET_INVALID");
-  }
-  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
-  const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-  const isProduction = PRODUCTION_HOST_SUFFIXES.some(suffix => hostname === suffix || hostname.endsWith(`.${suffix}`));
-
-  if (isProduction) throw invalid("Production targets are always denied", "PRODUCTION_TARGET_DENIED", { hostname });
-  if (url.username || url.password) throw invalid("Credentials are forbidden in capacity target URLs", "TARGET_CREDENTIALS_DENIED");
-  if (url.search || url.hash) throw invalid("Query strings and fragments are forbidden in capacity target URLs", "TARGET_SECRET_CHANNEL_DENIED");
-  if (isLocal && url.protocol !== "http:" && url.protocol !== "https:") {
-    throw invalid("Local targets must use HTTP or HTTPS", "TARGET_PROTOCOL_DENIED");
-  }
-  if (!isLocal && url.protocol !== "https:") {
-    throw invalid("Remote staging targets must use HTTPS", "TARGET_PROTOCOL_DENIED");
-  }
-  if (!isLocal && (isIP(hostname) !== 0 || !STAGING_HOST_MARKER.test(hostname))) {
-    throw invalid("Remote targets must have an explicit staging/test/qa/preview/sandbox/dev hostname", "TARGET_NOT_PROVABLY_STAGING", { hostname });
-  }
-
-  const canonical = target.includes("{room}")
-    ? url.toString().replace("capacity-room-placeholder", "{room}")
-    : url.toString();
-  return { canonical, hostname, classification: isLocal ? "local" : "staging" };
+export function executionAcknowledgement(plan, { productionOnly = false } = {}) {
+  validatePlan(plan, { productionOnly });
+  const targetHost = new URL(plan.targetTemplate.replaceAll("{room}", "room-001")).host;
+  const origins = plan.security.allowedBrowserOrigins.map(displayOrigin).join(",");
+  const binding = plan.security.mode === "loopback"
+    ? "loopback"
+    : `attestation=${plan.security.attestationSha256}`;
+  return [
+    "I ACKNOWLEDGE NON-PRODUCTION CAPACITY LOAD:",
+    `plan=${plan.planId}`,
+    `run=${plan.run.id}`,
+    `issuedAt=${plan.run.issuedAt}`,
+    `executionEnabled=${plan.run.executionEnabled}`,
+    `scenario=${plan.scenario.id}`,
+    `environment=${plan.environment?.sha256 ?? "none"}`,
+    `target=${targetHost}`,
+    `origins=${origins}`,
+    binding,
+    `participants=${plan.totals.participants}`,
+    `bots=${plan.totals.bots}`
+  ].join(" ");
 }
 
-export function assertExecutionSafety() {
-  throw invalid(
-    "Physical execution is disabled until a reviewed driver, sandbox and destination enforcement exist",
-    "PHYSICAL_EXECUTION_DISABLED"
-  );
+export function validateCollectorEndpoint(endpoint, planOrBinding) {
+  const binding = planOrBinding?.security ?? planOrBinding;
+  if (!binding) throw invalid("Collector validation requires the plan security binding", "COLLECTOR_ENDPOINT_REQUIRED");
+  return {
+    canonical: validateBoundCollector(endpoint, binding),
+    classification: binding.mode === "loopback" ? "local" : "attested-staging"
+  };
+}
+
+export function assertExecutionSafety({ plan, acknowledgement, collectorEndpoint, allowTestTrust = false }) {
+  const productionOnly = !allowTestTrust;
+  validatePlan(plan, { requireExecutionEnabled: true, productionOnly });
+  if (acknowledgement !== executionAcknowledgement(plan, { productionOnly })) {
+    throw invalid("Execution requires the exact plan, host, origin and attestation acknowledgement", "EXECUTION_ACK_INVALID");
+  }
+  if (!collectorEndpoint) throw invalid("Execution requires a bounded server collector endpoint", "COLLECTOR_ENDPOINT_REQUIRED");
+  const collector = validateCollectorEndpoint(collectorEndpoint, plan);
+  const readiness = assertPhysicalExecutionReady({ allowTestReadiness: allowTestTrust });
+  return {
+    targetClassification: plan.targetClassification,
+    collectorEndpoint: collector.canonical,
+    acknowledgement: executionAcknowledgement(plan, { productionOnly }),
+    planId: plan.planId,
+    attestationSha256: plan.security.attestationSha256,
+    physicalReadinessState: readiness.state,
+    physicalExecutionAllowed: allowTestTrust ? false : readiness.physicalExecutionAllowed,
+    certified: false
+  };
 }

@@ -44,6 +44,16 @@ test("catalogue rejects omission of a required scenario", async () => {
   );
 });
 
+test("catalogue and threshold schemas reject unreviewed fields", async () => {
+  const catalogue = await loadCatalogue();
+  catalogue.scenarios[0].certified = true;
+  assert.throws(() => validateCatalogue(catalogue), error => error.code === "SCHEMA_INVALID");
+
+  const thresholds = await loadThresholds();
+  thresholds.metrics["client.fpsP10"].unreviewed = true;
+  assert.throws(() => validateThresholds(thresholds), error => error.code === "THRESHOLD_SCHEMA_INVALID");
+});
+
 test("physical workload phases must be explicit and sum to the scenario duration", async () => {
   const catalogue = structuredClone(await loadCatalogue());
   catalogue.scenarios[0].plateauSeconds -= 1;

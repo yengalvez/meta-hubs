@@ -11,6 +11,7 @@
     "database",
     "coturn",
     "dialog",
+    "generator",
     "bots"
   ],
   "metrics": {
@@ -39,7 +40,7 @@
       "unit": "count",
       "stop": true
     },
-    "client.desktopFpsP10": {
+    "client.fpsP10": {
       "min": 30,
       "unit": "fps",
       "stop": true
@@ -47,6 +48,31 @@
     "client.disconnectRate": {
       "max": 0.01,
       "unit": "ratio",
+      "stop": true
+    },
+    "client.httpRequestFailureCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "client.httpStatusErrorCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "client.websocketConcurrentCount": {
+      "max": 20,
+      "unit": "count",
+      "stop": true
+    },
+    "network.clientReceiveBytesPerSecond": {
+      "max": 50000000,
+      "unit": "bytes_per_second",
+      "stop": true
+    },
+    "network.clientSendBytesPerSecond": {
+      "max": 20000000,
+      "unit": "bytes_per_second",
       "stop": true
     },
     "webrtc.packetLossP95": {
@@ -64,8 +90,8 @@
       "unit": "ratio",
       "stop": true
     },
-    "webrtc.syncP95Ms": {
-      "max": 500,
+    "avatar.networkUpdateGapP95Ms": {
+      "max": 1000,
       "unit": "ms",
       "stop": true
     },
@@ -136,6 +162,16 @@
       "unit": "count",
       "stop": true
     },
+    "network.loadBalancerP95Ms": {
+      "max": 1000,
+      "unit": "ms",
+      "stop": true
+    },
+    "network.loadBalancerRequestRate": {
+      "max": 100000,
+      "unit": "requests_per_second",
+      "stop": true
+    },
     "database.connectionUtilizationP95": {
       "max": 0.8,
       "unit": "ratio",
@@ -171,6 +207,11 @@
       "unit": "ratio",
       "stop": true
     },
+    "coturn.trafficBytesPerSecond": {
+      "max": 1000000000,
+      "unit": "bytes_per_second",
+      "stop": true
+    },
     "dialog.workerSaturationP95": {
       "max": 0.8,
       "unit": "ratio",
@@ -183,6 +224,43 @@
     },
     "dialog.errorCount": {
       "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "dialog.trafficMessagesPerSecond": {
+      "max": 100000,
+      "unit": "messages_per_second",
+      "stop": true
+    },
+    "generator.cpuUtilization": {
+      "max": 0.85,
+      "unit": "ratio",
+      "stop": true,
+      "sustainedMs": 30000
+    },
+    "generator.memoryUtilization": {
+      "max": 0.85,
+      "unit": "ratio",
+      "stop": true,
+      "sustainedMs": 30000
+    },
+    "generator.rssMiB": {
+      "max": 4096,
+      "unit": "MiB",
+      "stop": true
+    },
+    "generator.eventLoopLagP95Ms": {
+      "max": 100,
+      "unit": "ms",
+      "stop": true
+    },
+    "generator.browserProcessCount": {
+      "max": 4,
+      "unit": "count",
+      "stop": true
+    },
+    "generator.processCount": {
+      "max": 256,
       "unit": "count",
       "stop": true
     },

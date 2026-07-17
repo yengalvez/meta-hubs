@@ -4,7 +4,15 @@ export function valueMatchesUnit(value, unit) {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return false;
   if (unit === "ratio") return value <= 1;
   if (unit === "count") return Number.isInteger(value);
-  return ["ms", "fps", "s"].includes(unit);
+  return [
+    "ms",
+    "fps",
+    "s",
+    "MiB",
+    "bytes_per_second",
+    "messages_per_second",
+    "requests_per_second"
+  ].includes(unit);
 }
 
 export function violates(value, rule) {

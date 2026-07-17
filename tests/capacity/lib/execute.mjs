@@ -2,7 +2,10 @@ import { invalid } from "./errors.mjs";
 import { buildReport } from "./report.mjs";
 import { StopMonitor } from "./stop-monitor.mjs";
 
-const MAX_PROTOCOL_LINE_BYTES = 128 * 1024;
+// Result events may embed the bounded local-smoke raw artifact. The standalone
+// raw reader remains separately capped and physical runs persist NDJSON rather
+// than routing large multi-host artifacts through this evaluator.
+const MAX_PROTOCOL_LINE_BYTES = 2 * 1024 * 1024;
 
 function exactKeys(value, expected) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -20,9 +23,8 @@ function safeBreach(breach) {
   };
 }
 
-// This class validates the future NDJSON contract without launching a process,
-// opening a browser or connecting to a target. Physical execution deliberately
-// remains absent until a reviewed driver and OS/network sandbox exist.
+// Pure evaluator for protocol/report tests. The checked-in Playwright driver is
+// separate and can only be reached through the explicit CLI execution gate.
 export class CapacityProtocolSession {
   constructor({ plan, thresholds }) {
     if (!plan || plan.state !== "PLANNED" || plan.run?.executionEnabled !== false) {
@@ -66,7 +68,7 @@ export class CapacityProtocolSession {
           runId: this.plan.run.id,
           certified: false,
           breach: safeBreach(breach),
-          note: "A live stop criterion was satisfied; no physical driver was launched by this harness."
+          note: "A live stop criterion was satisfied; the protocol rejects every trailing event."
         };
       }
       return this.stopped;
@@ -75,7 +77,12 @@ export class CapacityProtocolSession {
       if (!exactKeys(event, ["type", "evidence"])) {
         throw invalid("Capacity result event schema is closed", "DRIVER_PROTOCOL_INVALID");
       }
-      const result = buildReport({ plan: this.plan, evidence: event.evidence, thresholds: this.thresholds });
+      const result = buildReport({
+        plan: this.plan,
+        evidence: event.evidence,
+        thresholds: this.thresholds,
+        allowTestFixtures: true
+      });
       if (result.run) {
         const resultStartedAtMs = Date.parse(result.run.startedAt);
         const resultEndedAtMs = Date.parse(result.run.endedAt);

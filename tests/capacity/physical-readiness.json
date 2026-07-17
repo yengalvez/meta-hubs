@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "state": "BLOCKED",
+  "physicalExecutionAllowed": false,
+  "certified": false,
+  "observability": {
+    "producerManifestSha256": null,
+    "ruleManifestSha256": null,
+    "scrapeManifestSha256": null,
+    "inventoryManifestSha256": null,
+    "sourceTimestampProof": null,
+    "counterResetPolicy": null,
+    "runScopePolicy": null
+  },
+  "collectorBoundary": {
+    "httpsDeploymentSha256": null,
+    "tlsPolicySha256": null,
+    "authenticationPolicySha256": null
+  },
+  "network": {
+    "egressPolicySha256": null
+  },
+  "generator": {
+    "physicalHostIdentityPolicySha256": null,
+    "processIsolationPolicySha256": null,
+    "terminationVerificationPolicySha256": null
+  },
+  "coordination": {
+    "reticulumReplicaLimit": 1,
+    "botRunnerLeaseScope": "process-local",
+    "databaseFencingPolicySha256": null
+  },
+  "baseReview": {
+    "baseOwnedPolicySha256": null,
+    "reviewAttestationSha256": null
+  },
+  "blockers": [
+    "base-owned-readiness-policy-not-materialized",
+    "collector-authentication-not-attested",
+    "collector-https-boundary-not-deployed",
+    "counter-reset-and-run-scope-not-proven",
+    "egress-isolation-not-attested",
+    "metric-producers-not-tracked",
+    "physical-generator-host-identity-not-attested",
+    "process-isolation-and-termination-not-proven",
+    "prometheus-inventory-not-tracked",
+    "prometheus-query-semantics-not-tracked",
+    "prometheus-rules-not-tracked",
+    "prometheus-run-bound-baseline-not-tracked",
+    "prometheus-scrape-configuration-not-tracked",
+    "readiness-review-attestation-not-verified",
+    "reticulum-db-arbitration-fencing-not-implemented",
+    "source-timestamp-freshness-not-proven"
+  ]
+}

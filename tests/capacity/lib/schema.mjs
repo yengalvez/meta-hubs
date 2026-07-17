@@ -1,4 +1,5 @@
 import { invalid } from "./errors.mjs";
+import { METRIC_CONTRACTS } from "./metric-contracts.mjs";
 
 const EXPECTED_SCENARIOS = new Set([
   "local-smoke",
@@ -8,9 +9,25 @@ const EXPECTED_SCENARIOS = new Set([
   "total-10000-model"
 ]);
 const MODES = new Set(["physical", "model-only"]);
-const AUDIO_PROFILES = new Set(["muted-synthetic", "not-applicable"]);
-const MOVEMENT_PROFILES = new Set(["bounded-waypoint-patrol-v1", "not-applicable"]);
-const METRIC_UNITS = new Set(["ratio", "count", "ms", "fps", "s"]);
+const MOVEMENT_PROFILES = new Set(["bounded-keyboard-patrol-v1", "not-applicable"]);
+const METRIC_UNITS = new Set([
+  "ratio", "count", "ms", "fps", "s", "MiB", "bytes_per_second",
+  "messages_per_second", "requests_per_second"
+]);
+const CATALOGUE_KEYS = ["schemaVersion", "scenarios"];
+const SCENARIO_KEYS = [
+  "id", "mode", "classification", "description", "totalParticipants", "roomCount",
+  "participantsPerRoom", "participantsPerWorker", "botVariants", "durationSeconds",
+  "rampUpSeconds", "plateauSeconds", "rampDownSeconds", "movementProfile"
+];
+const THRESHOLD_KEYS = ["schemaVersion", "provisional", "maxCollectorIntervalSeconds", "requiredCollectors", "metrics"];
+
+function exactKeys(value, expected) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+}
 
 function isPositiveInteger(value) {
   return Number.isInteger(value) && value > 0;
@@ -26,6 +43,7 @@ export function validateCatalogue(catalogue) {
   if (!catalogue || typeof catalogue !== "object") {
     throw invalid("Scenario catalogue is invalid", "SCHEMA_INVALID", errors);
   }
+  push(errors, exactKeys(catalogue, CATALOGUE_KEYS), "$", "schema is closed");
   push(errors, catalogue.schemaVersion === 1, "$.schemaVersion", "must equal 1");
   push(errors, Array.isArray(catalogue.scenarios), "$.scenarios", "must be an array");
 
@@ -34,6 +52,7 @@ export function validateCatalogue(catalogue) {
     const path = `$.scenarios[${index}]`;
     push(errors, scenario && typeof scenario === "object" && !Array.isArray(scenario), path, "must be an object");
     if (!scenario || typeof scenario !== "object" || Array.isArray(scenario)) continue;
+    push(errors, exactKeys(scenario, SCENARIO_KEYS), path, "schema is closed");
     push(errors, typeof scenario.id === "string" && EXPECTED_SCENARIOS.has(scenario.id), `${path}.id`, "is not a required scenario id");
     push(errors, !seen.has(scenario.id), `${path}.id`, "must be unique");
     seen.add(scenario.id);
@@ -71,7 +90,6 @@ export function validateCatalogue(catalogue) {
       "must equal rampUpSeconds + plateauSeconds + rampDownSeconds"
     );
     push(errors, MOVEMENT_PROFILES.has(scenario.movementProfile), `${path}.movementProfile`, "is unsupported");
-    push(errors, AUDIO_PROFILES.has(scenario.audioProfile), `${path}.audioProfile`, "is unsupported");
 
     if (scenario.mode === "physical") {
       push(errors, scenario.totalParticipants <= 300, `${path}.totalParticipants`, "physical scenarios are capped at 300");
@@ -80,7 +98,6 @@ export function validateCatalogue(catalogue) {
       push(errors, scenario.plateauSeconds > 0, `${path}.plateauSeconds`, "physical scenarios require a plateau");
       push(errors, scenario.rampDownSeconds > 0, `${path}.rampDownSeconds`, "physical scenarios require a ramp-down");
       push(errors, scenario.movementProfile !== "not-applicable", `${path}.movementProfile`, "physical scenarios require movement");
-      push(errors, scenario.audioProfile !== "not-applicable", `${path}.audioProfile`, "physical scenarios require an audio profile");
     } else {
       push(errors, scenario.id === "total-10000-model", `${path}.id`, "only the 10,000 scenario may be model-only");
       push(errors, scenario.durationSeconds === 0, `${path}.durationSeconds`, "model-only duration must be zero");
@@ -88,7 +105,6 @@ export function validateCatalogue(catalogue) {
       push(errors, scenario.plateauSeconds === 0, `${path}.plateauSeconds`, "model-only plateau must be zero");
       push(errors, scenario.rampDownSeconds === 0, `${path}.rampDownSeconds`, "model-only ramp-down must be zero");
       push(errors, scenario.movementProfile === "not-applicable", `${path}.movementProfile`, "model-only movement must be not-applicable");
-      push(errors, scenario.audioProfile === "not-applicable", `${path}.audioProfile`, "model-only audio must be not-applicable");
     }
   }
 
@@ -107,6 +123,7 @@ export function validateThresholds(thresholds) {
   if (!thresholds || typeof thresholds !== "object") {
     throw invalid("Threshold catalogue is invalid", "THRESHOLD_SCHEMA_INVALID", errors);
   }
+  push(errors, exactKeys(thresholds, THRESHOLD_KEYS), "$", "schema is closed");
   push(errors, thresholds.schemaVersion === 1, "$.schemaVersion", "must equal 1");
   push(errors, thresholds.provisional === true, "$.provisional", "must remain true until staging evidence certifies replacements");
   push(
@@ -124,6 +141,8 @@ export function validateThresholds(thresholds) {
     push(errors, rule && typeof rule === "object" && !Array.isArray(rule), path, "must be an object");
     if (!rule || typeof rule !== "object") continue;
     const bounds = [Object.hasOwn(rule, "min"), Object.hasOwn(rule, "max")].filter(Boolean).length;
+    const expectedRuleKeys = [Object.hasOwn(rule, "min") ? "min" : "max", "unit", "stop", ...(Object.hasOwn(rule, "sustainedMs") ? ["sustainedMs"] : [])];
+    push(errors, exactKeys(rule, expectedRuleKeys), path, "schema is closed");
     push(errors, bounds === 1, path, "must contain exactly one min or max bound");
     const bound = rule.min ?? rule.max;
     push(errors, typeof bound === "number" && Number.isFinite(bound), path, "bound must be finite");
@@ -137,6 +156,22 @@ export function validateThresholds(thresholds) {
     }
   }
   push(errors, Object.keys(thresholds.metrics ?? {}).length >= 10, "$.metrics", "must define the complete provisional stop set");
+  const metricNames = Object.keys(thresholds.metrics ?? {}).sort();
+  const contractNames = Object.keys(METRIC_CONTRACTS).sort();
+  push(
+    errors,
+    metricNames.length === contractNames.length && metricNames.every((name, index) => name === contractNames[index]),
+    "$.metrics",
+    "must exactly match the closed raw-provenance metric contracts"
+  );
+  for (const [metric, contract] of Object.entries(METRIC_CONTRACTS)) {
+    push(
+      errors,
+      (thresholds.requiredCollectors ?? []).includes(contract.collector),
+      `$.metrics.${metric}`,
+      "raw collector is not required"
+    );
+  }
 
   if (errors.length) throw invalid("Threshold catalogue is invalid", "THRESHOLD_SCHEMA_INVALID", errors);
   return thresholds;

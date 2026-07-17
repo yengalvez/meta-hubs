@@ -5,24 +5,23 @@
       "id": "local-smoke",
       "mode": "physical",
       "classification": "smoke",
-      "description": "Two synthetic desktop participants in one disposable local or staging room.",
+      "description": "Two real browser clients in one disposable local or staging room.",
       "totalParticipants": 2,
       "roomCount": 1,
       "participantsPerRoom": 2,
       "participantsPerWorker": 2,
       "botVariants": [0, 5, 10],
-      "durationSeconds": 60,
-      "rampUpSeconds": 10,
+      "durationSeconds": 80,
+      "rampUpSeconds": 30,
       "plateauSeconds": 40,
       "rampDownSeconds": 10,
-      "movementProfile": "bounded-waypoint-patrol-v1",
-      "audioProfile": "muted-synthetic"
+      "movementProfile": "bounded-keyboard-patrol-v1"
     },
     {
       "id": "room-30",
       "mode": "physical",
       "classification": "controlled-target",
-      "description": "Controlled target of 30 desktop participants in one optimized room.",
+      "description": "Controlled target of 30 real browser clients in one optimized room.",
       "totalParticipants": 30,
       "roomCount": 1,
       "participantsPerRoom": 30,
@@ -32,8 +31,7 @@
       "rampUpSeconds": 120,
       "plateauSeconds": 660,
       "rampDownSeconds": 120,
-      "movementProfile": "bounded-waypoint-patrol-v1",
-      "audioProfile": "muted-synthetic"
+      "movementProfile": "bounded-keyboard-patrol-v1"
     },
     {
       "id": "room-100-experimental",
@@ -49,8 +47,7 @@
       "rampUpSeconds": 180,
       "plateauSeconds": 600,
       "rampDownSeconds": 120,
-      "movementProfile": "bounded-waypoint-patrol-v1",
-      "audioProfile": "muted-synthetic"
+      "movementProfile": "bounded-keyboard-patrol-v1"
     },
     {
       "id": "total-300",
@@ -66,8 +63,7 @@
       "rampUpSeconds": 300,
       "plateauSeconds": 1200,
       "rampDownSeconds": 300,
-      "movementProfile": "bounded-waypoint-patrol-v1",
-      "audioProfile": "muted-synthetic"
+      "movementProfile": "bounded-keyboard-patrol-v1"
     },
     {
       "id": "total-10000-model",
@@ -83,8 +79,7 @@
       "rampUpSeconds": 0,
       "plateauSeconds": 0,
       "rampDownSeconds": 0,
-      "movementProfile": "not-applicable",
-      "audioProfile": "not-applicable"
+      "movementProfile": "not-applicable"
     }
   ]
 }

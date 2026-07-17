@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { invalid } from "./errors.mjs";
-import { stableId } from "./io.mjs";
-import { validateTarget } from "./safety.mjs";
+import { buildExecutionTopology, sealPlan, validatePlan } from "./plan-contract.mjs";
+import { buildSecurityBinding, validateTarget } from "./security.mjs";
+import { signedDocumentBinding } from "./trust.mjs";
+
+const CLIENT_PROFILES = new Set(["desktop", "mobile"]);
+const AUDIO_MODES = new Set(["muted", "active"]);
+const TRANSPORT_MODES = new Set(["direct", "forced-turn"]);
 
 function renderRoomTarget(template, roomId, roomCount) {
   if (template.includes("{room}")) return template.replaceAll("{room}", roomId);
@@ -12,8 +17,7 @@ function renderRoomTarget(template, roomId, roomCount) {
 function canonicalIso(value) {
   if (typeof value !== "string") return null;
   const milliseconds = Date.parse(value);
-  if (!Number.isFinite(milliseconds)) return null;
-  return new Date(milliseconds).toISOString() === value ? milliseconds : null;
+  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value ? milliseconds : null;
 }
 
 function validUuid(value) {
@@ -24,58 +28,62 @@ export function buildPlan({
   scenario,
   target,
   botsPerRoom,
+  clientProfile = "desktop",
+  audioMode = "muted",
+  transportMode = "direct",
+  attestation,
+  environment,
+  executionEnabled = false,
   runId = randomUUID(),
   issuedAt = new Date().toISOString()
 }) {
-  if (!scenario) throw invalid("Scenario is required to build a plan", "SCENARIO_REQUIRED");
-  if (scenario.mode !== "physical") {
-    throw invalid("Model-only scenarios do not produce physical plans", "MODEL_PLAN_DENIED");
+  if (!scenario || scenario.mode !== "physical") {
+    throw invalid("A physical scenario is required to build a plan", scenario ? "MODEL_PLAN_DENIED" : "SCENARIO_REQUIRED");
   }
-  if (!Number.isInteger(botsPerRoom) || botsPerRoom < 0 || botsPerRoom > 10) {
-    throw invalid("--bots must be an integer within 0..10", "BOT_COUNT_INVALID");
+  if (![0, 5, 10].includes(botsPerRoom) || !scenario.botVariants.includes(botsPerRoom)) {
+    throw invalid("--bots must select exactly 0, 5 or 10", "BOT_VARIANT_INVALID");
   }
-  if (!scenario.botVariants.includes(botsPerRoom)) {
-    throw invalid("--bots must select one declared scenario variant", "BOT_VARIANT_INVALID", { allowed: scenario.botVariants });
-  }
+  if (!CLIENT_PROFILES.has(clientProfile)) throw invalid("Client profile must be desktop or mobile", "CLIENT_PROFILE_INVALID");
+  if (!AUDIO_MODES.has(audioMode)) throw invalid("Audio mode must be muted or active", "AUDIO_MODE_INVALID");
+  if (!TRANSPORT_MODES.has(transportMode)) throw invalid("Transport mode must be direct or forced-turn", "TRANSPORT_MODE_INVALID");
+  if (typeof executionEnabled !== "boolean") throw invalid("Execution state must be boolean", "EXECUTION_STATE_INVALID");
   if (!validUuid(runId)) throw invalid("Run id must be a UUID", "RUN_ID_INVALID");
   const issuedAtMs = canonicalIso(issuedAt);
-  if (issuedAtMs === null) throw invalid("Run issuedAt must be a canonical ISO timestamp", "RUN_TIME_INVALID");
+  if (issuedAtMs === null) throw invalid("Run issuedAt must be canonical ISO", "RUN_TIME_INVALID");
   const targetInfo = validateTarget(target, { roomCount: scenario.roomCount });
-  const seed = {
-    schemaVersion: 1,
+  const environmentBinding = environment
+    ? signedDocumentBinding(environment, "environment-snapshot")
+    : null;
+  if ((executionEnabled || targetInfo.classification === "attested-staging") && !environmentBinding) {
+    throw invalid("Remote or execution-enabled plans require a signed environment snapshot", "ENVIRONMENT_EVIDENCE_REQUIRED");
+  }
+  const planBinding = {
     scenarioId: scenario.id,
-    target: targetInfo.canonical,
-    botsPerRoom,
-    participants: scenario.totalParticipants,
-    rooms: scenario.roomCount,
-    durationSeconds: scenario.durationSeconds,
-    rampUpSeconds: scenario.rampUpSeconds,
-    plateauSeconds: scenario.plateauSeconds,
-    rampDownSeconds: scenario.rampDownSeconds,
-    movementProfile: scenario.movementProfile,
-    audioProfile: scenario.audioProfile
+    targetTemplate: targetInfo.canonical,
+    executionEnabled,
+    environmentSha256: environmentBinding?.sha256 ?? null
   };
-  const planId = stableId("plan", seed);
-  const workloadSeed = stableId("workload", seed);
+  const security = buildSecurityBinding({ targetInfo, attestation, issuedAt, planBinding });
   const rooms = [];
-  let globalParticipantOffset = 0;
-  let workerNumber = 0;
+  const allWorkers = [];
+  let participantOffset = 0;
 
   for (let roomIndex = 0; roomIndex < scenario.roomCount; roomIndex += 1) {
     const roomId = `room-${String(roomIndex + 1).padStart(3, "0")}`;
     const workers = [];
-    let roomParticipantOffset = 0;
-    while (roomParticipantOffset < scenario.participantsPerRoom) {
-      const participantCount = Math.min(
-        scenario.participantsPerWorker,
-        scenario.participantsPerRoom - roomParticipantOffset
-      );
-      workers.push({
-        id: `worker-${String(++workerNumber).padStart(3, "0")}`,
-        participantStart: globalParticipantOffset + roomParticipantOffset + 1,
-        participantCount
-      });
-      roomParticipantOffset += participantCount;
+    let roomOffset = 0;
+    while (roomOffset < scenario.participantsPerRoom) {
+      const participantCount = Math.min(scenario.participantsPerWorker, scenario.participantsPerRoom - roomOffset);
+      const worker = {
+        id: `worker-${String(allWorkers.length + 1).padStart(3, "0")}`,
+        participantStart: participantOffset + roomOffset + 1,
+        participantCount,
+        hostId: null,
+        _roomId: roomId
+      };
+      workers.push(worker);
+      allWorkers.push(worker);
+      roomOffset += participantCount;
     }
     rooms.push({
       id: roomId,
@@ -84,45 +92,38 @@ export function buildPlan({
       bots: botsPerRoom,
       workers
     });
-    globalParticipantOffset += scenario.participantsPerRoom;
+    participantOffset += scenario.participantsPerRoom;
   }
-
-  const plannedParticipants = rooms.reduce((sum, room) => sum + room.participantCount, 0);
-  const plannedBots = rooms.reduce((sum, room) => sum + room.bots, 0);
-  if (plannedParticipants !== scenario.totalParticipants || plannedParticipants > 300) {
-    throw invalid("Planner violated the physical participant invariant", "PLANNER_INVARIANT_FAILED", {
-      plannedParticipants,
-      expected: scenario.totalParticipants
-    });
-  }
-  if (rooms.some(room => room.bots > 10)) {
-    throw invalid("Planner violated the per-room bot invariant", "PLANNER_INVARIANT_FAILED");
-  }
-
-  return {
+  const executionTopology = buildExecutionTopology(allWorkers);
+  for (const worker of allWorkers) delete worker._roomId;
+  const draft = {
     schemaVersion: 1,
     state: "PLANNED",
-    planId,
+    planId: "pending",
     run: {
       id: runId,
       issuedAt,
       startDeadlineAt: new Date(issuedAtMs + 60 * 60 * 1000).toISOString(),
-      executionEnabled: false
+      executionEnabled
     },
     scenario: {
-      id: scenario.id,
-      classification: scenario.classification,
-      durationSeconds: scenario.durationSeconds,
-      audioProfile: scenario.audioProfile
+      ...scenario,
+      clientProfile,
+      clientRuntime: clientProfile === "mobile" ? "chromium-mobile-emulation" : "chromium-desktop-emulation",
+      audioMode,
+      transportMode
     },
+    targetTemplate: targetInfo.canonical,
     targetClassification: targetInfo.classification,
+    security,
+    environment: environmentBinding,
     runtime: {
       nodeMajor: 22,
-      driverProtocol: "yenhubs-ndjson-v1",
-      browserProfile: "chromium-desktop-synthetic-v1"
+      driverProtocol: "yenhubs-ndjson-v3",
+      browserProfile: `chromium-${clientProfile}-capacity-v3`
     },
     workload: {
-      seed: workloadSeed,
+      seed: "pending",
       rampUp: {
         durationSeconds: scenario.rampUpSeconds,
         strategy: "linear",
@@ -132,27 +133,19 @@ export function buildPlan({
         durationSeconds: scenario.plateauSeconds,
         requiredConcurrentParticipants: scenario.totalParticipants
       },
-      rampDown: {
-        durationSeconds: scenario.rampDownSeconds,
-        strategy: "graceful-leave"
-      },
-      movement: {
-        profile: scenario.movementProfile,
-        intervalSeconds: 30
-      },
-      media: {
-        audio: scenario.audioProfile,
-        video: "disabled",
-        screenShare: "disabled"
-      }
+      rampDown: { durationSeconds: scenario.rampDownSeconds, strategy: "graceful-leave" },
+      movement: { profile: scenario.movementProfile, intervalSeconds: 30 },
+      media: { audio: audioMode, transport: transportMode, video: "disabled", screenShare: "disabled" }
     },
+    executionTopology,
     totals: {
-      participants: plannedParticipants,
+      participants: participantOffset,
       rooms: rooms.length,
-      workers: workerNumber,
-      bots: plannedBots,
+      workers: allWorkers.length,
+      bots: rooms.length * botsPerRoom,
       botsPerRoom
     },
     rooms
   };
+  return validatePlan(sealPlan(draft));
 }

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-07-17T00:00:00.000Z",
+  "currency": "USD",
+  "sources": [
+    "https://www.digitalocean.com/pricing/droplets",
+    "https://docs.digitalocean.com/products/kubernetes/details/pricing/",
+    "https://www.digitalocean.com/pricing/load-balancers",
+    "https://docs.digitalocean.com/products/volumes/details/pricing/",
+    "https://www.digitalocean.com/pricing/managed-databases"
+  ],
+  "workerSkus": [
+    { "id": "s-2vcpu-4gb", "cpuMillicores": 2000, "memoryMiB": 4096, "monthly": 24 },
+    { "id": "s-4vcpu-8gb", "cpuMillicores": 4000, "memoryMiB": 8192, "monthly": 48 },
+    { "id": "s-8vcpu-16gb", "cpuMillicores": 8000, "memoryMiB": 16384, "monthly": 96 }
+  ],
+  "loadBalancerMonthly": 12,
+  "blockStorageGiBMonthly": 0.1,
+  "haControlPlaneMonthly": 40,
+  "postgresMonthly": { "oneGiB": 15.15, "twoGiB": 30.45, "fourGiB": 60.9 },
+  "excluded": [
+    "tax",
+    "egress-overage",
+    "snapshots",
+    "container-registry",
+    "observability",
+    "llm-usage",
+    "unlisted-replicas"
+  ]
+}

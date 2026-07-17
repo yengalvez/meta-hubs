@@ -21,10 +21,10 @@ test("immediate criterion stops only above its maximum", () => {
 
 test("minimum criterion stops below the bound", () => {
   const monitor = new StopMonitor(thresholds, { runId });
-  assert.equal(monitor.observe(sample("client.desktopFpsP10", 30, "2026-07-17T10:00:00.000Z")), null);
+  assert.equal(monitor.observe(sample("client.fpsP10", 30, "2026-07-17T10:00:00.000Z")), null);
   assert.equal(
-    monitor.observe(sample("client.desktopFpsP10", 29.9, "2026-07-17T10:00:01.000Z")).metric,
-    "client.desktopFpsP10"
+    monitor.observe(sample("client.fpsP10", 29.9, "2026-07-17T10:00:01.000Z")).metric,
+    "client.fpsP10"
   );
 });
 
