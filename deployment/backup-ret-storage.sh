@@ -283,7 +283,7 @@ chmod 600 "$OUTPUT_PATH"
 cleanup_storage_backup
 trap - EXIT INT TERM
 
+SIZE_BYTES="$(recovery_file_size_bytes "$OUTPUT_PATH")"
 printf 'Reticulum storage backup completed: path=%s active_files=%s complete_pairs=%s deferred_pairs=%s pvc_uid=%s size_bytes=%s\n' \
   "$OUTPUT_PATH" "$DB_ACTIVE_COUNT" "$ARCHIVE_BLOB_COUNT" "$((ARCHIVE_BLOB_COUNT - DB_ACTIVE_COUNT))" \
-  "$RECOVERY_PVC_UID" \
-  "$(stat -f '%z' "$OUTPUT_PATH" 2>/dev/null || stat -c '%s' "$OUTPUT_PATH")"
+  "$RECOVERY_PVC_UID" "$SIZE_BYTES"

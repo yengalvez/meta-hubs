@@ -179,7 +179,7 @@ chmod 600 "$CONTRACT_OUTPUT_PATH"
 cleanup_backup
 trap - EXIT INT TERM
 
-SIZE_BYTES="$(stat -f '%z' "$OUTPUT_PATH" 2>/dev/null || stat -c '%s' "$OUTPUT_PATH")"
+SIZE_BYTES="$(recovery_file_size_bytes "$OUTPUT_PATH")"
 SHA256="$(recovery_sha256_file "$OUTPUT_PATH" | awk '{print $1}')"
 
 printf 'Reticulum database backup completed: path=%s schema_tables=%s migrations=%s hubs=%s active_files=%s size_bytes=%s sha256=%s\n' \

@@ -28,7 +28,18 @@ expect_failure() {
     pass "$name"
   fi
 }
-file_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
+file_mode() {
+  local mode
+  if mode="$(stat -c '%a' -- "$1" 2>/dev/null)"; then
+    :
+  elif mode="$(stat -f '%Lp' -- "$1" 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  printf '%s\n' "$mode"
+}
 sha256_digest() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'; else sha256sum "$1" | awk '{print $1}'; fi
 }
@@ -311,6 +322,14 @@ CONFIRM_DB="retdb:fixture-context:hcce:fixture-uid:$STAMP:$DUMP_SHA:$STORAGE_SHA
 CONFIRM_STORAGE="ret-pvc:fixture-context:hcce:fixture-uid:$STAMP:$DUMP_SHA:$STORAGE_SHA:fixture-pvc-uid"
 CONFIRM_CHECKPOINT="checkpoint:fixture-context:hcce:fixture-uid:$STAMP:$DUMP_SHA:$STORAGE_SHA:fixture-pvc-uid"
 
+SIZE_FIXTURE="$TMP_DIR/file-size-fixture"
+printf '1234' >"$SIZE_FIXTURE"
+# Expansion is intentionally performed by the isolated Bash process below.
+# shellcheck disable=SC2016
+expect_success 'portable file size helper returns decimal bytes' bash -c '
+  source "$1"
+  [[ "$(recovery_file_size_bytes "$2")" == 4 ]]
+' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$SIZE_FIXTURE"
 expect_success 'offline validator accepts complete deferred pairs' "$ROOT_DIR/deployment/validate-checkpoint.sh" "$VALID_PAIR/retdb-$STAMP.sql.gz" "$VALID_PAIR/ret-storage-$STAMP.tar.gz"
 expect_failure 'offline validator rejects a missing active pair' 'missing_active_blobs=1' "$ROOT_DIR/deployment/validate-checkpoint.sh" "$MISSING_PAIR/retdb-$STAMP.sql.gz" "$MISSING_PAIR/ret-storage-$STAMP.tar.gz"
 expect_failure 'offline validator rejects an incomplete physical pair' 'incomplete_pairs=1' "$ROOT_DIR/deployment/validate-checkpoint.sh" "$INCOMPLETE_PAIR/retdb-$STAMP.sql.gz" "$INCOMPLETE_PAIR/ret-storage-$STAMP.tar.gz"
@@ -387,7 +406,7 @@ expect_success 'materialized pair is private, jointly validated and immune to so
   printf mutation >>"$(dirname "$2")/database-contract.json"
   [[ "$(recovery_sha256_digest "$RECOVERY_DUMP_COPY")" == "$original" ]]
   [[ "$(recovery_sha256_digest "$RECOVERY_DATABASE_CONTRACT_COPY")" == "$contract_original" ]]
-  mode="$(stat -f %Lp "$RECOVERY_DUMP_COPY" 2>/dev/null || stat -c %a "$RECOVERY_DUMP_COPY")"
+  mode="$(stat -c %a -- "$RECOVERY_DUMP_COPY" 2>/dev/null || stat -f %Lp -- "$RECOVERY_DUMP_COPY")"
   [[ "$mode" == 600 ]]
   recovery_cleanup_materialized_checkpoint
 ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$MATERIALIZE_CHECKPOINT/retdb-$STAMP.sql.gz" "$ROOT_DIR/deployment/validate-checkpoint.sh"

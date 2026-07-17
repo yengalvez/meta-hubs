@@ -51,6 +51,19 @@ recovery_sha256_digest() {
   printf '%s\n' "$output"
 }
 
+recovery_file_size_bytes() {
+  local path="$1" size
+  if size="$(stat -c '%s' -- "$path" 2>/dev/null)"; then
+    :
+  elif size="$(stat -f '%z' -- "$path" 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+  [[ "$size" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$size"
+}
+
 recovery_checkpoint_snapshot_artifacts() {
   printf '%s\n' \
     checkpoint-metadata.json \
