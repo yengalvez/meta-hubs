@@ -89,7 +89,7 @@ else
   fail_test "root readiness must be tested against the real HTTP handler"
 fi
 readiness_http_test="${READINESS_TEST_PATH:-$ROOT_DIR/hubs-cloud/community-edition/services/bot-orchestrator/test/app.test.js}"
-if rg -Fq 'the real readiness endpoint exposes the fail-closed production contract' "$readiness_http_test" &&
+if grep -Fq 'the real readiness endpoint exposes the fail-closed production contract' "$readiness_http_test" &&
   node --test \
     --test-name-pattern='the real readiness endpoint exposes the fail-closed production contract' \
     "$readiness_http_test" >/dev/null; then
@@ -262,10 +262,10 @@ if reactivation_reticulum_deployment_is_singleton "$reticulum_singleton" &&
   ! reactivation_reticulum_deployment_is_singleton "$(jq -c '.spec.strategy.rollingUpdate = {maxSurge:1}' <<<"$reticulum_singleton")" &&
   reactivation_hpas_do_not_target_reticulum "$reticulum_hpas_clear" &&
   ! reactivation_hpas_do_not_target_reticulum "$reticulum_hpa_targeted" &&
-  rg -q 'recovery_require_pod_deployment_ownership.*reticulum' "$ROOT_DIR/deployment/preflight-reactivation.sh" &&
-  rg -q 'recovery_require_pod_deployment_ownership.*reticulum' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
-  rg -q 'reticulum_deployment_uid' "$ROOT_DIR/deployment/preflight-reactivation.sh" &&
-  rg -q 'reticulum_deployment_uid' "$ROOT_DIR/deployment/verify-live-reactivation.sh"; then
+  grep -Eq 'recovery_require_pod_deployment_ownership.*reticulum' "$ROOT_DIR/deployment/preflight-reactivation.sh" &&
+  grep -Eq 'recovery_require_pod_deployment_ownership.*reticulum' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
+  grep -Eq 'reticulum_deployment_uid' "$ROOT_DIR/deployment/preflight-reactivation.sh" &&
+  grep -Eq 'reticulum_deployment_uid' "$ROOT_DIR/deployment/verify-live-reactivation.sh"; then
   pass_test "Reticulum authority is singleton, Recreate-only, HPA-free and pod UID/owner checked in both root gates"
 else
   fail_test "Reticulum singleton authority contract"
@@ -273,16 +273,16 @@ fi
 
 reticulum_health_controller="${RETICULUM_HEALTH_CONTROLLER_PATH:-$ROOT_DIR/hubs-cloud/community-edition/services/reticulum/lib/ret_web/controllers/health_controller.ex}"
 reticulum_router="${RETICULUM_ROUTER_PATH:-$ROOT_DIR/hubs-cloud/community-edition/services/reticulum/lib/ret_web/router.ex}"
-if ! rg -qi 'reservation[- ]v1|reservation v1|Reticulum v1|Hubs v1' \
+if ! grep -Eqi 'reservation[- ]v1|reservation v1|Reticulum v1|Hubs v1' \
     "$ROOT_DIR/deployment/README.md" &&
-   rg -q 'protocol 2' "$ROOT_DIR/deployment/README.md" &&
-   rg -q 'state_version' "$ROOT_DIR/deployment/README.md" &&
-   rg -q 'snapshot_state_version' "$ROOT_DIR/deployment/README.md" &&
-   rg -q '/health/capabilities' "$ROOT_DIR/deployment/README.md" &&
-   rg -q 'deployment/reticulum :4000' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
-   rg -q 'reactivation_sitting_capabilities_are_acceptable' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
-   rg -q 'WaypointReservation.capability_contract' "$reticulum_health_controller" &&
-   rg -q 'get "/capabilities", HealthController, :capabilities' "$reticulum_router"; then
+   grep -Eq 'protocol 2' "$ROOT_DIR/deployment/README.md" &&
+   grep -Eq 'state_version' "$ROOT_DIR/deployment/README.md" &&
+   grep -Eq 'snapshot_state_version' "$ROOT_DIR/deployment/README.md" &&
+   grep -Eq '/health/capabilities' "$ROOT_DIR/deployment/README.md" &&
+   grep -Eq 'deployment/reticulum :4000' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
+   grep -Eq 'reactivation_sitting_capabilities_are_acceptable' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
+   grep -Eq 'WaypointReservation.capability_contract' "$reticulum_health_controller" &&
+   grep -Eq 'get "/capabilities", HealthController, :capabilities' "$reticulum_router"; then
   pass_test "deployment and live gates negotiate the real protocol-2 capability endpoint"
 else
   fail_test "deployment sitting protocol 2 capability contract"
@@ -403,13 +403,13 @@ else
   fail_test "tracked values example must be usable by the safe parser"
 fi
 
-if rg -n '\|\| true' "$ROOT_DIR/deployment/preflight-reactivation.sh" \
-  "$ROOT_DIR/deployment/verify-live-reactivation.sh" >/dev/null ||
-  rg -n 'output/latest-backup-path|output/checkpoints.*tail -1' \
+if grep -Fn '|| true' "$ROOT_DIR/deployment/preflight-reactivation.sh" \
+    "$ROOT_DIR/deployment/verify-live-reactivation.sh" >/dev/null ||
+  grep -En 'output/latest-backup-path|output/checkpoints.*tail -1' \
     "$ROOT_DIR/deployment/preflight-reactivation.sh" >/dev/null ||
-  ! rg -q 'BACKUP_DIR debe señalar explicitamente' "$ROOT_DIR/deployment/preflight-reactivation.sh" ||
-  ! rg -q 'deployment/bot-orchestrator :5001' "$ROOT_DIR/deployment/verify-live-reactivation.sh" ||
-  ! rg -q 'kill -0.*port_forward_pid' "$ROOT_DIR/deployment/verify-live-reactivation.sh"; then
+  ! grep -Eq 'BACKUP_DIR debe señalar explicitamente' "$ROOT_DIR/deployment/preflight-reactivation.sh" ||
+  ! grep -Eq 'deployment/bot-orchestrator :5001' "$ROOT_DIR/deployment/verify-live-reactivation.sh" ||
+  ! grep -Eq 'kill -0.*port_forward_pid' "$ROOT_DIR/deployment/verify-live-reactivation.sh"; then
   fail_test "preflight/live scripts retain forbidden masking, implicit backup or fixed listener"
 fi
 pass_test "preflight requires an explicit backup and live verification uses a supervised ephemeral port"
@@ -837,7 +837,7 @@ grep -Fxq 'SCANNED_ROOT_FILE' "$source_path/root-untracked.txt"
 grep -Fxq "$EXPECTED_EXTERNAL_LINK_TEXT" "$source_path/external-link"
 [[ -f "$source_path/external-directory-link" && ! -L "$source_path/external-directory-link" ]]
 grep -Fxq "$EXPECTED_EXTERNAL_DIRECTORY_LINK_TEXT" "$source_path/external-directory-link"
-if rg -q 'DO_NOT_FOLLOW_(EXTERNAL|DIRECTORY)_TARGET' "$source_path"; then exit 81; fi
+if grep -Erq 'DO_NOT_FOLLOW_(EXTERNAL|DIRECTORY)_TARGET' "$source_path"; then exit 81; fi
 printf '%s\n' "$source_path" >"$SCAN_PATH_RECORD"
 printf '%s\n' "$config_path" >"$POLICY_PATH_RECORD"
 STUB
@@ -871,16 +871,16 @@ pass_test "Gitleaks policy snapshot rejects linked path components before scanni
 
 baseline_file="$ROOT_DIR/scripts/gitleaks-submodule-baselines.tsv"
 if [[ "$(awk '!/^[[:space:]]*(#|$)/ {print $1"\t"$2}' "$baseline_file")" == $'hubs\t492625c5791fa540e752cc8300018a4e8252d3f4\nhubs-cloud\t4a1e3b9f2516851b015c17e968ea2cc4aabf4680' ]] &&
-  rg -q 'find deployment scripts tests/recovery tests/scripts' "$ROOT_DIR/.github/workflows/project-security.yml" &&
-  rg -q 'Materialize base-owned Gitleaks policy' "$ROOT_DIR/.github/workflows/project-security.yml" &&
-  rg -q 'materialize-gitleaks-policy\.sh' "$ROOT_DIR/.github/workflows/project-security.yml" &&
-  rg -q -- '--bootstrap-default' "$ROOT_DIR/.github/workflows/project-security.yml" &&
-  rg -q 'scan-gitleaks-worktree\.sh hubs-cloud "\$GITLEAKS_CLOUD_CONFIG"' "$ROOT_DIR/.github/workflows/project-security.yml" &&
-  rg -Fq 'gitleaks git "${root_config_args[@]}"' "$ROOT_DIR/.github/workflows/project-security.yml" &&
-  ! rg -q 'scan-gitleaks-worktree\.sh hubs-cloud \.gitleaks\.toml' "$ROOT_DIR/.github/workflows/project-security.yml" &&
-  ! rg -q 'policy_revision="\$HEAD_SHA"|policy_revision=HEAD|using HEAD only|git show .*HEAD.*gitleaks' "$ROOT_DIR/.github/workflows/project-security.yml" &&
-  ! rg -q '\bHEAD\b' "$ROOT_DIR/scripts/materialize-gitleaks-policy.sh" &&
-  rg -q 'useDefault = true' "$ROOT_DIR/scripts/materialize-gitleaks-policy.sh"; then
+  grep -Eq 'find deployment scripts tests/recovery tests/scripts' "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  grep -Eq 'Materialize base-owned Gitleaks policy' "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  grep -Eq 'materialize-gitleaks-policy\.sh' "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  grep -Eq -- '--bootstrap-default' "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  grep -Eq "scan-gitleaks-worktree\\.sh hubs-cloud \"\\\$GITLEAKS_CLOUD_CONFIG\"" "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  grep -Fq "gitleaks git \"\${root_config_args[@]}\"" "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  ! grep -Eq 'scan-gitleaks-worktree\.sh hubs-cloud \.gitleaks\.toml' "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  ! grep -Eq "policy_revision=\"\\\$HEAD_SHA\"|policy_revision=HEAD|using HEAD only|git show .*HEAD.*gitleaks" "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  ! grep -Eq '(^|[^[:alnum:]_])HEAD([^[:alnum:]_]|$)' "$ROOT_DIR/scripts/materialize-gitleaks-policy.sh" &&
+  grep -Eq 'useDefault = true' "$ROOT_DIR/scripts/materialize-gitleaks-policy.sh"; then
   pass_test "base-owned Gitleaks policies, production baselines and full ShellCheck scope are pinned"
 else
   fail_test "base-owned Gitleaks policy, production baselines or ShellCheck scope"

@@ -1374,7 +1374,7 @@ reset_stub
 expect_failure 'checkpoint creation refuses a concurrently owned destination lock' 'Another checkpoint publication owns' env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$VALUES_FIXTURE" "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_LOCKED"
 if [[ -f "$CREATE_LOCKED.yenhubs-publish-lock/sentinel" ]]; then pass 'checkpoint collision never removes another run owner lock'; else fail 'checkpoint collision never removes another run owner lock' 'foreign lock changed'; fi
 
-if rg -n 'mktemp[^\n]*XXXXXX[^"[:space:]]' "$ROOT_DIR/deployment"/*.sh "$ROOT_DIR/deployment/lib"/*.sh >/dev/null; then fail 'BSD mktemp templates end in XXXXXX' 'suffix found after XXXXXX'; else pass 'BSD mktemp templates end in XXXXXX'; fi
+if grep -En 'mktemp.*XXXXXX[^"[:space:]]' "$ROOT_DIR/deployment"/*.sh "$ROOT_DIR/deployment/lib"/*.sh >/dev/null; then fail 'BSD mktemp templates end in XXXXXX' 'suffix found after XXXXXX'; else pass 'BSD mktemp templates end in XXXXXX'; fi
 missing_signal_trap=""
 for recovery_script in \
   "$ROOT_DIR/deployment/backup-retdb.sh" \
@@ -1384,7 +1384,7 @@ for recovery_script in \
   "$ROOT_DIR/deployment/restore-checkpoint.sh" \
   "$ROOT_DIR/deployment/restore-ret-storage.sh" \
   "$ROOT_DIR/deployment/validate-checkpoint.sh"; do
-  if ! rg -q "trap .*INT" "$recovery_script"; then missing_signal_trap="$recovery_script"; fi
+  if ! grep -Eq "trap .*INT" "$recovery_script"; then missing_signal_trap="$recovery_script"; fi
 done
 if [[ -n "$missing_signal_trap" ]]; then fail 'recovery scripts install INT traps' "$missing_signal_trap"; else pass 'recovery scripts install INT traps'; fi
 
