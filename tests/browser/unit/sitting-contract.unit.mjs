@@ -66,13 +66,13 @@ test("summarizes one private concession and coherent public snapshots", () => {
   const summary = summarizeReservationPair(
     [
       {
-        protocol: 1,
+        protocol: 2,
         supported: true,
         activeWaypointIds: ["seat-b", "seat-a"],
         current: { waypointId: "seat-a", reservationId: "reservation-a" },
       },
       {
-        protocol: 1,
+        protocol: 2,
         supported: true,
         activeWaypointIds: ["seat-a", "seat-b"],
         current: null,
@@ -81,7 +81,7 @@ test("summarizes one private concession and coherent public snapshots", () => {
     "seat-a",
   );
 
-  assert.deepEqual(summary.protocol1Supported, [true, true]);
+  assert.deepEqual(summary.protocol2Supported, [true, true]);
   assert.deepEqual(summary.targetActive, [true, true]);
   assert.equal(summary.publicSnapshotsCoherent, true);
   assert.deepEqual(summary.holders, [
@@ -93,13 +93,13 @@ test("does not mistake a public occupied marker for a private concession", () =>
   const summary = summarizeReservationPair(
     [
       {
-        protocol: 1,
+        protocol: 2,
         supported: true,
         activeWaypointIds: ["seat-a"],
         current: null,
       },
       {
-        protocol: 1,
+        protocol: 2,
         supported: true,
         activeWaypointIds: ["seat-a"],
         current: null,

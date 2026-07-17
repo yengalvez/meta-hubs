@@ -154,8 +154,8 @@ export function summarizeReservationPair(states, waypointId) {
   );
 
   return {
-    protocol1Supported: states.map(
-      (state) => state?.protocol === 1 && state?.supported === true,
+    protocol2Supported: states.map(
+      (state) => state?.protocol === 2 && state?.supported === true,
     ),
     targetActive: publicSnapshots.map((active) => active.includes(waypointId)),
     publicSnapshots,

@@ -21,23 +21,26 @@ const REMOTE_POSITION_TOLERANCE_METERS = 0.75;
 
 async function seatInventory(page) {
   return page.evaluate(() => {
-    const vector = new THREE.Vector3();
-    return [...document.querySelectorAll("[waypoint]")]
-      .filter((el) => el.components?.waypoint?.data?.willDisableMotion)
-      .map((el) => {
-        el.object3D.updateMatrices();
-        el.object3D.getWorldPosition(vector);
-        return {
-          name: el.object3D.name,
-          position: vector.toArray(),
-          canBeOccupied: el.components.waypoint.data.canBeOccupied,
-          canBeClicked: el.components.waypoint.data.canBeClicked,
-          disableMotion: el.components.waypoint.data.willDisableMotion,
-          isOccupied: el.components.waypoint.data.isOccupied,
-          waypointId: el.components?.networked?.data?.networkId || null,
-          owner: NAF.utils.getNetworkOwner(el),
-        };
-      });
+    const getDiagnostics = window.APP?.getSittingWaypointDiagnosticsForTests;
+    if (typeof getDiagnostics !== "function") {
+      throw new Error("Loader-neutral waypoint diagnostics are unavailable.");
+    }
+    const diagnostics = getDiagnostics.call(window.APP);
+    return {
+      loader: diagnostics.loader,
+      seats: diagnostics.waypoints
+        .filter((waypoint) => waypoint.flags.willDisableMotion)
+        .map((waypoint) => ({
+          name: waypoint.name,
+          position: waypoint.position,
+          canBeOccupied: waypoint.flags.canBeOccupied,
+          canBeClicked: waypoint.flags.canBeClicked,
+          disableMotion: waypoint.flags.willDisableMotion,
+          isOccupied: waypoint.occupied,
+          waypointId: waypoint.reservationId,
+          owner: waypoint.owner,
+        })),
+    };
   });
 }
 
@@ -219,9 +222,15 @@ async function reservationState(page) {
 
 async function runtimeState(page, waypointId) {
   return page.evaluate((targetWaypointId) => {
-    const seat = [...document.querySelectorAll("[waypoint]")].find(
-      (el) => el.components?.networked?.data?.networkId === targetWaypointId,
-    );
+    const getDiagnostics = window.APP?.getSittingWaypointDiagnosticsForTests;
+    if (typeof getDiagnostics !== "function") {
+      throw new Error("Loader-neutral waypoint diagnostics are unavailable.");
+    }
+    const seat = getDiagnostics
+      .call(window.APP)
+      .waypoints.find(
+        (waypoint) => waypoint.reservationId === targetWaypointId,
+      );
     const rig = document.querySelector("#avatar-rig");
     const worldPosition = new THREE.Vector3();
     rig.object3D.getWorldPosition(worldPosition);
@@ -231,8 +240,8 @@ async function runtimeState(page, waypointId) {
       localPosition: worldPosition.toArray(),
       seat: seat
         ? {
-            isOccupied: seat.components.waypoint.data.isOccupied,
-            owner: NAF.utils.getNetworkOwner(seat),
+            isOccupied: seat.occupied,
+            owner: seat.owner,
           }
         : null,
       players: [...document.querySelectorAll("[player-info]")].map((el) => {
@@ -250,23 +259,26 @@ async function runtimeState(page, waypointId) {
 
 async function nearestStandingWaypoint(page) {
   return page.evaluate(() => {
+    const getDiagnostics = window.APP?.getSittingWaypointDiagnosticsForTests;
+    if (typeof getDiagnostics !== "function") {
+      throw new Error("Loader-neutral waypoint diagnostics are unavailable.");
+    }
     const rig = document.querySelector("#avatar-rig");
     const rigPosition = new THREE.Vector3();
     const waypointPosition = new THREE.Vector3();
     rig.object3D.getWorldPosition(rigPosition);
 
-    return [...document.querySelectorAll("[waypoint]")]
-      .filter(
-        (el) =>
-          !el.components.waypoint.data.willDisableMotion &&
-          !el.components.waypoint.data.canBeOccupied,
+    return getDiagnostics
+      .call(window.APP)
+      .waypoints.filter(
+        (waypoint) =>
+          !waypoint.flags.willDisableMotion && !waypoint.flags.canBeOccupied,
       )
-      .map((el) => {
-        el.object3D.updateMatrices();
-        el.object3D.getWorldPosition(waypointPosition);
+      .map((waypoint) => {
+        waypointPosition.fromArray(waypoint.position);
         return {
-          name: el.object3D.name,
-          position: waypointPosition.toArray(),
+          name: waypoint.name,
+          position: waypoint.position,
           distanceSquared: rigPosition.distanceToSquared(waypointPosition),
         };
       })
@@ -299,7 +311,13 @@ test("same-seat contention, remote pose, stand, reclaim and disconnect cleanup",
       })
       .toBe(2);
 
-    const inventories = await Promise.all(pages.map(seatInventory));
+    const inventorySnapshots = await Promise.all(pages.map(seatInventory));
+    expect(
+      inventorySnapshots.map((inventory) => inventory.loader),
+      "both clients exercise the same explicit scene loader",
+    ).toEqual([inventorySnapshots[0].loader, inventorySnapshots[0].loader]);
+    expect(["classic", "bitecs"]).toContain(inventorySnapshots[0].loader);
+    const inventories = inventorySnapshots.map((inventory) => inventory.seats);
     expect(inventories[0].length).toBeGreaterThan(0);
     expect(inventories[0].map((seat) => seat.name)).toEqual(
       inventories[1].map((seat) => seat.name),
@@ -338,8 +356,8 @@ test("same-seat contention, remote pose, stand, reclaim and disconnect cleanup",
       targetSeat.waypointId,
     );
     expect(
-      initialReservationSummary.protocol1Supported,
-      "both clients require the authoritative reservation-v1 capability",
+      initialReservationSummary.protocol2Supported,
+      "both clients require the authoritative reservation-v2 capability",
     ).toEqual([true, true]);
     expect(initialReservationSummary.targetActive).toEqual([false, false]);
     expect(initialReservationSummary.holders).toEqual([]);
@@ -437,14 +455,14 @@ test("same-seat contention, remote pose, stand, reclaim and disconnect cleanup",
         const states = await Promise.all(pages.map(reservationState));
         const summary = summarizeReservationPair(states, targetSeat.waypointId);
         return {
-          protocol1Supported: summary.protocol1Supported,
+          protocol2Supported: summary.protocol2Supported,
           targetActive: summary.targetActive,
           publicSnapshotsCoherent: summary.publicSnapshotsCoherent,
           holderIndexes: summary.holders.map((holder) => holder.clientIndex),
         };
       })
       .toEqual({
-        protocol1Supported: [true, true],
+        protocol2Supported: [true, true],
         targetActive: [true, true],
         publicSnapshotsCoherent: true,
         holderIndexes: [winnerIndex],
@@ -634,7 +652,7 @@ test("same-seat contention, remote pose, stand, reclaim and disconnect cleanup",
         };
       })
       .toEqual({
-        protocol: 1,
+        protocol: 2,
         supported: true,
         targetActive: false,
         current: null,

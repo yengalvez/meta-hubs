@@ -26,9 +26,9 @@ Antes del E2E:
    digests para Reticulum y Hubs; staging no admite builds locales/in-cluster.
 3. Crear el checkpoint exigido por `deployment/README.md` antes de cualquier
    mutación de una instalación compartida.
-4. Desplegar en dos manifest generations: Reticulum v1/migración conservando el
-   Hubs anterior, y solo después Hubs v1.
-5. Confirmar que la respuesta de join anuncia `protocol: 1`,
+4. Desplegar en dos manifest generations: Reticulum v2/migración conservando el
+   Hubs anterior, y solo después Hubs v2.
+5. Confirmar que la respuesta de join anuncia `protocol: 2`,
    `supported: true`, `lease_ms: 15000` y `request_timeout_ms: 3000` para un
    cliente nuevo.
 6. Publicar desde Spoke al menos una silla con `Disable motion`,
@@ -127,21 +127,33 @@ entre cuerpo, ropa, mesa y silla.
 - Dos pestañas duplicadas tienen `client_instance_id` distintos.
 - Un canal migrado conserva la instancia; el canal anterior recibe
   `stale_channel`.
+- Un reserve aceptado por el servidor cuyo caller queda cancelado durante la
+  migración reaparece solo como cleanup huérfano: `current` local es nulo, no
+  existe timer de renovación y el canal nuevo envía release para el mismo
+  `reservation_id`.
+- La intención de Stand se registra antes de ejecutar la cola; una migración
+  inmediata no puede rehidratar ni renovar ese mismo lease desde el snapshot.
+- Solo un claim local aún vigente puede adoptar el mismo waypoint y
+  `reservation_id` tras migrar, conservando su `claimId`.
 - Una nueva instancia en la misma sesión invalida y libera la reserva anterior.
 - Terminar un canal obsoleto no libera el lease del canal nuevo.
 - Una expiración observada publica `occupied: false` y permite reclamar.
 
 ### Compatibilidad fail-closed
 
-- Cliente v1 con Reticulum anterior: Sit no mueve a una silla ocupable.
-- Hubs v1 con join legacy/no negociado: `supported: false` y Sit fail-closed.
-- Hubs anterior con Reticulum v1: join compatible, pero su estado NAF no es una
+- Hubs con protocolo 2 frente a Reticulum anterior: Sit no mueve a una silla
+  ocupable.
+- Hubs v2 con join legacy/no negociado: `supported: false` y Sit fail-closed.
+- Hubs anterior con Reticulum v2: join compatible, pero su estado NAF no es una
   concesión autoritativa; no se acepta el uso de sillas en la ventana mixta.
-- Join v1 con forma o UUID inválidos: `supported: false`.
+- Join con protocolo 1 o con forma/UUID inválidos: `supported: false`.
 - `bot_runner`: reservas no soportadas y mutaciones rechazadas.
 - Sesión fuera del estado de entrada/sala: mutación rechazada.
 
 ### UX y regresiones
+
+- Replies Phoenix `ok` contradictorios (`status`, `reason`, `occupied` o
+  `expires_at`) se rechazan aunque sus UUID y `request_seq` correlacionen.
 
 - Click directo, botón Sit y navegación por hash solicitan reserva antes de
   mover a un waypoint ocupable.
