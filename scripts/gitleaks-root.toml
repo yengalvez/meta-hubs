@@ -1,0 +1,4 @@
+title = "YenHubs root and Hubs default Gitleaks policy"
+
+[extend]
+useDefault = true
