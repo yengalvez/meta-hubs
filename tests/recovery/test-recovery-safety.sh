@@ -1359,6 +1359,14 @@ CREATE_FAILED="$CREATE_PARENT/failed-checkpoint"
 reset_stub
 expect_failure 'checkpoint creation never publishes a partial directory on backup failure' 'Unexpected pods consume PVC' env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$VALUES_FIXTURE" STUB_MODE=backup-extra-consumer "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_FAILED"
 if [[ ! -e "$CREATE_FAILED" && ! -e "$CREATE_FAILED.yenhubs-publish-lock" ]] && ! find "$CREATE_PARENT" -maxdepth 1 -type d -name '.yenhubs-checkpoint-*' | grep -q .; then pass 'failed checkpoint staging is owned, private and removed'; else fail 'failed checkpoint staging is owned, private and removed' "$(find "$CREATE_PARENT" -maxdepth 1 -print)"; fi
+CREATE_EMPTY_ACTIVE="$CREATE_PARENT/empty-active-checkpoint"
+reset_stub
+expect_failure 'checkpoint creation rejects an empty active DB baseline before helper creation' 'Active owned-file DB baseline is empty or duplicated' env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$VALUES_FIXTURE" STUB_MODE=zero-db-active "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_EMPTY_ACTIVE"
+if [[ "$(grep -c 'create -f -' "$KUBECTL_LOG")" == "1" ]]; then pass 'empty active DB baseline creates only the operation lock'; else fail 'empty active DB baseline creates only the operation lock' "$(cat "$KUBECTL_LOG")"; fi
+CREATE_DUPLICATE_ACTIVE="$CREATE_PARENT/duplicate-active-checkpoint"
+reset_stub
+expect_failure 'checkpoint creation rejects duplicate active DB UUIDs before helper creation' 'Active owned-file DB baseline is empty or duplicated' env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$VALUES_FIXTURE" STUB_MODE=duplicate-db-uuids "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_DUPLICATE_ACTIVE"
+if [[ "$(grep -c 'create -f -' "$KUBECTL_LOG")" == "1" ]]; then pass 'duplicate active DB UUIDs create only the operation lock'; else fail 'duplicate active DB UUIDs create only the operation lock' "$(cat "$KUBECTL_LOG")"; fi
 CREATE_LOCKED="$CREATE_PARENT/locked-checkpoint"
 mkdir "$CREATE_LOCKED.yenhubs-publish-lock"
 printf 'other-owner\n' >"$CREATE_LOCKED.yenhubs-publish-lock/sentinel"

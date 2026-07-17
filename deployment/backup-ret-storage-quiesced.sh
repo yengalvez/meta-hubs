@@ -193,12 +193,12 @@ recovery_capture_live_database_contract "$PGSQL_POD" "$CONTRACT_BEFORE"
 recovery_kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
   'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d retdb -Atc "select owned_file_uuid from ret0.owned_files where state::text = '\''active'\'' order by owned_file_uuid"' \
   | tr -d '\r' | LC_ALL=C sort >"$DB_ACTIVE_BEFORE"
-[[ -s "$DB_ACTIVE_BEFORE" ]] &&
-  [[ "$(wc -l <"$DB_ACTIVE_BEFORE" | tr -d ' ')" == \
-     "$(LC_ALL=C sort -u "$DB_ACTIVE_BEFORE" | wc -l | tr -d ' ')" ]] || {
+if [[ ! -s "$DB_ACTIVE_BEFORE" ]] ||
+   [[ "$(wc -l <"$DB_ACTIVE_BEFORE" | tr -d ' ')" != \
+      "$(LC_ALL=C sort -u "$DB_ACTIVE_BEFORE" | wc -l | tr -d ' ')" ]]; then
   printf 'Active owned-file DB baseline is empty or duplicated.\n' >&2
   exit 1
-}
+fi
 
 recovery_require_operation_lock
 cat <<EOF | recovery_kubectl create -f - >/dev/null
