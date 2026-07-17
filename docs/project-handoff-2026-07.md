@@ -57,19 +57,20 @@ Estado de publicacion comprobado el 17 de julio:
 - Hubs Cloud PR `#1`, `codex/bot-safety-final -> development`: `CLEAN`, checks
   verdes. Tras fusionarlo debe abrirse y aceptar el paso separado
   `development -> master` exigido por el repositorio.
-- Meta-hubs PR `#1`, `codex/final-audit-readiness -> main`: bloqueado solo
-  porque `main` todavia no contiene la politica Gitleaks base-owned.
-- Meta-hubs PR minimo `#2`, `codex/gitleaks-policy-bootstrap -> main`: `CLEAN`,
-  checks verdes y pendiente de revision/merge. Debe integrarse antes de repetir
-  el PR `#1`; no se debe permitir que la politica candidata se autorice a si
-  misma.
+- Meta-hubs PR minimo `#2`, `codex/gitleaks-policy-bootstrap -> main`: fusionado
+  como `f79175d`. La politica ya procede de la base y no de la rama candidata.
+- Meta-hubs PR `#1`, `codex/final-audit-readiness -> main`: actualizado a
+  `9906cc7` y fusionable, pero `UNSTABLE`. Gitleaks pasa en modo `trusted-base`;
+  los runs `29599274001` y `29599277151` fallan despues en ShellCheck `SC2119`
+  sobre `deployment/capture-instance-state.sh:26`.
 
 La integración candidata del 17 de julio está cerrada en GO sobre
 Hubs `d7f0c2fc4` y Hubs Cloud `b7b752f`. Este resultado solo acredita código,
-suites, builds locales y CI de PR: no sustituye los valores live de la tabla,
-no implica que se hayan construido imágenes candidatas por Actions y no constituye aceptación de
-staging, capacidad ni producción. No actualizar punteros base ni digests live
-hasta completar el flujo publicado de integración y rollout.
+suites, builds locales y el CI verde de Hubs/Cloud: no sustituye los valores
+live de la tabla. El CI raiz aun no esta verde, no se han construido imagenes
+candidatas por Actions y no existe aceptacion de staging, capacidad ni
+produccion. No actualizar punteros base ni digests live hasta completar el flujo
+publicado de integracion y rollout.
 
 El candidato de bots añade dos contratos que tampoco forman parte del runtime
 live de la tabla:
