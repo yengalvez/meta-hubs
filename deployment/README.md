@@ -12,6 +12,15 @@ Hubs Community Edition 2.1.0 on DigitalOcean Kubernetes with automated SSL via c
 > the only active deployment runbook and
 > `deployment/client-instance-lifecycle.md` for create/freeze/restore/retire.
 
+> **Current rollout block — 17 July 2026:** an ignored generated manifest with
+> real local values was displayed to the task log during candidate
+> diagnostics. It was neither committed nor applied and production was not
+> changed. Nevertheless, do not build or deploy the next candidate until a
+> joint DB+storage checkpoint exists and every potentially included secret has
+> been rotated through the procedures in this runbook. Verify only by hashes,
+> configured-key presence and redacted reports; never reopen/print the ignored
+> manifest to inventory values.
+
 ---
 
 ## Architecture
@@ -68,6 +77,12 @@ Production uses `RUNNER_BACKEND=ghost`, `GHOST_NAVIGATION_MODE=navmesh_preferred
 the Spoke navmesh while retaining the room config and prompt/runtime guardrails from the earlier audit.
 The exact bot digest is `sha256:325c5c10e4ee039518693771c0974a0e5c876dcf54c443295e84490f4fa8ec53`.
 
+Node ghost is the only production/authenticated runner. Chromium is retained
+only as a legacy/local browser diagnostic without `--runner`; its renderer is
+not given `BOT_RUNNER_ACCESS_KEY`, cannot authenticate against hardened Reticulum and
+never counts toward readiness. Never pass that key in a URL or client-side
+state.
+
 Hubs commit `a7214eb88` includes the official `prod-2026-03-11` release, dependency hardening, safe cookie migration,
 mobile viewport containment, sitting feedback, bot privacy copy, responsive avatar UI, fully localized profile
 placeholders, the accepted Obsidian Aurora room interface, the Obsidian Aurora portal landing and the `static` bot
@@ -99,7 +114,10 @@ The ignored local values are therefore the authoritative image lock, not the rea
 
 Persistent/exclusive workloads have explicit safe update strategies:
 
-- `pgsql` and `reticulum`: `Recreate`, so two revisions never write the same single-writer PVC.
+- `pgsql` and `reticulum`: exact `Recreate` with no residual
+  `rollingUpdate`; Reticulum remains at exactly one replica and has no HPA.
+  While `BotRunnerLease` and the channel authority are process-local, a second
+  Reticulum process would be split-brain even if it shared PostgreSQL/PVC.
 - `dialog` and `coturn`: `Recreate`, so two revisions never compete for host ports `4443`/`5349` on the single node.
 - HAProxy: startup, readiness and liveness checks on `/healthz:1042`; startup has up to 120 seconds before liveness
   may restart it.
@@ -183,7 +201,7 @@ under `output/audit-retmodern-predeploy-20260715-103120/`.
 > The 4GB node ($24) is NOT enough. Hubs CE uses ~3.5GB at idle. With 4GB, pods get OOM-killed and evicted in a cascade.
 
 Pricing references: [DOKS](https://docs.digitalocean.com/products/kubernetes/details/pricing/),
-[regional Load Balancers](https://docs.digitalocean.com/products/networking/load-balancers/details/pricing/) and
+[regional Load Balancers](https://www.digitalocean.com/pricing/load-balancers) and
 [block storage](https://docs.digitalocean.com/products/volumes/details/pricing/).
 
 ## Avoid Surprise DigitalOcean Charges
@@ -221,10 +239,20 @@ mise exec -- mix --version
 Before recreating a frozen deployment, run the read-only preflight from the repository root:
 
 ```bash
-./deployment/preflight-reactivation.sh
+BACKUP_DIR=/absolute/path/to/checkpoint-YYYYMMDD-HHMMSS \
+  MAX_CHECKPOINT_AGE_SECONDS=86400 \
+  ./deployment/preflight-reactivation.sh
 ```
 
-It validates tools, pinned submodules, backup integrity, required local keys, GitHub/GHCR access, and DigitalOcean authentication without printing secrets or creating cloud resources.
+`BACKUP_DIR` is mandatory and is never inferred from an older directory or a
+"latest" pointer. The timestamp must be non-future and no older than the
+explicit TTL. The gate validates the exact allowlisted artifact set, filename
+equality in `SHA256SUMS`, the jointly coherent DB/storage pair, the structural
+Deployment inventory, required local keys, exact GHCR digest overrides and
+DigitalOcean state without printing secrets or creating resources. Export
+`EXPECTED_KUBE_CONTEXT`, `NAMESPACE` and `EXPECTED_NAMESPACE_UID`. If the
+DigitalOcean cluster exists, missing or unreadable Kubernetes identity is
+fatal; command errors are never interpreted as resource absence.
 
 ---
 
@@ -355,10 +383,16 @@ Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
 - `OVERRIDE_HUBS_IMAGE` - set this to the digest-pinned custom client image when you ship client-side features
   (official `hubsfoundation/hubs:*` images do not include local code changes)
 - `OVERRIDE_BOT_ORCHESTRATOR_IMAGE` - set this to the digest-pinned custom bot image when room bots/chat are enabled
-- `BOT_ACCESS_KEY` - random shared key used by Reticulum <-> bot-orchestrator internal calls; rotate it only in the
+- `BOT_ACCESS_KEY` - legacy binding key consumed only by Reticulum
+- `BOT_RUNNER_ACCESS_KEY` - ghost runner join/snapshot key shared only by Reticulum and the runner parent/child
+- `BOT_ORCHESTRATOR_ACCESS_KEY` - key shared only by Reticulum and the bot-orchestrator parent HTTP service
+- `DASHBOARD_ACCESS_KEY` - Reticulum administrative-route key
+- all four internal credentials must be distinct random strings of at least 32 characters; rotate them only in the
   ignored local values and then regenerate/apply the manifest
 - `OPENAI_API_KEY` - API key used by bot-orchestrator for LLM chat (model defaults to `gpt-5-nano`)
-- `GHOST_NAVIGATION_MODE` - keep `navmesh_preferred` in production; the old collider/direct mode is fallback only
+- `OPENAI_TOTAL_BUDGET_MS` - fixed to `4000` by the generator; input moderation, model and output moderation share it
+- `GHOST_NAVIGATION_MODE` - keep `navmesh_preferred` in production
+- `GHOST_NAVIGATION_REQUIRE_NAVMESH` - keep `true`; collider/direct modes are legacy diagnostics, not readiness
 - `GHOST_NAVMESH_MAX_TRIANGLES` - navmesh parser cap, default `50000`
 - `GHOST_NAVMESH_MAX_ROUTE_POINTS` - route publication cap, default `64`
 - `GHOST_NAVMESH_MAX_SNAP_DISTANCE_M` - maximum waypoint projection distance, default `3`
@@ -374,24 +408,44 @@ Do not modify either secret-bearing values file with an in-place Perl/Ruby comma
 1. Copy the source to a mode `0600` temporary file.
 2. Update the temporary file with a parser that treats values literally.
 3. Validate all required keys, exact image digest syntax and the `PERMS_KEY` PEM.
-4. Generate `hcce.yaml` and compare the generated `Secret/configs` keys and values with the live Secret when
-   preserving an existing environment.
+4. Generate `hcce.yaml`, run the tracked manifest verifier and compare only
+   configured-key presence and checksum annotations with the redacted live
+   inventory when preserving an existing environment. Never print either set
+   of Secret values for comparison.
 5. Atomically move the validated file into place.
 
-### Rotate the internal bot key safely
+Do not open, print or send `input-values.yaml`, `input-values.local.yaml` or
+generated `hcce.yaml` to a terminal/chat as a diagnostic. They are ignored, not
+sanitized. Use the manifest verifier and redacted inventory reports. If any
+real value appears in task, terminal or CI output, treat every affected value
+as compromised and rotate it before rollout.
 
-`BOT_ACCESS_KEY` must never be printed, committed or copied into a command argument. Replace it with a new random
-value in `deployment/input-values.local.yaml`, copy that file to the ignored
+The safe root parser accepts only top-level scalar values. Store `PERMS_KEY` on
+one quoted line with each PEM newline encoded as the literal two characters
+`\n`, as shown in `deployment/input-values.example.yaml`; YAML `|` block
+scalars are deliberately rejected. The Hubs CE generator restores the physical
+newlines before validating and deriving the public key.
+
+### Rotate the four internal credentials safely
+
+None of `BOT_ACCESS_KEY`, `BOT_RUNNER_ACCESS_KEY`,
+`BOT_ORCHESTRATOR_ACCESS_KEY` or `DASHBOARD_ACCESS_KEY` may be printed,
+committed or copied into a command argument. Replace them with four new,
+independent random values in `deployment/input-values.local.yaml`, copy that file to the ignored
 `hubs-cloud/community-edition/input-values.yaml`, run `npm run gen-hcce` and apply the generated manifest.
 
-The generator derives a SHA-256 checksum annotation from the key for both Reticulum and bot-orchestrator. The
-manifest verifier requires the two annotations to match, and Kubernetes restarts both pod templates automatically
-when the key changes. Do not compensate with a manual one-sided rollout: both processes must start with the same
-Secret revision.
+The generator derives a SHA-256 checksum annotation for each credential. The
+manifest verifier binds the legacy and dashboard checksums only to Reticulum,
+and requires the runner/orchestrator checksums to match their exact Reticulum
+and bot-orchestrator consumers. Kubernetes then restarts the affected pod
+templates. Do not compensate with a manual one-sided rollout.
 
-After rotation, validate by hash rather than echoing the value. Phoenix logs must contain `[FILTERED]` for
-`bot_access_key`, and a search for the live value must return no match. The key was last rotated and this behavior was
-accepted live on 2026-07-14.
+After rotation, validate only those checksum annotations and filtered logging
+behavior. Phoenix logs must contain `[FILTERED]` for every access-key field;
+never copy a live value into a shell search or diagnostic. Production accepted
+the former single-key contract on 2026-07-14; the four-domain candidate is not
+live and requires the fresh checkpoint plus coordinated rotation mandated by
+AUD-065 before rollout.
 
 ### Step 7: Generate hcce.yaml
 
@@ -413,12 +467,19 @@ invariants hold:
 - global SSL redirect is disabled so ACME HTTP-01 solver ingresses remain reachable;
 - HAProxy does not use the legacy Mozilla image or security context;
 - every Deployment image is pinned by an exact SHA-256 digest;
-- PostgreSQL, Reticulum, Dialog and Coturn use `Recreate` for single-writer storage or exclusive host ports;
+- PostgreSQL, Reticulum, Dialog and Coturn use `Recreate` for single-writer
+  storage or exclusive host ports; bot-orchestrator also uses `Recreate` so an
+  update never overlaps two authoritative runners;
+- Reticulum has exactly one desired replica, no `rollingUpdate` fields and no
+  HPA targeting its Deployment;
 - Reticulum is non-privileged, drops every capability and has no propagated host mount;
 - bot-orchestrator runs as UID/GID 1000, drops every capability and uses RuntimeDefault seccomp;
 - Photomnemonic runs as UID/GID 1000, drops every capability, uses RuntimeDefault seccomp and exposes only its
   audited HTTP health probes;
 - Reticulum and bot-orchestrator carry the same bot-key checksum annotation;
+- bot-orchestrator uses `/health` for liveness and authoritative `/ready` for
+  readiness, requires navmesh, allows only ghost autostart and fixes the shared
+  OpenAI deadline to 4 seconds;
 - Reticulum, both PgBouncer pools and Coturn carry one matching DB-credential checksum;
 - every Deployment except HAProxy disables service-account token automounting;
 - Coturn does not use the known credential-leaking image;
@@ -513,11 +574,23 @@ Run the tracked read-only verifier from the repository root. It checks all four 
 deployment readiness, restored DB counts, public HTTPS and the ghost-runner health contract without printing keys:
 
 ```bash
+export NAMESPACE=hcce
+export EXPECTED_KUBE_CONTEXT='<contexto-kubectl-exacto>'
+export EXPECTED_NAMESPACE_UID="$(
+  kubectl --context "$EXPECTED_KUBE_CONTEXT" get namespace "$NAMESPACE" \
+    -o jsonpath='{.metadata.uid}'
+)"
 ./deployment/verify-live-reactivation.sh
 ```
 
 Do not continue to audited images or upstream upgrades until it reports zero failures. Functional room/UI tests are
 still required afterwards; this script proves infrastructure health, not visual correctness.
+
+Both this verifier and `preflight-reactivation.sh` require the Reticulum
+Deployment to be the exact singleton contract above, exactly one Ready
+Reticulum Pod, and a verified Pod -> ReplicaSet -> Deployment ownership chain
+ending at that Deployment UID. Any extra Ready pod, owner/UID mismatch, HPA or
+rolling strategy is a hard stop; it is not rollout overlap to tolerate.
 
 ---
 
@@ -585,30 +658,40 @@ curl -s http://127.0.0.1:15001/health | jq .
 curl -sI https://your-domain.com    # HTTP/2 with valid TLS
 ```
 
-Optional bot smoke test (internal API):
-
-```bash
-BOT_KEY=$(kubectl get secret configs -n hcce -o jsonpath='{.data.BOT_ACCESS_KEY}' | base64 --decode)
-
-curl -s -X POST http://127.0.0.1:15001/internal/bots/room-config \
-  -H "content-type: application/json" \
-  -H "x-ret-bot-access-key: $BOT_KEY" \
-  -d '{"hub_sid":"smoketest-room","bots":{"enabled":true,"count":2,"mobility":"medium","chat_enabled":true}}' | jq .
-```
+Do not extract any internal access key into a shell variable or process argument for an
+ad-hoc smoke. The generated-manifest verifier, orchestrator tests and live
+verifier cover the authenticated contract without exposing it. Any future
+manual internal smoke must first add a reviewed helper that consumes the key
+through a non-printing channel and never stores it in argv, history or output.
 
 Bot-orchestrator security gate before promotion:
 
 - `npm test` in `community-edition/services/bot-orchestrator` must pass.
 - `npm audit --omit=dev` must report zero vulnerabilities.
-- The Responses request must keep `store:false`, a pseudonymous `safety_identifier` and strict JSON Schema output.
+- The Responses request must keep `store:false`, a pseudonymous
+  `safety_identifier` and reply-only strict JSON Schema output. The model has no
+  movement authority.
+- Input/output moderation fails closed and shares a 4-second deadline with the
+  model. Malformed or incomplete moderation responses are not allowed.
 - `scene.model_url` is same-origin by default. Add a CDN only through `GHOST_SCENE_ALLOWED_HOSTS`; never disable the
   allowlist to fix a scene.
 - The generated manifest fixes a 10 s timeout, 64 MiB scene limit, 4 MiB JSON limit, 50,000 nodes and 200,000 edges.
-- Production must also expose `GHOST_NAVIGATION_MODE=navmesh_preferred`, a 50,000-triangle navmesh cap, 64 route
-  points and a 3 m projection cap. `verify-generated-manifest.js` and `verify-live-reactivation.sh` enforce this.
+- GLB accessors are preflighted before any range fetch or allocation, and only
+  the exact required byte range counts against the bounded aggregate scene budget.
+- Production must expose `GHOST_NAVIGATION_MODE=navmesh_preferred`,
+  `GHOST_NAVIGATION_REQUIRE_NAVMESH=true`, a 30-second clean recovery restart,
+  a 50,000-triangle navmesh cap, 64 route points and a 3 m projection cap.
+  `verify-generated-manifest.js` and `verify-live-reactivation.sh` enforce this.
 - Before promotion, parse the current production GLB and require a valid navmesh plus routes between its expected
-  `spawbot-*` points. A log such as `No valid navmesh` means the scene has fallen back and is not accepted.
-- Validate one neutral chat message (`action=null`) and one explicit `go_to_waypoint` command after rollout.
+  `spawbot-*` points. A log such as `No valid navmesh` means readiness must be
+  503; it is not an accepted fallback.
+- Require authenticated runner Presence, exact
+  `room-bot-<hub_sid>-bot-<1..10>` identities and authoritative spawn ACKs.
+  `/ready` must remain 503 while auth, navmesh, population, ACK or a new room
+  configuration is pending; `/health=200` alone is not acceptance.
+- Validate one neutral chat reply and one explicit human
+  `go_to_waypoint` command after rollout; the action must be derived outside
+  model output and revalidated by Reticulum.
 - `store:false` is not Zero Data Retention. Confirm the OpenAI organization policy and publish a privacy notice before
   real public conversations.
 
@@ -647,6 +730,43 @@ kubectl -n hcce rollout status deployment/reticulum --timeout=300s
 ## Custom Hubs Client Rollout
 
 Use this when shipping client-side features (for example third-person camera, UI changes, avatar logic).
+
+### Authoritative sitting: mandatory server-first order
+
+The waypoint reservation protocol 2 client must never be promoted before its matching
+Reticulum migration/channel implementation:
+
+1. complete local gates, commit/push and build both images only through GitHub
+   Actions; resolve immutable digests before any staging rollout;
+2. create and validate a joint PostgreSQL + `ret-pvc` checkpoint for any shared
+   target;
+3. generate/apply staging with Reticulum protocol 2 first while preserving the
+   previous Hubs digest, then confirm the migration, legacy join compatibility
+   and the PostgreSQL-backed globally monotonic `state_version` source; the
+   read-only `GET /health/capabilities` response must match the exact protocol 2
+   `state_version` and `snapshot_state_version` semantics accepted by
+   `deployment/verify-live-reactivation.sh`;
+4. keep seats closed during that mixed-client window: legacy NAF occupancy is
+   not an authoritative grant;
+5. regenerate/apply staging with Hubs protocol 2 immediately afterwards; its
+   join snapshot must expose `snapshot_state_version` as the state floor and it
+   must ignore equal/older broadcasts;
+6. in staging, race two isolated browser contexts for the same published seat
+   and require exactly one winner, identical remote pose/state, safe Stand,
+   reclaim and disconnect release;
+7. only after staging is clean, promote the same digests to production using
+   the same Reticulum-first/Hubs-second generations, then perform cold
+   desktop/mobile and live verifier gates.
+
+A valid seat has a stable published network identity and the Spoke flags
+`Disable motion`, `Can be occupied` and `Clickable`. Reticulum protocol 2 may remain in
+place during a client rollback; do not drop the reservation table or reverse a
+migration while leases may exist.
+
+The endpoint is a rollout negotiation contract, not a substitute for the
+two-browser race. An older or extended response fails closed: do not promote the
+Hubs digest until the exact Reticulum capability and the isolated-browser
+acceptance both pass.
 
 ### Recommended Loop (No Extra DigitalOcean Cost)
 
@@ -725,17 +845,27 @@ preflight reports 0 failures and 0 warnings.
 For the next rotation:
 
 ```bash
-# Supply through the environment or Keychain, never commit it.
+# Supply through the environment or Keychain, never commit it or put it in argv.
 export GITHUBTOKEN='<new token with read:packages>'
 
-# Recreate the namespace pull secret without printing the token.
-kubectl create secret docker-registry ghcr-pull -n hcce \
-  --docker-server=ghcr.io \
-  --docker-username=yengalvez \
-  --docker-password="$GITHUBTOKEN" \
-  --dry-run=client -o yaml | kubectl apply -f -
+# Let Docker consume the token through stdin and create a private temporary
+# dockerconfig. kubectl receives only the file path, never the credential.
+GHCR_CONFIG="$(mktemp -d)"
+chmod 700 "$GHCR_CONFIG"
+trap 'rm -rf "$GHCR_CONFIG"' EXIT
+printf '%s' "$GITHUBTOKEN" | \
+  docker --config "$GHCR_CONFIG" login ghcr.io \
+    --username yengalvez --password-stdin
+unset GITHUBTOKEN
 
-kubectl patch serviceaccount default -n hcce --type=merge \
+kubectl --context "$EXPECTED_KUBE_CONTEXT" create secret generic ghcr-pull \
+  -n "$NAMESPACE" --type=kubernetes.io/dockerconfigjson \
+  --from-file=.dockerconfigjson="$GHCR_CONFIG/config.json" \
+  --dry-run=client -o yaml | \
+  kubectl --context "$EXPECTED_KUBE_CONTEXT" apply -f -
+
+kubectl --context "$EXPECTED_KUBE_CONTEXT" patch serviceaccount default \
+  -n "$NAMESPACE" --type=merge \
   -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
 
 ./deployment/preflight-reactivation.sh
@@ -937,25 +1067,62 @@ export EXPECTED_NAMESPACE_UID="$(
     -o jsonpath='{.metadata.uid}'
 )"
 test -n "$EXPECTED_NAMESPACE_UID"
-./deployment/create-checkpoint.sh
+export EXPECTED_RET_PVC_UID="$(
+  kubectl --context "$EXPECTED_KUBE_CONTEXT" get pvc ret-pvc -n "$NAMESPACE" \
+    -o jsonpath='{.metadata.uid}'
+)"
+test -n "$EXPECTED_RET_PVC_UID"
+ALLOW_CHECKPOINT_DOWNTIME=1 ./deployment/create-checkpoint.sh
 ```
 
-El primer script verifica esquema y migraciones; el segundo exige que cada `owned_file` activo tenga su par
+La opción de downtime es obligatoria: el comando toma un lock global
+inmutable, captura el contrato post-lock y lleva Reticulum, ambos Pgbouncers,
+bot-orchestrator y Coturn exactamente a cero mediante CAS antes de leer DB o
+PVC. Si no puede reanudar bajo las mismas UID/resourceVersion/plantillas,
+retiene el lock y deja los escritores a cero para revisión.
+
+El dump verifica esquema y migraciones; el backup de storage exige que cada `owned_file` activo tenga su par
 `.blob`/`.meta.json` y que no exista ningun par fisico incompleto. Puede incluir pares completos adicionales en estado
 diferido: Reticulum los conserva durante la ventana de gracia de 24 horas antes de moverlos a `expiring`. Un checkpoint
 no se considera completo si falta cualquiera de los dos artefactos. Antes de
 crear `SHA256SUMS`, `validate-checkpoint.sh` vuelve a extraer los UUID activos
-del dump SQL y los compara offline con ambos miembros de cada par del tar.
-Todos los artefactos se crean con `umask 077` y permisos `0600`.
+del dump SQL, exige al menos una sala y un UUID activo, y los compara offline
+con ambos miembros de cada par del tar. `SHA256SUMS` contiene un nombre exacto,
+sin prefijo, para cada artefacto permitido y ninguna entrada adicional. El
+checkpoint incluye `database-contract.json`, `checkpoint-metadata.json`,
+`deployment-images.json` y `k8s-hcce-structure.json`. El contrato de base de
+datos fija de forma checksummed los schemas, todas las relaciones, las versiones
+exactas de migracion, los SID de salas, todos los UUID/estados de `owned_files`
+y los conteos criticos; se captura antes y despues de
+`pg_dump` y debe coincidir exactamente con el DDL/COPY del dump. La captura
+Kubernetes es solo estructural: omite
+valores de entorno, comandos, argumentos y valores de anotaciones; de los
+ConfigMap conserva solo los nombres de claves. El inventario exige los 12
+Deployments, 13 pares Deployment/contenedor, ningun `initContainer` ni
+contenedor efimero, todos los digests y paridad exacta con los overrides
+privados capturados desde una copia
+temporal `0600`. Todos los artefactos se crean con `umask 077` y permisos
+`0600`. El directorio final aparece mediante un unico `mv` solo despues de
+validar contenido y checksums; una colision o fallo elimina unicamente el
+staging privado de esa ejecucion y nunca publica un checkpoint parcial.
 
-Checkpoint completo vigente:
+Solo se acepta para restauración destructiva un
+`checkpoint-metadata.json` schema 2 generado localmente por este flujo, con
+`external_import=false` y la misma evidencia de quiescencia/lock. Los SHA-256
+detectan deriva de bytes —incluido cualquier DDL SQL no inventariado—, pero no
+autentican un artefacto externo: copiarlo y recalcular sus checksums no lo
+convierte en un checkpoint autorizado.
+
+El checkpoint siguiente es evidencia historica anterior al contrato actual de
+layout exacto y frescura. No usarlo para otro rollout: crear uno nuevo con el
+comando trackeado inmediatamente antes del rollout.
 
 ```text
 output/backups/20260716-183112/
 ```
 
 Contiene schema 356, 94 migraciones, 33 archivos activos, 47 pares completos y
-14 diferidos validos. Los dry-runs de restauracion y `SHA256SUMS` pasan.
+14 diferidos validos bajo el contrato anterior.
 
 > A Reticulum backup is complete only when it contains **both** the PostgreSQL dump and the `ret-pvc` archive.
 > PostgreSQL stores UUIDs, keys and relationships; the actual scenes, Spoke projects, avatars and thumbnails are
@@ -1000,11 +1167,22 @@ The scene SID remains `f6VKtim`; its current model is
 waypoints, and both `navMesh` and `Floor Plan` nodes. Holding Space after fully entering the room shows two white
 waypoint targets. `Mirar` leaves the user in the lobby and is not a valid test of entered-room waypoint interaction.
 
+That live authoring predates the authoritative reservation candidate. Before
+using this scene for its staging acceptance, publish `Can be occupied=true` on
+each intended seat and verify that its `networked.id` is stable. Until then the
+two current waypoints demonstrate the legacy Sit/Stand UI only; they do not
+satisfy the reservation protocol 2 seat contract.
+
 Waypoint property distinction:
 
 - `Disable motion`: YenHubs treats the waypoint as a seat and applies the sitting state/animation.
+- `Can be occupied`: opts the waypoint into the authoritative reservation
+  protocol; required by the candidate Sit button.
 - `Clickable`: Hubs renders a target for that waypoint while the entered user holds Space.
-- A seat can work through the toolbar proximity flow without being visible on Space if only `Disable motion` is set.
+- `networked.id`: persistent identity used as the server `waypoint_id`; recreating
+  a waypoint can change it and must be treated as a content migration.
+- A legacy seat can work through the old toolbar proximity flow with only
+  `Disable motion`, but it is not an acceptable authoritative seat.
 
 Ownership is also split between room and content records. The current account for `info@virtualmente.com` owns scene
 `f6VKtim` and project `qa3U3Ke`. Room `VJopCY3` retains its historical creator and additionally grants that current
@@ -1019,8 +1197,9 @@ This distinction is mandatory for recovered scenes:
 - `walkable`/`collidable` on the imported office model describes the model but does not generate player navigation.
 - A Spoke `Floor Plan` generates the `nav-mesh` used both by the Hubs character controller and by the ghost runner.
   Bots project `spawbot-*` waypoints onto this mesh and use A* to route around structures.
-- `box-collider` remains optional as compatibility fallback for old scenes. It is not a replacement for the navmesh
-  and cannot calculate a route around an obstacle.
+- `box-collider` remains a legacy/diagnostic aid for old scenes. It is not a
+  production fallback, does not satisfy bot readiness and cannot calculate a
+  route around an obstacle.
 
 Before republishing a live scene, create a matching DB and `ret-pvc` checkpoint. The checkpoint for this repair is
 `output/magiclink-scene-prepublish-20260716-093347/`, with hashes in `SHA256SUMS`.
@@ -1073,49 +1252,95 @@ Use the authenticated Reticulum APIs, SQL through PostgreSQL or a separate isola
 command does restart Reticulum, stop all mutations, wait for `reticulum` to return `2/2`, and require public HTTP 200
 before continuing.
 
-### Restore the Reticulum database
+### Restore one coordinated Reticulum checkpoint
 
-The database is named `retdb`. A plain `pg_dump` does not include cluster-level roles, but the restored grants need
-the internal NOLOGIN role `ret_admin`. Use the tracked restore script instead of piping the dump directly into an
-empty database:
+The database is named `retdb`. A plain `pg_dump` does not include cluster-level
+roles, but the restored grants need the internal NOLOGIN role `ret_admin`. Never
+pipe the dump directly into an empty database. The DB dump, storage archive,
+`database-contract.json` and every checksummed inventory artifact must remain in
+one exact checkpoint directory. The coordinated driver verifies the directory,
+copies DB, storage and the contract into one private `0600` materialization,
+rehashes and jointly validates those copies, then has both restore children
+consume only their own independently revalidated copies:
 
 ```bash
-# Read-only preflight only; it does not execute or rehearse the SQL restore.
+# Combined read-only preflight; it does not execute or rehearse either restore.
+export EXPECTED_RET_PVC_UID="$(kubectl --context "$EXPECTED_KUBE_CONTEXT" \
+  get pvc ret-pvc -n "$NAMESPACE" -o jsonpath='{.metadata.uid}')"
+RESTORE_CHECKPOINT_PREFLIGHT=1 ./deployment/restore-checkpoint.sh \
+  /absolute/path/to/checkpoint
+
+# Resolve confirmation fields by exact filename equality.
+STAMP=YYYYMMDD-HHMMSS
+DUMP_SHA="$(awk -v f="retdb-$STAMP.sql.gz" 'substr($0,67)==f {print substr($0,1,64)}' \
+  /absolute/path/to/checkpoint/SHA256SUMS)"
+STORAGE_SHA="$(awk -v f="ret-storage-$STAMP.tar.gz" 'substr($0,67)==f {print substr($0,1,64)}' \
+  /absolute/path/to/checkpoint/SHA256SUMS)"
+
+# Destructive restore into a fresh/empty ret-pvc. The only accepted
+# confirmation binds the cluster, namespace, complete checkpoint and PVC UID.
+CONFIRM_RESTORE_CHECKPOINT="checkpoint:${EXPECTED_KUBE_CONTEXT}:${NAMESPACE}:${EXPECTED_NAMESPACE_UID}:${STAMP}:${DUMP_SHA}:${STORAGE_SHA}:${EXPECTED_RET_PVC_UID}" \
+  ./deployment/restore-checkpoint.sh /absolute/path/to/checkpoint
+```
+
+Standalone destructive calls to `restore-retdb.sh` and
+`restore-ret-storage.sh` are rejected; those scripts remain directly callable
+only in their read-only `*_PREFLIGHT=1` modes. The driver records the original
+replicas and keeps Reticulum, both Pgbouncers, bot-orchestrator and Coturn at
+zero continuously from before the DB drop until the DB contract, exact active
+UUID set, restored PVC pairs and live target identities have all passed. There
+is no intermediate DB-only scale-up. The storage child independently holds all
+five consumers at zero and rechecks both the checksummed DB contract and the
+exact active UUID set immediately before creating its restore pod. Before the
+first DB mutation, the driver creates an immutable, create-only ConfigMap lock
+bound to the exact context, namespace UID, PVC UID, checkpoint stamp and both
+artifact hashes. A contender cannot adopt or delete that lock and exits before
+scaling or dropping anything. The driver revalidates its UID, private token and
+exact metadata at every destructive phase; it deletes the lock only after the
+complete ordered resume succeeds. It resumes Pgbouncer first, then Reticulum
+and only after Reticulum is Ready starts Coturn and bot-orchestrator, whose
+readiness depends on an authoritative Reticulum snapshot.
+
+```bash
+# Optional component diagnosis remains read-only.
 RESTORE_PREFLIGHT=1 ./deployment/restore-retdb.sh \
-  output/backups/20260716-183112/retdb-20260716-183112.sql.gz
-
-# Destructive restore. The confirmation is valid only for this exact context,
-# namespace and immutable namespace UID.
-CONFIRM_RESTORE="retdb:${EXPECTED_KUBE_CONTEXT}:${NAMESPACE}:${EXPECTED_NAMESPACE_UID}" \
-  ./deployment/restore-retdb.sh \
-  output/backups/20260716-183112/retdb-20260716-183112.sql.gz
+  /absolute/path/to/checkpoint/retdb-$STAMP.sql.gz
+RESTORE_STORAGE_PREFLIGHT=1 ./deployment/restore-ret-storage.sh \
+  /absolute/path/to/checkpoint/ret-storage-$STAMP.tar.gz
 ```
 
-If the restore fails, consumers intentionally remain at zero. Diagnose the restore before scaling them back or
-reapplying the validated manifest. A pod-deletion timeout or any remaining
-consumer pod stops the script before it drops or recreates the database.
+The coordinated restore refuses unsafe/symlinked artifacts or directory
+components, an incomplete or drifted DB contract, unsafe archive paths, a
+zero/incoherent DB UUID
+baseline, missing active UUIDs, incomplete blob/metadata pairs, a non-empty
+destination and a Reticulum image not pinned by an exact digest. Complete
+deferred pairs are restored with the active set so Reticulum can finish its
+normal grace-period cleanup. A timeout or remaining Reticulum pod blocks
+creation of the tokenless, non-root (`UID/GID/fsGroup 1000`), read-only-root
+restore pod and any PVC write. That pod is also create-only and is accepted
+only after its admitted UID, unpredictable owner token, sole container, exact
+digest, command, hardening and direct `ret-pvc` -> `/storage` mount (without
+`subPath`) match; a same-name replacement is neither used nor deleted. The PVC
+UID and pod ownership are rechecked and every consumer is polled throughout
+extraction; only that exact restore pod may mount `ret-pvc`. On a failure after
+quiescing, every DB consumer is forced back to zero and the global lock is
+retained for inspection.
 
-### Restore Reticulum media storage
-
-Restore the database first, then validate and restore the matching storage archive:
+After reviewing and correcting the failure, clear a retained lock only while
+all five consumers remain at zero. The clearance mode is deliberately
+clear-only: it revalidates the exact checkpoint, cluster, namespace, PVC, lock
+UID/token and absence of PVC consumers, requires exact confirmation, deletes
+only the owned lock and never resumes a workload:
 
 ```bash
-# Read-only preflight. Counts in the archive must match active owned_files; no
-# PVC bytes are written.
-RESTORE_STORAGE_PREFLIGHT=1 ./deployment/restore-ret-storage.sh \
-  /path/to/ret-storage-YYYYMMDD.tar.gz
-
-# Destructive restore into a fresh/empty ret-pvc only.
-CONFIRM_RESTORE_STORAGE="ret-pvc:${EXPECTED_KUBE_CONTEXT}:${NAMESPACE}:${EXPECTED_NAMESPACE_UID}" \
-  ./deployment/restore-ret-storage.sh \
-  /path/to/ret-storage-YYYYMMDD.tar.gz
+RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1 \
+CONFIRM_CLEAR_RESTORE_LOCK="restore-lock:${EXPECTED_KUBE_CONTEXT}:${NAMESPACE}:${EXPECTED_NAMESPACE_UID}:${STAMP}:${DUMP_SHA}:${STORAGE_SHA}:<LOCK_UID>:${EXPECTED_RET_PVC_UID}" \
+  ./deployment/restore-checkpoint.sh /absolute/path/to/checkpoint
 ```
 
-The restore script refuses unsafe archive paths, missing active UUIDs, incomplete blob/metadata pairs and a non-empty
-destination. Complete deferred pairs are restored with the active set so Reticulum can finish its normal grace-period
-cleanup. A timeout or remaining Reticulum pod blocks creation of the restore
-pod and any PVC write. On a failure after Reticulum is stopped, Reticulum
-intentionally remains at zero for inspection.
+Do not scale individual workloads manually; clear or rerun the complete
+coordinated restore, or reapply a validated manifest, only after recovery has
+been reviewed.
 
 ## Cost Savings
 
@@ -1143,11 +1368,11 @@ restore preflights and exists in a second encrypted location.
 
 ```bash
 # 1. Confirm a matching DB dump and ret-pvc archive both exist and validate.
-gzip -t /path/to/retdb-YYYYMMDD.sql.gz
+gzip -t /path/to/retdb-YYYYMMDD-HHMMSS.sql.gz
 ./deployment/validate-checkpoint.sh \
-  /path/to/retdb-YYYYMMDD.sql.gz /path/to/ret-storage-YYYYMMDD.tar.gz
-RESTORE_STORAGE_PREFLIGHT=1 ./deployment/restore-ret-storage.sh \
-  /path/to/ret-storage-YYYYMMDD.tar.gz
+  /path/to/retdb-YYYYMMDD-HHMMSS.sql.gz /path/to/ret-storage-YYYYMMDD-HHMMSS.tar.gz
+RESTORE_CHECKPOINT_PREFLIGHT=1 ./deployment/restore-checkpoint.sh \
+  /path/to/checkpoint
 
 # 2. Confirm cluster and LB that will be removed
 doctl kubernetes cluster list
@@ -1178,8 +1403,9 @@ When resuming the project:
 4. Copy the local `input-values.local.yaml` back into `hubs-cloud/community-edition/input-values.yaml`.
 5. Run `npm ci && npm run gen-hcce`; the command verifies TLS, ingress class, RBAC and the single-LB invariant.
 6. Apply the generated file unchanged with `kubectl apply -f hcce.yaml`.
-7. Restore the database dump into the new `pgsql` pod.
-8. Restore the matching `ret-pvc` archive with `deployment/restore-ret-storage.sh`.
+7. Restore DB and the matching fresh/empty `ret-pvc` only through
+   `deployment/restore-checkpoint.sh`; never resume between the two halves.
+8. Confirm the driver brings proxies and Reticulum Ready before bot-orchestrator.
 9. Validate `meta-hubs.org`, TLS, room entry, avatar flow, and bots (`ghost` backend).
 
 The full lifecycle checklist for this rebuild is maintained in:

@@ -47,6 +47,10 @@ for path in "${declared_paths[@]}"; do
       "$path" "${expected:-missing}" "${actual:-uninitialized}" >&2
     exit 1
   fi
+  if [[ -n "$(git -C "$ROOT_DIR/$path" status --porcelain --untracked-files=normal)" ]]; then
+    printf 'Submodule worktree is dirty: %s\n' "$path" >&2
+    exit 1
+  fi
 done
 
 while IFS= read -r status_line; do

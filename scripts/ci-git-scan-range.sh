@@ -9,6 +9,7 @@ event_name="${1:-${GITHUB_EVENT_NAME:-}}"
 pull_request_base="${2:-${PR_BASE_SHA:-}}"
 push_before="${3:-${PUSH_BEFORE_SHA:-}}"
 head_revision="${4:-${GITHUB_SHA:-HEAD}}"
+default_branch="${5:-${DEFAULT_BRANCH:-main}}"
 zero_revision="0000000000000000000000000000000000000000"
 
 if ! git cat-file -e "${head_revision}^{commit}" 2>/dev/null; then
@@ -26,6 +27,11 @@ case "$event_name" in
     ;;
 esac
 
+if [[ -z "$base_revision" || "$base_revision" == "$zero_revision" ]] &&
+  git cat-file -e "refs/remotes/origin/${default_branch}^{commit}" 2>/dev/null; then
+  base_revision="$(git merge-base "refs/remotes/origin/$default_branch" "$head_revision" 2>/dev/null || true)"
+fi
+
 if [[ -n "$base_revision" && "$base_revision" != "$zero_revision" ]] &&
   git cat-file -e "${base_revision}^{commit}" 2>/dev/null; then
   if [[ "$base_revision" == "$head_revision" ]]; then
@@ -36,8 +42,7 @@ if [[ -n "$base_revision" && "$base_revision" != "$zero_revision" ]] &&
   exit 0
 fi
 
-if parent_revision="$(git rev-parse "${head_revision}^" 2>/dev/null)"; then
-  printf '%s..%s\n' "$parent_revision" "$head_revision"
-else
-  printf '%s\n' "$head_revision"
-fi
+# With no reliable base (notably the first push of a new branch), scan every
+# commit reachable from HEAD. Falling back to HEAD^..HEAD would miss a secret
+# introduced and removed in an earlier commit of that same push.
+printf '%s\n' "$head_revision"

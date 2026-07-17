@@ -14,17 +14,50 @@ fi
 
 DUMP_PATH="$1"
 ARCHIVE_PATH="$2"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=deployment/lib/recovery-safety.sh
+source "$SCRIPT_DIR/lib/recovery-safety.sh"
+
+if ! DUMP_STAMP="$(recovery_checkpoint_stamp_from_artifact "$DUMP_PATH")" ||
+   ! ARCHIVE_STAMP="$(recovery_checkpoint_stamp_from_artifact "$ARCHIVE_PATH")" ||
+   [[ "$DUMP_STAMP" != "$ARCHIVE_STAMP" ]]; then
+  printf 'Checkpoint dump and storage names must carry the same valid stamp.\n' >&2
+  exit 1
+fi
+
+DUMP_DIR="$(cd "$(dirname "$DUMP_PATH")" && pwd -P)"
+ARCHIVE_DIR="$(cd "$(dirname "$ARCHIVE_PATH")" && pwd -P)"
+CONTRACT_PATH="$DUMP_DIR/database-contract.json"
+if [[ "$DUMP_DIR" != "$ARCHIVE_DIR" ]]; then
+  printf 'Checkpoint dump, storage and database contract must share one direct directory.\n' >&2
+  exit 1
+fi
 
 for artifact in "$DUMP_PATH" "$ARCHIVE_PATH"; do
-  if [[ ! -s "$artifact" ]]; then
-    printf 'Checkpoint artifact is missing or empty: %s\n' "$artifact" >&2
+  if ! recovery_require_regular_direct_file "$artifact"; then
+    printf 'Checkpoint artifact is missing, empty, linked or reached through a link: %s\n' "$artifact" >&2
     exit 1
   fi
   gzip -t "$artifact"
 done
+if ! recovery_database_contract_is_acceptable "$CONTRACT_PATH"; then
+  printf 'Database contract is missing, linked or invalid.\n' >&2
+  exit 1
+fi
 
-TMP_DIR="$(mktemp -d /tmp/yenhubs-checkpoint-validation.XXXXXX)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yenhubs-checkpoint-validation.XXXXXX")"
+cleanup_validation() {
+  rm -rf -- "$TMP_DIR"
+}
+validation_interrupted() {
+  local status="$1"
+  trap - EXIT INT TERM
+  cleanup_validation
+  exit "$status"
+}
+trap cleanup_validation EXIT
+trap 'validation_interrupted 130' INT
+trap 'validation_interrupted 143' TERM
 SQL_PATH="$TMP_DIR/retdb.sql"
 ACTIVE_UUIDS_RAW="$TMP_DIR/active-uuids.raw"
 ACTIVE_UUIDS="$TMP_DIR/active-uuids"
@@ -39,58 +72,24 @@ gzip -cd "$DUMP_PATH" >"$SQL_PATH"
 chmod 600 "$SQL_PATH"
 
 if ! grep -Eq '^CREATE SCHEMA ret0;' "$SQL_PATH" ||
-   ! grep -Eq '^(CREATE TABLE|COPY) ret0\.schema_migrations' "$SQL_PATH"; then
-  printf 'Database dump is missing required Reticulum schema markers.\n' >&2
+   ! recovery_validate_sql_dump_contract "$SQL_PATH" ||
+   ! recovery_validate_database_contract_against_dump "$CONTRACT_PATH" "$SQL_PATH"; then
+  printf 'Database dump is missing the complete critical Reticulum SQL contract.\n' >&2
   exit 1
 fi
 
-awk '
-  BEGIN {
-    in_owned_files = 0
-    copy_blocks = 0
-    uuid_column = 0
-    state_column = 0
-  }
-  /^COPY ret0\.owned_files \(/ {
-    if (in_owned_files || copy_blocks > 0) {
-      print "Database dump has multiple or nested ret0.owned_files COPY blocks." > "/dev/stderr"
-      exit 1
-    }
-    columns = $0
-    sub(/^COPY ret0\.owned_files \(/, "", columns)
-    sub(/\) FROM stdin;$/, "", columns)
-    column_count = split(columns, names, /,[[:space:]]*/)
-    for (column_index = 1; column_index <= column_count; column_index++) {
-      if (names[column_index] == "owned_file_uuid") uuid_column = column_index
-      if (names[column_index] == "state") state_column = column_index
-    }
-    if (uuid_column == 0 || state_column == 0) {
-      print "ret0.owned_files COPY is missing owned_file_uuid or state." > "/dev/stderr"
-      exit 1
-    }
-    copy_blocks++
-    in_owned_files = 1
-    next
-  }
-  in_owned_files && $0 == "\\." {
-    in_owned_files = 0
-    next
-  }
-  in_owned_files {
-    value_count = split($0, values, "\t")
-    if (value_count < uuid_column || value_count < state_column) {
-      print "Malformed row in ret0.owned_files COPY data." > "/dev/stderr"
-      exit 1
-    }
-    if (values[state_column] == "active") print values[uuid_column]
-  }
-  END {
-    if (copy_blocks != 1 || in_owned_files) {
-      print "Database dump does not contain one complete ret0.owned_files COPY block." > "/dev/stderr"
-      exit 1
-    }
-  }
-' "$SQL_PATH" >"$ACTIVE_UUIDS_RAW"
+if ! recovery_extract_active_owned_file_uuids "$SQL_PATH" >"$ACTIVE_UUIDS_RAW"; then
+  printf 'Database dump does not contain one valid ret0.owned_files COPY block.\n' >&2
+  exit 1
+fi
+if ! HUB_COUNT="$(recovery_dump_copy_row_count "$SQL_PATH" hubs)"; then
+  printf 'Database dump does not contain exactly one valid ret0.hubs COPY block.\n' >&2
+  exit 1
+fi
+if [[ ! "$HUB_COUNT" =~ ^[0-9]+$ || "$HUB_COUNT" -eq 0 ]]; then
+  printf 'Database dump contains no Hubs room rows.\n' >&2
+  exit 1
+fi
 
 if awk '
   $0 !~ /^[A-Za-z0-9._-]+$/ { unsafe=1 }
@@ -100,6 +99,10 @@ if awk '
   exit 1
 fi
 sort "$ACTIVE_UUIDS_RAW" >"$ACTIVE_UUIDS"
+if [[ ! -s "$ACTIVE_UUIDS_RAW" ]]; then
+  printf 'Database dump contains no active owned_file_uuid values.\n' >&2
+  exit 1
+fi
 if [[ "$(wc -l <"$ACTIVE_UUIDS_RAW" | tr -d ' ')" -ne \
       "$(sort -u "$ACTIVE_UUIDS_RAW" | wc -l | tr -d ' ')" ]]; then
   printf 'Database dump contains duplicate active owned_file_uuid values.\n' >&2
@@ -117,20 +120,13 @@ if awk '
   exit 1
 fi
 
-if awk '
-  /^\// || /(^|\/)\.\.($|\/)/ { unsafe = 1; next }
-  $0 !~ /^owned(\/|$)/ { unsafe = 1; next }
-  $0 == "owned" || /\/$/ { next }
-  /\.(blob|meta\.json)$/ { next }
-  { unsafe = 1 }
-  END { exit unsafe ? 0 : 1 }
-' "$ARCHIVE_PATHS"; then
+if ! recovery_storage_paths_file_is_exact "$ARCHIVE_PATHS"; then
   printf 'Storage archive has unsafe paths or files outside the owned-file contract.\n' >&2
   exit 1
 fi
 
-sed -n 's#^.*/\([^/]*\)\.blob$#\1#p' "$ARCHIVE_PATHS" >"$BLOB_UUIDS_RAW"
-sed -n 's#^.*/\([^/]*\)\.meta\.json$#\1#p' "$ARCHIVE_PATHS" >"$META_UUIDS_RAW"
+recovery_extract_storage_uuids "$ARCHIVE_PATHS" blob >"$BLOB_UUIDS_RAW"
+recovery_extract_storage_uuids "$ARCHIVE_PATHS" meta.json >"$META_UUIDS_RAW"
 
 if [[ ! -s "$BLOB_UUIDS_RAW" || ! -s "$META_UUIDS_RAW" ]]; then
   printf 'Storage archive contains no complete owned-file data.\n' >&2

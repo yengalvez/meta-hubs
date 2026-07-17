@@ -39,8 +39,36 @@ jobs:
           tar -xzf "$archive" gitleaks
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
 
+      - name: Materialize base-owned Gitleaks policy
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          zero=0000000000000000000000000000000000000000
+          policy_revision=""
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            policy_revision="$PR_BASE_SHA"
+          elif [[ "$EVENT_NAME" == push && "$REF_NAME" == "$DEFAULT_BRANCH" &&
+                  -n "$PUSH_BEFORE_SHA" && "$PUSH_BEFORE_SHA" != "$zero" ]]; then
+            policy_revision="$PUSH_BEFORE_SHA"
+          elif git rev-parse --verify "origin/$DEFAULT_BRANCH^{commit}" >/dev/null 2>&1; then
+            policy_revision="$(git rev-parse "origin/$DEFAULT_BRANCH^{commit}")"
+          else
+            printf 'No trusted base/default revision is available for Gitleaks policy.\n' >&2
+            exit 1
+          fi
+          policy_dir="$RUNNER_TEMP/yenhubs-gitleaks-policy"
+          ./scripts/materialize-gitleaks-policy.sh \
+            . "$policy_revision" "$policy_dir" >>"$GITHUB_ENV"
+
       - name: Scan checked-out worktree for secrets
-        run: gitleaks detect --no-git --source . --redact --timeout 300
+        run: |
+          ./scripts/scan-gitleaks-worktree.sh . "$GITLEAKS_ROOT_CONFIG"
+          ./scripts/scan-gitleaks-worktree.sh hubs "$GITLEAKS_ROOT_CONFIG"
+          ./scripts/scan-gitleaks-worktree.sh hubs-cloud "$GITLEAKS_CLOUD_CONFIG"
 
       - name: Scan pushed Git range for secrets
         env:
@@ -48,11 +76,45 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
           HEAD_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           log_opts="$(./scripts/ci-git-scan-range.sh \
-            "$EVENT_NAME" "$PR_BASE_SHA" "$PUSH_BEFORE_SHA" "$HEAD_SHA")"
+            "$EVENT_NAME" "$PR_BASE_SHA" "$PUSH_BEFORE_SHA" "$HEAD_SHA" "$DEFAULT_BRANCH")"
           printf 'Scanning Git range: %s\n' "$log_opts"
-          gitleaks git --redact --timeout 300 --log-opts="$log_opts" .
+          root_config_args=()
+          cloud_config_args=()
+          if [[ -n "$GITLEAKS_ROOT_CONFIG" ]]; then
+            root_config_args=(--config "$GITLEAKS_ROOT_CONFIG")
+          fi
+          if [[ -n "$GITLEAKS_CLOUD_CONFIG" ]]; then
+            cloud_config_args=(--config "$GITLEAKS_CLOUD_CONFIG")
+          fi
+          gitleaks git "${root_config_args[@]}" --redact --timeout 300 \
+            --log-opts="$log_opts" .
+
+          if [[ "$GITLEAKS_POLICY_MODE" == trusted-base ]]; then
+            submodule_ranges="$(./scripts/ci-submodule-scan-ranges.sh \
+              "$EVENT_NAME" "$PR_BASE_SHA" "$PUSH_BEFORE_SHA" "$HEAD_SHA" "$DEFAULT_BRANCH" \
+              "$GITLEAKS_SUBMODULE_BASELINES")"
+          else
+            submodule_ranges="$(./scripts/ci-submodule-scan-ranges.sh \
+              "$EVENT_NAME" "$PR_BASE_SHA" "$PUSH_BEFORE_SHA" "$HEAD_SHA" "$DEFAULT_BRANCH" \
+              --bootstrap-default)"
+          fi
+          while IFS=$'\t' read -r submodule_path submodule_range; do
+            [[ -n "$submodule_path" && -n "$submodule_range" ]] || continue
+            printf 'Scanning submodule range: %s %s\n' "$submodule_path" "$submodule_range"
+            (
+              cd "$submodule_path"
+              if [[ "$submodule_path" == "hubs-cloud" ]]; then
+                gitleaks git "${cloud_config_args[@]}" --redact --timeout 300 \
+                  --log-opts="$submodule_range" .
+              else
+                gitleaks git "${root_config_args[@]}" --redact --timeout 300 \
+                  --log-opts="$submodule_range" .
+              fi
+            )
+          done <<<"$submodule_ranges"
 
       - name: Install actionlint
         env:
@@ -70,13 +132,22 @@ jobs:
           sudo install -m 0755 actionlint /usr/local/bin/actionlint
 
       - name: Validate GitHub Actions workflows
-        run: actionlint -shellcheck=shellcheck -color=false .github/workflows/*.yml
+        run: |
+          actionlint -shellcheck=shellcheck -color=false .github/workflows/*.yml
+          actionlint -shellcheck=shellcheck -color=false hubs/.github/workflows/*.yml
+          actionlint -shellcheck=shellcheck -color=false hubs-cloud/.github/workflows/*.yml
 
       - name: Validate operational shell scripts
         run: |
           while IFS= read -r -d '' script; do
             shellcheck -x "$script"
-          done < <(find deployment scripts tests/scripts -type f -name '*.sh' -print0)
+          done < <(find deployment scripts tests/recovery tests/scripts -type f -name '*.sh' -print0)
+
+      - name: Install readiness contract test dependencies
+        working-directory: hubs-cloud/community-edition/services/bot-orchestrator
+        run: npm ci --ignore-scripts --no-audit
 
       - name: Run security gate regression tests
-        run: bash tests/scripts/security-gates.test.sh
+        run: |
+          bash tests/scripts/security-gates.test.sh
+          bash tests/recovery/test-recovery-safety.sh
