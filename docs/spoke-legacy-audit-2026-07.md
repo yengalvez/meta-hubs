@@ -12,10 +12,13 @@ A fecha de esta auditoría:
 
 - producción continúa usando la imagen de Spoke fijada por digest que figura en
   el handoff (`sha256:f5120264938e189e702f835182ed4a28a5ce20b140d7262bc2a3074e6d0b6657`);
-- el commit candidato `0edd75b` (`Fix Spoke unit test discovery`) existe solo en
-  la rama `codex/spoke-test-discovery`: no pertenece a `hubs-cloud/master`, no
-  está integrado en el puntero raíz y no está desplegado;
-- ese candidato cambia una sola línea de `package.json`: entrega el glob entre
+- el cambio original `0edd75b` (`Fix Spoke unit test discovery`) se integró como
+  commit terminal `b7b752f` de `codex/bot-safety-final`; el puntero candidato
+  raíz ya fija ese commit y ambas ramas estan publicadas, pero todavia no
+  pertenecen a las ramas base ni estan desplegadas;
+- Hubs Cloud PR `#1` esta `CLEAN` y verde contra `development`; despues de su
+  merge queda el paso separado `development -> master`;
+- el cambio modifica una sola línea de `package.json`: entrega el glob entre
   comillas a AVA para que AVA, y no el shell local, descubra la suite;
 - con Node `16.13.2` y Yarn `1.22.22`, el comando corregido ejecutó localmente
   las 68 pruebas unitarias y terminó con 68/68 correctas;
@@ -25,7 +28,8 @@ A fecha de esta auditoría:
   en la imagen runtime.
 
 Por tanto, Spoke está **operativo en producción**, mientras que la corrección
-del gate y cualquier modernización descrita aquí siguen siendo **candidatas**.
+del gate esta publicada y validada como **candidata**, pero no fusionada ni
+desplegada. Cualquier modernización descrita aquí sigue siendo trabajo separado.
 
 ## Alcance y evidencia
 
@@ -33,18 +37,19 @@ La revisión cubrió, sin mutar producción:
 
 - `hubs-cloud/community-edition/services/spoke/package.json` y `yarn.lock`;
 - `hubs-cloud/community-edition/services/spoke/Dockerfile`;
-- el commit candidato `0edd75b`;
+- el cambio original `0edd75b` y su commit integrado `b7b752f`;
 - `output/project-audit-20260716-175953/security/hubs-cloud-trivy.json`;
 - `output/project-audit-20260716-175953/spoke-wrapper-repro.log`, usado solo
   para demostrar el falso verde anterior de `1 test passed`;
 - reproducción de esta sesión sobre `0edd75b` con Node `16.13.2`, Yarn
   `1.22.22` y `yarn unit-tests`: `68 tests passed` en 6,09 s;
+- repeticion sobre `b7b752f` dentro del gate raiz completo y del job Spoke del
+  PR Cloud `#1`, con lint, 68/68 y build verdes;
 - la documentación de despliegue, handoff y auditoría vigente.
 
-La reproducción 68/68 es evidencia de sesión, no un log CI durable. Antes de
-cerrar o publicar el candidato debe volver a aparecer en el gate raíz y en un
-run de GitHub Actions enlazado aquí. El log histórico de una prueba no se usa
-como sustituto de esa evidencia.
+La reproducción 68/68 ya cuenta con evidencia local integrada y CI durable. No
+sustituye el merge en `development`, el paso posterior `development -> master`,
+una imagen candidata ni la aceptacion funcional de Spoke en staging.
 
 No se ejecutó una actualización de dependencias, construcción de imagen,
 rollout ni operación de escritura sobre un proyecto Spoke real.
@@ -82,7 +87,7 @@ El shell expande el patrón de forma dependiente del entorno antes de que AVA lo
 procese. La evidencia del gate anterior muestra `1 test passed`, aunque existen
 muchos más tests bajo `test/unit`.
 
-El candidato `0edd75b` lo cambia a:
+El cambio original `0edd75b`, integrado como `b7b752f`, lo cambia a:
 
 ```json
 "unit-tests": "ava \"./test/unit/**/*.test.js\""
@@ -200,10 +205,13 @@ sin referencias de salas. Un proyecto o escena de producción no es un fixture.
 
 ### Fase 0 — Recuperar el gate real
 
-1. Integrar únicamente `0edd75b` en la rama base de `hubs-cloud`.
-2. Ejecutar lint, 68 pruebas unitarias y build con Node `16.13.2`/Yarn `1.22.22`.
-3. Actualizar el puntero del repositorio raíz solo después de integrar la rama
-   base del subrepositorio.
+1. `Completado en candidato`: integrar el cambio como `b7b752f` sin mezclar una
+   modernizacion de dependencias.
+2. `Completado en candidato y CI`: ejecutar lint, 68 pruebas unitarias y build
+   con Node `16.13.2`/Yarn `1.22.22`.
+3. `Pendiente`: fusionar Cloud `#1` en `development`, abrir y fusionar
+   `development -> master` y solo despues integrar definitivamente el puntero
+   del repositorio raiz.
 
 Este cambio no necesita una imagen nueva por sí mismo: no altera el bundle. Si
 se decide construirla, sigue aplicando el workflow estándar y todos los gates.

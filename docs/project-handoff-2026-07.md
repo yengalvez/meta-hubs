@@ -7,8 +7,9 @@ Este es el punto de entrada para continuar el proyecto sin depender de una conve
 > no desplegados para reservas autoritativas de sitting, autenticación/readiness
 > de bots, carga GLB neutral a proveedor, arnés de capacidad y gate de Spoke.
 > Durante el trabajo se mostró contenido real del `hcce.yaml` local ignorado al
-> registro de la tarea. No hubo commit, push, apply ni cambio live, pero
-> el próximo rollout queda bloqueado hasta rotar de forma coordinada todos los
+> registro de la tarea. La exposición no produjo apply ni cambio live. Los
+> candidatos se publicaron después en ramas y PR separados, pero el próximo
+> rollout queda bloqueado hasta rotar de forma coordinada todos los
 > secretos potencialmente incluidos y verificar solo por huella. No volver a
 > abrir ni imprimir el manifiesto ignorado para inventariarlos. Además, el
 > candidato de bots no puede pasar a rollout público ni a certificación de
@@ -45,14 +46,28 @@ Sala de aceptacion: <https://meta-hubs.org/VJopCY3/inicio>
 | `hubs-cloud/` | `master` | `b7b752f8247b30b22df241bfad2be795c5733420` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
 
 Los commits del corte original de auditoria/CI estan publicados en Git. Los
-candidatos del addendum siguen siendo locales y, incluso tras publicarlos, no
-cambiaran el runtime hasta construir nuevas imagenes por Actions y desplegarlas
-por digest.
+candidatos del addendum tambien estan publicados en ramas remotas y PR, pero no
+pertenecen todavia a las ramas base ni cambiaran el runtime hasta construir
+nuevas imagenes por Actions y desplegarlas por digest.
 
-La integración local de los candidatos del 17 de julio está cerrada en GO sobre
+Estado de publicacion comprobado el 17 de julio:
+
+- Hubs PR `#3`, `codex/hubs-race-hardening-final -> master`: `CLEAN`, checks
+  verdes.
+- Hubs Cloud PR `#1`, `codex/bot-safety-final -> development`: `CLEAN`, checks
+  verdes. Tras fusionarlo debe abrirse y aceptar el paso separado
+  `development -> master` exigido por el repositorio.
+- Meta-hubs PR `#1`, `codex/final-audit-readiness -> main`: bloqueado solo
+  porque `main` todavia no contiene la politica Gitleaks base-owned.
+- Meta-hubs PR minimo `#2`, `codex/gitleaks-policy-bootstrap -> main`: `CLEAN`,
+  checks verdes y pendiente de revision/merge. Debe integrarse antes de repetir
+  el PR `#1`; no se debe permitir que la politica candidata se autorice a si
+  misma.
+
+La integración candidata del 17 de julio está cerrada en GO sobre
 Hubs `d7f0c2fc4` y Hubs Cloud `b7b752f`. Este resultado solo acredita código,
-suites y builds locales: no sustituye los valores live de la tabla, no implica
-que se hayan construido imágenes por Actions y no constituye aceptación de
+suites, builds locales y CI de PR: no sustituye los valores live de la tabla,
+no implica que se hayan construido imágenes candidatas por Actions y no constituye aceptación de
 staging, capacidad ni producción. No actualizar punteros base ni digests live
 hasta completar el flujo publicado de integración y rollout.
 
