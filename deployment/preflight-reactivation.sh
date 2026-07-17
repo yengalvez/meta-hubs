@@ -24,7 +24,7 @@ DOCTL_CONTEXT="${DOCTL_CONTEXT:-yenhubs}"
 CLUSTER_NAME="${CLUSTER_NAME:-hubs-ce}"
 NAMESPACE="${NAMESPACE:-hcce}"
 
-reactivation_install_cleanup_traps
+reactivation_install_cleanup_traps ""
 
 failures=0
 warnings=0

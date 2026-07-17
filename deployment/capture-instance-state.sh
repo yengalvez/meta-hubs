@@ -23,7 +23,7 @@ VALUES_FILE=""
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
 # shellcheck source=deployment/lib/reactivation-gate-functions.sh
 source "$SCRIPT_DIR/lib/reactivation-gate-functions.sh"
-reactivation_install_cleanup_traps
+reactivation_install_cleanup_traps ""
 
 for command_name in git kubectl doctl jq node; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
