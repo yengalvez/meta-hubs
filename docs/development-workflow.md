@@ -21,6 +21,14 @@ verificables y reimplantables cuando Hubs Foundation publique una release.
 Las ramas `upstream/master` contienen trabajo no publicado. Se usan para
 anticipar conflictos, nunca como baseline automatico de produccion.
 
+## Corte candidato local del 17 de julio
+
+La integración local validada se apoya en Hubs `d7f0c2fc4` y Hubs Cloud
+`b7b752f`. Incluye la capacidad base64url exacta de 32 caracteres por canal para
+chat privado y la admisión global serializada de salas con bots. El gate Spoke
+pasó 68/68 pruebas, lint y build con Node 16.13.2/Yarn 1. Es GO de integración
+local únicamente, no de Actions, carga física, staging ni live.
+
 ## Preparar remotos
 
 ```bash
@@ -121,13 +129,13 @@ Reglas de resolucion:
 | Area cambiada | Aceptacion minima |
 | --- | --- |
 | Camara, IK o avatar rig | primera/tercera persona, avatar normal y full-body |
-| Waypoints o character controller | movimiento, sit/stand, Space targets |
-| Networking/NAF | usuario remoto, bots, late join, remove/reconnect |
-| Media/avatar upload | normal, RPM/Avaturn, preview, privado y featured |
+| Waypoints o character controller | movimiento, reserva autoritativa de dos clientes, sit/stand, lease/disconnect y Space targets |
+| Networking/NAF | usuario remoto, namespace/ACK de bots, tipos `networkId`, late join, remove/reconnect |
+| Media/avatar upload | normal, full-body/RPM histórico, GLB neutral, preview, privado y featured |
 | Room settings/Reticulum | persistencia, permisos y normalizacion backend |
-| Bots | spawn, static/low, navmesh, chat, rate limit y privacidad |
+| Bots | admisión global, Presence/auth, spawn ACK, navmesh obligatorio, `/ready`, capacidad exacta por canal, chat, moderación/deadline, rate limit y privacidad |
 | UI/i18n | desktop, tablet, movil, espanol y escena 3D visible |
-| Spoke | login, abrir proyecto, guardar y publicar en copia segura |
+| Spoke | 68/68 pruebas y lint/build legacy; después login, abrir proyecto, guardar y publicar en copia segura |
 | Dialog/Coturn | entrada de sala y audio entre dos clientes |
 | Generator/Kubernetes | 44 recursos, un LB, digests, TLS, RBAC y diff seguro |
 
@@ -148,6 +156,13 @@ con mayor riesgo son:
 El inventario detallado esta en `docs/customization-inventory.md`.
 
 ## Integracion y rollback
+
+Antes de promover el candidato siguen bloqueando: `AUD-065` (checkpoint fresco
+DB+storage y rotación coordinada), aislamiento OS/pod por runner, fencing DB de
+leases, aprobación o cuarentena ejecutable de configuraciones activas heredadas
+y una parada autoritativa más fuerte que el `room_stop` best-effort. También
+faltan Actions, carga física, staging y aceptación live; ningún gate local mide
+capacidad ni autoriza rollout público.
 
 Una release solo se acepta cuando:
 

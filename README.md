@@ -2,7 +2,9 @@
 
 Distribucion personalizada de Hubs Foundation Community Edition sobre DigitalOcean Kubernetes.
 
-Estado de referencia: 16 de julio de 2026.
+Estado live de referencia: 16 de julio de 2026. El handoff contiene un addendum
+de candidatos y bloqueos del 17 de julio; no confundir fuente candidata con
+runtime desplegado.
 
 - Hubs estable: `prod-2026-03-11`.
 - Hubs CE estable: `2.1.0`.
@@ -34,9 +36,11 @@ rama base y el root registra el nuevo puntero.
 ## Funcionalidad propia
 
 - Camara primera/tercera persona.
-- Avatares normales, RPM full-body y Avaturn privado no listado.
+- Avatares normales/full-body y carga GLB privada no listada, neutral respecto
+  del proveedor; conserva compatibilidad con RPM ya exportado.
 - Import local/URL, previews y Featured.
-- Sitting con waypoints `Disable motion`.
+- Sitting con waypoints; el candidato autoritativo exige `Disable motion`,
+  `Can be occupied`, identidad estable y reserva de servidor.
 - Locomocion idle, frontal, lateral y hacia atras.
 - Bots por sala, featured avatars, `spawbot-*`, navmesh, chat privado y GPT-5 Nano.
 - Guardarrailes, moderacion, rate limit y sin historial persistido en YenHubs.
@@ -64,11 +68,13 @@ YenHubs/
 ./scripts/audit-upstream.sh
 ./scripts/verify-project.sh
 ./scripts/verify-project.sh --full
-./deployment/preflight-reactivation.sh
+BACKUP_DIR=/absolute/path/to/fresh-checkpoint ./deployment/preflight-reactivation.sh
 ./deployment/verify-live-reactivation.sh
 ```
 
-Los dos ultimos comandos requieren el contexto de infraestructura correcto. No desplegar si el preflight falla.
+Los dos ultimos comandos requieren el contexto de infraestructura correcto. El
+preflight exige un `BACKUP_DIR` fresco y explicito; no selecciona un backup
+"latest". No desplegar si falla.
 
 ## Backup
 
