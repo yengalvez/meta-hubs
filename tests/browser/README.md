@@ -4,12 +4,19 @@
 
 The sitting test launches exactly two isolated Chrome contexts and verifies:
 
-- simultaneous contention never produces an overlapping seated frame;
+- epoch-timestamped, unthrottled sitting transitions never produce overlapping
+  seated intervals during simultaneous contention;
 - one stable owner and the same remote seated pose are visible to both clients;
 - Stand releases the seat and uses the nearest non-seat fallback waypoint;
 - the loser can reclaim the released seat;
 - an abrupt disconnect clears inherited occupancy within 2.5 seconds;
 - every seat in the target scene has `Disable motion`, `Can be occupied` and `Clickable`.
+
+The transition log is the primary evidence for short-lived local overlap. The
+25 ms cross-client samples provide bounded corroboration for public occupancy
+and private reservation state; they are not complete frame coverage. A-Frame's
+throttled `componentchanged` signal and the final `player-info` value are used as
+coherence checks, not as the transition clock.
 
 There is deliberately no default target. Prefer a disposable staging room with
 the production scene contract:
