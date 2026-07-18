@@ -123,8 +123,8 @@ pendiente.
   repetir gates verdes cuyos inputs no cambiaron.
 - [x] Ejecutar `git diff --check`, ShellCheck/Gitleaks pertinentes y revisión de
   secretos antes del commit.
-- [ ] Commit, push y PR raíz desde `codex/aud075-integration` hacia `main`.
-- [ ] Incluir este plan activo en el PR y conservar su ruta relativa
+- [x] Commit, push y PR raíz desde `codex/aud075-integration` hacia `main`.
+- [x] Incluir este plan activo en el PR y conservar su ruta relativa
   `docs/active-goal-plan-2026-07-18.md` como fuente de verdad versionada.
 - [ ] Esperar el CI, corregir fallos reales y fusionar el PR.
 - [ ] Confirmar que `main` fija Hubs y Cloud a commits existentes en sus ramas
@@ -299,6 +299,7 @@ secretos ni reemplazar la evidencia original.
 | 2026-07-18 14:16 CEST | Fase 1: revisión de alcance y gates finales | Revisión independiente de 38 ficheros sin trabajo ajeno; gitlink Cloud exacto `5392495` limpio y en `origin/master`; `npm run apply` confirmado como wrapper del mismo manifiesto generado y `kubectl apply` bajo Lease/fencing/fases. `verify-project.sh` y `--full` verdes: seguridad 43/43, recuperación 239/239, Pods 45/45, pull 19/19, Deployment 18/18, Hubs 97/97 y build, navegador 11/11, capacidad 115/115 fail-closed, orquestador 128/128, Dialog 2/2, Photomnemonic 7/7, Spoke 68/68 y build, generador 30/30 con 58 recursos y Reticulum 430 + 5 | Preparar el diff staged, repetir checks estáticos proporcionales y crear el commit raíz; producción sigue intacta |
 | 2026-07-18 14:17 CEST | Fase 1: precommit estático | `git diff --check`, Actionlint, ShellCheck completo y Gitleaks sobre root/Hubs/Cloud terminan con código 0; submódulos exactos Hubs `674ece` y Cloud `5392495` | Stagear únicamente los 38 ficheros revisados y verificar el diff cached antes del commit |
 | 2026-07-18 14:18 CEST | Fase 1: revisión staged | Los 38 ficheros se añadieron explícitamente; `git diff --cached --check` termina con código 0, no quedan cambios unstaged ni untracked y el gitlink registra únicamente Cloud `0f151eb -> 5392495` | Crear el commit raíz y publicar el PR de Fase 1 |
+| 2026-07-18 14:20 CEST | Fase 1: publicación del candidato | Commit raíz `9e7b860`, push de `codex/aud075-integration` y PR `meta-hubs #5` hacia `main`; el PR incluye este plan activo y declara explícitamente que no hubo mutación live | Esperar CI, corregir únicamente fallos reales y fusionar el PR |
 
 Mientras se completa la Fase 1, la copia autoritativa está en el worktree
 indicado al principio. Después de fusionarla, continuar desde la versión
