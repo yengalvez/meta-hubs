@@ -2,10 +2,11 @@
 
 Este es el punto de entrada para continuar el proyecto sin depender de una conversacion anterior.
 
-> **Addendum activo — 17 de julio de 2026:** los hashes e imágenes de este
-> documento siguen describiendo producción el 16 de julio. Hay candidatos aún
-> no desplegados para reservas autoritativas de sitting, autenticación/readiness
-> de bots, carga GLB neutral a proveedor, arnés de capacidad y gate de Spoke.
+> **Addendum activo — 18 de julio de 2026:** los hashes e imágenes de este
+> documento siguen describiendo producción el 16 de julio. El código para
+> reservas autoritativas de sitting, autenticación/readiness de bots, carga GLB
+> neutral a proveedor, arnés de capacidad y gate de Spoke ya está integrado en
+> las ramas base, pero aún no se ha construido ni desplegado como nuevo runtime.
 > Durante el trabajo se mostró contenido real del `hcce.yaml` local ignorado al
 > registro de la tarea. La exposición no produjo apply ni cambio live. Los
 > candidatos se publicaron después en ramas y PR separados, pero el próximo
@@ -20,8 +21,8 @@ Este es el punto de entrada para continuar el proyecto sin depender de una conve
 
 YenHubs esta operativo en <https://meta-hubs.org> y el verificador live informa 0 fallos y 0 avisos. La produccion usa:
 
-- Hubs `prod-2026-03-11` con 79 commits propios adicionales.
-- Hubs CE `2.1.0` con 79 commits propios adicionales.
+- Hubs sobre la release aceptada `prod-2026-03-11`.
+- Hubs CE sobre la release aceptada `2.1.0`.
 - Reticulum sobre Elixir 1.18.4 / OTP 27.
 - Ghost runner Node, no Chromium, con navmesh+A*.
 - Un cluster DOKS no-HA `hubs-ce` en `ams3`.
@@ -45,32 +46,31 @@ Sala de aceptacion: <https://meta-hubs.org/VJopCY3/inicio>
 | `hubs/` | `master` | `d7f0c2fc40bb17e36e428b425064d2d47c7cdcbe` | `a7214eb882d19c98b2c8516489e0ed1fb7401c75` |
 | `hubs-cloud/` | `master` | `b7b752f8247b30b22df241bfad2be795c5733420` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
 
-Los commits del corte original de auditoria/CI estan publicados en Git. Los
-candidatos del addendum tambien estan publicados en ramas remotas y PR, pero no
-pertenecen todavia a las ramas base ni cambiaran el runtime hasta construir
-nuevas imagenes por Actions y desplegarlas por digest.
+Los gitlinks conservan las fuentes exactas auditadas. Hubs `d7f0c2fc4` ya es
+ancestro de `master` mediante el merge `6f1f5315696c`; Hubs Cloud `b7b752f` es
+ancestro de `development` mediante `c5d39e0c930` y de `master` mediante
+`2164851185da`. Estos merges no cambian el runtime hasta construir nuevas
+imagenes por Actions y desplegarlas por digest.
 
-Estado de publicacion comprobado el 17 de julio:
+Estado de publicación comprobado el 18 de julio:
 
-- Hubs PR `#3`, `codex/hubs-race-hardening-final -> master`: `CLEAN`, checks
-  verdes.
-- Hubs Cloud PR `#1`, `codex/bot-safety-final -> development`: `CLEAN`, checks
-  verdes. Tras fusionarlo debe abrirse y aceptar el paso separado
-  `development -> master` exigido por el repositorio.
+- Hubs PR `#3`: fusionado en `master` como `6f1f5315696c`; Security y Storybook
+  post-merge verdes.
+- Hubs Cloud PR `#1`: fusionado en `development` como `c5d39e0c930`; PR `#2`
+  `development -> master`: fusionado como `2164851185da`, con guard, Security,
+  Services, Spoke y Reticulum PostgreSQL 12/14 verdes.
 - Meta-hubs PR minimo `#2`, `codex/gitleaks-policy-bootstrap -> main`: fusionado
   como `f79175d`. La politica ya procede de la base y no de la rama candidata.
-- Meta-hubs PR `#1`, `codex/final-audit-readiness -> main`: actualizado a
-  `9906cc7` y fusionable, pero `UNSTABLE`. Gitleaks pasa en modo `trusted-base`;
-  los runs `29599274001` y `29599277151` fallan despues en ShellCheck `SC2119`
-  sobre `deployment/capture-instance-state.sh:26`.
+- Meta-hubs PR `#1`, `codex/final-audit-readiness -> main`: gate de código verde
+  en `9d2679d` mediante los runs `29621665409` y `29621667500`, después de
+  corregir SC2119, SC2015 y portabilidad GNU/BSD. Queda fusionar el PR raíz.
 
-La integración candidata del 17 de julio está cerrada en GO sobre
-Hubs `d7f0c2fc4` y Hubs Cloud `b7b752f`. Este resultado solo acredita código,
-suites, builds locales y el CI verde de Hubs/Cloud: no sustituye los valores
-live de la tabla. El CI raiz aun no esta verde, no se han construido imagenes
-candidatas por Actions y no existe aceptacion de staging, capacidad ni
-produccion. No actualizar punteros base ni digests live hasta completar el flujo
-publicado de integracion y rollout.
+La integración Git y el CI de fuentes están cerrados en GO sobre Hubs
+`d7f0c2fc4` y Hubs Cloud `b7b752f`. Este resultado acredita código, suites,
+builds de verificación y ramas base; no sustituye los valores live de la tabla.
+No se han construido imágenes candidatas de rollout, ni existe aceptación de
+staging, capacidad o producción. No actualizar digests live hasta completar el
+flujo publicado de seguridad, build y rollout.
 
 El candidato de bots añade dos contratos que tampoco forman parte del runtime
 live de la tabla:
@@ -220,7 +220,7 @@ política de red propios; el padre debe conservar las credenciales OpenAI y de
 orquestación y comunicarse con los runners mediante un canal autenticado y
 mínimo. Este rediseño aún no está implementado ni desplegado.
 
-El GO de integración local no levanta los siguientes bloqueos:
+El GO de integración Git y CI de fuentes no levanta los siguientes bloqueos:
 
 - `AUD-065`: antes de cualquier mutación de producción hay que crear un
   checkpoint fresco de DB+storage y rotar coordinadamente todos los secretos
@@ -269,10 +269,10 @@ El GO de integración local no levanta los siguientes bloqueos:
 
 ## Auditoria y pruebas realizadas
 
-El cierre candidato del 17 de julio añadió Hubs `d7f0c2fc4`, Hubs Cloud
-`b7b752f` y el gate Spoke 68/68+lint+build. Su dictamen es GO de integración
-local únicamente; las cifras y verificaciones live siguientes pertenecen al
-baseline de producción del 16 de julio y no prueban el candidato.
+El cierre del 18 de julio integró en Git Hubs `d7f0c2fc4`, Hubs Cloud
+`b7b752f` y el gate Spoke 68/68+lint+build, con CI de fuentes verde. Su dictamen
+no autoriza rollout: las cifras y verificaciones live siguientes pertenecen al
+baseline de producción del 16 de julio y no prueban el nuevo runtime.
 
 - Hubs: check, lint, 12 unit tests, build; Hubs/Admin audit de produccion en 0.
 - Admin: tests, lint y build.

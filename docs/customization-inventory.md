@@ -8,13 +8,14 @@ uso estan en `features/`; la evidencia de pruebas esta en
 
 Comparado con las releases estables aceptadas:
 
-- Hubs: 147 archivos, 10.913 inserciones y 2.472 eliminaciones.
-- Hubs CE: 118 archivos, 13.663 inserciones y 12.700 eliminaciones.
+- Hubs: 172 archivos, 14.681 inserciones y 2.611 eliminaciones.
+- Hubs CE: 155 archivos, 28.154 inserciones y 12.876 eliminaciones.
 
-El candidato integrado local del 17 de julio queda identificado por Hubs
-`d7f0c2fc4` y Hubs Cloud `b7b752f`. Spoke pasó 68/68 pruebas, lint y build con
-Node 16.13.2/Yarn 1. Es un GO de integración local, no de Actions, staging,
-capacidad ni producción.
+El corte integrado del 18 de julio queda identificado por Hubs `d7f0c2fc4`,
+ancestro de `master` mediante `6f1f5315696c`, y Hubs Cloud `b7b752f`, ancestro
+de `master` mediante `2164851185da`. Spoke pasó 68/68 pruebas, lint y build con
+Node 16.13.2/Yarn 1. Es un GO de Git y CI de fuentes, no de builds de imágenes,
+staging, capacidad ni producción.
 
 ## Cliente Hubs
 
@@ -108,8 +109,9 @@ Cambiar estos contratos exige compatibilidad hacia atras o migracion:
   fencing persistente en DB para leases de autoridad.
 - Aprobación persistida o cuarentena ejecutable para configuraciones activas
   heredadas; `room_stop` sigue siendo best-effort.
-- Capacidad física, Actions, staging y aceptación live siguen pendientes; los
-  gates locales no miden CCU ni autorizan rollout público.
+- Capacidad física, builds de imágenes por Actions, staging y aceptación live
+  siguen pendientes; los gates de fuentes no miden CCU ni autorizan rollout
+  público.
 
 ## Prueba obligatoria tras upgrade
 

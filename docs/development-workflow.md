@@ -21,13 +21,14 @@ verificables y reimplantables cuando Hubs Foundation publique una release.
 Las ramas `upstream/master` contienen trabajo no publicado. Se usan para
 anticipar conflictos, nunca como baseline automatico de produccion.
 
-## Corte candidato local del 17 de julio
+## Corte integrado del 18 de julio
 
-La integración local validada se apoya en Hubs `d7f0c2fc4` y Hubs Cloud
-`b7b752f`. Incluye la capacidad base64url exacta de 32 caracteres por canal para
-chat privado y la admisión global serializada de salas con bots. El gate Spoke
-pasó 68/68 pruebas, lint y build con Node 16.13.2/Yarn 1. Es GO de integración
-local únicamente, no de Actions, carga física, staging ni live.
+La integración validada se apoya en Hubs `d7f0c2fc4`, incorporado a `master`
+mediante `6f1f5315696c`, y Hubs Cloud `b7b752f`, incorporado a `master` mediante
+`2164851185da`. Incluye la capacidad base64url exacta de 32 caracteres por canal
+para chat privado y la admisión global serializada de salas con bots. El gate
+Spoke pasó 68/68 pruebas, lint y build con Node 16.13.2/Yarn 1. Es GO de Git y CI
+de fuentes, no de builds de imágenes, carga física, staging ni live.
 
 ## Preparar remotos
 
@@ -62,11 +63,11 @@ El script:
 - hace un dry merge contra `upstream/master`;
 - no cambia ningun worktree.
 
-En el corte del 16 de julio de 2026:
+En el corte integrado del 18 de julio de 2026:
 
-- Hubs esta 79 commits propios por delante de `prod-2026-03-11` y no le falta
+- Hubs esta 87 commits propios por delante de `prod-2026-03-11` y no le falta
   ningun commit de esa release;
-- Hubs CE esta 79 commits propios por delante de `2.1.0` y no le falta ningun
+- Hubs CE esta 85 commits propios por delante de `2.1.0` y no le falta ningun
   commit de esa release;
 - hay 13 commits Hubs y 5 Hubs CE no publicados en los respectivos `master`
   oficiales;
@@ -141,8 +142,8 @@ Reglas de resolucion:
 
 ## Conflictos previsibles
 
-La personalizacion es amplia: frente a la release estable, Hubs modifica 146
-archivos y Hubs CE 111. No significa que cada update produzca 257 conflictos;
+La personalizacion es amplia: frente a la release estable, Hubs modifica 172
+archivos y Hubs CE 155. No significa que cada update produzca 327 conflictos;
 la mayoria de cambios estan aislados por componentes y servicios. Los puntos
 con mayor riesgo son:
 
@@ -157,12 +158,12 @@ El inventario detallado esta en `docs/customization-inventory.md`.
 
 ## Integracion y rollback
 
-Antes de promover el candidato siguen bloqueando: `AUD-065` (checkpoint fresco
+Antes de desplegar el código integrado siguen bloqueando: `AUD-065` (checkpoint fresco
 DB+storage y rotación coordinada), aislamiento OS/pod por runner, fencing DB de
 leases, aprobación o cuarentena ejecutable de configuraciones activas heredadas
 y una parada autoritativa más fuerte que el `room_stop` best-effort. También
-faltan Actions, carga física, staging y aceptación live; ningún gate local mide
-capacidad ni autoriza rollout público.
+faltan builds de imágenes por Actions, carga física, staging y aceptación live;
+ningún gate de fuentes mide capacidad ni autoriza rollout público.
 
 Una release solo se acepta cuando:
 
