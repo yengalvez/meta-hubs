@@ -10,18 +10,21 @@ clave por URL ni estado cliente. Ghost publica avatares y rutas por Phoenix/NAF
 sin renderizar la sala, mientras Reticulum conserva la autoridad sobre
 identidad, spawn, actualizaciones y comandos.
 
-> Estado: endurecimiento candidato validado con suites locales. Esta
-> especificación no afirma despliegue ni aceptación en staging/live; esas fases
-> siguen pendientes del flujo de `deployment/README.md`. El rollout público y
-> la certificación de capacidad están además bloqueados hasta aislar padre y
-> runners ghost en pods o contenedores distintos con credenciales y recursos
-> propios.
+> Estado: `AUD-075` está integrado en la fuente Cloud final
+> `5392495b077249edcedfb3092551201645f648f1`; sus PR `#11`/`#12` y CI están
+> verdes. Todavía no se ha construido por Actions el par de imágenes, desplegado
+> ni atestado en staging/live. Por ello el rollout público sigue bloqueado hasta
+> cerrar `AUD-065`/`AUD-078`, fijar ambos digests, desplegar la topología
+> generada y superar los gates live de `deployment/README.md`. La certificación
+> física de capacidad es una campaña futura separada.
 
-El corte integrado usa Hubs `674ece411691` y Hubs Cloud `0f151eb88da1`. Spoke
-pasó 68/68 pruebas, lint y build con Node 16.13.2/Yarn 1; el fencing de
-autoridad pasó Reticulum 418 pruebas + 5 properties, orquestador 103/103 y
-generador 26/26. El dictamen es GO de integración Git/CI únicamente: no se
-ejecutaron carga física, builds de rollout, staging ni aceptación live.
+El corte usa Hubs `674ece411691` y Hubs Cloud
+`5392495b077249edcedfb3092551201645f648f1`, que incluye el baseline
+`0f151eb88da1` de fencing y aprobación. Pasan 128/128 pruebas del orquestador,
+30/30 del generador con 58 recursos, 45/45 del verificador de Pods runner,
+19/19 del pull/configuración, 18/18 del Deployment, 43/43 gates raíz de
+seguridad y 239/239 de recuperación. El dictamen es GO de fuente/CI únicamente:
+no se ejecutaron builds de rollout, staging, despliegue ni aceptación live.
 
 Límites de seguridad por defecto:
 
@@ -139,28 +142,31 @@ distintas y existir solo en los consumidores mínimos:
 
 - `BOT_ACCESS_KEY`: compatibilidad del binding interno heredado, solo en
   Reticulum;
-- `BOT_RUNNER_ACCESS_KEY`: join Phoenix del ghost runner y lectura del snapshot,
-  en Reticulum y en el proceso padre/hijo del runner;
-- `BOT_ORCHESTRATOR_ACCESS_KEY`: llamadas de Reticulum al proceso padre del
-  orquestador;
+- `BOT_RUNNER_ACCESS_KEY`: transición del runner `process-local` heredado, solo
+  en Reticulum; no se monta en ninguna de las dos imágenes nuevas;
+- `BOT_ORCHESTRATOR_ACCESS_KEY`: llamadas de Reticulum al proceso padre y firma
+  del token de generación v1, en Reticulum y en el padre;
 - `DASHBOARD_ACCESS_KEY`: rutas administrativas de Reticulum.
 
-El proceso hijo recibe por entorno únicamente `BOT_RUNNER_ACCESS_KEY`; el padre
-no recibe la clave legacy ni la administrativa. Ninguna se envía al navegador
-ni se almacena en YAML versionado. Esta separación de variables reduce la
-herencia accidental, pero no constituye una frontera de seguridad entre
-procesos mientras compartan contenedor y UID.
+El Pod runner recibe únicamente su token de generación efímero; el padre no
+recibe la clave legacy de runner ni la administrativa. Ninguna credencial se
+envía al navegador ni se almacena en YAML versionado. El Secret privado
+`bot-images-pull` solo lo consume kubelet mediante `imagePullSecrets`: no se
+monta ni se entrega a Node. Su origen
+`BOT_IMAGE_PULL_CONFIG_JSON_BASE64` vive únicamente en el values local `0600` y
+se actualiza con `npm run set-bot-image-pull-config`, pasando `GHCR_TOKEN` por
+entrada oculta/entorno y sin imprimirlo.
 
 El flujo autoritativo es:
 
-1. Ghost solicita el join Phoenix con `context.bot_runner=true` y la clave
-   interna.
-2. Reticulum rechaza el join si se pidió rol de runner sin clave válida; no
+1. Ghost solicita el join Phoenix con `context.bot_runner=true` y su token de
+   generación v1; la master key solo existe para el rollback legacy privado.
+2. Reticulum verifica sala, generación, holder y caducidad exactos. Si falla, no
    degrada silenciosamente a cliente normal.
-3. La respuesta confirma `bot_runner=true` y Presence publica el contexto
-   autenticado de esa misma sesión.
-4. Ghost espera a observar su propia Presence autenticada antes de intentar un
-   spawn.
+3. Bajo lock PostgreSQL adquiere/asigna el lease UUID y epoch de autoridad; la
+   respuesta y Presence confirman `bot_runner=true` con ese fence exacto.
+4. Ghost espera su propia Presence autenticada con lease+epoch coincidentes
+   antes de intentar un spawn.
 5. Los bots usan exclusivamente el template `#remote-bot-avatar` y el namespace
    reservado `room-bot-<hub_sid>-bot-<id>`.
 6. Reticulum rechaza que un cliente normal use ese namespace o template, y
@@ -193,30 +199,49 @@ verificador siguen exigiendo una réplica Reticulum, `Recreate` y sin HPA hasta
 que un rollout separado pruebe dos réplicas frías, readiness/Endpoints y la
 restricción `ret-pvc` RWO.
 
-### Bloqueo de aislamiento de procesos
+### Aislamiento por Pod (`AUD-075`)
 
-El candidato actual ejecuta el padre y todos los ghost runners bajo UID 1000 en
-el mismo contenedor, namespace PID y cgroup. Por ello un runner comprometido
-puede intentar leer mediante `/proc` variables del padre que no heredó, enviar
-señales a otros procesos y consumir el límite de memoria compartido hasta
-derribar padre y salas vecinas. La allowlist de `spawn` no resuelve ese límite
-de confianza ni el dominio común de fallo/OOM.
+Cloud `5392495b077249edcedfb3092551201645f648f1` elimina el hijo Node del
+contenedor padre y crea exactamente
+un Pod `restartPolicy: Never` por sala y generación. El padre conserva
+`OPENAI_API_KEY`, `BOT_ORCHESTRATOR_ACCESS_KEY` y el control namespaced de Pods;
+no recibe `BOT_RUNNER_ACCESS_KEY`. Cada runner usa la imagen separada
+`bot-runner`, UID/GID 10001, namespace PID y cgroup propios, requests/limits,
+raíz de solo lectura, `/tmp` acotado, `allowPrivilegeEscalation=false`, todas las
+capabilities eliminadas y seccomp `RuntimeDefault`. Su ServiceAccount no monta
+token y no tiene RBAC. No recibe clave del proveedor, credencial maestra de
+runner, credencial del padre ni autoridad Kubernetes.
 
-Antes de rollout público o certificación de capacidad, cada runner debe vivir
-en su propio pod o contenedor, con namespace de proceso, credencial
-`BOT_RUNNER_ACCESS_KEY`, requests/limits y NetworkPolicy propios. El padre debe
-conservar `BOT_ORCHESTRATOR_ACCESS_KEY` y `OPENAI_API_KEY` y comunicarse por un
-canal autenticado mínimo. Este rediseño es un residual P1 abierto y no está
-implementado ni desplegado.
+Los nombres y labels usan un HMAC de la sala, nunca el SID crudo. El padre solo
+puede crear, consultar/listar y borrar Pods en el namespace; cada borrado se
+liga al nombre y UID exactos. Al arrancar no adopta Pods heredados: elimina todo
+runner gestionado, prueba el conjunto vacío y después abre el transporte. La
+reconciliación periódica elimina de forma fail-closed Pods desconocidos,
+caducados, terminales o con owner/contrato distinto. Las dos NetworkPolicies
+del namespace runner aplican default-deny y autorizan únicamente el egress
+necesario hacia kube-dns, el control-plane padre y TCP/443 público.
+
+El token de generación v1 preautoriza únicamente sala, UUID de generación,
+holder/UID del Pod padre y caducidad. No contiene lease ni epoch y no sustituye
+el fencing. Después del join, Reticulum asigna el UUID de lease PostgreSQL y el
+epoch de autoridad positivo; Presence, ACKs, comandos, estado del runner y
+readiness deben coincidir exactamente. El runner rechaza fences ausentes o
+stale. El token viaja en el join y en el header Bearer del canal de control,
+nunca en URL o estado cliente.
+
+Este aislamiento está integrado y probado en fuente, pero sigue sin digests ni
+atestación de runtime. `process-local` solo se admite como rollback privado con
+bots públicos deshabilitados; no es una topología aceptable para público ni
+para certificar capacidad.
 
 ### Otros bloqueos operativos
 
 - `AUD-065` exige checkpoint fresco de DB+storage y rotación coordinada de todos
   los secretos potencialmente expuestos antes de cualquier mutación de
   producción.
-- El fencing PostgreSQL de leases está integrado y probado, pero aún no
-  desplegado ni atestado; el baseline live sigue siendo process-local y no debe
-  autorizar autoridades concurrentes.
+- El aislamiento por Pod y el fencing PostgreSQL están integrados y probados en
+  fuente, pero aún no desplegados ni atestados; el baseline live sigue siendo
+  `process-local` y no debe autorizar uso público ni autoridades concurrentes.
 - El código de aprobación/cuarentena está integrado pero no desplegado; tras la
   migración debe revisarse el inventario redactado y aprobar cada configuración
   válida antes de reactivar bots.
@@ -248,11 +273,17 @@ Variables principales de `bot-orchestrator`:
 - `GHOST_NAVMESH_MAX_ROUTE_POINTS` y
   `GHOST_NAVMESH_MAX_SNAP_DISTANCE_M`.
 - `RUNNER_HEALTH_TTL_MS`: frescura máxima del estado autoritativo.
+- `BOT_RUNNER_IMAGE`: digest exacto de la imagen separada que el padre crea por
+  sala; debe coincidir con `OVERRIDE_BOT_RUNNER_IMAGE`.
 - `OPENAI_MODEL`: debe permanecer `gpt-5-nano` si el chat IA está habilitado.
 - `OPENAI_TOTAL_BUDGET_MS`: presupuesto total, limitado a 4000 ms.
 
 `/health` describe proceso, cola y diagnóstico. No certifica por sí solo que
-los bots estén utilizables. `/ready` es el gate: cada sala configurada con una
+los bots estén utilizables. La probe Kubernetes del padre usa
+`/transport-ready`: solo abre tras eliminar/probar ausentes los runners
+huérfanos y permite que los nuevos Pods alcancen el canal de control sin crear
+un deadlock de bootstrap. No es aceptación de bots. `/ready` es el gate
+autoritativo: cada sala configurada con una
 población mayor que cero debe tener un estado reciente que confirme a la vez:
 
 - runner autenticado;
@@ -411,6 +442,9 @@ Superficie que debe revalidarse en cada upgrade:
 - normalización, chat, readiness y límites de `bot-orchestrator/app.js`;
 - parser GLB, navmesh, namespace y ACKs de `run-ghost-runner.js`;
 - generador Hubs CE y verificaciones fail-closed.
+- manager Kubernetes, cliente de control y token de generación v1;
+- ambos Dockerfiles, workflow de dos imágenes, RBAC/ServiceAccounts, Secret de
+  pull y NetworkPolicy del runner.
 
 Gate mínimo:
 
@@ -418,7 +452,8 @@ Gate mínimo:
 2. generador sin placeholders, secretos expuestos ni imágenes mutables;
 3. escena staging con navmesh y rutas entre puntos conectados;
 4. autenticación negativa/positiva, namespace reservado y ACK exacto;
-5. `/ready=503` ante navmesh, auth, ACK o población incorrectos;
+5. `/transport-ready` solo tras reconciliar huérfanos y `/ready=503` ante
+   navmesh, auth, lease/epoch, ACK o población incorrectos;
 6. `static`, movilidad, late join, chat, moderación y comando allowlisted;
 7. cold desktop/mobile y verificador live solo después del rollout estándar.
 

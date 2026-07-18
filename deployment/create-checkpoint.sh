@@ -10,6 +10,9 @@ umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+VALUES_INPUT_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
+MANIFEST_INPUT_FILE="${HCCE_MANIFEST_PATH:-$ROOT_DIR/hubs-cloud/community-edition/hcce.yaml}"
+VALUES_SOURCE_FILE=""
 TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
 FINAL_OUTPUT_DIR="${1:-$ROOT_DIR/output/checkpoints/$TIMESTAMP}"
 OUTPUT_PARENT="$(dirname "$FINAL_OUTPUT_DIR")"
@@ -52,10 +55,142 @@ PUBLISH_LOCK_OWNED=0
 FINAL_CLAIM_OWNED=0
 FINAL_INCOMPLETE_MARKER=""
 OPERATION_LOCK_OWNED=0
+SERIALIZATION_LEASE_OWNED=0
 WRITERS_MUTATED=0
+RUNNER_MONITOR_STOP=""
+RUNNER_MONITOR_FAILURE=""
+RUNNER_MONITOR_READY=""
+RUNNER_MONITOR_PID=""
+CHECKPOINT_RUNNER_MODE=""
+CHECKPOINT_VALUES_SNAPSHOT=""
+CHECKPOINT_MANIFEST_SNAPSHOT=""
+
+snapshot_checkpoint_private_file() {
+  local destination_variable="$1" source_path="$2" label="$3"
+  local snapshot_path=""
+  [[ -n "$destination_variable" && -n "$label" ]] || return 2
+  snapshot_path="$(mktemp "${TMPDIR:-/tmp}/yenhubs-checkpoint-$label.XXXXXX")" || return 1
+  snapshot_path="$(cd "$(dirname "$snapshot_path")" && pwd -P)/$(basename "$snapshot_path")"
+  if ! command node "$SCRIPT_DIR/snapshot-private-file.mjs" \
+    "$source_path" "$snapshot_path"; then
+    rm -f -- "$snapshot_path"
+    printf 'Could not bind a private immutable checkpoint %s snapshot.\n' \
+      "$label" >&2
+    return 1
+  fi
+  printf -v "$destination_variable" '%s' "$snapshot_path"
+}
+
+cleanup_runner_monitor() {
+  if [[ -n "$RUNNER_MONITOR_PID" ]]; then
+    recovery_discard_no_managed_bot_runner_watch \
+      "$RUNNER_MONITOR_STOP" "$RUNNER_MONITOR_PID"
+    RUNNER_MONITOR_PID=""
+  fi
+  [[ -z "$RUNNER_MONITOR_STOP" ]] || rm -f -- "$RUNNER_MONITOR_STOP"
+  [[ -z "$RUNNER_MONITOR_FAILURE" ]] || rm -f -- "$RUNNER_MONITOR_FAILURE"
+  [[ -z "$RUNNER_MONITOR_READY" ]] || rm -f -- "$RUNNER_MONITOR_READY"
+  RUNNER_MONITOR_STOP=""
+  RUNNER_MONITOR_FAILURE=""
+  RUNNER_MONITOR_READY=""
+}
+
+start_runner_monitor() {
+  recovery_require_no_managed_bot_runner_pods || return 1
+  RUNNER_MONITOR_STOP="$(mktemp "${TMPDIR:-/tmp}/yenhubs-checkpoint-runner-stop.XXXXXX")" || return 1
+  RUNNER_MONITOR_FAILURE="$(mktemp "${TMPDIR:-/tmp}/yenhubs-checkpoint-runner-failure.XXXXXX")" || {
+    cleanup_runner_monitor
+    return 1
+  }
+  RUNNER_MONITOR_READY="$(mktemp "${TMPDIR:-/tmp}/yenhubs-checkpoint-runner-ready.XXXXXX")" || {
+    cleanup_runner_monitor
+    return 1
+  }
+  chmod 600 "$RUNNER_MONITOR_STOP" "$RUNNER_MONITOR_FAILURE" "$RUNNER_MONITOR_READY"
+  if ! recovery_start_no_managed_bot_runner_watch \
+    "$RUNNER_MONITOR_STOP" "$RUNNER_MONITOR_FAILURE" "$RUNNER_MONITOR_READY" \
+    RUNNER_MONITOR_PID; then
+    cleanup_runner_monitor
+    return 1
+  fi
+}
+
+stop_runner_monitor_before_resume() {
+  local monitor_status=0
+  if [[ -n "$RUNNER_MONITOR_PID" ]]; then
+    if ! recovery_stop_no_managed_bot_runner_watch \
+      "$RUNNER_MONITOR_STOP" "$RUNNER_MONITOR_FAILURE" "$RUNNER_MONITOR_READY" \
+      "$RUNNER_MONITOR_PID"; then
+      monitor_status=1
+    fi
+    RUNNER_MONITOR_PID=""
+  else
+    monitor_status=1
+  fi
+  [[ -z "$RUNNER_MONITOR_STOP" ]] || rm -f -- "$RUNNER_MONITOR_STOP"
+  [[ -z "$RUNNER_MONITOR_FAILURE" ]] || rm -f -- "$RUNNER_MONITOR_FAILURE"
+  [[ -z "$RUNNER_MONITOR_READY" ]] || rm -f -- "$RUNNER_MONITOR_READY"
+  RUNNER_MONITOR_STOP=""
+  RUNNER_MONITOR_FAILURE=""
+  RUNNER_MONITOR_READY=""
+  if [[ "$monitor_status" != 0 ]]; then
+    printf 'Managed bot-runner quiescence monitoring failed; refusing writer resume.\n' >&2
+    return 1
+  fi
+}
+
+handoff_runner_monitor() {
+  local old_stop="$RUNNER_MONITOR_STOP" old_failure="$RUNNER_MONITOR_FAILURE"
+  local old_ready="$RUNNER_MONITOR_READY" old_pid="$RUNNER_MONITOR_PID"
+  local new_stop="" new_failure="" new_ready="" new_pid=""
+  [[ "$old_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  new_stop="$(mktemp "${TMPDIR:-/tmp}/yenhubs-checkpoint-runner-stop.XXXXXX")" || return 1
+  new_failure="$(mktemp "${TMPDIR:-/tmp}/yenhubs-checkpoint-runner-failure.XXXXXX")" || {
+    rm -f -- "$new_stop"
+    return 1
+  }
+  new_ready="$(mktemp "${TMPDIR:-/tmp}/yenhubs-checkpoint-runner-ready.XXXXXX")" || {
+    rm -f -- "$new_stop" "$new_failure"
+    return 1
+  }
+  chmod 600 "$new_stop" "$new_failure" "$new_ready"
+  if ! recovery_start_no_managed_bot_runner_watch \
+    "$new_stop" "$new_failure" "$new_ready" new_pid; then
+    recovery_discard_no_managed_bot_runner_watch "$new_stop" "$new_pid"
+    rm -f -- "$new_stop" "$new_failure" "$new_ready"
+    return 1
+  fi
+  # The new LIST+resourceVersion watches are ready before the previous watcher
+  # is joined, so no transient ADDED+DELETED event can fall into a handoff gap.
+  if ! recovery_stop_no_managed_bot_runner_watch \
+    "$old_stop" "$old_failure" "$old_ready" "$old_pid"; then
+    recovery_discard_no_managed_bot_runner_watch "$new_stop" "$new_pid"
+    rm -f -- "$old_stop" "$old_failure" "$old_ready" \
+      "$new_stop" "$new_failure" "$new_ready"
+    RUNNER_MONITOR_STOP=""
+    RUNNER_MONITOR_FAILURE=""
+    RUNNER_MONITOR_READY=""
+    RUNNER_MONITOR_PID=""
+    printf 'Managed bot-runner quiescence monitoring failed before checkpoint publication.\n' >&2
+    return 1
+  fi
+  rm -f -- "$old_stop" "$old_failure" "$old_ready"
+  RUNNER_MONITOR_STOP="$new_stop"
+  RUNNER_MONITOR_FAILURE="$new_failure"
+  RUNNER_MONITOR_READY="$new_ready"
+  RUNNER_MONITOR_PID="$new_pid"
+}
 
 cleanup_local_artifacts() {
-  local marker_value=""
+  local marker_value="" snapshot_path
+  cleanup_runner_monitor
+  for snapshot_path in \
+    "$CHECKPOINT_VALUES_SNAPSHOT" "$CHECKPOINT_MANIFEST_SNAPSHOT"; do
+    [[ -z "$snapshot_path" ]] || rm -f -- "$snapshot_path"
+  done
+  CHECKPOINT_VALUES_SNAPSHOT=""
+  CHECKPOINT_MANIFEST_SNAPSHOT=""
+  VALUES_SOURCE_FILE=""
   if [[ "$CHECKPOINT_STAGING_OWNED" == 1 && -n "$OUTPUT_DIR" &&
         -d "$OUTPUT_DIR" && ! -L "$OUTPUT_DIR" &&
         "$(dirname "$OUTPUT_DIR")" == "$OUTPUT_PARENT" &&
@@ -76,6 +211,19 @@ cleanup_local_artifacts() {
   CHECKPOINT_STAGING_OWNED=0
   FINAL_CLAIM_OWNED=0
   PUBLISH_LOCK_OWNED=0
+  if [[ "$SERIALIZATION_LEASE_OWNED" == 1 ]]; then
+    if recovery_release_operation_serialization; then
+      SERIALIZATION_LEASE_OWNED=0
+    else
+      printf 'Checkpoint serialization Lease could not be released safely.\n' >&2
+    fi
+  fi
+}
+
+release_serialization_if_owned() {
+  [[ "$SERIALIZATION_LEASE_OWNED" == 1 ]] || return 0
+  recovery_release_operation_serialization || return 1
+  SERIALIZATION_LEASE_OWNED=0
 }
 
 capture_consumer_contracts() {
@@ -107,10 +255,57 @@ capture_consumer_contracts() {
   export RECOVERY_CONSUMER_CONTRACT_JSON
 }
 
+require_checkpoint_runner_absence_stable() {
+  local stable_seconds started
+  stable_seconds="$(recovery_stable_absence_seconds)" || return 1
+  started="$SECONDS"
+  while :; do
+    recovery_require_operation_lock || return 1
+    recovery_require_no_managed_bot_runner_watch_healthy \
+      "$RUNNER_MONITOR_FAILURE" "$RUNNER_MONITOR_READY" \
+      "$RUNNER_MONITOR_PID" || return 1
+    recovery_require_no_managed_bot_runner_pods || return 1
+    ((SECONDS - started >= stable_seconds)) && return 0
+    sleep 1
+  done
+}
+
+require_checkpoint_post_watch_absence_stable() {
+  local stable_seconds started
+  stable_seconds="$(recovery_stable_absence_seconds)" || return 1
+  started="$SECONDS"
+  while :; do
+    recovery_require_operation_lock || return 1
+    recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
+      bot-orchestrator 0 || return 1
+    recovery_require_no_managed_bot_runner_pods || return 1
+    ((SECONDS - started >= stable_seconds)) && return 0
+    sleep 1
+  done
+}
+
 quiesce_writers() {
   local index
+  local -a remaining_order=(0 1 2 4)
   WRITERS_MUTATED=1
-  for index in "${!CONSUMERS[@]}"; do
+  # Revoke the token-bearing parent first, wait for its Pod to disappear, then
+  # UID-delete all already-issued runner Pods. The continuous watcher and a
+  # 61-second stable-absence window outlive every projected parent token.
+  index=3
+  DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
+    "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
+    "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" "${ORIGINAL_REPLICAS[$index]}" 0 \
+    "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" || return 1
+  recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
+    "deployment/${CONSUMERS[$index]}" 180s || return 1
+  recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
+    "${CONSUMERS[$index]}" 0 || return 1
+  recovery_delete_all_managed_bot_runner_pods_exact || return 1
+  recovery_wait_for_no_managed_bot_runner_pods 180s || return 1
+  start_runner_monitor
+  require_checkpoint_runner_absence_stable || return 1
+
+  for index in "${remaining_order[@]}"; do
     DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
       "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
       "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" "${ORIGINAL_REPLICAS[$index]}" 0 \
@@ -123,12 +318,67 @@ quiesce_writers() {
     recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
       "${CONSUMERS[$index]}" 0 || return 1
   done
-  recovery_require_exact_pvc_consumers ret-pvc
+  recovery_require_no_managed_bot_runner_pods || return 1
+  recovery_require_exact_pvc_consumers ret-pvc || return 1
+}
+
+prepare_runner_monitor_for_resume() {
+  local index contract uid resource_version replicas selector fingerprint
+  if [[ -n "$RUNNER_MONITOR_PID" ]]; then
+    recovery_require_no_managed_bot_runner_watch_healthy \
+      "$RUNNER_MONITOR_FAILURE" "$RUNNER_MONITOR_READY" \
+      "$RUNNER_MONITOR_PID"
+    return
+  fi
+
+  # A scale may have reached the API server even when its postcondition read
+  # failed before the normal watcher started. Reconstruct a safe monitored
+  # boundary from the captured parent contract instead of making automatic
+  # resume impossible solely because the watcher was not yet created.
+  recovery_require_checkpoint_runner_mode_exact \
+    "$VALUES_SOURCE_FILE" "$CHECKPOINT_RUNNER_MODE" >/dev/null || return 1
+  contract="$(recovery_capture_deployment_contract bot-orchestrator)" || return 1
+  IFS=$'\t' read -r uid resource_version replicas selector fingerprint <<<"$contract"
+  index=3
+  [[ "$uid" == "${DEPLOYMENT_UIDS[$index]}" &&
+     "$selector" == "${DEPLOYMENT_SELECTORS[$index]}" &&
+     "$fingerprint" == "${DEPLOYMENT_FINGERPRINTS[$index]}" ]] || return 1
+  if [[ "$replicas" == "${ORIGINAL_REPLICAS[$index]}" ]]; then
+    # No checkpoint writer after the parent can have been scaled before the
+    # watcher starts. If every captured writer is still exact, there is no
+    # downtime mutation to recover.
+    for index in "${!CONSUMERS[@]}"; do
+      recovery_require_deployment_contract "${CONSUMERS[$index]}" \
+        "${DEPLOYMENT_UIDS[$index]}" "${ORIGINAL_REPLICAS[$index]}" \
+        "${DEPLOYMENT_SELECTORS[$index]}" \
+        "${DEPLOYMENT_FINGERPRINTS[$index]}" || return 1
+    done
+    WRITERS_MUTATED=0
+    return 0
+  fi
+  [[ "$replicas" == 0 ]] || {
+    printf 'Bot parent replica state is unsafe for monitored checkpoint resume.\n' >&2
+    return 1
+  }
+  recovery_require_consumer_contract_entry \
+    "$RECOVERY_CONSUMER_CONTRACT_JSON" bot-orchestrator 0 || return 1
+  recovery_delete_all_managed_bot_runner_pods_exact || return 1
+  recovery_wait_for_no_managed_bot_runner_pods 180s || return 1
+  start_runner_monitor || return 1
+  require_checkpoint_runner_absence_stable || return 1
 }
 
 resume_writers() {
   local index deployment contract uid resource_version replicas selector fingerprint
   local -a order=(1 2 0 4 3)
+  recovery_require_operation_lock || return 1
+  prepare_runner_monitor_for_resume || return 1
+  [[ "$WRITERS_MUTATED" == 1 ]] || return 0
+  recovery_require_no_managed_bot_runner_watch_healthy \
+    "$RUNNER_MONITOR_FAILURE" "$RUNNER_MONITOR_READY" "$RUNNER_MONITOR_PID" || return 1
+  recovery_require_checkpoint_runner_mode_exact \
+    "$VALUES_SOURCE_FILE" "$CHECKPOINT_RUNNER_MODE" >/dev/null || return 1
+  recovery_require_operation_serialization || return 1
   recovery_require_operation_lock || return 1
   for index in "${!CONSUMERS[@]}"; do
     deployment="${CONSUMERS[$index]}"
@@ -149,14 +399,35 @@ resume_writers() {
   done
   for index in "${order[@]}"; do
     deployment="${CONSUMERS[$index]}"
+    if [[ "$deployment" == bot-orchestrator ]]; then
+      recovery_require_no_managed_bot_runner_watch_healthy \
+        "$RUNNER_MONITOR_FAILURE" "$RUNNER_MONITOR_READY" \
+        "$RUNNER_MONITOR_PID" || return 1
+      recovery_require_no_managed_bot_runner_pods || return 1
+      stop_runner_monitor_before_resume || return 1
+      require_checkpoint_post_watch_absence_stable || return 1
+      # This second exact Cloud gate is adjacent to restoring token-bearing
+      # parent authority. It closes drift after the initial resume gate while
+      # the other four consumers were restarted.
+      recovery_require_checkpoint_runner_mode_exact \
+        "$VALUES_SOURCE_FILE" "$CHECKPOINT_RUNNER_MODE" >/dev/null || return 1
+      recovery_require_operation_serialization || return 1
+      recovery_require_operation_lock || return 1
+      recovery_require_consumer_contract_entry \
+        "$RECOVERY_CONSUMER_CONTRACT_JSON" bot-orchestrator 0 || return 1
+      recovery_require_no_managed_bot_runner_pods || return 1
+    else
+      recovery_require_no_managed_bot_runner_watch_healthy \
+        "$RUNNER_MONITOR_FAILURE" "$RUNNER_MONITOR_READY" \
+        "$RUNNER_MONITOR_PID" || return 1
+    fi
     contract="$(recovery_capture_deployment_contract "$deployment")" || return 1
     IFS=$'\t' read -r uid resource_version replicas selector fingerprint <<<"$contract"
     if [[ "$replicas" == 0 ]]; then
       DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
         "$deployment" "$uid" "$resource_version" 0 "${ORIGINAL_REPLICAS[$index]}" \
         "$selector" "$fingerprint")" || return 1
-      recovery_kubectl rollout status "deployment/$deployment" -n "$NAMESPACE" \
-        --timeout=5m >/dev/null || return 1
+      recovery_wait_for_deployment_rollout "$deployment" 300 || return 1
     fi
     recovery_require_operation_lock || return 1
     recovery_require_deployment_contract "$deployment" "${DEPLOYMENT_UIDS[$index]}" \
@@ -174,6 +445,13 @@ release_lock_if_safe() {
 
 checkpoint_error() {
   local status="$?"
+  # errtrace also copies ERR into command substitutions and background
+  # subshells. Those processes have only stale copies of ownership variables;
+  # they must report failure to the main shell, never resume writers or delete
+  # a shared lock on its behalf.
+  if ((BASH_SUBSHELL > 0)); then
+    return "$status"
+  fi
   trap - ERR
   if [[ "$WRITERS_MUTATED" == 1 ]]; then
     if resume_writers; then
@@ -217,13 +495,27 @@ OUTPUT_DIR="$(mktemp -d "$OUTPUT_PARENT/.yenhubs-checkpoint-$TIMESTAMP.XXXXXX")"
 CHECKPOINT_STAGING_OWNED=1
 chmod 700 "$OUTPUT_DIR"
 
+# Bind the local authorization input once. The source may be prepared for a
+# future rotation while the checkpoint runs, but every gate in this operation
+# must keep using the same private bytes selected before any downtime.
+snapshot_checkpoint_private_file \
+  CHECKPOINT_VALUES_SNAPSHOT "$VALUES_INPUT_FILE" values
+VALUES_SOURCE_FILE="$CHECKPOINT_VALUES_SNAPSHOT"
+command node "$SCRIPT_DIR/parse-local-values.mjs" "$VALUES_SOURCE_FILE" --validate
+
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 RECOVERY_CHECKPOINT_STAMP="$TIMESTAMP"
 RECOVERY_DUMP_SHA256="$(printf '0%.0s' {1..64})"
 RECOVERY_STORAGE_SHA256="$RECOVERY_DUMP_SHA256"
+recovery_acquire_operation_serialization root-recovery
+SERIALIZATION_LEASE_OWNED=1
+recovery_require_operation_serialization
+recovery_require_cluster_identity
+recovery_require_pvc_identity ret-pvc
 recovery_acquire_operation_lock checkpoint-backup yenhubs-recovery-operation-lock
 OPERATION_LOCK_OWNED=1
+recovery_require_operation_serialization
 # Coordinated backup children revalidate these exported bindings against the
 # immutable lock. They are data-only identifiers, not local cleanup
 # capabilities; materialized paths are never inherited.
@@ -231,10 +523,43 @@ export RECOVERY_CHECKPOINT_STAMP RECOVERY_DUMP_SHA256 RECOVERY_STORAGE_SHA256 \
   RECOVERY_NAMESPACE_UID RECOVERY_PVC_UID
 capture_consumer_contracts
 
+# Fail before the first downtime mutation unless the live runtime is either
+# the exact accepted process-local checkpoint boundary or the exact generated
+# active isolated-runner control plane. Partial transitions never fall back.
+# The generated manifest is needed only after isolated runners are active; the
+# historical process-local checkpoint remains independent of an unbuilt
+# candidate manifest.
+checkpoint_runner_candidate="$(recovery_checkpoint_runner_mode_candidate)"
+if [[ "$checkpoint_runner_candidate" == kubernetes-pod ]]; then
+  snapshot_checkpoint_private_file \
+    CHECKPOINT_MANIFEST_SNAPSHOT "$MANIFEST_INPUT_FILE" manifest
+  HCCE_MANIFEST_PATH="$CHECKPOINT_MANIFEST_SNAPSHOT"
+elif [[ "$checkpoint_runner_candidate" != process-local ]]; then
+  printf 'The checkpoint runner mode candidate is invalid.\n' >&2
+  exit 1
+fi
+CHECKPOINT_RUNNER_MODE="$(
+  recovery_require_checkpoint_runner_mode_exact "$VALUES_SOURCE_FILE"
+)"
+[[ "$CHECKPOINT_RUNNER_MODE" == "$checkpoint_runner_candidate" ]] || {
+  printf 'Checkpoint runner mode changed while binding immutable local inputs.\n' >&2
+  exit 1
+}
+recovery_require_operation_serialization
+recovery_require_operation_lock
+recovery_stable_absence_seconds >/dev/null
+
 # Capture the exact live image/infrastructure inventory while the deployments
 # still have their pre-downtime scale, then prove those immutable contracts
 # again as each writer is stopped.
-"$SCRIPT_DIR/capture-instance-state.sh" "$OUTPUT_DIR"
+VALUES_FILE="$VALUES_SOURCE_FILE" \
+  "$SCRIPT_DIR/capture-instance-state.sh" "$OUTPUT_DIR"
+captured_runner_mode="$(jq -er '.bot_runner_runtime.mode' \
+  "$OUTPUT_DIR/deployment-images.json")"
+[[ "$captured_runner_mode" == "$CHECKPOINT_RUNNER_MODE" ]] || {
+  printf 'Captured runner mode does not match the pre-downtime authorization.\n' >&2
+  exit 1
+}
 
 QUIESCE_STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 jq -n \
@@ -257,11 +582,27 @@ jq -n \
 chmod 600 "$OUTPUT_DIR/checkpoint-metadata.json"
 
 quiesce_writers
-BACKUP_COORDINATED=1 "$SCRIPT_DIR/backup-retdb.sh" \
+recovery_require_operation_serialization
+BACKUP_COORDINATED=1 \
+YENHUBS_PARENT_LEASE_HOLDER="$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
+YENHUBS_PARENT_LEASE_UID="$RECOVERY_SERIALIZATION_LEASE_UID" \
+YENHUBS_PARENT_PROCESS_PID="$RECOVERY_SERIALIZATION_PARENT_PID" \
+YENHUBS_PARENT_PROCESS_START_IDENTITY="$RECOVERY_SERIALIZATION_PARENT_START_IDENTITY" \
+  "$SCRIPT_DIR/backup-retdb.sh" \
   "$OUTPUT_DIR/retdb-$TIMESTAMP.sql.gz"
-"$SCRIPT_DIR/backup-ret-storage-quiesced.sh" \
+recovery_require_operation_serialization
+YENHUBS_PARENT_LEASE_HOLDER="$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
+YENHUBS_PARENT_LEASE_UID="$RECOVERY_SERIALIZATION_LEASE_UID" \
+YENHUBS_PARENT_PROCESS_PID="$RECOVERY_SERIALIZATION_PARENT_PID" \
+YENHUBS_PARENT_PROCESS_START_IDENTITY="$RECOVERY_SERIALIZATION_PARENT_START_IDENTITY" \
+  "$SCRIPT_DIR/backup-ret-storage-quiesced.sh" \
   "$OUTPUT_DIR/ret-storage-$TIMESTAMP.tar.gz" \
   "$OUTPUT_DIR/deployment-images.json"
+recovery_require_operation_serialization
+# Join the watcher that covered every backup byte before recording successful
+# quiescence. A replacement watch is already ready, so publication remains
+# continuously fenced without a LIST/watch gap.
+handoff_runner_monitor
 SNAPSHOT_COMPLETED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 metadata_tmp="$(mktemp "$OUTPUT_DIR/.checkpoint-metadata.XXXXXX")"
 jq --arg completed "$SNAPSHOT_COMPLETED_AT" \
@@ -300,6 +641,10 @@ actual_with_marker="$(find "$FINAL_OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print |
   while IFS= read -r path; do basename "$path"; done | LC_ALL=C sort)"
 expected_with_marker="$({ recovery_checkpoint_artifacts "$TIMESTAMP"; printf '%s\n' SHA256SUMS .yenhubs-incomplete; } | LC_ALL=C sort)"
 [[ "$actual_with_marker" == "$expected_with_marker" ]]
+# The second watcher covers validation and the visible incomplete claim. Join
+# it before removing the marker, with a third watcher already covering the
+# publication-to-parent-resume interval.
+handoff_runner_monitor
 rm -f -- "$FINAL_INCOMPLETE_MARKER"
 FINAL_CLAIM_OWNED=0
 FINAL_INCOMPLETE_MARKER=""
@@ -310,6 +655,7 @@ OUTPUT_DIR=""
 
 resume_writers
 release_lock_if_safe
+release_serialization_if_owned
 cleanup_local_artifacts
 trap - EXIT ERR INT TERM
 

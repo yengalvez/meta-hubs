@@ -12,14 +12,18 @@ Este es el punto de entrada para continuar el proyecto sin depender de una conve
 > candidatos se publicaron después en ramas y PR separados, pero el próximo
 > rollout queda bloqueado hasta rotar de forma coordinada todos los
 > secretos potencialmente incluidos y verificar solo por huella. No volver a
-> abrir ni imprimir el manifiesto ignorado para inventariarlos. Además, el
-> candidato de bots no puede pasar a rollout público ni a certificación de
-> capacidad mientras padre y runners ghost compartan contenedor, UID, namespace
-> PID y cgroup; debe separarse cada runner con credenciales y recursos propios.
+> abrir ni imprimir el manifiesto ignorado para inventariarlos. `AUD-075` ya
+> está integrado en Cloud `5392495b0772`: separa el parent y un Pod runner por
+> sala/generación y endurece su activación y recuperación. Las fuentes y CI
+> están verdes, pero no se han construido sus dos imágenes ni desplegado o
+> atestado esa topología. Por ello el rollout público y la certificación de
+> capacidad siguen bloqueados.
 
 ## Estado ejecutivo
 
-YenHubs esta operativo en <https://meta-hubs.org> y el verificador live informa 0 fallos y 0 avisos. La produccion usa:
+En la última aceptación live documentada del 16 de julio, YenHubs estaba
+operativo en <https://meta-hubs.org> y el verificador informó 0 fallos y 0
+avisos. Ese baseline histórico usa:
 
 - Hubs sobre la release aceptada `prod-2026-03-11`.
 - Hubs CE sobre la release aceptada `2.1.0`.
@@ -40,16 +44,19 @@ Sala de aceptacion: <https://meta-hubs.org/VJopCY3/inicio>
 
 ## Repos y ramas
 
-| Ruta | Rama base | Fuente final auditada | Fuente del runtime live |
+| Ruta | Rama base | Fuente candidata auditada | Fuente del runtime live |
 | --- | --- | --- | --- |
-| Root | `main` | commit que contiene este handoff | `a0a2b59cad80e0b07f9b2a2f82c2020781163570` |
+| Root | `main` | `codex/aud075-integration` (PR raíz pendiente) | `a0a2b59cad80e0b07f9b2a2f82c2020781163570` |
 | `hubs/` | `master` | `674ece41169117a1a842af9cf5d256a10cc43df0` | `a7214eb882d19c98b2c8516489e0ed1fb7401c75` |
-| `hubs-cloud/` | `master` | `0f151eb88da117cb2cffd74dcd8f91f984e91986` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
+| `hubs-cloud/` | `master` | `5392495b077249edcedfb3092551201645f648f1` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
 
-Los gitlinks conservan las fuentes exactas auditadas. Hubs `674ece411691` y Hubs
-Cloud `0f151eb88da1` son los heads integrados de `master`; incluyen los cortes
-anteriores y los cierres `AUD-076`/`AUD-077`. Estos merges no cambian el runtime hasta
-construir nuevas imagenes por Actions y desplegarlas por digest.
+Hubs `674ece411691` y Cloud `5392495b0772` son los heads finales integrados en
+sus ramas `master`. Pasan 128/128 pruebas del orquestador, 30/30 del generador,
+430 pruebas Reticulum + 5 properties y el CI de Cloud. El worktree candidato
+raíz `codex/aud075-integration` fija esos gitlinks y sus gates normal y `--full`
+están verdes, pero el puntero de Cloud todavía no pertenece a root `main`: falta
+el PR raíz y su CI. Ningún cambio de fuente modifica el runtime hasta construir
+imágenes por Actions y desplegarlas por digest.
 
 Estado de publicación comprobado el 18 de julio:
 
@@ -69,19 +76,28 @@ Estado de publicación comprobado el 18 de julio:
 - Hubs Cloud PR `#7`: fusionado en `development` como `04278c69646b`; PR `#8`
   `development -> master`: fusionado como `0f151eb88da1`. El fencing PostgreSQL
   de `AUD-076` pasó PostgreSQL 12/14, Services, Spoke, Security y release build.
+- Hubs Cloud PR `#9`: fusionado en `development` como `41cdbe639707`; PR `#10`
+  `development -> master`: fusionado como `ca18723fa31b`. Publicó el primer
+  corte de aislamiento por Pod de `AUD-075`.
+- Hubs Cloud PR `#11`: fusionado en `development` como `ebe960794735`; PR `#12`
+  `development -> master`: fusionado como `5392495b0772`. Cerró consumo único
+  de generaciones, fencing de recuperación y verificación live ligada al
+  manifiesto generado; Security, Services, Spoke, PostgreSQL 12/14 y release
+  quedaron verdes.
 - Meta-hubs PR minimo `#2`, `codex/gitleaks-policy-bootstrap -> main`: fusionado
   como `f79175d`. La politica ya procede de la base y no de la rama candidata.
 - Meta-hubs PR `#1`, `codex/final-audit-readiness -> main`: fusionado como
   `4481e9628b76` después de corregir SC2119, SC2015 y portabilidad GNU/BSD.
 
-La integración Git y el CI de fuentes están cerrados en GO sobre Hubs
-`674ece411691` y Hubs Cloud `0f151eb88da1`. Este resultado acredita código, suites,
-builds de verificación y ramas base; no sustituye los valores live de la tabla.
-No se han construido imágenes candidatas de rollout, ni existe aceptación de
-staging, capacidad o producción. No actualizar digests live hasta completar el
-flujo publicado de seguridad, build y rollout.
+La integración de los subrepositorios y su CI está cerrada en GO sobre Hubs
+`674ece411691` y Hubs Cloud `5392495b0772`; la integración raíz sigue pendiente
+del PR de `codex/aud075-integration` a `main`. Ninguno de esos resultados
+sustituye los valores live de la tabla. No se han construido las dos imágenes
+candidatas de `AUD-075`, ni existe checkpoint nuevo o aceptación de staging,
+capacidad o producción. No actualizar digests live hasta completar el flujo
+publicado de seguridad, build y rollout.
 
-El candidato de bots añade tres contratos que tampoco forman parte del runtime
+El candidato de bots añade cuatro contratos que tampoco forman parte del runtime
 live de la tabla:
 
 - Reticulum serializa en una transacción PostgreSQL la admisión global de salas
@@ -102,6 +118,12 @@ live de la tabla:
   el Admin solo muestra inventario redactado y cada decisión es individual.
   Runtime, chat y registro del runner fallan cerrados ante configuración no
   aprobada o modificada.
+- El parent conserva `OPENAI_API_KEY`, la credencial de orquestación y un Role
+  namespaced mínimo. Cada sala/generación usa una imagen `bot-runner` separada,
+  UID/GID 10001, PID/cgroup, resources, filesystem y ServiceAccount propios, sin
+  provider/master-runner/Kubernetes credentials. El token v1 liga solo
+  sala/generación/holder/expiry; el lease UUID y epoch PostgreSQL siguen siendo
+  obligatorios después del join.
 
 El gate separado de Spoke también pasó localmente con Node 16.13.2/Yarn 1:
 68/68 pruebas, lint y build. Spoke conserva su deuda legacy; este resultado no
@@ -157,6 +179,18 @@ Contenido validado:
 el preflight actual no la selecciona: cada rollout debe pasar `BACKUP_DIR`
 explicitamente y crear un checkpoint fresco con el layout vigente. Mantener una segunda copia cifrada fuera
 del Mac antes de retirar infraestructura.
+
+El layout vigente añade `deployment-images.json` schema 3 con
+`bot_runner_runtime`: `{mode:"process-local",image:null}` para el rollback
+legacy o `{mode:"kubernetes-pod",image:"...@sha256:..."}` para el runner
+aislado. Checkpoint y restore deben mantener y monitorizar cero Pods dinámicos
+gestionados durante toda la quiescencia; el checkpoint histórico anterior no
+prueba ese contrato y no sirve para el próximo rollout.
+
+El checkpoint vigente liga antes del downtime snapshots privados `0600` de sus
+inputs y consume solo esas copias. Tanto checkpoint como restore reservan la
+recuperación autoritativa al driver principal: un error heredado por un
+subshell no puede reanudar writers, duplicar el fencing ni liberar el lock.
 
 ## Credenciales operativas
 
@@ -219,31 +253,34 @@ registro no sea público. Antes de construir/desplegar el siguiente candidato:
 
 ## Bloqueos y residuales del candidato de bots
 
-Aunque el hijo ghost recibe por entorno únicamente `BOT_RUNNER_ACCESS_KEY`, el
-padre y todos los runners siguen siendo procesos del mismo contenedor bajo UID
-1000, el mismo namespace PID y el mismo cgroup de memoria. La allowlist de
-entorno reduce exposición accidental, pero no constituye aislamiento frente a
-JavaScript comprometido: `/proc` puede exponer el entorno del padre, los
-procesos pueden señalizarse y una sola sala puede agotar el límite compartido y
-derribar todo el orquestador.
+`AUD-075` está integrado en Cloud `5392495b0772`: un Pod endurecido por
+sala/generación, imagen y cgroup propios, runner sin provider/master/Kubernetes
+credentials, canal autenticado con token v1 y fencing PostgreSQL obligatorio.
+El control-plane abarca los namespaces `hcce` y `hcce-bot-runners`, cuota,
+ValidatingAdmissionPolicy+binding, RBAC mínimo atestado mediante revisiones
+efectivas y ocho NetworkPolicies. El pull Secret es kubelet-only; el parent
+conserva OpenAI y la credencial de orquestación. La probe del Deployment usa
+`/transport-ready` después de limpiar huérfanos; el gate de bots sigue siendo
+`/ready`.
 
-Esto bloquea el rollout público del candidato y cualquier certificación de
-capacidad. La salida requerida es ejecutar cada runner en un pod o contenedor
-aislado, con namespace de proceso, credencial de runner, requests/limits y
-política de red propios; el padre debe conservar las credenciales OpenAI y de
-orquestación y comunicarse con los runners mediante un canal autenticado y
-mínimo. Este rediseño aún no está implementado ni desplegado.
+Eso elimina el residual de implementación, pero no acredita el runtime. Faltan
+dos imágenes/digests construidos desde el mismo commit, el Secret privado
+generado, rollout Reticulum-first, prueba de un Pod exacto por sala y aceptación
+live. El runtime `process-local` es el último baseline live aceptado. Si un
+rollout candidato vuelve a él como rollback, debe mantener los bots públicos
+deshabilitados y no reabrirse ni declararse aceptado de nuevo hasta superar el
+preflight, el verificador live y la carga fría vigentes con las credenciales
+rotadas; tampoco certifica capacidad.
 
-El GO de integración Git y CI de fuentes no levanta los siguientes bloqueos:
+La evidencia local de fuente no levanta los siguientes bloqueos:
 
 - `AUD-065`: antes de cualquier mutación de producción hay que crear un
   checkpoint fresco de DB+storage y rotar coordinadamente todos los secretos
   potencialmente expuestos, verificándolos solo por presencia o huella;
-- cada runner sigue sin aislamiento OS/pod por bot, con UID, namespace PID y
-  cgroup compartidos;
-- el fencing PostgreSQL de leases está integrado y probado en fuentes, pero no
-  desplegado ni atestado; el baseline live sigue siendo process-local y no se
-  puede operar más de una autoridad concurrente;
+- aislamiento y fencing están integrados y probados en fuente, pero no
+  desplegados ni atestados; el baseline live aceptado sigue siendo
+  `process-local`, y un rollback a él no puede reabrirse después sin repetir los
+  gates actuales ni operar más de una autoridad concurrente;
 - la aprobación/cuarentena ya está integrada pero no desplegada: la migración
   debe producir el inventario redactado y cada configuración válida necesita
   una aprobación individual antes de permitir autostart;
@@ -266,11 +303,9 @@ El GO de integración Git y CI de fuentes no levanta los siguientes bloqueos:
 - Spoke conserva dependencias legacy y advisories; se valida con Node 16.13.2 y debe modernizarse como proyecto
   separado, no con un upgrade masivo.
 - `cowlib 2.18.0` mantiene dos avisos upstream sin release corregida; cualquier aviso Hex adicional falla CI.
-- La imagen del orquestador conserva Chromium solo para diagnóstico browser
-  legacy/local, sin `--runner`; no es un fallback operativo ni autenticado. El
-  renderer no recibe `BOT_RUNNER_ACCESS_KEY`, por lo que Reticulum endurecido rechaza
-  ese navegador, nunca cuenta para readiness y la clave no debe pasarse por URL
-  ni estado cliente. Separar una imagen ghost-only reduciría tamaño/superficie.
+- Chromium se conserva como comando manual de diagnóstico browser legacy/local,
+  sin `--runner`; no forma parte de las imágenes parent/runner productivas, no
+  recibe credenciales y nunca cuenta para readiness.
 - La proximidad de 3 m para `Talk` sigue siendo UX, no autorización por
   distancia. El candidato exige la capacidad privada exacta de un canal
   autenticado que haya entrado en la misma sala; se rota al iniciar sesión, se
@@ -284,29 +319,35 @@ El GO de integración Git y CI de fuentes no levanta los siguientes bloqueos:
 
 ## Auditoria y pruebas realizadas
 
-El cierre del 18 de julio integró en Git Hubs `674ece411691`, Hubs Cloud
-`0f151eb88da1` y el gate Spoke 68/68+lint+build, con CI de fuentes verde. Su dictamen
-no autoriza rollout: las cifras y verificaciones live siguientes pertenecen al
-baseline de producción del 16 de julio y no prueban el nuevo runtime.
+El cierre de los subrepositorios integra Hubs `674ece411691` y Hubs Cloud
+`5392495b0772` con CI de fuentes verde. El gitlink raíz es todavía candidato en
+`codex/aud075-integration` y requiere PR/CI hacia `main`. Las cifras y
+verificaciones live históricas pertenecen al baseline de producción del 16 de
+julio y no prueban el nuevo runtime.
 
-- Root: 36 regresiones de seguridad y 142 de recuperación.
+- Root normal y `--full`: 43 regresiones de seguridad, 239 de recuperación,
+  verificador de Pods 45/45, pull/checksum 19/19 y Deployment 18/18.
 - Hubs: check, lint, 97 unit tests y build; audit de producción en 0.
 - Admin: lint, build y audit de producción en 0.
-- Hubs CE: generator y verificador de 44 recursos; audit en 0.
-- Reticulum: format, compile warnings-as-errors, 418 tests + 5 properties,
+- Hubs CE: generador 30/30 y manifiesto exacto de 58 recursos repartidos entre
+  dos namespaces, con cuota, ValidatingAdmissionPolicy+binding, RBAC efectivo y
+  ocho NetworkPolicies.
+- Reticulum: format, compile warnings-as-errors, 430 tests + 5 properties,
   0 fallos y 3 excluidos.
-- Bot orchestrator: 103 tests y audit en 0.
+- Bot orchestrator: 128/128 tests y audit de producción en 0.
 - Dialog: lint, 2 tests y audit en 0.
 - Photomnemonic: syntax/check, 7 tests y audit en 0.
 - Coturn: test de entrypoint.
-- Spoke: lint, unit y build con Node 16.13.2/Yarn 1.
+- Spoke: 68/68, lint y build con Node 16.13.2/Yarn 1.
 - Navegador local: 11 contratos; capacidad: 115/115 con ejecución física
   deliberadamente bloqueada y sin certificación.
 - Gitleaks, Actionlint, ShellCheck, SBOM y Trivy.
+- GitHub Actions de Cloud: Security, Services, Spoke, Reticulum PostgreSQL
+  12/14 y release build verdes tras las promociones `#11` y `#12`.
 - Baseline live histórico: navegador real desktop/móvil sin errores JS/HTTP,
   escena lista y cinco bots; 12 deployments Ready, TLS/DNS/DB/storage/assets/CSP
   y ghost runner con 0 fallos/avisos. No acredita el candidato actual.
-- GitHub Actions de cierre: Hubs Security `29518981250`, Storybook
+- GitHub Actions del baseline previo: Hubs Security `29518981250`, Storybook
   `29518980804`, cloud Security `29520235224`, Services `29520235446`,
   Reticulum `29519815859` y root Security `29519331721`, todos correctos.
 
@@ -332,19 +373,40 @@ No desplegar `upstream/master`. Seguir `docs/development-workflow.md` y preserva
 
 ## Deploy correcto
 
-1. checkpoint;
-2. rotación coordinada exigida por el addendum y verificación solo por huellas;
-3. tests locales;
-4. commit/push;
-5. GitHub Actions;
-6. digest en values local;
-7. `npm run gen-hcce` en aislamiento;
-8. `kubectl diff` sin imprimir Secrets;
-9. `kubectl apply -f hcce.yaml` sin editarlo;
-10. rollout;
-11. si cambia Hubs, reiniciar Reticulum;
-12. carga fria real desktop/mobile, consola y red sin errores ni warnings;
-13. `deployment/verify-live-reactivation.sh` con 0/0.
+1. cerrar y fusionar el PR raíz de `AUD-075`;
+2. crear el checkpoint completo exigido por el addendum;
+3. completar la rotación coordinada y verificar solo por huellas;
+4. en una rama Cloud separada, implementar, validar y fusionar `AUD-078` sin
+   mezclar dependencias ni upstream;
+5. ejecutar los gates finales sobre los commits y gitlinks exactos;
+6. GitHub Actions: construir parent y runner desde el mismo commit Cloud final;
+7. fijar ambos digests en values local y actualizar
+   `BOT_IMAGE_PULL_CONFIG_JSON_BASE64` solo mediante
+   `npm run set-bot-image-pull-config` con `GHCR_TOKEN` oculto/en entorno;
+8. generar el manifiesto completo de 58 recursos con
+   `BOT_RUNNER_ACTIVATION_PHASE=bootstrap`, revisar el diff por la vía redactada
+   y ejecutar `npm run apply` con `KUBECTL_CONTEXT` fijado;
+9. regenerar con fase `admission`, revisar el diff y ejecutar de nuevo
+   `npm run apply`; el wrapper mantiene el parent parado, comprueba la
+   ValidatingAdmissionPolicy, atesta RBAC efectivo y exige que el probe no
+   autorizado sea denegado antes de conceder autoridad;
+10. regenerar con fase `active`, revisar el diff y ejecutar `npm run apply`; solo
+   esta transición puede levantar el parent después de verificar Lease global,
+   ausencia estable de runners y control-plane exacto;
+11. no sustituir esas tres transiciones por un `kubectl apply` directo: ante
+    error o deriva el wrapper falla cerrado y vuelve a cercar la autoridad;
+11. verificar los dos namespaces, cuota, ValidatingAdmissionPolicy+binding,
+    RBAC efectivo, ocho NetworkPolicies, `/transport-ready`, `/ready` y
+    exactamente un Pod runner por sala;
+12. si cambia Hubs, reiniciar Reticulum;
+13. carga fria real desktop/mobile, consola y red sin errores ni warnings;
+14. `deployment/verify-live-reactivation.sh` con 0/0.
+
+Rollback en orden inverso: cero runner Pods y bots públicos deshabilitados,
+parent legacy contra Reticulum compatible, verificar auth privada, y solo
+después Reticulum antiguo. El manifiesto viejo no poda los nuevos
+ServiceAccounts, Role, RoleBinding, Secret o NetworkPolicy; inventariarlos y
+retirarlos mediante una transición trackeada, no con parches manuales.
 
 No usar `kubectl set image`, hotpatches, builds in-cluster, `kubectl cp` ni parches manuales como flujo normal.
 

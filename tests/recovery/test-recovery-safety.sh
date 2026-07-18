@@ -43,6 +43,9 @@ file_mode() {
 sha256_digest() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'; else sha256sum "$1" | awk '{print $1}'; fi
 }
+CHECKPOINT_RUNNER_EPOCH='11111111-1111-4111-8111-111111111111'
+LIVE_RUNNER_EPOCH='22222222-2222-4222-8222-222222222222'
+export LIVE_RUNNER_EPOCH
 
 make_sql_fixture() {
   local plain_path="$1" gzip_path="$2" mode="${3:-valid}"
@@ -235,10 +238,13 @@ EXTRA_DDL_PAIR="$(pair_dir extra-ddl "$EXTRA_DDL_SQL_GZIP" "$VALID_STORAGE")"
 ARBITRARY_DEPTH_PAIR="$(pair_dir arbitrary-depth "$SQL_GZIP" "$ARBITRARY_DEPTH_STORAGE")"
 
 make_deployments_json() {
-  jq -n '
+  jq -n --arg epoch "$LIVE_RUNNER_EPOCH" '
     def item($name; $containers): {
-      metadata: {name:$name, uid:("uid-"+$name)},
-      spec: {replicas:1, selector:{matchLabels:{app:$name}}, template:{spec:{initContainers:[],containers:$containers}}},
+      metadata: {name:$name, uid:("uid-"+$name),annotations:{
+        "yenhubs.org/bot-runner-recovery-phase":"active"}},
+      spec: {replicas:1, selector:{matchLabels:{app:$name}}, template:{
+        metadata:{annotations:{"yenhubs.org/bot-runner-recovery-epoch":$epoch}},
+        spec:{initContainers:[],containers:$containers}}},
       status: {readyReplicas:1}
     };
     {items:[
@@ -263,6 +269,10 @@ export STUB_DEPLOYMENTS_JSON
 VALUES_FIXTURE="$TMP_DIR/input-values.fixture.yaml"
 cat >"$VALUES_FIXTURE" <<'YAML'
 OVERRIDE_BOT_ORCHESTRATOR_IMAGE: ghcr.io/yengalvez/bot-orchestrator@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+OVERRIDE_BOT_RUNNER_IMAGE: ghcr.io/yengalvez/bot-runner@sha256:8888888888888888888888888888888888888888888888888888888888888888
+BOT_ORCHESTRATOR_ACCESS_KEY: fixture-rotated-orchestrator-key-at-least-32-chars
+BOT_RUNNER_RECOVERY_EPOCH: 22222222-2222-4222-8222-222222222222
+BOT_IMAGE_PULL_CONFIG_JSON_BASE64: eyJhdXRocyI6eyJnaGNyLmlvIjp7ImF1dGgiOiJZMmt0ZFhObGNqcGphUzEwYjJ0bGJnPT0ifX19 # gitleaks:allow non-secret CI fixture
 OVERRIDE_COTURN_IMAGE: ghcr.io/yengalvez/coturn@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 OVERRIDE_DIALOG_IMAGE: ghcr.io/yengalvez/dialog@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 OVERRIDE_HAPROXY_IMAGE: ghcr.io/yengalvez/haproxy@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
@@ -276,6 +286,59 @@ OVERRIDE_RETICULUM_IMAGE: ghcr.io/yengalvez/reticulum@sha256:6666666666666666666
 OVERRIDE_SPOKE_IMAGE: ghcr.io/yengalvez/spoke@sha256:7777777777777777777777777777777777777777777777777777777777777777
 YAML
 chmod 600 "$VALUES_FIXTURE"
+VALUES_PROCESS_LOCAL_FIXTURE="$TMP_DIR/input-values.process-local.fixture.yaml"
+sed \
+  's|^OVERRIDE_BOT_RUNNER_IMAGE:.*$|OVERRIDE_BOT_RUNNER_IMAGE: No|' \
+  "$VALUES_FIXTURE" >"$VALUES_PROCESS_LOCAL_FIXTURE"
+chmod 600 "$VALUES_PROCESS_LOCAL_FIXTURE"
+RUNNER_DIGEST_IMAGE='ghcr.io/yengalvez/bot-runner@sha256:8888888888888888888888888888888888888888888888888888888888888888'
+LEGACY_DEPLOYMENTS_JSON="$TMP_DIR/deployments-legacy-process-local.json"
+jq '
+  (.items[].metadata.annotations) = null |
+  (.items[].spec.template.metadata.annotations) = null |
+  (.items[] | select(.metadata.name == "bot-orchestrator") | .spec.strategy) =
+    {type:"Recreate"} |
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.automountServiceAccountToken) = false |
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.volumes) = [{
+      name:"bot-orchestrator-tmp",emptyDir:{sizeLimit:"256Mi"}
+    }] |
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.containers[0]) += {
+      securityContext:{
+        runAsNonRoot:true,runAsUser:1000,runAsGroup:1000,
+        allowPrivilegeEscalation:false,readOnlyRootFilesystem:true,
+        capabilities:{drop:["ALL"]},seccompProfile:{type:"RuntimeDefault"}
+      },
+      env:[
+        {name:"BOT_RUNNER_ACCESS_KEY",valueFrom:{secretKeyRef:{
+          name:"configs",key:"BOT_RUNNER_ACCESS_KEY"}}},
+        {name:"RUNNER_AUTOSTART",value:"true"},
+        {name:"RUNNER_BACKEND",value:"ghost"},
+        {name:"GHOST_RUNNER_SCRIPT",value:"/app/run-ghost-runner.js"}
+      ],
+      volumeMounts:[{name:"bot-orchestrator-tmp",mountPath:"/tmp"}]
+    }
+' "$STUB_DEPLOYMENTS_JSON" >"$LEGACY_DEPLOYMENTS_JSON"
+KUBERNETES_DEPLOYMENTS_JSON="$TMP_DIR/deployments-kubernetes-runner.json"
+jq --arg image "$RUNNER_DIGEST_IMAGE" '
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.strategy) = {type:"Recreate"} |
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.serviceAccountName) = "bot-orchestrator" |
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.automountServiceAccountToken) = true |
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.containers[] | select(.name == "bot-orchestrator") |
+    .env) = [{name:"BOT_RUNNER_IMAGE",value:$image}]
+' "$STUB_DEPLOYMENTS_JSON" >"$KUBERNETES_DEPLOYMENTS_JSON"
+RESTORE_VALUES_FIXTURE="$TMP_DIR/input-values.restore-fence.fixture.yaml"
+sed \
+  's|^BOT_RUNNER_RECOVERY_EPOCH:.*$|BOT_RUNNER_RECOVERY_EPOCH: 33333333-3333-4333-8333-333333333333|' \
+  "$VALUES_FIXTURE" >"$RESTORE_VALUES_FIXTURE"
+chmod 600 "$RESTORE_VALUES_FIXTURE"
+export VALUES_FILE="$RESTORE_VALUES_FIXTURE"
 
 make_checkpoint() {
   local directory="$1"
@@ -291,7 +354,15 @@ make_checkpoint() {
     ret_pvc_uid:"fixture-pvc-uid",operation_id:("9"*32),
     writer_quiescence:{required:true,started_at_utc:"2026-07-17T00:00:00Z",completed_at_utc:"2026-07-17T00:00:01Z"}
   }' >"$directory/checkpoint-metadata.json"
-  jq --arg namespace hcce --arg uid fixture-uid '{schema_version:2,namespace:$namespace,namespace_uid:$uid,deployments:[.items[]|{name:.metadata.name,uid:.metadata.uid,replicas:.spec.replicas,init_containers:[],containers:[.spec.template.spec.containers[]|{name,image}]}]}' "$STUB_DEPLOYMENTS_JSON" >"$directory/deployment-images.json"
+  jq --arg namespace hcce --arg uid fixture-uid \
+    '{schema_version:3,namespace:$namespace,namespace_uid:$uid,
+      bot_runner_runtime:{
+        mode:"process-local",image:null,control_plane:{state:"legacy-absent"},
+        recovery_epoch:{state:"legacy-absent"}},
+      deployments:[.items[]|{name:.metadata.name,uid:.metadata.uid,
+        replicas:.spec.replicas,init_containers:[],
+        containers:[.spec.template.spec.containers[]|{name,image}]}]}' \
+    "$STUB_DEPLOYMENTS_JSON" >"$directory/deployment-images.json"
   printf 'A=configured\n' >"$directory/configured-value-keys.txt"
   printf 'cluster\n' >"$directory/digitalocean-cluster.json"
   printf 'lbs\n' >"$directory/digitalocean-load-balancers.json"
@@ -320,7 +391,6 @@ DUMP_SHA="$(sha256_digest "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz")"
 STORAGE_SHA="$(sha256_digest "$GOOD_CHECKPOINT/ret-storage-$STAMP.tar.gz")"
 CONFIRM_DB="retdb:fixture-context:hcce:fixture-uid:$STAMP:$DUMP_SHA:$STORAGE_SHA"
 CONFIRM_STORAGE="ret-pvc:fixture-context:hcce:fixture-uid:$STAMP:$DUMP_SHA:$STORAGE_SHA:fixture-pvc-uid"
-CONFIRM_CHECKPOINT="checkpoint:fixture-context:hcce:fixture-uid:$STAMP:$DUMP_SHA:$STORAGE_SHA:fixture-pvc-uid"
 
 SIZE_FIXTURE="$TMP_DIR/file-size-fixture"
 printf '1234' >"$SIZE_FIXTURE"
@@ -447,12 +517,151 @@ cat >"$TMP_DIR/bin/kubectl" <<'STUB'
 set -euo pipefail
 printf '%s\n' "$*" >>"$KUBECTL_LOG"
 if [[ "${1:-}" == "--context" ]]; then shift 2; fi
+if [[ "${1:-}" == "--request-timeout=45s" ||
+      "${1:-}" == "--request-timeout=75s" ||
+      "${1:-}" == "--request-timeout=30s" ||
+      "${1:-}" == "--request-timeout=3600s" ]]; then shift; else exit 89; fi
 joined="$*"
+if [[ "${STUB_MODE:-}" == parent-death-stream &&
+      "$joined" == "exec -n hcce parent-death-probe -- destructive-stream" ]]; then
+  trap 'printf terminated >"$STUB_STATE_DIR/parent-death-stream-terminated"; exit 143' TERM INT
+  (
+    trap '' TERM INT
+    while :; do sleep 1; done
+  ) &
+  printf '%s' "$!" >"$STUB_STATE_DIR/parent-death-grandchild-pid"
+  printf started >"$STUB_STATE_DIR/parent-death-stream-started"
+  wait
+  printf completed >"$STUB_STATE_DIR/parent-death-stream-completed"
+  exit 0
+fi
 yaml_field() {
   local pattern="$1" file="$2"
   awk -v pattern="$pattern" '$0 ~ pattern {value=$0; sub(/^[^:]+:[[:space:]]*/, "", value); gsub(/^"|"$/, "", value); print value; exit}' "$file"
 }
 if [[ "$joined" == "config current-context" ]]; then printf '%s' "${STUB_CURRENT_CONTEXT:-fixture-context}"; exit 0; fi
+if [[ "$joined" == "get lease yenhubs-operation-serialization -n hcce --ignore-not-found -o json" ]]; then
+  [[ ! -f "$STUB_STATE_DIR/serialization-lease.json" ]] ||
+    cat "$STUB_STATE_DIR/serialization-lease.json"
+  exit 0
+fi
+if [[ "$joined" == "get lease yenhubs-operation-serialization -n hcce -o json" ]]; then
+  [[ -f "$STUB_STATE_DIR/serialization-lease.json" ]] || exit 1
+  if [[ -n "${YENHUBS_PARENT_LEASE_HOLDER:-}" ]]; then
+    case "${STUB_MODE:-}" in
+      stale-helper-parent-lease-missing)
+        exit 1
+        ;;
+      stale-helper-parent-lease-replaced)
+        jq '.metadata.uid = "replacement-serialization-lease-uid"' \
+          "$STUB_STATE_DIR/serialization-lease.json"
+        exit 0
+        ;;
+    esac
+  fi
+  lease_get_count=0
+  [[ ! -f "$STUB_STATE_DIR/serialization-lease-get-count" ]] ||
+    lease_get_count="$(cat "$STUB_STATE_DIR/serialization-lease-get-count")"
+  lease_get_count=$((lease_get_count + 1))
+  printf '%s' "$lease_get_count" >"$STUB_STATE_DIR/serialization-lease-get-count"
+  if [[ "${STUB_MODE:-}" == lease-holder-lost && "$lease_get_count" -ge 1 ]]; then
+    jq '.spec.holderIdentity = "cloud-apply:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" |
+      .metadata.resourceVersion = "lease-rv-lost"' \
+      "$STUB_STATE_DIR/serialization-lease.json" \
+      >"$STUB_STATE_DIR/serialization-lease.next"
+    mv "$STUB_STATE_DIR/serialization-lease.next" \
+      "$STUB_STATE_DIR/serialization-lease.json"
+  fi
+  cat "$STUB_STATE_DIR/serialization-lease.json"
+  exit 0
+fi
+if [[ "$joined" == "get role bot-orchestrator-runner-pods -n hcce-bot-runners -o json" ]]; then
+  role_uid=runner-role-uid
+  role_rv_number=1
+  role_phase=active
+  role_rules='[{"apiGroups":[""],"resources":["pods"],"verbs":["create","delete","get","list"]}]'
+  [[ ! -f "$STUB_STATE_DIR/runner-role-uid" ]] || role_uid="$(cat "$STUB_STATE_DIR/runner-role-uid")"
+  [[ ! -f "$STUB_STATE_DIR/runner-role-rv" ]] || role_rv_number="$(cat "$STUB_STATE_DIR/runner-role-rv")"
+  [[ ! -f "$STUB_STATE_DIR/runner-role-phase" ]] || role_phase="$(cat "$STUB_STATE_DIR/runner-role-phase")"
+  [[ ! -f "$STUB_STATE_DIR/runner-role-rules.json" ]] || role_rules="$(cat "$STUB_STATE_DIR/runner-role-rules.json")"
+  jq -cn --arg uid "$role_uid" --arg rv "runner-role-rv-$role_rv_number" \
+    --arg phase "$role_phase" --argjson rules "$role_rules" '
+    {apiVersion:"rbac.authorization.k8s.io/v1",kind:"Role",
+      metadata:{name:"bot-orchestrator-runner-pods",namespace:"hcce-bot-runners",
+        uid:$uid,resourceVersion:$rv,annotations:{
+          "yenhubs.org/runner-activation-phase":"active",
+          "yenhubs.org/bot-runner-recovery-phase":$phase}},rules:$rules}
+  '
+  exit 0
+fi
+if [[ "$joined" == "get namespace hcce-bot-runners --ignore-not-found -o json" ]]; then
+  if [[ "${STUB_RUNNER_NAMESPACE:-absent}" == present ]]; then
+    printf '%s' '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"hcce-bot-runners","uid":"fixture-runner-namespace-uid"}}'
+  fi
+  exit 0
+fi
+if [[ "$joined" == "get serviceaccount bot-orchestrator -n hcce --ignore-not-found -o json" ]]; then
+  [[ "${STUB_RUNNER_RESIDUAL:-}" != serviceaccount ]] ||
+    printf '%s' '{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"bot-orchestrator","namespace":"hcce","uid":"residual-sa-uid"}}'
+  exit 0
+fi
+if [[ "$joined" == "get role bot-orchestrator-runner-pods -n hcce --ignore-not-found -o json" ]]; then
+  [[ "${STUB_RUNNER_RESIDUAL:-}" != role ]] ||
+    printf '%s' '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"bot-orchestrator-runner-pods","namespace":"hcce","uid":"residual-role-uid"}}'
+  exit 0
+fi
+if [[ "$joined" == "get rolebinding bot-orchestrator-runner-pods -n hcce --ignore-not-found -o json" ]]; then
+  [[ "${STUB_RUNNER_RESIDUAL:-}" != rolebinding ]] ||
+    printf '%s' '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"bot-orchestrator-runner-pods","namespace":"hcce","uid":"residual-binding-uid"}}'
+  exit 0
+fi
+if [[ "$joined" == "get validatingadmissionpolicy bot-runner-pods.yenhubs.org --ignore-not-found -o json" ]]; then
+  [[ "${STUB_RUNNER_RESIDUAL:-}" != validatingadmissionpolicy ]] ||
+    printf '%s' '{"apiVersion":"admissionregistration.k8s.io/v1","kind":"ValidatingAdmissionPolicy","metadata":{"name":"bot-runner-pods.yenhubs.org","uid":"residual-vap-uid"}}'
+  exit 0
+fi
+if [[ "$joined" == "get validatingadmissionpolicybinding bot-runner-pods.yenhubs.org --ignore-not-found -o json" ]]; then
+  [[ "${STUB_RUNNER_RESIDUAL:-}" != validatingadmissionpolicybinding ]] ||
+    printf '%s' '{"apiVersion":"admissionregistration.k8s.io/v1","kind":"ValidatingAdmissionPolicyBinding","metadata":{"name":"bot-runner-pods.yenhubs.org","uid":"residual-vap-binding-uid"}}'
+  exit 0
+fi
+if [[ "$joined" == get\ namespace\ hcce-bot-runners\ -o\ jsonpath=* ]]; then
+  uid=fixture-runner-namespace-uid
+  [[ "${STUB_RUNNER_RESOURCE_DRIFT:-}" != namespace ]] || uid=drifted-runner-namespace-uid
+  printf 'v1\tNamespace\thcce-bot-runners\t%s' "$uid"
+  exit 0
+fi
+if [[ "$joined" == get\ *\ *\ -n\ hcce-bot-runners\ -o\ jsonpath=* ]]; then
+  resource="${2:-}"; name="${3:-}"; api_version=""; kind=""
+  case "$resource/$name" in
+    secret/bot-images-pull) api_version=v1; kind=Secret ;;
+    serviceaccount/bot-runner) api_version=v1; kind=ServiceAccount ;;
+    resourcequota/bot-runner-capacity) api_version=v1; kind=ResourceQuota ;;
+    role/bot-orchestrator-runner-pods) api_version=rbac.authorization.k8s.io/v1; kind=Role ;;
+    rolebinding/bot-orchestrator-runner-pods) api_version=rbac.authorization.k8s.io/v1; kind=RoleBinding ;;
+    networkpolicy/bot-runner-default-deny|networkpolicy/bot-runner-egress)
+      api_version=networking.k8s.io/v1; kind=NetworkPolicy ;;
+    *) exit 1 ;;
+  esac
+  uid="uid-$name"
+  [[ "${STUB_RUNNER_RESOURCE_DRIFT:-}" != "$name" ]] || uid="drifted-$uid"
+  printf '%s\t%s\thcce-bot-runners\t%s\t%s' "$api_version" "$kind" "$name" "$uid"
+  exit 0
+fi
+if [[ "$joined" == get\ validatingadmissionpolicy*\ bot-runner-pods.yenhubs.org\ -o\ jsonpath=* ]]; then
+  resource="${2:-}"
+  if [[ "$resource" == validatingadmissionpolicy ]]; then
+    kind=ValidatingAdmissionPolicy
+  elif [[ "$resource" == validatingadmissionpolicybinding ]]; then
+    kind=ValidatingAdmissionPolicyBinding
+  else
+    exit 1
+  fi
+  uid="uid-$resource"
+  [[ "${STUB_RUNNER_RESOURCE_DRIFT:-}" != "$resource" ]] || uid="drifted-$uid"
+  printf 'admissionregistration.k8s.io/v1\t%s\tbot-runner-pods.yenhubs.org\t%s' "$kind" "$uid"
+  exit 0
+fi
 if [[ "$joined" == get\ namespace\ * ]]; then printf '%s' "${STUB_NAMESPACE_UID:-fixture-uid}"; exit 0; fi
 if [[ "$joined" == get\ pvc\ ret-pvc*"jsonpath"* ]]; then printf '%s' "${STUB_PVC_UID:-fixture-pvc-uid}"; exit 0; fi
 if [[ "$joined" == "get configmap yenhubs-recovery-operation-lock -n hcce -o json" ]]; then
@@ -487,11 +696,17 @@ if [[ "$joined" == "get configmap yenhubs-recovery-operation-lock -n hcce -o jso
   lock_stamp="$(yaml_field 'yenhubs.org/checkpoint-stamp:' "$STUB_STATE_DIR/restore-lock.yaml")"
   lock_dump="$(yaml_field 'yenhubs.org/dump-sha256:' "$STUB_STATE_DIR/restore-lock.yaml")"
   lock_storage="$(yaml_field 'yenhubs.org/storage-sha256:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_pre_epoch="$(yaml_field 'yenhubs.org/pre-fence-epoch:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_target_epoch="$(yaml_field 'yenhubs.org/restore-fence-epoch:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_inventory="$(yaml_field 'yenhubs.org/deployment-inventory-sha256:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_state="$(yaml_field 'yenhubs.org/recovery-state:' "$STUB_STATE_DIR/restore-lock.yaml")"
   jq -cn --arg uid "$lock_uid" --arg rv "$lock_rv" --arg owner "$lock_owner" \
     --arg operation_id "$lock_operation_id" --arg token "$lock_token" \
     --arg namespace_uid "$lock_namespace_uid" --arg pvc_uid "$lock_pvc_uid" \
     --arg stamp "$lock_stamp" --arg dump "$lock_dump" --arg storage "$lock_storage" \
-    '{apiVersion:"v1",kind:"ConfigMap",metadata:{name:"yenhubs-recovery-operation-lock",namespace:"hcce",uid:$uid,resourceVersion:$rv,labels:{"yenhubs.org/recovery-owner":$owner},annotations:{"yenhubs.org/operation-id":$operation_id,"yenhubs.org/recovery-token":$token,"yenhubs.org/namespace-uid":$namespace_uid,"yenhubs.org/pvc-uid":$pvc_uid,"yenhubs.org/checkpoint-stamp":$stamp,"yenhubs.org/dump-sha256":$dump,"yenhubs.org/storage-sha256":$storage}},immutable:true}'
+    --arg pre_epoch "$lock_pre_epoch" --arg target_epoch "$lock_target_epoch" \
+    --arg inventory "$lock_inventory" --arg state "$lock_state" \
+    '{apiVersion:"v1",kind:"ConfigMap",metadata:{name:"yenhubs-recovery-operation-lock",namespace:"hcce",uid:$uid,resourceVersion:$rv,labels:{"yenhubs.org/recovery-owner":$owner},annotations:({"yenhubs.org/operation-id":$operation_id,"yenhubs.org/recovery-token":$token,"yenhubs.org/namespace-uid":$namespace_uid,"yenhubs.org/pvc-uid":$pvc_uid,"yenhubs.org/checkpoint-stamp":$stamp,"yenhubs.org/dump-sha256":$dump,"yenhubs.org/storage-sha256":$storage} + if $pre_epoch == "" then {} else {"yenhubs.org/pre-fence-epoch":$pre_epoch,"yenhubs.org/restore-fence-epoch":$target_epoch,"yenhubs.org/deployment-inventory-sha256":$inventory} end + if $state == "" then {} else {"yenhubs.org/recovery-state":$state} end)},immutable:true}'
   exit 0
 fi
 if [[ "$joined" == get\ pod\ reticulum-0*metadata.uid* ]]; then printf 'reticulum-pod-uid'; exit 0; fi
@@ -501,6 +716,40 @@ if [[ "$joined" == rollout\ status\ * ]]; then
   if [[ "${STUB_MODE:-}" == "resume-ret-fail" && "$joined" == *"deployment/reticulum"* &&
         -f "$STUB_STATE_DIR/replicas-reticulum" &&
         "$(cat "$STUB_STATE_DIR/replicas-reticulum")" == "1" ]]; then exit 1; fi
+  if [[ "${STUB_MODE:-}" == "finalizer-failclose-drift" &&
+        "$joined" == *"deployment/reticulum"* &&
+        -f "$STUB_STATE_DIR/replicas-reticulum" &&
+        "$(cat "$STUB_STATE_DIR/replicas-reticulum")" == "1" &&
+        ! -e "$STUB_STATE_DIR/finalizer-failclose-triggered" ]]; then
+    : >"$STUB_STATE_DIR/finalizer-failclose-triggered"
+    rm -f -- "$STUB_STATE_DIR/restore-lock.yaml" \
+      "$STUB_STATE_DIR/restore-lock-uid" "$STUB_STATE_DIR/restore-lock-rv"
+    printf '%s' replacement-runner-role-uid >"$STUB_STATE_DIR/runner-role-uid"
+    printf '%s' active >"$STUB_STATE_DIR/runner-role-phase"
+    printf '%s' '[{"apiGroups":[""],"resources":["pods","secrets"],"verbs":["*"]}]' \
+      >"$STUB_STATE_DIR/runner-role-rules.json"
+    exit 1
+  fi
+  if [[ "${STUB_MODE:-}" == "runner-reappears-before-parent" &&
+        "$joined" == *"deployment/coturn"* &&
+        -f "$STUB_STATE_DIR/replicas-coturn" &&
+        "$(cat "$STUB_STATE_DIR/replicas-coturn")" == "1" ]]; then
+    : >"$STUB_STATE_DIR/runner-reappear"
+  fi
+  if [[ "${STUB_MODE:-}" == "checkpoint-process-local-adjacent-drift" &&
+        "$joined" == *"deployment/coturn"* &&
+        -f "$STUB_STATE_DIR/replicas-coturn" &&
+        "$(cat "$STUB_STATE_DIR/replicas-coturn")" == "1" ]]; then
+    : >"$STUB_STATE_DIR/checkpoint-adjacent-drift"
+  fi
+  if [[ "${STUB_MODE:-}" == "runner-transient-during-ret" &&
+        "$joined" == *"deployment/reticulum"* &&
+        -f "$STUB_STATE_DIR/replicas-reticulum" &&
+        "$(cat "$STUB_STATE_DIR/replicas-reticulum")" == "1" ]]; then
+    : >"$STUB_STATE_DIR/runner-reappear"
+    sleep 0.05
+    rm -f -- "$STUB_STATE_DIR/runner-reappear"
+  fi
   exit 0
 fi
 if [[ "$joined" == get\ pod\ *"-l app=pgsql"*"jsonpath"* ]]; then printf 'pgsql-0'; exit 0; fi
@@ -580,30 +829,173 @@ if [[ "$joined" == get\ pod\ ret-storage-*"-o json" ]]; then
   fi
   exit 0
 fi
-if [[ "$joined" == "get pod -n hcce -o json" ]]; then
-  if [[ -e "$STUB_STATE_DIR/pod-created" ]]; then
+if [[ "$joined" == "get pod -n hcce -o json" ||
+      "$joined" == "get pod -n hcce-bot-runners -o json" ]]; then
+  target_namespace="${4:-}"
+  pods_json='{"apiVersion":"v1","kind":"PodList","metadata":{"resourceVersion":"100"},"items":[]}'
+  if [[ "$target_namespace" == hcce && -e "$STUB_STATE_DIR/pod-created" ]]; then
     count_file="$STUB_STATE_DIR/consumer-count"; count=0; [[ ! -f "$count_file" ]] || count="$(cat "$count_file")"; count=$((count + 1)); printf '%s' "$count" >"$count_file"
     pod_name="$(cat "$STUB_STATE_DIR/pod-name")"
     if [[ "${STUB_MODE:-}" == "extra-consumer" ||
           "${STUB_MODE:-}" == "backup-extra-consumer" ||
           ( "${STUB_MODE:-}" == "monitor-extra" && "$count" -ge 3 ) ||
           ( "${STUB_MODE:-}" == "backup-monitor-extra" && "$count" -ge 3 ) ]]; then
-      jq -cn --arg pod "$pod_name" '{items:[{metadata:{name:$pod},spec:{volumes:[{persistentVolumeClaim:{claimName:"ret-pvc"}}]}},{metadata:{name:"rogue"},spec:{volumes:[{persistentVolumeClaim:{claimName:"ret-pvc"}}]}}]}'
+      pods_json="$(jq -cn --arg pod "$pod_name" '{apiVersion:"v1",kind:"PodList",items:[{metadata:{name:$pod,uid:"restore-pod-uid",labels:{}},spec:{volumes:[{persistentVolumeClaim:{claimName:"ret-pvc"}}]}},{metadata:{name:"rogue",uid:"rogue-pod-uid",labels:{}},spec:{volumes:[{persistentVolumeClaim:{claimName:"ret-pvc"}}]}}]}')"
     else
-      jq -cn --arg pod "$pod_name" '{items:[{metadata:{name:$pod},spec:{volumes:[{persistentVolumeClaim:{claimName:"ret-pvc"}}]}}]}'
+      pods_json="$(jq -cn --arg pod "$pod_name" '{apiVersion:"v1",kind:"PodList",items:[{metadata:{name:$pod,uid:"restore-pod-uid",labels:{}},spec:{volumes:[{persistentVolumeClaim:{claimName:"ret-pvc"}}]}}]}')"
     fi
-  else
+  elif [[ "$target_namespace" == hcce ]]; then
     if [[ "${STUB_OPERATION:-}" == "storage-backup" ]]; then
       count_file="$STUB_STATE_DIR/consumer-count"; count=0; [[ ! -f "$count_file" ]] || count="$(cat "$count_file")"; count=$((count + 1)); printf '%s' "$count" >"$count_file"
       if [[ "${STUB_MODE:-}" == "backup-extra-consumer" ||
             ( "${STUB_MODE:-}" == "backup-monitor-extra" && "$count" -ge 3 ) ]]; then
-        printf '%s' '{"items":[{"metadata":{"name":"reticulum-0"},"spec":{"volumes":[{"persistentVolumeClaim":{"claimName":"ret-pvc"}}]}},{"metadata":{"name":"rogue"},"spec":{"volumes":[{"persistentVolumeClaim":{"claimName":"ret-pvc"}}]}}]}'
+        pods_json='{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"reticulum-0","uid":"reticulum-pod-uid","labels":{"app":"reticulum"}},"spec":{"volumes":[{"persistentVolumeClaim":{"claimName":"ret-pvc"}}]}},{"metadata":{"name":"rogue","uid":"rogue-pod-uid","labels":{}},"spec":{"volumes":[{"persistentVolumeClaim":{"claimName":"ret-pvc"}}]}}]}'
       else
-        printf '%s' '{"items":[{"metadata":{"name":"reticulum-0"},"spec":{"volumes":[{"persistentVolumeClaim":{"claimName":"ret-pvc"}}]}}]}'
+        pods_json='{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"reticulum-0","uid":"reticulum-pod-uid","labels":{"app":"reticulum"}},"spec":{"volumes":[{"persistentVolumeClaim":{"claimName":"ret-pvc"}}]}}]}'
       fi
     else
-      printf '%s' '{"items":[]}'
+      pods_json='{"apiVersion":"v1","kind":"PodList","items":[]}'
     fi
+  fi
+  runner_count_file="$STUB_STATE_DIR/runner-list-count"
+  runner_count=0
+  [[ ! -f "$runner_count_file" ]] || runner_count="$(cat "$runner_count_file")"
+  runner_count=$((runner_count + 1))
+  printf '%s' "$runner_count" >"$runner_count_file"
+  runner_labels=''
+  runner_service_account=''
+  case "${STUB_MODE:-}" in
+    runner-residual|runner-timeout)
+      runner_labels='{"app":"bot-runner","yenhubs.org/managed-by":"bot-orchestrator"}'
+      ;;
+    runner-app-only)
+      runner_labels='{"app":"bot-runner"}'
+      ;;
+    runner-managed-only)
+      runner_labels='{"yenhubs.org/managed-by":"bot-orchestrator"}'
+      ;;
+    runner-component-only)
+      runner_labels='{"component":"bot-runner"}'
+      ;;
+    runner-parent-service-account)
+      if [[ "$target_namespace" == hcce ]]; then
+        runner_labels='{}'
+        runner_service_account=bot-orchestrator
+      fi
+      ;;
+    runner-namespace-unlabeled)
+      if [[ "$target_namespace" == hcce-bot-runners ]]; then
+        runner_labels='{}'
+        runner_service_account=default
+      fi
+      ;;
+    runner-reappears)
+      if [[ "$runner_count" -ge 2 ]]; then
+        runner_labels='{"app":"bot-runner","yenhubs.org/managed-by":"bot-orchestrator"}'
+      fi
+      ;;
+    runner-reappears-during-storage|runner-reappears-before-parent|runner-transient-during-ret)
+      if [[ -e "$STUB_STATE_DIR/runner-reappear" ]]; then
+        runner_labels='{"app":"bot-runner","yenhubs.org/managed-by":"bot-orchestrator"}'
+      fi
+      ;;
+    checkpoint-orphan-runner|finalizer-failclose-drift)
+      if [[ "$target_namespace" == hcce-bot-runners &&
+            ! -e "$STUB_STATE_DIR/checkpoint-orphan-runner-deleted" ]]; then
+        runner_labels='{"app":"bot-runner","yenhubs.org/managed-by":"bot-orchestrator"}'
+      fi
+      ;;
+  esac
+  if [[ -n "$runner_labels" ]]; then
+    pods_json="$(jq -c --argjson labels "$runner_labels" \
+      --arg service_account "$runner_service_account" '
+      .items += [{metadata:{name:"bot-runner-fixture",uid:"runner-pod-uid",labels:$labels},
+        spec:({volumes:[]} + if $service_account == "" then {} else
+          {serviceAccountName:$service_account} end)}]
+    ' <<<"$pods_json")"
+  fi
+  pods_json="$(jq -c --arg namespace "$target_namespace" '
+    .apiVersion = "v1" | .kind = "PodList" |
+    .metadata.resourceVersion = "100" |
+    .items |= map(.metadata.namespace = $namespace | .metadata.resourceVersion = "101")
+  ' <<<"$pods_json")"
+  printf '%s' "$pods_json"
+  exit 0
+fi
+if [[ "$joined" == get\ --raw\ /api/v1/namespaces/*/pods\?* ]]; then
+  raw_path="${3:-}"
+  [[ "$raw_path" == *"allowWatchBookmarks=true"* &&
+     "$raw_path" == *"resourceVersion="* &&
+     "$raw_path" != *"resourceVersionMatch="* &&
+     "$raw_path" != *"sendInitialEvents="* ]] || exit 1
+  watch_namespace="${raw_path#/api/v1/namespaces/}"
+  watch_namespace="${watch_namespace%%/pods\?*}"
+  [[ "$watch_namespace" == hcce || "$watch_namespace" == hcce-bot-runners ]] || exit 1
+  watch_count_file="$STUB_STATE_DIR/runner-watch-count-$watch_namespace"
+  watch_count=0
+  [[ ! -f "$watch_count_file" ]] || watch_count="$(cat "$watch_count_file")"
+  watch_count=$((watch_count + 1))
+  printf '%s' "$watch_count" >"$watch_count_file"
+  if [[ "$raw_path" == *"timeoutSeconds=65"* ]]; then
+    final_count_file="$STUB_STATE_DIR/runner-final-watch-count-$watch_namespace"
+    final_count=0
+    [[ ! -f "$final_count_file" ]] || final_count="$(cat "$final_count_file")"
+    printf '%s' "$((final_count + 1))" >"$final_count_file"
+  fi
+  sleep 0.01
+  if [[ "${STUB_MODE:-}" == runner-watch-fails-before-event ]]; then
+    exit 1
+  fi
+  emit_runner_event=false
+  if [[ ( ( "${STUB_MODE:-}" == runner-watch-transient &&
+            "$watch_namespace" == hcce-bot-runners ) ||
+          ( "${STUB_MODE:-}" == runner-watch-parent-service-account &&
+            "$watch_namespace" == hcce ) ||
+          ( "${STUB_MODE:-}" == runner-watch-runner-unlabeled &&
+            "$watch_namespace" == hcce-bot-runners ) ||
+          ( "${STUB_MODE:-}" == runner-watch-component-only &&
+            "$watch_namespace" == hcce ) ) &&
+        ! -e "$STUB_STATE_DIR/runner-watch-transient-emitted" ]]; then
+    : >"$STUB_STATE_DIR/runner-watch-transient-emitted"
+    emit_runner_event=true
+  elif [[ "${STUB_MODE:-}" == runner-watch-stop-gap-transient &&
+          "$raw_path" == *"timeoutSeconds=65"* &&
+          ! -e "$STUB_STATE_DIR/runner-watch-transient-emitted" ]]; then
+    : >"$STUB_STATE_DIR/runner-watch-transient-emitted"
+    emit_runner_event=true
+  elif [[ ( "${STUB_MODE:-}" == runner-reappears-during-storage ||
+             "${STUB_MODE:-}" == runner-reappears-before-parent ||
+             "${STUB_MODE:-}" == runner-transient-during-ret ) &&
+           -e "$STUB_STATE_DIR/runner-reappear" &&
+           ! -e "$STUB_STATE_DIR/runner-watch-event-$watch_namespace" ]]; then
+    : >"$STUB_STATE_DIR/runner-watch-event-$watch_namespace"
+    emit_runner_event=true
+  fi
+  if [[ "$emit_runner_event" == true ]]; then
+    event_labels='{"app":"bot-runner"}'
+    event_service_account=default
+    if [[ "${STUB_MODE:-}" == runner-watch-parent-service-account ]]; then
+      event_labels='{}'
+      event_service_account=bot-orchestrator
+    elif [[ "${STUB_MODE:-}" == runner-watch-runner-unlabeled ]]; then
+      event_labels='{}'
+      event_service_account=default
+    elif [[ "${STUB_MODE:-}" == runner-watch-component-only ]]; then
+      event_labels='{"component":"bot-runner"}'
+      event_service_account=default
+    fi
+    jq -cn --arg namespace "$watch_namespace" --argjson labels "$event_labels" \
+      --arg service_account "$event_service_account" '
+      {type:"ADDED",object:{apiVersion:"v1",kind:"Pod",metadata:{
+        name:"bot-runner-transient",namespace:$namespace,uid:"runner-transient-uid",
+        resourceVersion:"102",labels:$labels},spec:{serviceAccountName:$service_account}}},
+      {type:"DELETED",object:{apiVersion:"v1",kind:"Pod",metadata:{
+        name:"bot-runner-transient",namespace:$namespace,uid:"runner-transient-uid",
+        resourceVersion:"103",labels:$labels},spec:{serviceAccountName:$service_account}}}
+    '
+  else
+    jq -cn '{type:"BOOKMARK",object:{metadata:{resourceVersion:"101",annotations:{
+      "k8s.io/initial-events-end":"true"}}}}'
   fi
   exit 0
 fi
@@ -638,6 +1030,16 @@ if [[ "$joined" == "get networkpolicy -n hcce -o json" ]]; then
   exit 0
 fi
 if [[ "$joined" == "get deployment -n hcce -o json" ]]; then cat "$STUB_DEPLOYMENTS_JSON"; exit 0; fi
+if [[ "$joined" == "get replicaset -n hcce -o json" ]]; then
+  jq -cn '
+    {apiVersion:"v1",kind:"ReplicaSetList",items:
+      ["reticulum","pgbouncer","pgbouncer-t","bot-orchestrator","coturn"] |
+      map({apiVersion:"apps/v1",kind:"ReplicaSet",metadata:{name:(.+"-rs"),
+        namespace:"hcce",uid:(.+"-rs-uid"),ownerReferences:[{
+          apiVersion:"apps/v1",kind:"Deployment",name:.,uid:("uid-"+.),controller:true}]}})}
+  '
+  exit 0
+fi
 if [[ "$joined" == get\ replicaset\ *"-o json" ]]; then
   replica_set="${3:-}"
   deployment="${replica_set%-rs}"
@@ -657,22 +1059,92 @@ if [[ "$joined" == get\ deployment\ *"-o json" ]]; then
   if [[ -f "$replica_file" ]]; then replicas="$(cat "$replica_file")"; else replicas=1; fi
   rv_file="$STUB_STATE_DIR/rv-$deployment"
   if [[ -f "$rv_file" ]]; then rv_number="$(cat "$rv_file")"; else rv_number=1; fi
-  jq -ce --arg name "$deployment" --arg rv "rv-$deployment-$rv_number" --argjson replicas "$replicas" '
+  recovery_phase=active
+  recovery_phase_override=false
+  if [[ -f "$STUB_STATE_DIR/recovery-phase" ]]; then
+    recovery_phase="$(cat "$STUB_STATE_DIR/recovery-phase")"
+    recovery_phase_override=true
+  fi
+  recovery_epoch="$LIVE_RUNNER_EPOCH"
+  recovery_epoch_override=false
+  if [[ -f "$STUB_STATE_DIR/recovery-epoch" ]]; then
+    recovery_epoch="$(cat "$STUB_STATE_DIR/recovery-epoch")"
+    recovery_epoch_override=true
+  fi
+  deployment_json="$(jq -ce --arg name "$deployment" --arg rv "rv-$deployment-$rv_number" \
+    --argjson replicas "$replicas" --arg recovery_phase "$recovery_phase" \
+    --argjson recovery_phase_override "$recovery_phase_override" \
+    --arg recovery_epoch "$recovery_epoch" \
+    --argjson recovery_epoch_override "$recovery_epoch_override" '
     [.items[] | select(.metadata.name == $name)] | select(length == 1) | .[0] |
     .apiVersion = "apps/v1" | .kind = "Deployment" |
     .metadata.namespace = "hcce" | .metadata.resourceVersion = $rv |
-    .spec.replicas = $replicas | .spec.strategy = {} |
-    .spec.template.metadata = {labels:{app:$name}}
-  ' "$STUB_DEPLOYMENTS_JSON"
+    .metadata.generation = 1 |
+    if $recovery_phase_override then
+      .metadata.annotations["yenhubs.org/bot-runner-recovery-phase"] = $recovery_phase
+    else . end |
+    .spec.replicas = $replicas | .spec.strategy = (.spec.strategy // {}) |
+    .spec.template.metadata = ((.spec.template.metadata // {}) + {labels:{app:$name}}) |
+    if $recovery_epoch_override then
+      .spec.template.metadata.annotations["yenhubs.org/bot-runner-recovery-epoch"] = $recovery_epoch
+    else . end |
+    .status = {observedGeneration:1,replicas:$replicas,readyReplicas:$replicas,
+      availableReplicas:$replicas,updatedReplicas:$replicas,unavailableReplicas:0}
+  ' "$STUB_DEPLOYMENTS_JSON")"
+  if [[ "${STUB_MODE:-}" == epoch-reticulum-only &&
+        "$deployment" == bot-orchestrator ]] ||
+     [[ "${STUB_MODE:-}" == epoch-parent-only &&
+        "$deployment" == reticulum ]]; then
+    deployment_json="$(jq -c '
+      del(.spec.template.metadata.annotations[
+        "yenhubs.org/bot-runner-recovery-epoch"
+      ])
+    ' <<<"$deployment_json")"
+  fi
+  if [[ ( "${STUB_MODE:-}" == checkpoint-process-local-mode-drift &&
+        "$deployment" == bot-orchestrator &&
+        -e "$STUB_STATE_DIR/checkpoint-backup-complete" ) ||
+        ( "${STUB_MODE:-}" == checkpoint-process-local-adjacent-drift &&
+          "$deployment" == bot-orchestrator &&
+          -e "$STUB_STATE_DIR/checkpoint-adjacent-drift" ) ]]; then
+    deployment_json="$(jq -c '
+      .spec.template.spec.containers[0].env += [{
+        name:"ORCHESTRATOR_POD_UID",value:"late-partial-binding"
+      }]
+    ' <<<"$deployment_json")"
+  fi
+  if [[ "${STUB_MODE:-}" == finalizer-failclose-drift &&
+        -e "$STUB_STATE_DIR/finalizer-failclose-triggered" &&
+        "$deployment" == pgbouncer ]]; then
+    deployment_json="$(jq -c '
+      .metadata.uid = "replacement-uid-pgbouncer" |
+      .spec.selector.matchLabels.app = "replacement-pgbouncer" |
+      .spec.template.metadata.labels.app = "replacement-pgbouncer"
+    ' <<<"$deployment_json")"
+  fi
+  printf '%s' "$deployment_json"
   exit 0
 fi
 if [[ "$joined" == get\ pod\ *"-o name"* ]]; then
   if [[ "$joined" == *"-l app="* ]]; then
-    if [[ ! -e "$STUB_STATE_DIR/waited" ]]; then printf 'pod/workload-0\n'; elif [[ "${STUB_MODE:-}" == residual ]]; then printf 'pod/workload-still-running\n'; fi
+    if [[ ! -e "$STUB_STATE_DIR/waited" ]]; then
+      printf 'pod/workload-0\n'
+    elif [[ "${STUB_MODE:-}" == residual ]] ||
+         [[ "${STUB_MODE:-}" == checkpoint-parent-wait-failure &&
+            "$joined" == *"-l app=bot-orchestrator"* ]]; then
+      printf 'pod/workload-still-running\n'
+    fi
     exit 0
   fi
 fi
-if [[ "$joined" == wait\ --for=delete\ * ]]; then [[ "${STUB_MODE:-}" != timeout ]] || exit 1; : >"$STUB_STATE_DIR/waited"; exit 0; fi
+if [[ "$joined" == wait\ --for=delete\ * ]]; then
+  if [[ "${STUB_MODE:-}" == runner-timeout && "$joined" == *"pod/bot-runner-"* ]]; then
+    exit 1
+  fi
+  [[ "${STUB_MODE:-}" != timeout ]] || exit 1
+  : >"$STUB_STATE_DIR/waited"
+  exit 0
+fi
 if [[ "$joined" == wait\ --for=condition=Ready\ * ]]; then exit 0; fi
 if [[ "$joined" == scale\ deployment\ * ]]; then
   deployment="${3:-}"
@@ -691,9 +1163,113 @@ if [[ "$joined" == scale\ deployment\ * ]]; then
   [[ "$current_expected" == "$current" && "$rv_expected" == "rv-$deployment-$rv_number" && "$replicas" =~ ^[0-9]+$ ]] || exit 1
   printf '%s' "$replicas" >"$replica_file"
   printf '%s' "$((rv_number + 1))" >"$rv_file"
+  if [[ "${STUB_MODE:-}" == checkpoint-local-input-mutation &&
+        "$deployment" == bot-orchestrator && "$replicas" == 0 ]]; then
+    [[ -n "${STUB_MUTABLE_VALUES_PATH:-}" &&
+       -n "${STUB_MUTABLE_MANIFEST_PATH:-}" ]] || exit 1
+    printf '%s\n' 'invalid: [' >"$STUB_MUTABLE_VALUES_PATH"
+    printf '%s\n' 'tampered-after-fence' >"$STUB_MUTABLE_MANIFEST_PATH"
+  fi
   exit 0
 fi
-if [[ "$joined" == create\ -f\ - ]]; then
+if [[ "$joined" == "replace -f - -o json" ]]; then
+  replace_payload="$(mktemp "$STUB_STATE_DIR/replace-payload.XXXXXX")"
+  trap 'rm -f -- "$replace_payload"' EXIT
+  cat >"$replace_payload"
+  if [[ "${STUB_MODE:-}" == replace-payload-concurrency ]]; then
+    replace_kind="$(jq -er '.kind' "$replace_payload")"
+    : >"$STUB_STATE_DIR/replace-ready-$replace_kind"
+    for _ in {1..200}; do
+      [[ -e "$STUB_STATE_DIR/replace-ready-Lease" &&
+         -e "$STUB_STATE_DIR/replace-ready-Role" ]] && break
+      sleep 0.01
+    done
+    [[ -e "$STUB_STATE_DIR/replace-ready-Lease" &&
+       -e "$STUB_STATE_DIR/replace-ready-Role" ]] || exit 1
+  fi
+  if [[ "$(jq -r '.kind // ""' "$replace_payload")" == Lease ]]; then
+    [[ -f "$STUB_STATE_DIR/serialization-lease.json" ]] || exit 1
+    [[ "${STUB_MODE:-}" != lease-cas-conflict ]] || exit 1
+    current_uid="$(jq -er '.metadata.uid' "$STUB_STATE_DIR/serialization-lease.json")"
+    current_rv="$(jq -er '.metadata.resourceVersion' "$STUB_STATE_DIR/serialization-lease.json")"
+    [[ "$(jq -er '.metadata.uid' "$replace_payload")" == "$current_uid" &&
+       "$(jq -er '.metadata.resourceVersion' "$replace_payload")" == "$current_rv" ]] || exit 1
+    lease_rv_number=1
+    [[ ! "$current_rv" =~ ^lease-rv-([0-9]+)$ ]] || lease_rv_number="${BASH_REMATCH[1]}"
+    lease_rv_number=$((lease_rv_number + 1))
+    jq -c --arg uid "$current_uid" --arg rv "lease-rv-$lease_rv_number" \
+      '.metadata.uid = $uid | .metadata.resourceVersion = $rv' \
+      "$replace_payload" >"$STUB_STATE_DIR/serialization-lease.next"
+    mv "$STUB_STATE_DIR/serialization-lease.next" \
+      "$STUB_STATE_DIR/serialization-lease.json"
+    cat "$STUB_STATE_DIR/serialization-lease.json"
+    exit 0
+  fi
+  if [[ "$(jq -r '.kind // ""' "$replace_payload")" == Role ]]; then
+    if [[ "${STUB_MODE:-}" == restore-role-replace-retry &&
+          ! -e "$STUB_STATE_DIR/role-replace-failed-once" ]]; then
+      : >"$STUB_STATE_DIR/role-replace-failed-once"
+      exit 1
+    fi
+    current_role_uid=runner-role-uid
+    current_role_rv_number=1
+    [[ ! -f "$STUB_STATE_DIR/runner-role-uid" ]] || current_role_uid="$(cat "$STUB_STATE_DIR/runner-role-uid")"
+    [[ ! -f "$STUB_STATE_DIR/runner-role-rv" ]] || current_role_rv_number="$(cat "$STUB_STATE_DIR/runner-role-rv")"
+    [[ "$(jq -er '.metadata.uid' "$replace_payload")" == "$current_role_uid" &&
+       "$(jq -er '.metadata.resourceVersion' "$replace_payload")" == \
+         "runner-role-rv-$current_role_rv_number" ]] || exit 1
+    current_role_rv_number=$((current_role_rv_number + 1))
+    printf '%s' "$current_role_uid" >"$STUB_STATE_DIR/runner-role-uid"
+    printf '%s' "$current_role_rv_number" >"$STUB_STATE_DIR/runner-role-rv"
+    jq -c '.rules' "$replace_payload" >"$STUB_STATE_DIR/runner-role-rules.json"
+    jq -r '.metadata.annotations["yenhubs.org/bot-runner-recovery-phase"]' \
+      "$replace_payload" >"$STUB_STATE_DIR/runner-role-phase"
+    jq -c --arg rv "runner-role-rv-$current_role_rv_number" \
+      '.metadata.resourceVersion = $rv' "$replace_payload"
+    exit 0
+  fi
+  [[ -f "$STUB_STATE_DIR/restore-lock.yaml" ]] || exit 1
+  current_uid="$(cat "$STUB_STATE_DIR/restore-lock-uid")"
+  current_rv="$(cat "$STUB_STATE_DIR/restore-lock-rv")"
+  [[ "$(jq -er '.metadata.uid' "$replace_payload")" == "$current_uid" &&
+     "$(jq -er '.metadata.resourceVersion' "$replace_payload")" == "$current_rv" &&
+     "$(jq -er '.metadata.annotations["yenhubs.org/recovery-state"]' "$replace_payload")" == \
+       restore-complete-awaiting-reactivation ]] || exit 1
+  awk '
+    /yenhubs.org\/recovery-state:/ {
+      print "    yenhubs.org/recovery-state: \"restore-complete-awaiting-reactivation\""
+      next
+    }
+    {print}
+  ' "$STUB_STATE_DIR/restore-lock.yaml" >"$STUB_STATE_DIR/restore-lock.next"
+  mv "$STUB_STATE_DIR/restore-lock.next" "$STUB_STATE_DIR/restore-lock.yaml"
+  printf '%s' lock-rv-2 >"$STUB_STATE_DIR/restore-lock-rv"
+  jq -c '.metadata.resourceVersion = "lock-rv-2"' "$replace_payload"
+  exit 0
+fi
+if [[ "$joined" == "create -f - -o json" ]]; then
+  lease_create_payload="$STUB_STATE_DIR/serialization-lease-create.yaml"
+  cat >"$lease_create_payload"
+  grep -q '^kind: Lease$' "$lease_create_payload" || exit 1
+  [[ ! -e "$STUB_STATE_DIR/serialization-lease.json" &&
+     "${STUB_MODE:-}" != lease-create-conflict ]] || exit 1
+  lease_holder="$(yaml_field 'holderIdentity:' "$lease_create_payload")"
+  lease_acquire="$(yaml_field 'acquireTime:' "$lease_create_payload")"
+  lease_renew="$(yaml_field 'renewTime:' "$lease_create_payload")"
+  lease_transitions="$(yaml_field 'leaseTransitions:' "$lease_create_payload")"
+  jq -cn --arg holder "$lease_holder" --arg acquire "$lease_acquire" \
+    --arg renew "$lease_renew" --argjson transitions "$lease_transitions" '
+    {apiVersion:"coordination.k8s.io/v1",kind:"Lease",
+     metadata:{name:"yenhubs-operation-serialization",namespace:"hcce",
+       uid:"serialization-lease-uid",resourceVersion:"lease-rv-1",
+       labels:{"yenhubs.org/operation-serialization":"deployment-recovery"}},
+     spec:{holderIdentity:$holder,leaseDurationSeconds:120,
+       acquireTime:$acquire,renewTime:$renew,leaseTransitions:$transitions}}
+  ' >"$STUB_STATE_DIR/serialization-lease.json"
+  cat "$STUB_STATE_DIR/serialization-lease.json"
+  exit 0
+fi
+if [[ "$joined" == "create -f -" ]]; then
   create_count_file="$STUB_STATE_DIR/create-count"
   create_count=0; [[ ! -f "$create_count_file" ]] || create_count="$(cat "$create_count_file")"
   create_count=$((create_count + 1)); printf '%s' "$create_count" >"$create_count_file"
@@ -747,6 +1323,10 @@ if [[ "$joined" == delete\ --raw=*" -f -" ]]; then
       [[ "$expected_uid" == "$current_uid" ]] || exit 1
       rm -f -- "$STUB_STATE_DIR/restore-lock.yaml" "$STUB_STATE_DIR/restore-lock-uid" "$STUB_STATE_DIR/restore-lock-rv"
       ;;
+    /api/v1/namespaces/hcce-bot-runners/pods/bot-runner-fixture)
+      [[ "$expected_uid" == runner-pod-uid ]] || exit 1
+      : >"$STUB_STATE_DIR/checkpoint-orphan-runner-deleted"
+      ;;
     /api/v1/namespaces/hcce/pods/*)
       [[ -f "$STUB_STATE_DIR/pod-created" ]] || exit 1
       current_uid="$(cat "$STUB_STATE_DIR/pod-uid")"
@@ -777,7 +1357,11 @@ if [[ "$joined" == exec\ * ]]; then
     else
       cat "$STUB_DB_CONTRACT"
     fi
-  elif [[ "$joined" == *pg_dump* ]]; then cat "$STUB_SQL_PLAIN"
+  elif [[ "$joined" == *pg_dump* ]]; then
+    if [[ "${STUB_MODE:-}" == checkpoint-process-local-mode-drift ]]; then
+      : >"$STUB_STATE_DIR/checkpoint-backup-complete"
+    fi
+    cat "$STUB_SQL_PLAIN"
   elif [[ "$joined" == *"count(*) from information_schema.tables"* ]]; then
     case "${STUB_MODE:-}" in zero-db-active) printf '356\n94\n17\n0\n';; zero-db-hubs) printf '356\n94\n0\n1\n';; *) printf '356\n94\n17\n1\n';; esac
   elif [[ "$joined" == *"select count(*) from ret0.owned_files"* ]]; then case "${STUB_MODE:-}" in zero-db-active) printf '0\n';; duplicate-db-uuids) printf '2\n';; *) printf '1\n';; esac
@@ -805,7 +1389,12 @@ if [[ "$joined" == exec\ * ]]; then
   elif [[ "$joined" == *"basename {} .blob"* ]]; then printf 'active-one\ndeferred-one\n'
   elif [[ "$joined" == *"tar -C /storage -cf - owned"* ]]; then [[ "${STUB_MODE:-}" != backup-monitor-extra ]] || sleep 0.08; cat "$STUB_TAR_STREAM"
   elif [[ "$joined" == *"tar -C /storage -xf -"* ]]; then
-    if [[ "${STUB_MODE:-}" == monitor-extra || "${STUB_MODE:-}" == restore-pod-replaced ]]; then sleep 0.08; fi
+    if [[ "${STUB_MODE:-}" == runner-reappears-during-storage ]]; then
+      : >"$STUB_STATE_DIR/runner-reappear"
+      sleep 0.08
+    elif [[ "${STUB_MODE:-}" == monitor-extra || "${STUB_MODE:-}" == restore-pod-replaced ]]; then
+      sleep 0.08
+    fi
     cat >/dev/null
   elif [[ "$joined" == *"psql -v ON_ERROR_STOP=1 -q"* ]]; then cat >/dev/null
   else printf '0\n'
@@ -822,9 +1411,76 @@ set -euo pipefail
 printf '[]\n'
 STUB
 chmod 700 "$TMP_DIR/bin/doctl"
+RUNNER_CONTROL_PLANE_VERIFIER_FIXTURE="$TMP_DIR/runner-control-plane-verifier.fixture.js"
+cat >"$RUNNER_CONTROL_PLANE_VERIFIER_FIXTURE" <<'STUB'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const stateDirectory = process.env.STUB_STATE_DIR;
+if (!stateDirectory || process.env.KUBECTL_CONTEXT !== "fixture-context") process.exit(2);
+for (const name of ["HCCE_INPUT_VALUES_PATH", "HCCE_MANIFEST_PATH"]) {
+  const value = process.env[name];
+  if (!value || !fs.statSync(value).isFile()) process.exit(2);
+}
+const countPath = path.join(stateDirectory, "runner-control-plane-verifier-count");
+const previous = fs.existsSync(countPath) ? Number(fs.readFileSync(countPath, "utf8")) : 0;
+const count = previous + 1;
+fs.writeFileSync(countPath, String(count), { mode: 0o600 });
+fs.appendFileSync(
+  path.join(stateDirectory, "runner-control-plane-verifier.log"),
+  `${count}\t${process.env.HCCE_INPUT_VALUES_PATH}\t${process.env.HCCE_MANIFEST_PATH}\n`,
+  { mode: 0o600 }
+);
+if (
+  process.env.STUB_MODE === "checkpoint-control-plane-preflight-failure" ||
+  process.env.STUB_MODE === "checkpoint-bootstrap-control-plane" ||
+  (process.env.STUB_MODE === "checkpoint-active-control-plane-drift" && count >= 3)
+) {
+  process.stderr.write("runner_live_control_plane_verification_failed\n");
+  process.exit(1);
+}
+process.stdout.write("runner_live_control_plane_verified\n");
+STUB
+chmod 600 "$RUNNER_CONTROL_PLANE_VERIFIER_FIXTURE"
+GENERATED_MANIFEST_VERIFIER_FIXTURE="$TMP_DIR/generated-manifest-verifier.fixture.js"
+cat >"$GENERATED_MANIFEST_VERIFIER_FIXTURE" <<'STUB'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const stateDirectory = process.env.STUB_STATE_DIR;
+if (!stateDirectory) process.exit(2);
+for (const name of ["HCCE_INPUT_VALUES_PATH", "HCCE_MANIFEST_PATH"]) {
+  const value = process.env[name];
+  if (!value || !fs.statSync(value).isFile()) process.exit(2);
+}
+const countPath = path.join(stateDirectory, "generated-manifest-verifier-count");
+const previous = fs.existsSync(countPath) ? Number(fs.readFileSync(countPath, "utf8")) : 0;
+const count = previous + 1;
+fs.writeFileSync(countPath, String(count), { mode: 0o600 });
+if (process.env.STUB_MODE === "checkpoint-tampered-manifest") {
+  process.stderr.write("Manifest verification failed\n");
+  process.exit(1);
+}
+process.stdout.write("Manifest verification passed (fixture).\n");
+STUB
+chmod 600 "$GENERATED_MANIFEST_VERIFIER_FIXTURE"
+RUNNER_CONTROL_PLANE_MANIFEST_FIXTURE="$TMP_DIR/hcce.fixture.yaml"
+printf '%s\n' 'apiVersion: v1' >"$RUNNER_CONTROL_PLANE_MANIFEST_FIXTURE"
+chmod 600 "$RUNNER_CONTROL_PLANE_MANIFEST_FIXTURE"
 export PATH="$TMP_DIR/bin:$PATH"
+export RECOVERY_WAIT_RETRY_DELAY_SECONDS=0
+export RECOVERY_STREAM_POLL_SECONDS=0.01
+# shellcheck disable=SC2031 # Intentional global fixture values after isolated subshells.
+export YENHUBS_RECOVERY_TEST_MODE=local-fixture
+# shellcheck disable=SC2031 # Intentional global fixture value after isolated subshells.
+export RECOVERY_TEST_STABLE_ABSENCE_SECONDS=0
+export YENHUBS_RECOVERY_RUNNER_CONTROL_PLANE_VERIFIER="$RUNNER_CONTROL_PLANE_VERIFIER_FIXTURE"
+export YENHUBS_RECOVERY_GENERATED_MANIFEST_VERIFIER="$GENERATED_MANIFEST_VERIFIER_FIXTURE"
+export HCCE_MANIFEST_PATH="$RUNNER_CONTROL_PLANE_MANIFEST_FIXTURE"
 
 reset_stub() {
+  unset YENHUBS_PARENT_LEASE_HOLDER YENHUBS_PARENT_LEASE_UID \
+    YENHUBS_PARENT_PROCESS_PID YENHUBS_PARENT_PROCESS_START_IDENTITY
   : >"$KUBECTL_LOG"
   rm -f -- "$STUB_STATE_DIR/waited" "$STUB_STATE_DIR/applied.yaml" \
     "$STUB_STATE_DIR/pod-created" "$STUB_STATE_DIR/consumer-count" \
@@ -835,12 +1491,195 @@ reset_stub() {
     "$STUB_STATE_DIR/network-policy-name" "$STUB_STATE_DIR/network-policy-uid" \
     "$STUB_STATE_DIR/pod-name" "$STUB_STATE_DIR/pod-uid" \
     "$STUB_STATE_DIR/create-count" "$STUB_STATE_DIR/delete-count" \
-    "$STUB_STATE_DIR/lock-replaced-after-quiesce"
+    "$STUB_STATE_DIR/replace-ready-Lease" \
+    "$STUB_STATE_DIR/replace-ready-Role" \
+    "$STUB_STATE_DIR/serialization-lease.json" \
+    "$STUB_STATE_DIR/serialization-lease.next" \
+    "$STUB_STATE_DIR/serialization-lease-create.yaml" \
+    "$STUB_STATE_DIR/serialization-lease-get-count" \
+    "$STUB_STATE_DIR/runner-role-uid" "$STUB_STATE_DIR/runner-role-rv" \
+    "$STUB_STATE_DIR/runner-role-phase" "$STUB_STATE_DIR/runner-role-rules.json" \
+    "$STUB_STATE_DIR/parent-death-stream-started" \
+    "$STUB_STATE_DIR/parent-death-stream-terminated" \
+    "$STUB_STATE_DIR/parent-death-stream-completed" \
+    "$STUB_STATE_DIR/parent-death-grandchild-pid" \
+    "$STUB_STATE_DIR/checkpoint-orphan-runner-deleted" \
+    "$STUB_STATE_DIR/runner-control-plane-verifier-count" \
+    "$STUB_STATE_DIR/runner-control-plane-verifier.log" \
+    "$STUB_STATE_DIR/generated-manifest-verifier-count" \
+    "$STUB_STATE_DIR/finalizer-failclose-triggered" \
+    "$STUB_STATE_DIR/lock-replaced-after-quiesce" \
+    "$STUB_STATE_DIR/role-replace-failed-once" \
+    "$STUB_STATE_DIR/runner-list-count" "$STUB_STATE_DIR/runner-reappear" \
+    "$STUB_STATE_DIR/runner-watch-transient-emitted"
+  rm -f -- "$STUB_STATE_DIR/recovery-phase" "$STUB_STATE_DIR/recovery-epoch"
   find "$STUB_STATE_DIR" -maxdepth 1 -type f \
     \( -name 'replicas-*' -o -name 'rv-*' -o -name 'create-payload-*' \
-       -o -name 'delete-options-*' \) -delete
+       -o -name 'delete-options-*' -o -name 'runner-watch-count-*' \
+       -o -name 'runner-final-watch-count-*' \
+       -o -name 'runner-watch-event-*' -o -name 'replace-payload.*' \) -delete
+}
+
+run_checkpoint_input_snapshot_test() {
+  local checkpoint_output="$1"
+  local mutable_values="$TMP_DIR/checkpoint-mutable-values.yaml"
+  local mutable_manifest="$TMP_DIR/checkpoint-mutable-manifest.yaml"
+  local pair_count values_snapshot manifest_snapshot
+  cp "$VALUES_FIXTURE" "$mutable_values"
+  cp "$RUNNER_CONTROL_PLANE_MANIFEST_FIXTURE" "$mutable_manifest"
+  chmod 600 "$mutable_values" "$mutable_manifest"
+  reset_stub
+  expect_success 'checkpoint resume is independent of local input rotation after fencing' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$mutable_values" HCCE_MANIFEST_PATH="$mutable_manifest" \
+    STUB_MODE=checkpoint-local-input-mutation \
+    STUB_MUTABLE_VALUES_PATH="$mutable_values" \
+    STUB_MUTABLE_MANIFEST_PATH="$mutable_manifest" \
+    STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
+    STUB_RUNNER_NAMESPACE=present STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" "$checkpoint_output"
+  pair_count="$(awk -F '\t' '{print $2 "\t" $3}' \
+    "$STUB_STATE_DIR/runner-control-plane-verifier.log" |
+    LC_ALL=C sort -u | wc -l | tr -d ' ')"
+  IFS=$'\t' read -r values_snapshot manifest_snapshot < <(
+    awk -F '\t' 'NR == 1 {print $2 "\t" $3}' \
+      "$STUB_STATE_DIR/runner-control-plane-verifier.log"
+  )
+  if [[ "$pair_count" == 1 && -n "$values_snapshot" && -n "$manifest_snapshot" &&
+        "$values_snapshot" != "$mutable_values" &&
+        "$manifest_snapshot" != "$mutable_manifest" &&
+        ! -e "$values_snapshot" && ! -e "$manifest_snapshot" ]] &&
+     grep -q '^invalid: \[$' "$mutable_values" &&
+     grep -q '^tampered-after-fence$' "$mutable_manifest"; then
+    pass 'checkpoint binds one private values/manifest pair and removes both snapshots'
+  else
+    fail 'checkpoint immutable local-input binding' \
+      "pairs=$pair_count values=$values_snapshot manifest=$manifest_snapshot"
+  fi
+}
+
+run_restore_role_retry_test() {
+  local inventory_sha confirmation retry_consumer retry_exact=true
+  inventory_sha="$(sha256_digest "$GOOD_CHECKPOINT/deployment-images.json")"
+  confirmation="prepare-fence:fixture-context:hcce:fixture-uid:fixture-pvc-uid:$STAMP:$DUMP_SHA:$STORAGE_SHA:$inventory_sha:$LIVE_RUNNER_EPOCH:33333333-3333-4333-8333-333333333333"
+  reset_stub
+  expect_success 'prepare-fence retries one Role CAS failure only in the main driver' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+    EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$RESTORE_VALUES_FIXTURE" \
+    RESTORE_CHECKPOINT_PREPARE_FENCE=1 \
+    CONFIRM_PREPARE_RESTORE_FENCE="$confirmation" \
+    STUB_MODE=restore-role-replace-retry \
+    "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+  for retry_consumer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+    if [[ "$(grep -Ec "scale deployment $retry_consumer .*--replicas=0" \
+          "$KUBECTL_LOG" || :)" != 1 ]]; then
+      retry_exact=false
+    fi
+  done
+  if [[ -e "$STUB_STATE_DIR/role-replace-failed-once" &&
+        "$(cat "$STUB_STATE_DIR/runner-role-rv")" == 2 &&
+        "$retry_exact" == true && -e "$STUB_STATE_DIR/restore-lock.yaml" ]]; then
+    pass 'Role retry causes no subshell fail-close, duplicate fence or lock release'
+  else
+    fail 'Role retry escaped the main restore driver' "$(cat "$KUBECTL_LOG")"
+  fi
+}
+
+# shellcheck disable=SC2016 # Expanded by the isolated Bash process.
+expect_success 'production stable-absence timing remains 61 seconds' \
+  env -u YENHUBS_RECOVERY_TEST_MODE -u RECOVERY_TEST_STABLE_ABSENCE_SECONDS \
+  bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    [[ "$(recovery_stable_absence_seconds)" == 61 ]]
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+# shellcheck disable=SC2016 # Expanded by the isolated Bash process.
+expect_success 'exact live fixture identity permits bounded zero-second timing' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+  EXPECTED_RET_PVC_UID=fixture-pvc-uid bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    [[ "$(recovery_stable_absence_seconds)" == 0 ]]
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+# shellcheck disable=SC2016 # Expanded by the isolated Bash process.
+expect_failure 'non-fixture context cannot enable recovery timing overrides' \
+  'exact isolated fixture identity' env EXPECTED_KUBE_CONTEXT=production-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_stable_absence_seconds
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
+reset_stub
+# shellcheck disable=SC2016 # Expanded by the isolated Bash process.
+expect_success 'live runner epoch requires and returns the exact shared binding' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context NAMESPACE=hcce bash -c '
+    set -euo pipefail
+    source "$1"
+    [[ "$(recovery_live_runner_epoch)" == "$LIVE_RUNNER_EPOCH" ]]
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+for asymmetric_epoch_mode in epoch-reticulum-only epoch-parent-only; do
+  reset_stub
+  # shellcheck disable=SC2016 # Expanded by the isolated Bash process.
+  if env EXPECTED_KUBE_CONTEXT=fixture-context NAMESPACE=hcce \
+      STUB_MODE="$asymmetric_epoch_mode" bash -c '
+        set -euo pipefail
+        source "$1"
+        recovery_live_runner_epoch >/dev/null
+      ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"; then
+    fail "$asymmetric_epoch_mode is rejected" 'asymmetric epoch was accepted'
+  else
+    pass "$asymmetric_epoch_mode is rejected"
+  fi
+done
+
+reset_stub
+DELETE_ERR_SENTINEL="$STUB_STATE_DIR/expected-delete-404-err-trap"
+rm -f -- "$DELETE_ERR_SENTINEL"
+# shellcheck disable=SC2016 # Expanded by the isolated Bash process.
+expect_success 'expected UID-delete 404 cannot inherit a caller recovery ERR trap' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context NAMESPACE=hcce \
+  STUB_MODE=checkpoint-orphan-runner bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    sentinel="$2"
+    recovery_kubectl_mutate() { recovery_kubectl "$@"; }
+    trap "printf triggered >\"$sentinel\"" ERR
+    recovery_delete_namespaced_with_uid_in_namespace \
+      hcce-bot-runners pod bot-runner-fixture runner-pod-uid 1
+    [[ ! -e "$sentinel" ]]
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$DELETE_ERR_SENTINEL"
+
+seed_serialization_lease() {
+  local holder="${1:-}" renew_time="${2:-2026-07-18T00:00:00.000000Z}"
+  local transitions="${3:-0}"
+  if [[ -z "$holder" ]]; then
+    jq -cn --argjson transitions "$transitions" '
+      {apiVersion:"coordination.k8s.io/v1",kind:"Lease",
+       metadata:{name:"yenhubs-operation-serialization",namespace:"hcce",
+         uid:"serialization-lease-uid",resourceVersion:"lease-rv-1",
+         labels:{"yenhubs.org/operation-serialization":"deployment-recovery"}},
+       spec:{leaseDurationSeconds:120,leaseTransitions:$transitions}}
+    ' >"$STUB_STATE_DIR/serialization-lease.json"
+  else
+    jq -cn --arg holder "$holder" --arg renew "$renew_time" \
+      --argjson transitions "$transitions" '
+      {apiVersion:"coordination.k8s.io/v1",kind:"Lease",
+       metadata:{name:"yenhubs-operation-serialization",namespace:"hcce",
+         uid:"serialization-lease-uid",resourceVersion:"lease-rv-1",
+         labels:{"yenhubs.org/operation-serialization":"deployment-recovery"}},
+       spec:{holderIdentity:$holder,leaseDurationSeconds:120,
+         acquireTime:$renew,renewTime:$renew,leaseTransitions:$transitions}}
+    ' >"$STUB_STATE_DIR/serialization-lease.json"
+  fi
 }
 seed_restore_lock() {
+  local lease_mode="${1:-adopted}"
   local operation_id="88888888888888888888888888888888"
   local operation_token="77777777777777777777777777777777"
   local deployment entry consumers='[]' fingerprint
@@ -864,10 +1703,29 @@ immutable: true
 EOF
   printf '%s' restore-lock-uid >"$STUB_STATE_DIR/restore-lock-uid"
   printf '%s' lock-rv-1 >"$STUB_STATE_DIR/restore-lock-rv"
+  if [[ "$lease_mode" == adopted ]]; then
+    seed_serialization_lease \
+      root-recovery:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb \
+      "$(date -u '+%Y-%m-%dT%H:%M:%S.000000Z')" 1
+    export YENHUBS_PARENT_LEASE_HOLDER=root-recovery:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+    export YENHUBS_PARENT_LEASE_UID=serialization-lease-uid
+    export YENHUBS_PARENT_PROCESS_PID="$$"
+    YENHUBS_PARENT_PROCESS_START_IDENTITY="$(
+      ps -o lstart= -p "$$" | awk '{$1=$1; print}'
+    )"
+    export YENHUBS_PARENT_PROCESS_START_IDENTITY
+  elif [[ "$lease_mode" == available ]]; then
+    seed_serialization_lease
+    unset YENHUBS_PARENT_LEASE_HOLDER YENHUBS_PARENT_LEASE_UID \
+      YENHUBS_PARENT_PROCESS_PID YENHUBS_PARENT_PROCESS_START_IDENTITY
+  else
+    return 2
+  fi
   for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
     fingerprint="$(jq -er --arg name "$deployment" '
       [.items[] | select(.metadata.name == $name)] | select(length == 1) | .[0] |
-      .spec.strategy = {} | .spec.template.metadata = {labels:{app:$name}} |
+      .spec.strategy = {} |
+      .spec.template.metadata = ((.spec.template.metadata // {}) + {labels:{app:$name}}) |
       {selector:.spec.selector,strategy:.spec.strategy,template:.spec.template} | @base64
     ' "$STUB_DEPLOYMENTS_JSON")"
     entry="$(jq -cn --arg name "$deployment" --arg uid "uid-$deployment" \
@@ -968,19 +1826,871 @@ EOF
 }
 assert_no_kube() { if [[ -s "$KUBECTL_LOG" ]]; then fail "$1" "$(cat "$KUBECTL_LOG")"; else pass "$1"; fi; }
 
+run_stale_helper_cleanup_tests() {
+  local confirmation lease_failure_mode
+  confirmation="restore-lock:fixture-context:hcce:fixture-uid:$STAMP:$DUMP_SHA:$STORAGE_SHA:restore-lock-uid:fixture-pvc-uid"
+
+  reset_stub
+  seed_restore_lock available
+  seed_stale_restore_helper
+  expect_success 'stale-lock recovery removes its exact operation-bound helper before the lock' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+    EXPECTED_RET_PVC_UID=fixture-pvc-uid RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1 \
+    CONFIRM_CLEAR_RESTORE_LOCK="$confirmation" \
+    "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+  if [[ ! -e "$STUB_STATE_DIR/pod-created" &&
+        ! -e "$STUB_STATE_DIR/network-policy.yaml" &&
+        ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+     [[ "$(grep -c 'delete --raw=' "$KUBECTL_LOG" || :)" == 3 ]]; then
+    pass 'stale helper cleanup is exact, complete and clear-only'
+  else
+    fail 'stale helper cleanup is exact, complete and clear-only' "$(cat "$KUBECTL_LOG")"
+  fi
+  if [[ -f "$STUB_STATE_DIR/delete-options-1.json" &&
+        -f "$STUB_STATE_DIR/delete-options-2.json" &&
+        -f "$STUB_STATE_DIR/delete-options-3.json" ]] &&
+     jq -e '.preconditions.uid == "restore-pod-uid"' \
+       "$STUB_STATE_DIR/delete-options-1.json" >/dev/null &&
+     jq -e '.preconditions.uid == "network-policy-uid"' \
+       "$STUB_STATE_DIR/delete-options-2.json" >/dev/null &&
+     jq -e '.preconditions.uid == "restore-lock-uid"' \
+       "$STUB_STATE_DIR/delete-options-3.json" >/dev/null; then
+    pass 'stale helper cleanup emits three exact UID-preconditioned DeleteOptions'
+  else
+    fail 'stale helper cleanup emits three exact UID-preconditioned DeleteOptions' \
+      "$(cat "$STUB_STATE_DIR"/delete-options-*.json 2>/dev/null || :)"
+  fi
+
+  for lease_failure_mode in \
+    stale-helper-parent-lease-missing \
+    stale-helper-parent-lease-replaced; do
+    reset_stub
+    seed_restore_lock available
+    seed_stale_restore_helper
+    expect_failure "stale helper cleanup rejects $lease_failure_mode" '' \
+      env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+      EXPECTED_RET_PVC_UID=fixture-pvc-uid RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1 \
+      CONFIRM_CLEAR_RESTORE_LOCK="$confirmation" STUB_MODE="$lease_failure_mode" \
+      "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+    if [[ -e "$STUB_STATE_DIR/pod-created" &&
+          -e "$STUB_STATE_DIR/network-policy.yaml" &&
+          -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+       ! grep -q 'delete --raw=' "$KUBECTL_LOG"; then
+      pass "$lease_failure_mode preserves the helper, policy and lock without deletion"
+    else
+      fail "$lease_failure_mode preserves the helper, policy and lock without deletion" \
+        "$(cat "$KUBECTL_LOG")"
+    fi
+  done
+
+  reset_stub
+  seed_restore_lock available
+  seed_stale_restore_helper
+  expect_failure 'stale helper same-name replacement is never adopted or deleted' \
+    'identity/spec changed' env EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1 CONFIRM_CLEAR_RESTORE_LOCK="$confirmation" \
+    STUB_MODE=stale-helper-replaced \
+    "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+  if [[ -e "$STUB_STATE_DIR/pod-created" &&
+        -e "$STUB_STATE_DIR/network-policy.yaml" &&
+        -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+     ! grep -q 'delete --raw=.*/pods/' "$KUBECTL_LOG"; then
+    pass 'replacement helper, deny policy and retained lock remain untouched'
+  else
+    fail 'replacement helper, deny policy and retained lock remain untouched' \
+      "$(cat "$KUBECTL_LOG")"
+  fi
+}
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == stale-helper ]]; then
+  run_stale_helper_cleanup_tests
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused stale-helper test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused stale-helper tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-input-snapshot ]]; then
+  run_checkpoint_input_snapshot_test "$TMP_DIR/checkpoint-input-snapshot-focus"
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused checkpoint-input-snapshot test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused checkpoint-input-snapshot tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == restore-errtrap ]]; then
+  run_restore_role_retry_test
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused restore-errtrap test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused restore-errtrap tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-gates ||
+      "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-adjacent ]]; then
+  checkpoint_focus_parent="$TMP_DIR/checkpoint-gate-focus"
+  if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-gates ]]; then
+    for checkpoint_focus_mode in \
+      checkpoint-control-plane-preflight-failure \
+      checkpoint-bootstrap-control-plane \
+      checkpoint-tampered-manifest; do
+      reset_stub
+      if [[ "$checkpoint_focus_mode" == checkpoint-tampered-manifest ]]; then
+        checkpoint_focus_error='generated Cloud manifest is invalid'
+      else
+        checkpoint_focus_error='active runner control plane is not exact'
+      fi
+      expect_failure "focused preflight $checkpoint_focus_mode" \
+        "$checkpoint_focus_error" \
+        env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+        EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+        VALUES_FILE="$VALUES_FIXTURE" STUB_MODE="$checkpoint_focus_mode" \
+        STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
+        STUB_RUNNER_NAMESPACE=present \
+        STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+        "$ROOT_DIR/deployment/create-checkpoint.sh" \
+        "$checkpoint_focus_parent/$checkpoint_focus_mode"
+      if grep -Eq ' scale .*--replicas=(0|1)' "$KUBECTL_LOG"; then
+        fail "focused $checkpoint_focus_mode preflight does not scale" \
+          "$(cat "$KUBECTL_LOG")"
+      else
+        pass "focused $checkpoint_focus_mode preflight does not scale"
+      fi
+    done
+  fi
+
+  reset_stub
+  expect_failure 'focused adjacent Cloud drift gate blocks parent resume' \
+    'active runner control plane is not exact' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_FIXTURE" STUB_MODE=checkpoint-active-control-plane-drift \
+    STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
+    STUB_RUNNER_NAMESPACE=present \
+    STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" \
+    "$checkpoint_focus_parent/adjacent-drift"
+  checkpoint_focus_parent_resume_count="$(grep -Ec -- \
+    'scale deployment bot-orchestrator .*--replicas=1' "$KUBECTL_LOG" || :)"
+  checkpoint_focus_verifier_count="$(cat \
+    "$STUB_STATE_DIR/runner-control-plane-verifier-count" 2>/dev/null || :)"
+  if [[ "$checkpoint_focus_parent_resume_count" == 0 &&
+        "$checkpoint_focus_verifier_count" =~ ^[3-9][0-9]*$ &&
+        "$(cat "$STUB_STATE_DIR/replicas-bot-orchestrator" 2>/dev/null || :)" == 0 ]]; then
+    pass 'focused adjacent drift leaves token-bearing parent at zero'
+  else
+    fail 'focused adjacent drift resumed token-bearing parent' \
+      "verifier-count=$checkpoint_focus_verifier_count $(cat "$KUBECTL_LOG")"
+  fi
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused checkpoint gate test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused checkpoint gate tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-orphan ]]; then
+  checkpoint_orphan_output="$TMP_DIR/checkpoint-orphan-focus"
+  reset_stub
+  expect_success 'focused checkpoint UID-deletes an isolated orphan and resumes' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_FIXTURE" STUB_MODE=checkpoint-orphan-runner \
+    STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
+    STUB_RUNNER_NAMESPACE=present STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" "$checkpoint_orphan_output"
+  orphan_focus_zero="$(grep -n -- \
+    'scale deployment bot-orchestrator .*--replicas=0' "$KUBECTL_LOG" |
+    head -1 | cut -d: -f1 || :)"
+  orphan_focus_delete="$(grep -n \
+    'delete --raw=/api/v1/namespaces/hcce-bot-runners/pods/bot-runner-fixture' \
+    "$KUBECTL_LOG" | head -1 | cut -d: -f1 || :)"
+  orphan_focus_dump="$(grep -n 'pg_dump -U' "$KUBECTL_LOG" |
+    head -1 | cut -d: -f1 || :)"
+  orphan_focus_resume="$(grep -n -- \
+    'scale deployment bot-orchestrator .*--replicas=1' "$KUBECTL_LOG" |
+    head -1 | cut -d: -f1 || :)"
+  if [[ "$orphan_focus_zero" =~ ^[0-9]+$ &&
+        "$orphan_focus_delete" =~ ^[0-9]+$ &&
+        "$orphan_focus_dump" =~ ^[0-9]+$ &&
+        "$orphan_focus_resume" =~ ^[0-9]+$ &&
+        "$orphan_focus_zero" -lt "$orphan_focus_delete" &&
+        "$orphan_focus_delete" -lt "$orphan_focus_dump" &&
+        "$orphan_focus_dump" -lt "$orphan_focus_resume" ]]; then
+    pass 'focused orphan ordering is parent-zero then UID-delete then backup then resume'
+  else
+    fail 'focused orphan ordering' "$(cat "$KUBECTL_LOG")"
+  fi
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused checkpoint-orphan test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused checkpoint-orphan tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-process-local ]]; then
+  process_local_capture="$TMP_DIR/process-local-focus-capture"
+  process_local_checkpoint="$TMP_DIR/process-local-focus-checkpoint"
+  reset_stub
+  expect_success 'focused process-local inventory capture accepts the exact legacy boundary' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    "$ROOT_DIR/deployment/capture-instance-state.sh" "$process_local_capture"
+  reset_stub
+  expect_success 'focused process-local checkpoint publishes and resumes exactly' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+    STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" "$process_local_checkpoint"
+  reset_stub
+  expect_failure 'focused process-local mode drift blocks every writer resume' \
+    'Checkpoint runner mode changed while writers were fenced' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+    STUB_MODE=checkpoint-process-local-mode-drift \
+    STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" \
+    "$TMP_DIR/process-local-focus-mode-drift"
+  if [[ "$(cat "$STUB_STATE_DIR/replicas-bot-orchestrator" 2>/dev/null || :)" == 0 ]] &&
+     ! grep -q 'scale deployment bot-orchestrator .*--replicas=1' "$KUBECTL_LOG" &&
+     [[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]]; then
+    pass 'focused process-local drift retains the lock with parent authority at zero'
+  else
+    fail 'focused process-local drift resumed or released authority' "$(cat "$KUBECTL_LOG")"
+  fi
+  reset_stub
+  expect_failure 'focused adjacent process-local drift blocks parent resume' \
+    'Checkpoint runner mode changed while writers were fenced' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+    STUB_MODE=checkpoint-process-local-adjacent-drift \
+    STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" \
+    "$TMP_DIR/process-local-focus-adjacent-drift"
+  if [[ "$(cat "$STUB_STATE_DIR/replicas-bot-orchestrator" 2>/dev/null || :)" == 0 ]] &&
+     ! grep -q 'scale deployment bot-orchestrator .*--replicas=1' "$KUBECTL_LOG" &&
+     [[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]]; then
+    pass 'focused adjacent process-local drift leaves parent zero under lock'
+  else
+    fail 'focused adjacent process-local drift resumed parent' "$(cat "$KUBECTL_LOG")"
+  fi
+  reset_stub
+  expect_failure 'focused pre-watcher quiesce failure safely reconstructs resume monitoring' \
+    'Pods still remain for deployment/bot-orchestrator; refusing further mutation' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+    STUB_MODE=checkpoint-parent-wait-failure \
+    STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" \
+    "$TMP_DIR/process-local-focus-parent-wait"
+  if [[ "$(cat "$STUB_STATE_DIR/replicas-bot-orchestrator" 2>/dev/null || :)" == 1 ]] &&
+     [[ ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]]; then
+    pass 'focused pre-watcher failure restores parent and releases its lock safely'
+  else
+    fail 'focused pre-watcher failure strands parent or lock' "$(cat "$KUBECTL_LOG")"
+  fi
+  partial_process_local="$TMP_DIR/process-local-focus-partial.json"
+  jq '(.items[] | select(.metadata.name == "bot-orchestrator") |
+      .spec.template.spec.containers[0].env) += [
+        {name:"ORCHESTRATOR_POD_UID",value:"partial"}
+      ]' "$LEGACY_DEPLOYMENTS_JSON" >"$partial_process_local"
+  reset_stub
+  expect_failure 'focused partial isolated binding never falls back to process-local' \
+    'not bound to recovery phase active' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_DEPLOYMENTS_JSON="$partial_process_local" \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" "$TMP_DIR/process-local-partial"
+  if grep -Eq ' scale .*--replicas=(0|1)' "$KUBECTL_LOG"; then
+    fail 'focused partial isolated binding mutates writer scale' "$(cat "$KUBECTL_LOG")"
+  else
+    pass 'focused partial isolated binding performs zero writer scale mutations'
+  fi
+  reset_stub
+  expect_failure 'focused residual runner Namespace never falls back to process-local' \
+    'not bound to recovery phase active' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+    STUB_RUNNER_NAMESPACE=present \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" "$TMP_DIR/process-local-namespace"
+  if grep -Eq ' scale .*--replicas=(0|1)' "$KUBECTL_LOG"; then
+    fail 'focused residual runner Namespace mutates writer scale' "$(cat "$KUBECTL_LOG")"
+  else
+    pass 'focused residual runner Namespace performs zero writer scale mutations'
+  fi
+  for residual_resource in role validatingadmissionpolicy; do
+    reset_stub
+    expect_failure "focused residual $residual_resource never falls back to process-local" \
+      'not bound to recovery phase active' \
+      env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+      EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+      VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+      STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+      STUB_RUNNER_RESIDUAL="$residual_resource" \
+      "$ROOT_DIR/deployment/create-checkpoint.sh" \
+      "$TMP_DIR/process-local-residual-$residual_resource"
+    if grep -Eq ' scale .*--replicas=(0|1)' "$KUBECTL_LOG"; then
+      fail "focused residual $residual_resource mutates writer scale" "$(cat "$KUBECTL_LOG")"
+    else
+      pass "focused residual $residual_resource performs zero writer scale mutations"
+    fi
+  done
+  annotated_process_local="$TMP_DIR/process-local-focus-annotated.json"
+  jq '(.items[] | select(.metadata.name == "pgbouncer") |
+      .metadata.annotations["yenhubs.org/bot-runner-recovery-phase"]) = "active"' \
+    "$LEGACY_DEPLOYMENTS_JSON" >"$annotated_process_local"
+  reset_stub
+  expect_failure 'focused non-parent runner annotation never falls back to process-local' \
+    'not bound to recovery phase active' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_DEPLOYMENTS_JSON="$annotated_process_local" \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" \
+    "$TMP_DIR/process-local-annotated"
+  if grep -Eq ' scale .*--replicas=(0|1)' "$KUBECTL_LOG"; then
+    fail 'focused non-parent runner annotation mutates writer scale' "$(cat "$KUBECTL_LOG")"
+  else
+    pass 'focused non-parent runner annotation performs zero writer scale mutations'
+  fi
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused process-local checkpoint test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused process-local checkpoint tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+reset_stub
+# Lease capabilities are local to the sourcing process; poisoned inherited
+# paths/PIDs must be discarded without touching their targets.
+lease_poison_stop="$TMP_DIR/lease-poison-stop"
+lease_poison_failure="$TMP_DIR/lease-poison-failure"
+printf 'sentinel-stop\n' >"$lease_poison_stop"
+printf 'sentinel-failure\n' >"$lease_poison_failure"
+# shellcheck disable=SC2016
+expect_success 'serialization Lease process capabilities reject environment poisoning' \
+  env RECOVERY_SERIALIZATION_LEASE_HOLDER=root-recovery:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa \
+    RECOVERY_SERIALIZATION_LEASE_UID=poison-uid RECOVERY_SERIALIZATION_LEASE_REQUIRED=1 \
+    RECOVERY_SERIALIZATION_HEARTBEAT_PID=999999 \
+    RECOVERY_SERIALIZATION_HEARTBEAT_STOP="$lease_poison_stop" \
+    RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE="$lease_poison_failure" \
+    RECOVERY_SERIALIZATION_PARENT_PID=999998 bash -c '
+      source "$1"
+      [[ -z "$RECOVERY_SERIALIZATION_LEASE_HOLDER" &&
+         -z "$RECOVERY_SERIALIZATION_LEASE_UID" &&
+         "$RECOVERY_SERIALIZATION_LEASE_REQUIRED" == 0 &&
+         -z "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" &&
+         -z "$RECOVERY_SERIALIZATION_HEARTBEAT_STOP" &&
+         -z "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE" &&
+         -z "$RECOVERY_SERIALIZATION_PARENT_PID" ]]
+      [[ "$(cat "$2")" == sentinel-stop && "$(cat "$3")" == sentinel-failure ]]
+    ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" \
+      "$lease_poison_stop" "$lease_poison_failure"
+
+# Root and Cloud share this strict Kubernetes MicroTime/metadata shape. Null is
+# not treated as absence for any optional metadata collection.
+# shellcheck disable=SC2016
+expect_success 'serialization Lease validator enforces exact shared MicroTime and null contract' \
+  bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    valid="$(jq -cn '\''
+      {apiVersion:"coordination.k8s.io/v1",kind:"Lease",
+       metadata:{name:"yenhubs-operation-serialization",namespace:"hcce",
+         uid:"lease-uid",resourceVersion:"lease-rv-1",
+         labels:{"yenhubs.org/operation-serialization":"deployment-recovery"}},
+       spec:{holderIdentity:"root-recovery:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+         leaseDurationSeconds:120,leaseTransitions:0,
+         acquireTime:"2026-07-18T00:00:00.000000Z",
+         renewTime:"2026-07-18T00:00:00.000000Z"}}
+    '\'')"
+    recovery_serialization_lease_json_is_valid "$valid"
+    for filter in \
+      ".metadata.deletionTimestamp = null" \
+      ".metadata.annotations = null" \
+      ".metadata.ownerReferences = null" \
+      ".metadata.finalizers = null" \
+      ".spec.acquireTime = \"2026-07-18T00:00:00Z\"" \
+      ".spec.renewTime = \"2026-07-18T00:00:00.000Z\"" \
+      ".spec.renewTime = \"2026-07-18T00:00:00.000000000Z\""; do
+      if recovery_serialization_lease_json_is_valid "$(jq -c "$filter" <<<"$valid")"; then
+        exit 1
+      fi
+    done
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
+reset_stub
+# shellcheck disable=SC2016
+expect_success 'serialization Lease acquires, revalidates and CAS-releases without deletion' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context RECOVERY_LEASE_HEARTBEAT_SECONDS=1 bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_acquire_operation_serialization root-recovery
+    recovery_require_operation_serialization
+    [[ "$RECOVERY_SERIALIZATION_LEASE_HOLDER" =~ ^root-recovery: ]]
+    recovery_release_operation_serialization
+    jq -e '\''(.metadata | has("deletionTimestamp") | not) and
+      (.spec | keys | sort) == ["leaseDurationSeconds","leaseTransitions"]'\'' \
+      "$2" >/dev/null
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" \
+    "$STUB_STATE_DIR/serialization-lease.json"
+
+reset_stub
+seed_serialization_lease
+lease_replace_payload="$TMP_DIR/concurrent-lease-replace.json"
+role_replace_payload="$TMP_DIR/concurrent-role-replace.json"
+lease_replace_output="$TMP_DIR/concurrent-lease-output.json"
+role_replace_output="$TMP_DIR/concurrent-role-output.json"
+cp "$STUB_STATE_DIR/serialization-lease.json" "$lease_replace_payload"
+jq -cn '
+  {apiVersion:"rbac.authorization.k8s.io/v1",kind:"Role",
+   metadata:{name:"bot-orchestrator-runner-pods",namespace:"hcce-bot-runners",
+     uid:"runner-role-uid",resourceVersion:"runner-role-rv-1",annotations:{
+       "yenhubs.org/runner-activation-phase":"active",
+       "yenhubs.org/bot-runner-recovery-phase":"restore-fence"}},rules:[]}
+' >"$role_replace_payload"
+STUB_MODE=replace-payload-concurrency kubectl --context fixture-context \
+  --request-timeout=30s replace -f - -o json \
+  <"$lease_replace_payload" >"$lease_replace_output" &
+lease_replace_pid=$!
+STUB_MODE=replace-payload-concurrency kubectl --context fixture-context \
+  --request-timeout=30s replace -f - -o json \
+  <"$role_replace_payload" >"$role_replace_output" &
+role_replace_pid=$!
+if wait "$lease_replace_pid"; then lease_replace_status=0; else lease_replace_status=$?; fi
+if wait "$role_replace_pid"; then role_replace_status=0; else role_replace_status=$?; fi
+if [[ "$lease_replace_status" == 0 && "$role_replace_status" == 0 ]] &&
+   jq -e '.kind == "Lease" and .metadata.resourceVersion == "lease-rv-2"' \
+     "$lease_replace_output" >/dev/null &&
+   jq -e '.kind == "Role" and .metadata.resourceVersion == "runner-role-rv-2"' \
+     "$role_replace_output" >/dev/null &&
+   [[ "$(cat "$STUB_STATE_DIR/runner-role-rv")" == 2 ]] &&
+   ! find "$STUB_STATE_DIR" -maxdepth 1 -name 'replace-payload.*' \
+     -print -quit | grep -q .; then
+  pass 'replace fixture isolates concurrent Lease heartbeat and resource CAS payloads'
+else
+  fail 'replace fixture isolates concurrent Lease heartbeat and resource CAS payloads' \
+    "lease-status=$lease_replace_status role-status=$role_replace_status $(cat "$KUBECTL_LOG")"
+fi
+
+reset_stub
+seed_serialization_lease \
+  cloud-apply:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa \
+  "$(date -u '+%Y-%m-%dT%H:%M:%S.000000Z')" 4
+# shellcheck disable=SC2016
+expect_failure 'active Cloud apply Lease excludes root recovery before mutation' \
+  'Another deployment or recovery operation owns' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
+    NAMESPACE=hcce
+    source "$1"
+    recovery_acquire_operation_serialization root-recovery
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
+reset_stub
+seed_serialization_lease \
+  cloud-apply:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa \
+  2000-01-01T00:00:00.000000Z 4
+# shellcheck disable=SC2016
+expect_success 'stale Cloud apply Lease is taken over only through resourceVersion CAS' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_acquire_operation_serialization root-recovery
+    [[ "$(jq -r .spec.leaseTransitions "$2")" == 5 ]]
+    recovery_release_operation_serialization
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" \
+    "$STUB_STATE_DIR/serialization-lease.json"
+
+reset_stub
+seed_serialization_lease \
+  cloud-apply:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa \
+  2000-01-01T00:00:00.000000Z 4
+# shellcheck disable=SC2016
+expect_failure 'serialization Lease takeover rejects a lost resourceVersion CAS' \
+  'takeover lost its resourceVersion CAS' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context STUB_MODE=lease-cas-conflict bash -c '
+    NAMESPACE=hcce
+    source "$1"
+    recovery_acquire_operation_serialization root-recovery
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
+reset_stub
+# shellcheck disable=SC2016
+expect_failure 'serialization Lease ownership loss is detected before further mutation' '' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context STUB_MODE=lease-holder-lost bash -c '
+    NAMESPACE=hcce
+    source "$1"
+    recovery_acquire_operation_serialization root-recovery
+    trap '\''recovery_release_operation_serialization >/dev/null 2>&1 || :'\'' EXIT
+    recovery_require_operation_serialization
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
+reset_stub
+parent_death_owner_pid=""
+# shellcheck disable=SC2016 # Expanded by the isolated owner process.
+env EXPECTED_KUBE_CONTEXT=fixture-context STUB_MODE=parent-death-stream \
+  RECOVERY_LEASE_HEARTBEAT_SECONDS=1 RECOVERY_STREAM_POLL_SECONDS=0.01 \
+  bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_acquire_operation_serialization root-recovery
+    recovery_kubectl_stream_mutate 30 exec -n hcce parent-death-probe -- destructive-stream
+    printf completed >"$2/parent-death-owner-completed"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$STUB_STATE_DIR" &
+parent_death_owner_pid=$!
+for _ in {1..200}; do
+  [[ ! -e "$STUB_STATE_DIR/parent-death-stream-started" ]] || break
+  sleep 0.01
+done
+if [[ ! -e "$STUB_STATE_DIR/parent-death-stream-started" ]]; then
+  kill -KILL "$parent_death_owner_pid" 2>/dev/null || :
+  wait "$parent_death_owner_pid" 2>/dev/null || :
+  fail 'parent SIGKILL kills orphaned stream group and stops Lease renewal' \
+    'stream did not start'
+else
+  parent_death_rv_before="$(jq -r '.metadata.resourceVersion' \
+    "$STUB_STATE_DIR/serialization-lease.json")"
+  kill -KILL "$parent_death_owner_pid"
+  wait "$parent_death_owner_pid" 2>/dev/null || :
+  for _ in {1..400}; do
+    [[ ! -e "$STUB_STATE_DIR/parent-death-stream-terminated" ]] || break
+    sleep 0.01
+  done
+  parent_death_grandchild_pid="$(cat \
+    "$STUB_STATE_DIR/parent-death-grandchild-pid" 2>/dev/null || :)"
+  parent_death_grandchild_state=""
+  # The supervisor intentionally grants the process group two seconds to
+  # honor TERM before issuing KILL. Observe beyond that bounded grace period
+  # instead of sampling a descendant while the TERM grace is still active.
+  for _ in {1..400}; do
+    parent_death_grandchild_state="$(
+      ps -o stat= -p "$parent_death_grandchild_pid" 2>/dev/null |
+        awk '{$1=$1; print}' || :
+    )"
+    [[ -n "$parent_death_grandchild_state" &&
+       "$parent_death_grandchild_state" != Z* ]] || break
+    sleep 0.01
+  done
+  parent_death_rv_after="$(jq -r '.metadata.resourceVersion' \
+    "$STUB_STATE_DIR/serialization-lease.json")"
+  if [[ -e "$STUB_STATE_DIR/parent-death-stream-terminated" &&
+        ! -e "$STUB_STATE_DIR/parent-death-stream-completed" &&
+        ! -e "$STUB_STATE_DIR/parent-death-owner-completed" &&
+        "$parent_death_rv_before" == "$parent_death_rv_after" &&
+        "$parent_death_grandchild_pid" =~ ^[1-9][0-9]*$ &&
+        ( -z "$parent_death_grandchild_state" ||
+          "$parent_death_grandchild_state" == Z* ) ]]; then
+    pass 'parent SIGKILL kills orphaned stream group and stops Lease renewal'
+  else
+    fail 'parent SIGKILL kills orphaned stream group and stops Lease renewal' \
+      "rv-before=$parent_death_rv_before rv-after=$parent_death_rv_after grandchild=$parent_death_grandchild_pid state=$parent_death_grandchild_state"
+  fi
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == sigkill ]]; then
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused recovery safety test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused SIGKILL recovery safety tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+# Expansion is intentionally performed by the isolated Bash process.
+# shellcheck disable=SC2016
+expect_success 'managed bot-runner helper accepts one exact empty PodList' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_require_no_managed_bot_runner_pods
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+for partial_runner_mode in runner-app-only runner-managed-only runner-component-only; do
+  reset_stub
+  # Expansion is intentionally performed by the isolated Bash process.
+  # shellcheck disable=SC2016
+  expect_failure "managed bot-runner union rejects $partial_runner_mode" \
+    'Managed bot-runner Pods remain' env EXPECTED_KUBE_CONTEXT=fixture-context \
+    STUB_MODE="$partial_runner_mode" bash -c '
+      set -euo pipefail
+      NAMESPACE=hcce
+      source "$1"
+      recovery_require_no_managed_bot_runner_pods
+    ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+done
+reset_stub
+# A parent-namespace Pod using the orchestrator ServiceAccount retains the
+# projected API token even if it drops every runner label.
+# shellcheck disable=SC2016
+expect_failure 'orchestrator ServiceAccount Pod without runner labels fails closed' \
+  'Managed bot-runner Pods remain' env EXPECTED_KUBE_CONTEXT=fixture-context \
+  STUB_MODE=runner-parent-service-account bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_require_no_managed_bot_runner_pods
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+reset_stub
+# The dedicated namespace has no workload except ephemeral runner Pods, so any
+# Pod there is unsafe even when it strips every identifying label.
+# shellcheck disable=SC2016
+expect_failure 'unlabelled Pod in the dedicated runner namespace fails closed' \
+  'Managed bot-runner Pods remain' env EXPECTED_KUBE_CONTEXT=fixture-context \
+  STUB_RUNNER_NAMESPACE=present STUB_MODE=runner-namespace-unlabeled bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_require_no_managed_bot_runner_pods
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+reset_stub
+# Expansion is intentionally performed by the isolated Bash process.
+# shellcheck disable=SC2016
+expect_failure 'managed bot-runner residual Pod fails closed' \
+  'Managed bot-runner Pods remain' env EXPECTED_KUBE_CONTEXT=fixture-context \
+  STUB_MODE=runner-residual bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_require_no_managed_bot_runner_pods
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+reset_stub
+# Expansion is intentionally performed by the isolated Bash process.
+# shellcheck disable=SC2016
+expect_failure 'managed bot-runner deletion timeout fails closed' \
+  'Timed out waiting for managed bot-runner pods' env EXPECTED_KUBE_CONTEXT=fixture-context \
+  STUB_MODE=runner-timeout bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_wait_for_no_managed_bot_runner_pods 1s
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+reset_stub
+# Expansion is intentionally performed by the isolated Bash process.
+# shellcheck disable=SC2016
+expect_success 'managed bot-runner event watcher completes ready/stop handshake' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+  EXPECTED_RET_PVC_UID=fixture-pvc-uid YENHUBS_WATCH_TEST_DEBUG=1 \
+  RECOVERY_TEST_STABLE_ABSENCE_SECONDS=1 bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    stop_path="$(mktemp "${TMPDIR:-/tmp}/runner-monitor-stop.XXXXXX")"
+    failure_path="$(mktemp "${TMPDIR:-/tmp}/runner-monitor-failure.XXXXXX")"
+    ready_path="$(mktemp "${TMPDIR:-/tmp}/runner-monitor-ready.XXXXXX")"
+    chmod 600 "$stop_path" "$failure_path" "$ready_path"
+    trap '\''rm -f -- "$stop_path" "$failure_path" "$ready_path"'\'' EXIT
+    watcher_pid=""
+    recovery_start_no_managed_bot_runner_watch \
+      "$stop_path" "$failure_path" "$ready_path" watcher_pid
+    recovery_require_no_managed_bot_runner_watch_healthy \
+      "$failure_path" "$ready_path" "$watcher_pid"
+    recovery_stop_no_managed_bot_runner_watch \
+      "$stop_path" "$failure_path" "$ready_path" "$watcher_pid"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+if [[ "$(cat "$STUB_STATE_DIR/runner-watch-count-hcce" 2>/dev/null || :)" -ge 2 ]]; then
+  pass 'runner watcher completes a post-ready exact-RV round before honoring stop'
+else
+  fail 'runner watcher completes a post-ready exact-RV round before honoring stop' \
+    "$(cat "$KUBECTL_LOG")"
+fi
+if [[ "$(cat "$STUB_STATE_DIR/runner-final-watch-count-hcce" 2>/dev/null || :)" -ge 2 ]]; then
+  pass 'runner watcher retries early clean closes until the stable window elapses'
+else
+  fail 'runner watcher retries early clean closes until the stable window elapses' \
+    "$(cat "$KUBECTL_LOG")"
+fi
+reset_stub
+# The stop marker is written from boundary LIST resourceVersions. The watcher
+# must use those exact RVs for its final round, which replays a transient event
+# occurring after the boundary LIST instead of trusting a later empty LIST.
+# shellcheck disable=SC2016
+expect_success 'runner watcher covers a transient event in the final-close to stop gap' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+  EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  STUB_MODE=runner-watch-stop-gap-transient bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    stop_path="$(mktemp "${TMPDIR:-/tmp}/runner-stop-gap-stop.XXXXXX")"
+    failure_path="$(mktemp "${TMPDIR:-/tmp}/runner-stop-gap-failure.XXXXXX")"
+    ready_path="$(mktemp "${TMPDIR:-/tmp}/runner-stop-gap-ready.XXXXXX")"
+    chmod 600 "$stop_path" "$failure_path" "$ready_path"
+    trap '\''rm -f -- "$stop_path" "$failure_path" "$ready_path"'\'' EXIT
+    watcher_pid=""
+    recovery_start_no_managed_bot_runner_watch \
+      "$stop_path" "$failure_path" "$ready_path" watcher_pid
+    if recovery_stop_no_managed_bot_runner_watch \
+      "$stop_path" "$failure_path" "$ready_path" "$watcher_pid"; then
+      exit 1
+    fi
+    [[ "$(<"$failure_path")" == runner_watch_failed ]]
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+if [[ "$(cat "$STUB_STATE_DIR/runner-watch-count-hcce" 2>/dev/null || :)" -ge 3 ]]; then
+  pass 'stop-boundary fixture required a post-marker watch round'
+else
+  fail 'stop-boundary fixture required a post-marker watch round' "$(cat "$KUBECTL_LOG")"
+fi
+last_hcce_watch="$(grep 'get --raw /api/v1/namespaces/hcce/pods?' "$KUBECTL_LOG" | tail -n 1 || :)"
+if [[ "$last_hcce_watch" == *'resourceVersion=100'* &&
+      "$last_hcce_watch" == *'timeoutSeconds=65'* ]]; then
+  pass 'stop-boundary final watch uses exact RV and the 65-second safety window'
+else
+  fail 'stop-boundary final watch uses exact RV and the 65-second safety window' \
+    "$last_hcce_watch"
+fi
+reset_stub
+# A spawned kubectl process is not a usable handoff until the first exact-RV
+# watch round for every namespace has closed successfully.
+# shellcheck disable=SC2016
+expect_failure 'runner watcher never marks ready when watch fails before its first event' \
+  'before its ready handshake' env EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  STUB_MODE=runner-watch-fails-before-event bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    stop_path="$(mktemp "${TMPDIR:-/tmp}/runner-no-event-stop.XXXXXX")"
+    failure_path="$(mktemp "${TMPDIR:-/tmp}/runner-no-event-failure.XXXXXX")"
+    ready_path="$(mktemp "${TMPDIR:-/tmp}/runner-no-event-ready.XXXXXX")"
+    chmod 600 "$stop_path" "$failure_path" "$ready_path"
+    trap '\''rm -f -- "$stop_path" "$failure_path" "$ready_path"'\'' EXIT
+    watcher_pid=""
+    recovery_start_no_managed_bot_runner_watch \
+      "$stop_path" "$failure_path" "$ready_path" watcher_pid
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+if [[ -s "$STUB_STATE_DIR/runner-watch-count-hcce" ]]; then
+  pass 'failed pre-event watch fixture executed without a ready handoff'
+else
+  fail 'failed pre-event watch fixture executed' 'watch command did not run'
+fi
+reset_stub
+# The watch stream emits ADDED and DELETED back-to-back while every LIST is
+# empty. A polling monitor would pass; the resourceVersion watch must fail.
+# shellcheck disable=SC2016
+expect_success 'runner ADDED+DELETED between empty LISTs is remembered fail-closed' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context STUB_MODE=runner-watch-transient bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    stop_path="$(mktemp "${TMPDIR:-/tmp}/runner-transient-stop.XXXXXX")"
+    failure_path="$(mktemp "${TMPDIR:-/tmp}/runner-transient-failure.XXXXXX")"
+    ready_path="$(mktemp "${TMPDIR:-/tmp}/runner-transient-ready.XXXXXX")"
+    chmod 600 "$stop_path" "$failure_path" "$ready_path"
+    trap '\''rm -f -- "$stop_path" "$failure_path" "$ready_path"'\'' EXIT
+    if node "$2" --context fixture-context --namespace hcce \
+      --runner-namespace hcce-bot-runners --stop "$stop_path" \
+      --failure "$failure_path" --ready "$ready_path"; then
+      exit 1
+    fi
+    [[ "$(<"$failure_path")" == runner_watch_failed ]]
+    recovery_require_no_managed_bot_runner_pods
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" \
+  "$ROOT_DIR/deployment/watch-bot-runner-pods.mjs"
+
+reset_stub
+# shellcheck disable=SC2016
+expect_success 'parent orchestrator-SA Pod event without labels is remembered fail-closed' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context \
+  STUB_MODE=runner-watch-parent-service-account bash -c '
+    set -euo pipefail
+    stop_path="$(mktemp "${TMPDIR:-/tmp}/runner-sa-stop.XXXXXX")"
+    failure_path="$(mktemp "${TMPDIR:-/tmp}/runner-sa-failure.XXXXXX")"
+    ready_path="$(mktemp "${TMPDIR:-/tmp}/runner-sa-ready.XXXXXX")"
+    chmod 600 "$stop_path" "$failure_path" "$ready_path"
+    trap '\''rm -f -- "$stop_path" "$failure_path" "$ready_path"'\'' EXIT
+    if node "$1" --context fixture-context --namespace hcce \
+      --runner-namespace hcce-bot-runners --stop "$stop_path" \
+      --failure "$failure_path" --ready "$ready_path"; then
+      exit 1
+    fi
+    [[ "$(<"$failure_path")" == runner_watch_failed ]]
+  ' _ "$ROOT_DIR/deployment/watch-bot-runner-pods.mjs"
+
+reset_stub
+# shellcheck disable=SC2016
+expect_success 'unlabelled Pod event in runner namespace is remembered fail-closed' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context \
+  STUB_MODE=runner-watch-runner-unlabeled bash -c '
+    set -euo pipefail
+    stop_path="$(mktemp "${TMPDIR:-/tmp}/runner-unlabelled-stop.XXXXXX")"
+    failure_path="$(mktemp "${TMPDIR:-/tmp}/runner-unlabelled-failure.XXXXXX")"
+    ready_path="$(mktemp "${TMPDIR:-/tmp}/runner-unlabelled-ready.XXXXXX")"
+    chmod 600 "$stop_path" "$failure_path" "$ready_path"
+    trap '\''rm -f -- "$stop_path" "$failure_path" "$ready_path"'\'' EXIT
+    if node "$1" --context fixture-context --namespace hcce \
+      --runner-namespace hcce-bot-runners --stop "$stop_path" \
+      --failure "$failure_path" --ready "$ready_path"; then
+      exit 1
+    fi
+    [[ "$(<"$failure_path")" == runner_watch_failed ]]
+  ' _ "$ROOT_DIR/deployment/watch-bot-runner-pods.mjs"
+
+reset_stub
+# shellcheck disable=SC2016
+expect_success 'legacy component-only runner event is remembered fail-closed' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context \
+  STUB_MODE=runner-watch-component-only bash -c '
+    set -euo pipefail
+    stop_path="$(mktemp "${TMPDIR:-/tmp}/runner-component-stop.XXXXXX")"
+    failure_path="$(mktemp "${TMPDIR:-/tmp}/runner-component-failure.XXXXXX")"
+    ready_path="$(mktemp "${TMPDIR:-/tmp}/runner-component-ready.XXXXXX")"
+    chmod 600 "$stop_path" "$failure_path" "$ready_path"
+    trap '\''rm -f -- "$stop_path" "$failure_path" "$ready_path"'\'' EXIT
+    if node "$1" --context fixture-context --namespace hcce \
+      --runner-namespace hcce-bot-runners --stop "$stop_path" \
+      --failure "$failure_path" --ready "$ready_path"; then
+      exit 1
+    fi
+    [[ "$(<"$failure_path")" == runner_watch_failed ]]
+  ' _ "$ROOT_DIR/deployment/watch-bot-runner-pods.mjs"
+
 TAMPERED="$TMP_DIR/checkpoint-tampered-pair"; cp -R "$GOOD_CHECKPOINT" "$TAMPERED"; printf mutation >>"$TAMPERED/retdb-$STAMP.sql.gz"
 reset_stub
 expect_failure 'DB restore rejects checksum mismatch before Kubernetes' 'verification failed' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid RESTORE_PREFLIGHT=1 "$ROOT_DIR/deployment/restore-retdb.sh" "$TAMPERED/retdb-$STAMP.sql.gz"
 assert_no_kube 'checksum rejection performs no kubectl call'
 
 reset_stub
-expect_success 'DB restore preflight validates the immutable pair read-only' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid RESTORE_PREFLIGHT=1 "$ROOT_DIR/deployment/restore-retdb.sh" "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz"
+expect_success 'DB restore preflight validates the immutable pair read-only' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid RESTORE_PREFLIGHT=1 "$ROOT_DIR/deployment/restore-retdb.sh" "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz"
 if grep -Eq ' scale |dropdb| apply ' "$KUBECTL_LOG"; then fail 'DB preflight has no mutation' "$(cat "$KUBECTL_LOG")"; else pass 'DB preflight has no mutation'; fi
 
 reset_stub
 expect_failure 'DB preflight rejects a pgsql-labelled pod owned by an unrelated Deployment' \
   'Exactly one owned Ready PostgreSQL pod' env EXPECTED_KUBE_CONTEXT=fixture-context \
-  EXPECTED_NAMESPACE_UID=fixture-uid RESTORE_PREFLIGHT=1 STUB_MODE=rogue-pgsql-owner \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  RESTORE_PREFLIGHT=1 STUB_MODE=rogue-pgsql-owner \
   "$ROOT_DIR/deployment/restore-retdb.sh" "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz"
 if grep -Eq ' exec |dropdb' "$KUBECTL_LOG"; then
   fail 'rogue PostgreSQL ownership performs no exec or drop' "$(cat "$KUBECTL_LOG")"
@@ -993,12 +2703,28 @@ expect_failure 'wrong context fails closed' 'context mismatch' env EXPECTED_KUBE
 reset_stub
 expect_failure 'wrong namespace UID fails closed' 'Namespace UID mismatch' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid RESTORE_PREFLIGHT=1 STUB_NAMESPACE_UID=wrong "$ROOT_DIR/deployment/restore-retdb.sh" "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz"
 reset_stub
-expect_failure 'generic DB confirmation is rejected' 'for this exact target' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid RESTORE_COORDINATED=1 CONFIRM_RESTORE=retdb "$ROOT_DIR/deployment/restore-retdb.sh" "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz"
+expect_failure 'generic DB confirmation is rejected' 'for this exact target' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid RESTORE_COORDINATED=1 CONFIRM_RESTORE=retdb "$ROOT_DIR/deployment/restore-retdb.sh" "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz"
 if grep -q ' scale ' "$KUBECTL_LOG"; then fail 'bad DB confirmation performs no scale' "$(cat "$KUBECTL_LOG")"; else pass 'bad DB confirmation performs no scale'; fi
 reset_stub
 seed_restore_lock
 expect_failure 'consumer timeout blocks DB drop' 'Timed out waiting' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid RESTORE_COORDINATED=1 CONFIRM_RESTORE="$CONFIRM_DB" STUB_MODE=timeout "$ROOT_DIR/deployment/restore-retdb.sh" "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz"
 if grep -q dropdb "$KUBECTL_LOG"; then fail 'timeout performs no DB drop' "$(cat "$KUBECTL_LOG")"; else pass 'timeout performs no DB drop'; fi
+reset_stub
+seed_restore_lock
+expect_failure 'residual managed bot-runner blocks DB restore before drop' \
+  'Pods still remain for managed bot-runner' env EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid RESTORE_COORDINATED=1 \
+  CONFIRM_RESTORE="$CONFIRM_DB" STUB_MODE=runner-residual \
+  "$ROOT_DIR/deployment/restore-retdb.sh" "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz"
+if grep -q dropdb "$KUBECTL_LOG"; then fail 'runner residual performs no DB drop' "$(cat "$KUBECTL_LOG")"; else pass 'runner residual performs no DB drop'; fi
+reset_stub
+seed_restore_lock
+expect_failure 'managed bot-runner timeout blocks DB restore before drop' \
+  'Timed out waiting for managed bot-runner pods' env EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid RESTORE_COORDINATED=1 \
+  CONFIRM_RESTORE="$CONFIRM_DB" STUB_MODE=runner-timeout \
+  "$ROOT_DIR/deployment/restore-retdb.sh" "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz"
+if grep -q dropdb "$KUBECTL_LOG"; then fail 'runner timeout performs no DB drop' "$(cat "$KUBECTL_LOG")"; else pass 'runner timeout performs no DB drop'; fi
 reset_stub
 seed_restore_lock
 expect_failure 'lock replacement after quiescence blocks before DB mutation' 'identity or operation binding changed' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid RESTORE_COORDINATED=1 CONFIRM_RESTORE="$CONFIRM_DB" STUB_MODE=restore-lock-replaced-after-quiesce "$ROOT_DIR/deployment/restore-retdb.sh" "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz"
@@ -1028,7 +2754,15 @@ seed_restore_lock
 expect_failure 'extra PVC consumer blocks restore pod/write' 'Unexpected pods consume PVC' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid RESTORE_COORDINATED=1 CONFIRM_RESTORE_STORAGE="$CONFIRM_STORAGE" STUB_MODE=extra-consumer "$ROOT_DIR/deployment/restore-ret-storage.sh" "$GOOD_CHECKPOINT/ret-storage-$STAMP.tar.gz"
 reset_stub
 seed_restore_lock
-expect_failure 'PVC consumer monitor fails extraction on transient extra pod' 'monitoring failed' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid RESTORE_COORDINATED=1 CONFIRM_RESTORE_STORAGE="$CONFIRM_STORAGE" STUB_MODE=monitor-extra PVC_MONITOR_INTERVAL_SECONDS=0.01 "$ROOT_DIR/deployment/restore-ret-storage.sh" "$GOOD_CHECKPOINT/ret-storage-$STAMP.tar.gz"
+expect_failure 'PVC consumer monitor fails extraction on transient extra pod' 'Unexpected pods consume PVC' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid RESTORE_COORDINATED=1 CONFIRM_RESTORE_STORAGE="$CONFIRM_STORAGE" STUB_MODE=monitor-extra PVC_MONITOR_INTERVAL_SECONDS=0.01 "$ROOT_DIR/deployment/restore-ret-storage.sh" "$GOOD_CHECKPOINT/ret-storage-$STAMP.tar.gz"
+reset_stub
+seed_restore_lock
+expect_failure 'storage monitor catches managed bot-runner reappearance during PVC write' \
+  'monitoring failed' env EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  RESTORE_COORDINATED=1 CONFIRM_RESTORE_STORAGE="$CONFIRM_STORAGE" \
+  STUB_MODE=runner-reappears-during-storage PVC_MONITOR_INTERVAL_SECONDS=0.01 \
+  "$ROOT_DIR/deployment/restore-ret-storage.sh" "$GOOD_CHECKPOINT/ret-storage-$STAMP.tar.gz"
 reset_stub
 seed_restore_lock
 expect_failure 'restore pod creation is exclusive across concurrent runs' 'remain at zero' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid RESTORE_COORDINATED=1 CONFIRM_RESTORE_STORAGE="$CONFIRM_STORAGE" STUB_MODE=restore-pod-already-exists "$ROOT_DIR/deployment/restore-ret-storage.sh" "$GOOD_CHECKPOINT/ret-storage-$STAMP.tar.gz"
@@ -1094,121 +2828,215 @@ else
 fi
 
 reset_stub
-expect_failure 'coordinated driver rejects a generic confirmation before scaling' 'for this exact target' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid CONFIRM_RESTORE_CHECKPOINT=checkpoint "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
-if grep -q ' scale ' "$KUBECTL_LOG"; then fail 'bad coordinated confirmation performs no scale' "$(cat "$KUBECTL_LOG")"; else pass 'bad coordinated confirmation performs no scale'; fi
+CHECKPOINT_INVENTORY_SHA="$(sha256_digest "$GOOD_CHECKPOINT/deployment-images.json")"
+PREPARE_FENCE_CONFIRMATION="prepare-fence:fixture-context:hcce:fixture-uid:fixture-pvc-uid:$STAMP:$DUMP_SHA:$STORAGE_SHA:$CHECKPOINT_INVENTORY_SHA:$LIVE_RUNNER_EPOCH:33333333-3333-4333-8333-333333333333"
+test_yaml_field() {
+  local pattern="$1" file="$2"
+  awk -v pattern="$pattern" '$0 ~ pattern {value=$0; sub(/^[^:]+:[[:space:]]*/, "", value); gsub(/^"|"$/, "", value); print value; exit}' "$file"
+}
+prepare_fence_fixture() {
+  env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid     EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$RESTORE_VALUES_FIXTURE"     RESTORE_CHECKPOINT_PREPARE_FENCE=1     CONFIRM_PREPARE_RESTORE_FENCE="$PREPARE_FENCE_CONFIRMATION"     "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+}
+apply_restore_fence_fixture() {
+  local deployment
+  printf '%s' restore-fence >"$STUB_STATE_DIR/recovery-phase"
+  printf '%s' 33333333-3333-4333-8333-333333333333 >"$STUB_STATE_DIR/recovery-epoch"
+  for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+    [[ -f "$STUB_STATE_DIR/replicas-$deployment" &&
+       "$(cat "$STUB_STATE_DIR/replicas-$deployment")" == 0 ]] || return 1
+    printf '%s' 3 >"$STUB_STATE_DIR/rv-$deployment"
+  done
+}
+execute_fence_confirmation() {
+  local operation_id
+  operation_id="$(test_yaml_field 'yenhubs.org/operation-id:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  printf 'execute-fenced:fixture-context:hcce:fixture-uid:fixture-pvc-uid:%s:%s:%s:%s:%s:%s:restore-lock-uid:%s'     "$STAMP" "$DUMP_SHA" "$STORAGE_SHA" "$CHECKPOINT_INVENTORY_SHA"     "$LIVE_RUNNER_EPOCH" 33333333-3333-4333-8333-333333333333 "$operation_id"
+}
+execute_fenced_fixture() {
+  local confirmation
+  confirmation="$(execute_fence_confirmation)"
+  env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid     EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$RESTORE_VALUES_FIXTURE"     RESTORE_CHECKPOINT_EXECUTE_FENCED=1     CONFIRM_EXECUTE_RESTORE_FENCE="$confirmation"     PVC_MONITOR_INTERVAL_SECONDS=0.01     "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+}
+
+apply_active_reactivation_fixture() {
+  local deployment
+  printf '%s' active >"$STUB_STATE_DIR/recovery-phase"
+  printf '%s' 33333333-3333-4333-8333-333333333333 >"$STUB_STATE_DIR/recovery-epoch"
+  printf '%s' runner-role-uid >"$STUB_STATE_DIR/runner-role-uid"
+  printf '%s' active >"$STUB_STATE_DIR/runner-role-phase"
+  printf '%s' '[{"apiGroups":[""],"resources":["pods"],"verbs":["create","delete","get","list"]}]' \
+    >"$STUB_STATE_DIR/runner-role-rules.json"
+  for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+    printf '%s' 1 >"$STUB_STATE_DIR/replicas-$deployment"
+    printf '%s' 4 >"$STUB_STATE_DIR/rv-$deployment"
+  done
+}
+finalize_fence_confirmation() {
+  local operation_id
+  operation_id="$(test_yaml_field 'yenhubs.org/operation-id:' \
+    "$STUB_STATE_DIR/restore-lock.yaml")"
+  printf 'finalize-reactivation:fixture-context:hcce:fixture-uid:fixture-pvc-uid:%s:%s:%s:%s:%s:%s:restore-lock-uid:%s' \
+    "$STAMP" "$DUMP_SHA" "$STORAGE_SHA" "$CHECKPOINT_INVENTORY_SHA" \
+    "$LIVE_RUNNER_EPOCH" 33333333-3333-4333-8333-333333333333 "$operation_id"
+}
+
+LIVE_IMAGE_DRIFT_JSON="$TMP_DIR/deployments-live-image-drift.json"
+jq '(.items[] | select(.metadata.name == "reticulum") |
+  .spec.template.spec.containers[] | select(.name == "reticulum") | .image) =
+  ("ghcr.io/yengalvez/reticulum@sha256:" + ("9" * 64))' \
+  "$STUB_DEPLOYMENTS_JSON" >"$LIVE_IMAGE_DRIFT_JSON"
+expect_failure 'coordinated preflight rejects same-repository live digest drift' \
+  'live workload image inventory' env EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  VALUES_FILE="$RESTORE_VALUES_FIXTURE" RESTORE_CHECKPOINT_PREFLIGHT=1 \
+  STUB_DEPLOYMENTS_JSON="$LIVE_IMAGE_DRIFT_JSON" \
+  "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+if grep -Eq ' scale |dropdb|tar -C /storage -xf -' "$KUBECTL_LOG"; then
+  fail 'live image drift preflight performs no mutation' "$(cat "$KUBECTL_LOG")"
+else
+  pass 'live image drift preflight performs no mutation'
+fi
 reset_stub
-expect_failure 'a second coordinated restore cannot cross an active global lock' 'Another recovery operation owns' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid CONFIRM_RESTORE_CHECKPOINT="$CONFIRM_CHECKPOINT" STUB_MODE=restore-lock-exists "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+
+expect_failure 'prepare-fence rejects a generic confirmation before scaling'   'Refusing restore fence phase' env EXPECTED_KUBE_CONTEXT=fixture-context   EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid   VALUES_FILE="$RESTORE_VALUES_FIXTURE" RESTORE_CHECKPOINT_PREPARE_FENCE=1   CONFIRM_PREPARE_RESTORE_FENCE=prepare-fence   "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+if grep -q ' scale ' "$KUBECTL_LOG"; then
+  fail 'bad prepare-fence confirmation performs no scale' "$(cat "$KUBECTL_LOG")"
+else
+  pass 'bad prepare-fence confirmation performs no scale'
+fi
+
+reset_stub
+expect_failure 'a second prepare-fence cannot cross an active global lock'   'Another recovery operation owns' env EXPECTED_KUBE_CONTEXT=fixture-context   EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid   VALUES_FILE="$RESTORE_VALUES_FIXTURE" RESTORE_CHECKPOINT_PREPARE_FENCE=1   CONFIRM_PREPARE_RESTORE_FENCE="$PREPARE_FENCE_CONFIRMATION"   STUB_MODE=restore-lock-exists   "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
 if grep -q 'create -f -' "$KUBECTL_LOG" &&
    ! grep -Eq ' scale |dropdb|delete --raw=.*/configmaps/' "$KUBECTL_LOG"; then
-  pass 'global lock contender never scales, drops or deletes owner state'
+  pass 'prepare-fence lock contender never scales, restores or deletes owner state'
 else
-  fail 'global lock contender never scales, drops or deletes owner state' "$(cat "$KUBECTL_LOG")"
+  fail 'prepare-fence lock contender never mutates owner state' "$(cat "$KUBECTL_LOG")"
 fi
+
+run_restore_role_retry_test
+
 reset_stub
-expect_success 'coordinated driver validates DB and storage before any consumer resumes' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid CONFIRM_RESTORE_CHECKPOINT="$CONFIRM_CHECKPOINT" PVC_MONITOR_INTERVAL_SECONDS=0.01 "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
-lock_create_line="$(grep -n 'create -f -' "$KUBECTL_LOG" | head -1 | cut -d: -f1 || :)"
-first_deployment_line="$(grep -n 'get deployment .* -n hcce -o json' "$KUBECTL_LOG" | head -1 | cut -d: -f1 || :)"
+expect_success 'prepare-fence persistently quiesces all five consumers under the exact lock'   prepare_fence_fixture
+prepared_zero=true
+for prepared_consumer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+  if [[ ! -f "$STUB_STATE_DIR/replicas-$prepared_consumer" ||
+        "$(cat "$STUB_STATE_DIR/replicas-$prepared_consumer")" != 0 ]]; then
+    prepared_zero=false
+  fi
+done
+if [[ "$prepared_zero" == true && -f "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+   grep -q 'yenhubs.org/recovery-state: "restore-fence-prepared"'      "$STUB_STATE_DIR/restore-lock.yaml" &&
+   grep -q "yenhubs.org/deployment-inventory-sha256: \"$CHECKPOINT_INVENTORY_SHA\""      "$STUB_STATE_DIR/restore-lock.yaml" &&
+   ! grep -Eq 'dropdb|tar -C /storage -xf -|--replicas=1' "$KUBECTL_LOG"; then
+  pass 'prepare-fence retains its checkpoint-bound lock and performs no restore'
+else
+  fail 'prepare-fence exact persistent contract' "$(cat "$KUBECTL_LOG")"
+fi
+
+execute_before_manifest_confirmation="$(execute_fence_confirmation)"
+: >"$KUBECTL_LOG"
+expect_failure 'execute-fenced rejects the pre-fence live epoch before standard manifest apply'   'live restore-fence epoch is not the exact new candidate' env   EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid   EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$RESTORE_VALUES_FIXTURE"   RESTORE_CHECKPOINT_EXECUTE_FENCED=1   CONFIRM_EXECUTE_RESTORE_FENCE="$execute_before_manifest_confirmation"   "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+if grep -Eq 'dropdb|tar -C /storage -xf -' "$KUBECTL_LOG"; then
+  fail 'pre-manifest execute performs no restore' "$(cat "$KUBECTL_LOG")"
+else
+  pass 'pre-manifest execute performs no restore'
+fi
+
+apply_restore_fence_fixture
+: >"$KUBECTL_LOG"
+# shellcheck disable=SC2016 # Expanded by the isolated fixture process.
+expect_success 'live recovery phase reads the exact Deployment metadata annotation'   env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_require_live_runner_recovery_phase restore-fence
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
+: >"$KUBECTL_LOG"
+expect_failure 'execute-fenced rejects a generic confirmation after manifest apply'   'Refusing restore fence phase' env EXPECTED_KUBE_CONTEXT=fixture-context   EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid   VALUES_FILE="$RESTORE_VALUES_FIXTURE" RESTORE_CHECKPOINT_EXECUTE_FENCED=1   CONFIRM_EXECUTE_RESTORE_FENCE=execute-fenced   "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+if grep -Eq 'dropdb|tar -C /storage -xf -' "$KUBECTL_LOG"; then
+  fail 'bad execute-fenced confirmation performs no restore' "$(cat "$KUBECTL_LOG")"
+else
+  pass 'bad execute-fenced confirmation performs no restore'
+fi
+
+: >"$KUBECTL_LOG"
+expect_success 'execute-fenced restores both checkpoint halves and remains persistently fenced'   execute_fenced_fixture
 drop_line="$(grep -n 'dropdb' "$KUBECTL_LOG" | head -1 | cut -d: -f1 || :)"
 extract_line="$(grep -n 'tar -C /storage -xf -' "$KUBECTL_LOG" | head -1 | cut -d: -f1 || :)"
-resume_line="$(grep -n -- '--replicas=1' "$KUBECTL_LOG" | head -1 | cut -d: -f1 || :)"
-last_resume_line="$(grep -n -- '--replicas=1' "$KUBECTL_LOG" | tail -1 | cut -d: -f1 || :)"
-lock_delete_line="$(grep -n 'delete --raw=.*/configmaps/yenhubs-recovery-operation-lock ' "$KUBECTL_LOG" | tail -1 | cut -d: -f1 || :)"
-resume_count="$(grep -c -- '--replicas=1' "$KUBECTL_LOG" || :)"
-if [[ "$lock_create_line" =~ ^[0-9]+$ && "$first_deployment_line" =~ ^[0-9]+$ && "$drop_line" =~ ^[0-9]+$ &&
-      "$extract_line" =~ ^[0-9]+$ && "$resume_line" =~ ^[0-9]+$ &&
-      "$last_resume_line" =~ ^[0-9]+$ && "$lock_delete_line" =~ ^[0-9]+$ &&
-      "$lock_create_line" -lt "$first_deployment_line" && "$lock_create_line" -lt "$drop_line" && "$drop_line" -lt "$extract_line" &&
-      "$extract_line" -lt "$resume_line" && "$last_resume_line" -lt "$lock_delete_line" &&
-      "$resume_count" == 5 && ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]]; then
-  pass 'coordinated resume occurs only after DB drop, PVC extraction and joint validation'
+replace_line="$(grep -n 'replace -f - -o json' "$KUBECTL_LOG" | tail -1 | cut -d: -f1 || :)"
+executed_zero=true
+for executed_consumer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+  if [[ ! -f "$STUB_STATE_DIR/replicas-$executed_consumer" ||
+        "$(cat "$STUB_STATE_DIR/replicas-$executed_consumer")" != 0 ]]; then
+    executed_zero=false
+  fi
+done
+if [[ "$drop_line" =~ ^[0-9]+$ && "$extract_line" =~ ^[0-9]+$ &&
+      "$replace_line" =~ ^[0-9]+$ && "$drop_line" -lt "$extract_line" &&
+      "$extract_line" -lt "$replace_line" && "$executed_zero" == true &&
+      -f "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+   grep -q 'restore-complete-awaiting-reactivation' "$STUB_STATE_DIR/restore-lock.yaml" &&
+   ! grep -Eq -- '--replicas=1|delete --raw=.*/configmaps/yenhubs-recovery-operation-lock'      "$KUBECTL_LOG"; then
+  pass 'execute-fenced CASes the retained lock only after DB, storage and joint validation'
 else
-  fail 'coordinated resume occurs only after DB drop, PVC extraction and joint validation' "$(cat "$KUBECTL_LOG")"
+  fail 'execute-fenced persistent post-restore fence contract' "$(cat "$KUBECTL_LOG")"
 fi
-resume_order="$(grep -- '--replicas=1' "$KUBECTL_LOG" | sed -E 's/.*scale deployment ([^ ]+).*/\1/' | paste -sd, -)"
-if [[ "$resume_order" == 'pgbouncer,pgbouncer-t,reticulum,coturn,bot-orchestrator' ]]; then
-  pass 'coordinated resume makes Reticulum Ready before bot-orchestrator'
+
+apply_active_reactivation_fixture
+finalize_confirmation="$(finalize_fence_confirmation)"
+: >"$KUBECTL_LOG"
+expect_failure 'finalizer fail-close fences through missing lock, Role replacement and Deployment replacement' '' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+  EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$RESTORE_VALUES_FIXTURE" \
+  RESTORE_CHECKPOINT_FINALIZE_REACTIVATION=1 \
+  CONFIRM_FINALIZE_RESTORE_REACTIVATION="$finalize_confirmation" \
+  STUB_MODE=finalizer-failclose-drift STUB_RUNNER_NAMESPACE=present \
+  "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+finalizer_all_fences_attempted=true
+for finalizer_consumer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+  if [[ ! -f "$STUB_STATE_DIR/replicas-$finalizer_consumer" ||
+        "$(cat "$STUB_STATE_DIR/replicas-$finalizer_consumer")" != 0 ]] ||
+     ! grep -Eq "scale deployment $finalizer_consumer .*--replicas=0" \
+       "$KUBECTL_LOG"; then
+    finalizer_all_fences_attempted=false
+  fi
+done
+if [[ "$finalizer_all_fences_attempted" == true &&
+      ! -e "$STUB_STATE_DIR/restore-lock.yaml" &&
+      "$(cat "$STUB_STATE_DIR/runner-role-uid")" == replacement-runner-role-uid &&
+      "$(cat "$STUB_STATE_DIR/runner-role-phase")" == restore-fence ]] &&
+   jq -e '. == []' "$STUB_STATE_DIR/runner-role-rules.json" >/dev/null &&
+   grep -q 'delete --raw=/api/v1/namespaces/hcce-bot-runners/pods/bot-runner-fixture' \
+     "$KUBECTL_LOG"; then
+  pass 'fail-close aggregates drift only after Role, five zero fences and runner UID delete'
 else
-  fail 'coordinated resume makes Reticulum Ready before bot-orchestrator' "$resume_order"
-fi
-ret_resume_line="$(grep -n 'scale deployment reticulum .*--replicas=1' "$KUBECTL_LOG" | tail -1 | cut -d: -f1 || :)"
-ret_ready_line="$(awk -v start="$ret_resume_line" 'NR > start && /rollout status deployment\/reticulum / {print NR; exit}' "$KUBECTL_LOG")"
-coturn_resume_line="$(grep -n 'scale deployment coturn .*--replicas=1' "$KUBECTL_LOG" | tail -1 | cut -d: -f1 || :)"
-bot_resume_line="$(grep -n 'scale deployment bot-orchestrator .*--replicas=1' "$KUBECTL_LOG" | tail -1 | cut -d: -f1 || :)"
-if [[ "$ret_resume_line" =~ ^[0-9]+$ && "$ret_ready_line" =~ ^[0-9]+$ &&
-      "$coturn_resume_line" =~ ^[0-9]+$ && "$bot_resume_line" =~ ^[0-9]+$ &&
-      "$ret_resume_line" -lt "$ret_ready_line" &&
-      "$ret_ready_line" -lt "$coturn_resume_line" &&
-      "$ret_ready_line" -lt "$bot_resume_line" ]]; then
-  pass 'Reticulum rollout reaches Ready before Coturn or bot scaling'
-else
-  fail 'Reticulum rollout reaches Ready before Coturn or bot scaling' "$(cat "$KUBECTL_LOG")"
+  fail 'fail-close skipped a reductive fence after drift' "$(cat "$KUBECTL_LOG")"
 fi
 
 reset_stub
-expect_failure 'Reticulum resume failure requiesces every consumer' 'forced back to zero' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid CONFIRM_RESTORE_CHECKPOINT="$CONFIRM_CHECKPOINT" STUB_MODE=resume-ret-fail PVC_MONITOR_INTERVAL_SECONDS=0.01 "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
-resume_failure_held_zero=true
-for held_consumer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
-  if [[ ! -f "$STUB_STATE_DIR/replicas-$held_consumer" ||
-        "$(cat "$STUB_STATE_DIR/replicas-$held_consumer")" != 0 ]]; then
-    resume_failure_held_zero=false
+expect_success 'failure fixture prepares a new persistent fence' prepare_fence_fixture
+apply_restore_fence_fixture
+failed_execute_confirmation="$(execute_fence_confirmation)"
+: >"$KUBECTL_LOG"
+expect_failure 'coordinated storage failure retains every consumer at zero and the exact lock'   'non-empty or unsafe' env EXPECTED_KUBE_CONTEXT=fixture-context   EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid   VALUES_FILE="$RESTORE_VALUES_FIXTURE" RESTORE_CHECKPOINT_EXECUTE_FENCED=1   CONFIRM_EXECUTE_RESTORE_FENCE="$failed_execute_confirmation"   STUB_MODE=destination-nonempty PVC_MONITOR_INTERVAL_SECONDS=0.01   "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+failure_held_zero=true
+for failed_consumer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+  if [[ ! -f "$STUB_STATE_DIR/replicas-$failed_consumer" ||
+        "$(cat "$STUB_STATE_DIR/replicas-$failed_consumer")" != 0 ]]; then
+    failure_held_zero=false
   fi
 done
-if [[ "$resume_failure_held_zero" == true ]]; then
-  pass 'resume failure leaves no partially resumed consumer'
+if [[ "$failure_held_zero" == true && -f "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+   ! grep -Eq -- '--replicas=1|delete --raw=.*/configmaps/yenhubs-recovery-operation-lock'      "$KUBECTL_LOG"; then
+  pass 'failed execute-fenced has no partial resume or lock release'
 else
-  fail 'resume failure leaves no partially resumed consumer' "$(cat "$KUBECTL_LOG")"
-fi
-if [[ -f "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
-   ! grep -q 'delete --raw=.*/configmaps/yenhubs-recovery-operation-lock ' "$KUBECTL_LOG"; then
-  pass 'resume failure retains the global restore lock'
-else
-  fail 'resume failure retains the global restore lock' "$(cat "$KUBECTL_LOG")"
-fi
-reset_stub
-expect_failure 'restore-lock replacement at release stops under foreign ownership' 'consumer state requires manual inspection' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid CONFIRM_RESTORE_CHECKPOINT="$CONFIRM_CHECKPOINT" STUB_MODE=restore-lock-replaced-on-release PVC_MONITOR_INTERVAL_SECONDS=0.01 "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
-replacement_failure_left_state=true
-for held_consumer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
-  if [[ ! -f "$STUB_STATE_DIR/replicas-$held_consumer" ||
-        "$(cat "$STUB_STATE_DIR/replicas-$held_consumer")" != 1 ]]; then
-    replacement_failure_left_state=false
-  fi
-done
-lock_release_line="$(grep -n 'delete --raw=.*/configmaps/yenhubs-recovery-operation-lock ' "$KUBECTL_LOG" | tail -1 | cut -d: -f1 || :)"
-post_replacement_scale_count="$(awk -v release="$lock_release_line" \
-  'release ~ /^[0-9]+$/ && NR > release && / scale deployment / {count++} END {print count+0}' \
-  "$KUBECTL_LOG")"
-if [[ "$replacement_failure_left_state" == true &&
-      -f "$STUB_STATE_DIR/restore-lock.yaml" &&
-      "$(cat "$STUB_STATE_DIR/restore-lock-uid")" == replacement-lock-uid &&
-      "$post_replacement_scale_count" == 0 ]] &&
-   grep -q 'delete --raw=.*/configmaps/yenhubs-recovery-operation-lock ' "$KUBECTL_LOG" &&
-   ! jq -se 'any(.[]; .preconditions.uid == "replacement-lock-uid")' \
-     "$STUB_STATE_DIR"/delete-options-*.json >/dev/null 2>&1; then
-  pass 'lock replacement is never deleted or followed by a foreign-state mutation'
-else
-  fail 'lock replacement is never deleted or followed by a foreign-state mutation' "$(cat "$KUBECTL_LOG")"
-fi
-reset_stub
-expect_failure 'coordinated storage failure holds every DB consumer at zero' 'non-empty or unsafe' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid CONFIRM_RESTORE_CHECKPOINT="$CONFIRM_CHECKPOINT" STUB_MODE=destination-nonempty PVC_MONITOR_INTERVAL_SECONDS=0.01 "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
-held_zero=true
-for held_consumer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
-  if [[ ! -f "$STUB_STATE_DIR/replicas-$held_consumer" ||
-        "$(cat "$STUB_STATE_DIR/replicas-$held_consumer")" != 0 ]]; then
-    held_zero=false
-  fi
-done
-if [[ "$held_zero" == true ]] && ! grep -q -- '--replicas=1' "$KUBECTL_LOG"; then
-  pass 'coordinated failure is fail-closed with no partial resume'
-else
-  fail 'coordinated failure is fail-closed with no partial resume' "$(cat "$KUBECTL_LOG")"
-fi
-if [[ -f "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
-   ! grep -q 'delete --raw=.*/configmaps/yenhubs-recovery-operation-lock ' "$KUBECTL_LOG"; then
-  pass 'failed coordinated mutation retains its exact global lock'
-else
-  fail 'failed coordinated mutation retains its exact global lock' "$(cat "$KUBECTL_LOG")"
+  fail 'failed execute-fenced remains fail-closed' "$(cat "$KUBECTL_LOG")"
 fi
 
+reset_stub
+seed_restore_lock available
 CONFIRM_CLEAR_LOCK="restore-lock:fixture-context:hcce:fixture-uid:$STAMP:$DUMP_SHA:$STORAGE_SHA:restore-lock-uid:fixture-pvc-uid"
 : >"$KUBECTL_LOG"
 expect_failure 'stale restore lock rejects generic clearance' 'for this exact target' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1 CONFIRM_CLEAR_RESTORE_LOCK=restore-lock "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
@@ -1219,7 +3047,7 @@ else
   fail 'bad stale-lock confirmation neither resumes nor deletes' "$(cat "$KUBECTL_LOG")"
 fi
 reset_stub
-seed_restore_lock
+seed_restore_lock available
 seed_stale_restore_helper
 expect_failure 'bad stale-lock confirmation preserves the exact helper and policy' \
   'for this exact target' env EXPECTED_KUBE_CONTEXT=fixture-context \
@@ -1233,7 +3061,7 @@ else
   fail 'bad stale-lock confirmation performs no helper, policy or lock deletion' "$(cat "$KUBECTL_LOG")"
 fi
 reset_stub
-seed_restore_lock
+seed_restore_lock available
 for stale_consumer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
   printf 0 >"$STUB_STATE_DIR/replicas-$stale_consumer"
 done
@@ -1247,30 +3075,7 @@ else
   fail 'stale-lock clearance deletes only the pinned lock and resumes nothing' "$(cat "$KUBECTL_LOG")"
 fi
 
-reset_stub
-seed_restore_lock
-seed_stale_restore_helper
-expect_success 'stale-lock recovery removes its exact operation-bound helper before the lock' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1 CONFIRM_CLEAR_RESTORE_LOCK="$CONFIRM_CLEAR_LOCK" "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
-if [[ ! -e "$STUB_STATE_DIR/pod-created" &&
-      ! -e "$STUB_STATE_DIR/network-policy.yaml" &&
-      ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
-   [[ "$(grep -c 'delete --raw=' "$KUBECTL_LOG" || :)" == 3 ]]; then
-  pass 'stale helper cleanup is exact, complete and clear-only'
-else
-  fail 'stale helper cleanup is exact, complete and clear-only' "$(cat "$KUBECTL_LOG")"
-fi
-reset_stub
-seed_restore_lock
-seed_stale_restore_helper
-expect_failure 'stale helper same-name replacement is never adopted or deleted' 'identity/spec changed' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1 CONFIRM_CLEAR_RESTORE_LOCK="$CONFIRM_CLEAR_LOCK" STUB_MODE=stale-helper-replaced "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
-if [[ -e "$STUB_STATE_DIR/pod-created" &&
-      -e "$STUB_STATE_DIR/network-policy.yaml" &&
-      -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
-   ! grep -q 'delete --raw=.*/pods/' "$KUBECTL_LOG"; then
-  pass 'replacement helper, deny policy and retained lock remain untouched'
-else
-  fail 'replacement helper, deny policy and retained lock remain untouched' "$(cat "$KUBECTL_LOG")"
-fi
+run_stale_helper_cleanup_tests
 
 reset_stub
 DB_BACKUP="$TMP_DIR/backup/retdb-$STAMP.sql.gz"
@@ -1308,9 +3113,170 @@ done
 
 reset_stub
 CAPTURE_DIR="$TMP_DIR/captured-state"
-expect_success 'state capture emits strict structural inventory' env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid VALUES_FILE="$VALUES_FIXTURE" "$ROOT_DIR/deployment/capture-instance-state.sh" "$CAPTURE_DIR"
+expect_success 'legacy state capture does not require an unbuilt runner candidate digest' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+  STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+  VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+  "$ROOT_DIR/deployment/capture-instance-state.sh" "$CAPTURE_DIR"
 if grep -R -q SECRET_SENTINEL "$CAPTURE_DIR"; then fail 'capture excludes env/args/commands/annotations/values' 'secret sentinel leaked'; else pass 'capture excludes env/args/commands/annotations/values'; fi
-if jq -e '.items[0].data_keys == ["credential"] and .items[0].binary_data_keys == ["certificate"]' "$CAPTURE_DIR/k8s-configmaps-redacted.json" >/dev/null && jq -e '.deployments | length == 12' "$CAPTURE_DIR/deployment-images.json" >/dev/null; then pass 'capture preserves only structural keys and exact deployments'; else fail 'capture preserves only structural keys and exact deployments' 'invalid inventory'; fi
+if jq -e '.items[0].data_keys == ["credential"] and .items[0].binary_data_keys == ["certificate"]' "$CAPTURE_DIR/k8s-configmaps-redacted.json" >/dev/null && jq -e '
+  .schema_version == 3 and .bot_runner_runtime == {
+    mode:"process-local",image:null,control_plane:{state:"legacy-absent"},
+    recovery_epoch:{state:"legacy-absent"}}
+  and (.deployments | length) == 12
+' "$CAPTURE_DIR/deployment-images.json" >/dev/null; then pass 'capture preserves exact deployments and explicit legacy runner rollback mode'; else fail 'capture preserves exact deployments and explicit legacy runner rollback mode' 'invalid inventory'; fi
+if bash -c 'source "$1"; recovery_deployment_inventory_is_acceptable "$2" hcce fixture-uid' _ \
+  "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$CAPTURE_DIR/deployment-images.json"; then
+  pass 'checkpoint inventory accepts the explicit process-local runner rollback mode'
+else
+  fail 'checkpoint inventory accepts the explicit process-local runner rollback mode' 'valid rollback inventory rejected'
+fi
+BOUND_PROCESS_LOCAL_INVENTORY="$TMP_DIR/deployment-images-process-local-bound-epoch.json"
+jq --arg epoch "$CHECKPOINT_RUNNER_EPOCH" '
+  .bot_runner_runtime.recovery_epoch = {state:"bound",value:$epoch}
+' "$CAPTURE_DIR/deployment-images.json" >"$BOUND_PROCESS_LOCAL_INVENTORY"
+if bash -c 'source "$1"; recovery_deployment_inventory_is_acceptable "$2" hcce fixture-uid' _ \
+  "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$BOUND_PROCESS_LOCAL_INVENTORY"; then
+  fail 'checkpoint inventory rejects a recovery epoch bound to process-local mode' \
+    'inconsistent process-local epoch accepted'
+else
+  pass 'checkpoint inventory rejects a recovery epoch bound to process-local mode'
+fi
+reset_stub
+expect_failure 'Kubernetes runner capture rejects a missing private candidate digest' \
+  'does not match the private candidate override' env EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
+  VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+  "$ROOT_DIR/deployment/capture-instance-state.sh" "$TMP_DIR/capture-k8s-no-candidate"
+MISMATCHED_KUBERNETES_DEPLOYMENTS_JSON="$TMP_DIR/deployments-kubernetes-runner-mismatch.json"
+jq --arg image "ghcr.io/yengalvez/bot-runner@sha256:${RUNNER_DIGEST_IMAGE##*@sha256:}" '
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.containers[] | select(.name == "bot-orchestrator") |
+    .env[0].value) = ($image | sub("8$"; "9"))
+' "$KUBERNETES_DEPLOYMENTS_JSON" >"$MISMATCHED_KUBERNETES_DEPLOYMENTS_JSON"
+reset_stub
+expect_failure 'Kubernetes runner capture rejects a live/private digest mismatch' \
+  'does not match the private candidate override' env EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid \
+  STUB_DEPLOYMENTS_JSON="$MISMATCHED_KUBERNETES_DEPLOYMENTS_JSON" \
+  VALUES_FILE="$VALUES_FIXTURE" \
+  "$ROOT_DIR/deployment/capture-instance-state.sh" "$TMP_DIR/capture-k8s-mismatch"
+PARTIAL_KUBERNETES_DEPLOYMENTS_JSON="$TMP_DIR/deployments-partial-kubernetes-runner.json"
+jq '
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.containers[] | select(.name == "bot-orchestrator") |
+    .env) = [{name:"ORCHESTRATOR_POD_UID",value:"partial"}]
+' "$STUB_DEPLOYMENTS_JSON" >"$PARTIAL_KUBERNETES_DEPLOYMENTS_JSON"
+reset_stub
+expect_failure 'process-local capture rejects partial Kubernetes runner bindings' \
+  'partial Kubernetes runner bindings' env EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid \
+  STUB_DEPLOYMENTS_JSON="$PARTIAL_KUBERNETES_DEPLOYMENTS_JSON" \
+  VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+  "$ROOT_DIR/deployment/capture-instance-state.sh" "$TMP_DIR/capture-partial-k8s"
+KUBERNETES_RUNNER_INVENTORY="$TMP_DIR/deployment-images-kubernetes-runner.json"
+jq --arg image "$RUNNER_DIGEST_IMAGE" --arg epoch "$CHECKPOINT_RUNNER_EPOCH" '
+  .bot_runner_runtime.mode = "kubernetes-pod" |
+  .bot_runner_runtime.image = $image |
+  .bot_runner_runtime.recovery_epoch = {
+    state:"bound",value:$epoch
+  } |
+  .bot_runner_runtime.control_plane = {
+    state:"kubernetes-active",
+    namespaces:[
+      {api_version:"v1",kind:"Namespace",name:"hcce",uid:"fixture-uid"},
+      {api_version:"v1",kind:"Namespace",name:"hcce-bot-runners",uid:"fixture-runner-namespace-uid"}
+    ],
+    namespaced_resources:[
+      {api_version:"v1",kind:"Secret",namespace:"hcce-bot-runners",name:"bot-images-pull",uid:"uid-bot-images-pull"},
+      {api_version:"v1",kind:"ServiceAccount",namespace:"hcce-bot-runners",name:"bot-runner",uid:"uid-bot-runner"},
+      {api_version:"v1",kind:"ResourceQuota",namespace:"hcce-bot-runners",name:"bot-runner-capacity",uid:"uid-bot-runner-capacity"},
+      {api_version:"rbac.authorization.k8s.io/v1",kind:"Role",namespace:"hcce-bot-runners",name:"bot-orchestrator-runner-pods",uid:"uid-bot-orchestrator-runner-pods"},
+      {api_version:"rbac.authorization.k8s.io/v1",kind:"RoleBinding",namespace:"hcce-bot-runners",name:"bot-orchestrator-runner-pods",uid:"uid-bot-orchestrator-runner-pods"},
+      {api_version:"networking.k8s.io/v1",kind:"NetworkPolicy",namespace:"hcce-bot-runners",name:"bot-runner-default-deny",uid:"uid-bot-runner-default-deny"},
+      {api_version:"networking.k8s.io/v1",kind:"NetworkPolicy",namespace:"hcce-bot-runners",name:"bot-runner-egress",uid:"uid-bot-runner-egress"}
+    ],
+    cluster_resources:[
+      {api_version:"admissionregistration.k8s.io/v1",kind:"ValidatingAdmissionPolicy",name:"bot-runner-pods.yenhubs.org",uid:"uid-validatingadmissionpolicy"},
+      {api_version:"admissionregistration.k8s.io/v1",kind:"ValidatingAdmissionPolicyBinding",name:"bot-runner-pods.yenhubs.org",uid:"uid-validatingadmissionpolicybinding"}
+    ]
+  }
+' \
+  "$CAPTURE_DIR/deployment-images.json" >"$KUBERNETES_RUNNER_INVENTORY"
+if bash -c 'source "$1"; recovery_deployment_inventory_is_acceptable "$2" hcce fixture-uid "" "$3"' _ \
+  "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$KUBERNETES_RUNNER_INVENTORY" \
+  "$RUNNER_DIGEST_IMAGE"; then
+  pass 'checkpoint inventory accepts one expected digest-pinned Kubernetes runner image'
+else
+  fail 'checkpoint inventory accepts one expected digest-pinned Kubernetes runner image' 'valid Kubernetes runner inventory rejected'
+fi
+MISSING_RUNNER_CONTROL_RESOURCE="$TMP_DIR/deployment-images-kubernetes-runner-missing-resource.json"
+jq '.bot_runner_runtime.control_plane.namespaced_resources |= map(select(.name != "bot-runner-egress"))' \
+  "$KUBERNETES_RUNNER_INVENTORY" >"$MISSING_RUNNER_CONTROL_RESOURCE"
+if bash -c 'source "$1"; recovery_deployment_inventory_is_acceptable "$2" hcce fixture-uid' _ \
+  "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$MISSING_RUNNER_CONTROL_RESOURCE"; then
+  fail 'checkpoint inventory rejects omitted runner control-plane resource' 'omission accepted'
+else
+  pass 'checkpoint inventory rejects omitted runner control-plane resource'
+fi
+reset_stub
+# shellcheck disable=SC2016 # Expanded by the isolated fixture process.
+if env EXPECTED_KUBE_CONTEXT=fixture-context STUB_RUNNER_NAMESPACE=present bash -c '
+  set -euo pipefail
+  NAMESPACE=hcce
+  source "$1"
+  recovery_require_live_runner_control_plane_matches_checkpoint "$2"
+' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$KUBERNETES_RUNNER_INVENTORY"; then
+  pass 'live runner control-plane identity matches every checksummed checkpoint UID'
+else
+  fail 'live runner control-plane identity matches every checksummed checkpoint UID' 'valid live inventory rejected'
+fi
+reset_stub
+# shellcheck disable=SC2016 # Expanded by the isolated fixture process.
+if env EXPECTED_KUBE_CONTEXT=fixture-context STUB_RUNNER_NAMESPACE=present \
+  STUB_RUNNER_RESOURCE_DRIFT=bot-runner-egress bash -c '
+  set -euo pipefail
+  NAMESPACE=hcce
+  source "$1"
+  recovery_require_live_runner_control_plane_matches_checkpoint "$2"
+' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$KUBERNETES_RUNNER_INVENTORY"; then
+  fail 'live runner control-plane UID drift blocks restore' 'drift accepted'
+else
+  pass 'live runner control-plane UID drift blocks restore'
+fi
+for bad_runner_kind in tag repository; do
+  BAD_RUNNER_INVENTORY="$TMP_DIR/deployment-images-bad-runner-$bad_runner_kind.json"
+  if [[ "$bad_runner_kind" == tag ]]; then
+    bad_runner_image='ghcr.io/yengalvez/bot-runner:latest'
+  else
+    bad_runner_image='evil.invalid/yengalvez/bot-runner@sha256:8888888888888888888888888888888888888888888888888888888888888888'
+  fi
+  jq --arg image "$bad_runner_image" \
+    '.bot_runner_runtime.image = $image' \
+    "$CAPTURE_DIR/deployment-images.json" >"$BAD_RUNNER_INVENTORY"
+  if bash -c 'source "$1"; recovery_deployment_inventory_is_acceptable "$2" hcce fixture-uid' _ \
+    "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$BAD_RUNNER_INVENTORY"; then
+    fail "checkpoint inventory rejects malicious runner $bad_runner_kind" 'unsafe runner image accepted'
+  else
+    pass "checkpoint inventory rejects malicious runner $bad_runner_kind"
+  fi
+done
+MISMATCHED_RUNNER_IMAGE='ghcr.io/yengalvez/bot-runner@sha256:9999999999999999999999999999999999999999999999999999999999999999'
+if bash -c 'source "$1"; recovery_deployment_inventory_is_acceptable "$2" hcce fixture-uid "" "$3"' _ \
+  "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$KUBERNETES_RUNNER_INVENTORY" \
+  "$MISMATCHED_RUNNER_IMAGE"; then
+  fail 'checkpoint inventory rejects runner digest mismatch against the expected override' 'mismatched runner accepted'
+else
+  pass 'checkpoint inventory rejects runner digest mismatch against the expected override'
+fi
+EXTRA_TOP_LEVEL_INVENTORY="$TMP_DIR/deployment-images-extra-top-level.json"
+jq '.unexpected = true' "$CAPTURE_DIR/deployment-images.json" >"$EXTRA_TOP_LEVEL_INVENTORY"
+if bash -c 'source "$1"; recovery_deployment_inventory_is_acceptable "$2" hcce fixture-uid' _ \
+  "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$EXTRA_TOP_LEVEL_INVENTORY"; then
+  fail 'checkpoint inventory rejects unlisted top-level fields' 'extra top-level field accepted'
+else
+  pass 'checkpoint inventory rejects unlisted top-level fields'
+fi
 BOT2_INVENTORY="$TMP_DIR/deployment-images-bot2.json"
 jq '(.deployments[] | select(.name == "bot-orchestrator") | .replicas) = 2' \
   "$CAPTURE_DIR/deployment-images.json" >"$BOT2_INVENTORY"
@@ -1367,9 +3333,269 @@ else
 fi
 
 CREATE_PARENT="$TMP_DIR/atomic-create"
+CREATE_PROCESS_LOCAL="$CREATE_PARENT/process-local-checkpoint"
+reset_stub
+expect_success 'process-local checkpoint publishes and resumes the exact accepted legacy boundary' \
+  env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+  STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+  STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+  "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_PROCESS_LOCAL"
+if jq -e '.bot_runner_runtime.mode == "process-local" and
+    .bot_runner_runtime.control_plane == {state:"legacy-absent"} and
+    .bot_runner_runtime.recovery_epoch == {state:"legacy-absent"}' \
+    "$CREATE_PROCESS_LOCAL/deployment-images.json" >/dev/null &&
+   [[ ! -e "$STUB_STATE_DIR/runner-control-plane-verifier-count" ]] &&
+   grep -q 'scale deployment bot-orchestrator .*--replicas=0' "$KUBECTL_LOG" &&
+   grep -q 'scale deployment bot-orchestrator .*--replicas=1' "$KUBECTL_LOG"; then
+  pass 'process-local checkpoint does not consult candidate manifest and restores its parent'
+else
+  fail 'process-local checkpoint mode binding and exact resume' "$(cat "$KUBECTL_LOG")"
+fi
+CREATE_PROCESS_LOCAL_DRIFT="$CREATE_PARENT/process-local-mode-drift"
+reset_stub
+expect_failure 'process-local mode drift during backup blocks every writer resume' \
+  'Checkpoint runner mode changed while writers were fenced' \
+  env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+  STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+  STUB_MODE=checkpoint-process-local-mode-drift \
+  STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+  "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_PROCESS_LOCAL_DRIFT"
+if [[ "$(cat "$STUB_STATE_DIR/replicas-bot-orchestrator" 2>/dev/null || :)" == 0 ]] &&
+   ! grep -q 'scale deployment bot-orchestrator .*--replicas=1' "$KUBECTL_LOG" &&
+   [[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]]; then
+  pass 'process-local drift retains the lock with parent authority at zero'
+else
+  fail 'process-local drift resumed or released authority' "$(cat "$KUBECTL_LOG")"
+fi
+CHECKPOINT_PARTIAL_PROCESS_LOCAL="$TMP_DIR/checkpoint-partial-process-local.json"
+jq '(.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.containers[0].env) += [
+      {name:"ORCHESTRATOR_POD_UID",value:"partial"}
+    ]' "$LEGACY_DEPLOYMENTS_JSON" >"$CHECKPOINT_PARTIAL_PROCESS_LOCAL"
+reset_stub
+expect_failure 'partial isolated binding cannot fall back to process-local checkpoint' \
+  'not bound to recovery phase active' \
+  env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+  STUB_DEPLOYMENTS_JSON="$CHECKPOINT_PARTIAL_PROCESS_LOCAL" \
+  "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_PARENT/process-local-partial"
+if grep -Eq ' scale .*--replicas=(0|1)' "$KUBECTL_LOG"; then
+  fail 'partial isolated binding mutated writer scale' "$(cat "$KUBECTL_LOG")"
+else
+  pass 'partial isolated binding performs zero writer scale mutations'
+fi
+reset_stub
+expect_failure 'residual runner Namespace cannot fall back to process-local checkpoint' \
+  'not bound to recovery phase active' \
+  env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+  STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+  STUB_RUNNER_NAMESPACE=present \
+  "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_PARENT/process-local-namespace"
+if grep -Eq ' scale .*--replicas=(0|1)' "$KUBECTL_LOG"; then
+  fail 'residual runner Namespace mutated writer scale' "$(cat "$KUBECTL_LOG")"
+else
+  pass 'residual runner Namespace performs zero writer scale mutations'
+fi
+reset_stub
+expect_failure 'adjacent process-local drift blocks parent resume' \
+  'Checkpoint runner mode changed while writers were fenced' \
+  env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+  STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+  STUB_MODE=checkpoint-process-local-adjacent-drift \
+  STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+  "$ROOT_DIR/deployment/create-checkpoint.sh" \
+  "$CREATE_PARENT/process-local-adjacent-drift"
+if [[ "$(cat "$STUB_STATE_DIR/replicas-bot-orchestrator" 2>/dev/null || :)" == 0 ]] &&
+   ! grep -q 'scale deployment bot-orchestrator .*--replicas=1' "$KUBECTL_LOG" &&
+   [[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]]; then
+  pass 'adjacent process-local drift leaves parent zero under lock'
+else
+  fail 'adjacent process-local drift resumed parent' "$(cat "$KUBECTL_LOG")"
+fi
+reset_stub
+expect_failure 'pre-watcher quiesce failure safely reconstructs resume monitoring' \
+  'Pods still remain for deployment/bot-orchestrator; refusing further mutation' \
+  env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+  STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+  STUB_MODE=checkpoint-parent-wait-failure \
+  STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+  "$ROOT_DIR/deployment/create-checkpoint.sh" \
+  "$CREATE_PARENT/process-local-parent-wait"
+if [[ "$(cat "$STUB_STATE_DIR/replicas-bot-orchestrator" 2>/dev/null || :)" == 1 ]] &&
+   [[ ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]]; then
+  pass 'pre-watcher quiesce failure restores parent and releases its lock safely'
+else
+  fail 'pre-watcher quiesce failure strands parent or lock' "$(cat "$KUBECTL_LOG")"
+fi
+for residual_resource in role validatingadmissionpolicy; do
+  reset_stub
+  expect_failure "residual $residual_resource cannot fall back to process-local checkpoint" \
+    'not bound to recovery phase active' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+    STUB_RUNNER_RESIDUAL="$residual_resource" \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" \
+    "$CREATE_PARENT/process-local-residual-$residual_resource"
+  if grep -Eq ' scale .*--replicas=(0|1)' "$KUBECTL_LOG"; then
+    fail "residual $residual_resource mutated writer scale" "$(cat "$KUBECTL_LOG")"
+  else
+    pass "residual $residual_resource performs zero writer scale mutations"
+  fi
+done
+ANNOTATED_PROCESS_LOCAL="$TMP_DIR/deployments-process-local-non-parent-annotation.json"
+jq '(.items[] | select(.metadata.name == "pgbouncer") |
+    .metadata.annotations["yenhubs.org/bot-runner-recovery-phase"]) = "active"' \
+  "$LEGACY_DEPLOYMENTS_JSON" >"$ANNOTATED_PROCESS_LOCAL"
+reset_stub
+expect_failure 'non-parent runner annotation cannot fall back to process-local checkpoint' \
+  'not bound to recovery phase active' \
+  env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+  STUB_DEPLOYMENTS_JSON="$ANNOTATED_PROCESS_LOCAL" \
+  "$ROOT_DIR/deployment/create-checkpoint.sh" \
+  "$CREATE_PARENT/process-local-non-parent-annotation"
+if grep -Eq ' scale .*--replicas=(0|1)' "$KUBECTL_LOG"; then
+  fail 'non-parent runner annotation mutated writer scale' "$(cat "$KUBECTL_LOG")"
+else
+  pass 'non-parent runner annotation performs zero writer scale mutations'
+fi
+
+# All remaining checkpoint cases exercise the post-rollout isolated path.
+STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON"
+STUB_RUNNER_NAMESPACE=present
+export STUB_DEPLOYMENTS_JSON STUB_RUNNER_NAMESPACE
 CREATE_FINAL="$CREATE_PARENT/published-checkpoint"
+for checkpoint_preflight_case in \
+  checkpoint-control-plane-preflight-failure \
+  checkpoint-bootstrap-control-plane \
+  checkpoint-tampered-manifest; do
+  reset_stub
+  checkpoint_preflight_output="$CREATE_PARENT/$checkpoint_preflight_case"
+  if [[ "$checkpoint_preflight_case" == checkpoint-tampered-manifest ]]; then
+    checkpoint_preflight_error='generated Cloud manifest is invalid'
+  else
+    checkpoint_preflight_error='active runner control plane is not exact'
+  fi
+  expect_failure "checkpoint preflight rejects $checkpoint_preflight_case before downtime" \
+    "$checkpoint_preflight_error" \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_FIXTURE" STUB_MODE="$checkpoint_preflight_case" \
+    STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" "$checkpoint_preflight_output"
+  if ! grep -Eq ' scale .*--replicas=(0|1)' "$KUBECTL_LOG"; then
+    pass "$checkpoint_preflight_case performs zero writer scale mutations"
+  else
+    fail "$checkpoint_preflight_case mutated writer scale during preflight" \
+      "$(cat "$KUBECTL_LOG")"
+  fi
+done
 reset_stub
 expect_success 'checkpoint creation publishes one fully verified directory atomically' env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$VALUES_FIXTURE" STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_FINAL"
+checkpoint_dump_line="$(grep -n 'pg_dump -U' "$KUBECTL_LOG" | head -1 | cut -d: -f1 || :)"
+checkpoint_archive_line="$(grep -n 'tar -C /storage -cf - owned' "$KUBECTL_LOG" | head -1 | cut -d: -f1 || :)"
+checkpoint_resume_line="$(grep -n -- '--replicas=1' "$KUBECTL_LOG" | head -1 | cut -d: -f1 || :)"
+checkpoint_runner_before_dump="$(awk -v stop="$checkpoint_dump_line" '
+  NR < stop && index($0, "get pod -n hcce -o json") {line=NR}
+  END {print line}
+' "$KUBECTL_LOG")"
+checkpoint_runner_before_resume="$(awk -v start="$checkpoint_archive_line" -v stop="$checkpoint_resume_line" '
+  NR > start && NR < stop && index($0, "get pod -n hcce -o json") {line=NR}
+  END {print line}
+' "$KUBECTL_LOG")"
+if [[ "$checkpoint_runner_before_dump" =~ ^[0-9]+$ &&
+      "$checkpoint_runner_before_resume" =~ ^[0-9]+$ ]]; then
+  pass 'checkpoint keeps managed bot-runner zero from quiesce through pre-resume'
+else
+  fail 'checkpoint keeps managed bot-runner zero from quiesce through pre-resume' "$(cat "$KUBECTL_LOG")"
+fi
+checkpoint_parent_resume_line="$(grep -n -- \
+  'scale deployment bot-orchestrator .*--replicas=1' "$KUBECTL_LOG" |
+  head -1 | cut -d: -f1 || :)"
+checkpoint_final_watch_line="$(awk -v stop="$checkpoint_parent_resume_line" '
+  NR < stop && index($0, "get --raw /api/v1/namespaces/") {line=NR}
+  END {print line}
+' "$KUBECTL_LOG")"
+checkpoint_post_watch_list_line="$(awk -v start="$checkpoint_final_watch_line" \
+  -v stop="$checkpoint_parent_resume_line" '
+  NR > start && NR < stop && index($0, "get pod -n hcce -o json") {print NR; exit}
+' "$KUBECTL_LOG")"
+if [[ "$checkpoint_final_watch_line" =~ ^[0-9]+$ &&
+      "$checkpoint_post_watch_list_line" =~ ^[0-9]+$ &&
+      "$checkpoint_parent_resume_line" =~ ^[0-9]+$ &&
+      "$checkpoint_final_watch_line" -lt "$checkpoint_post_watch_list_line" &&
+      "$checkpoint_post_watch_list_line" -lt "$checkpoint_parent_resume_line" ]]; then
+  pass 'checkpoint runs the post-watcher stable-absence gate before parent resume'
+else
+  fail 'checkpoint post-watcher stable-absence ordering' "$(cat "$KUBECTL_LOG")"
+fi
+run_checkpoint_input_snapshot_test "$CREATE_PARENT/local-input-mutation"
+CREATE_ORPHAN_RUNNER="$CREATE_PARENT/orphan-runner-checkpoint"
+reset_stub
+expect_success 'checkpoint UID-deletes a dedicated-namespace orphan before backup and resumes only after the stable gate' \
+  env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  VALUES_FILE="$VALUES_FIXTURE" STUB_MODE=checkpoint-orphan-runner \
+  STUB_RUNNER_NAMESPACE=present STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+  "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_ORPHAN_RUNNER"
+orphan_parent_zero_line="$(grep -n -- \
+  'scale deployment bot-orchestrator .*--replicas=0' "$KUBECTL_LOG" |
+  head -1 | cut -d: -f1 || :)"
+orphan_delete_line="$(grep -n \
+  'delete --raw=/api/v1/namespaces/hcce-bot-runners/pods/bot-runner-fixture' \
+  "$KUBECTL_LOG" | head -1 | cut -d: -f1 || :)"
+orphan_dump_line="$(grep -n 'pg_dump -U' "$KUBECTL_LOG" |
+  head -1 | cut -d: -f1 || :)"
+orphan_parent_resume_line="$(grep -n -- \
+  'scale deployment bot-orchestrator .*--replicas=1' "$KUBECTL_LOG" |
+  head -1 | cut -d: -f1 || :)"
+if [[ "$orphan_parent_zero_line" =~ ^[0-9]+$ &&
+      "$orphan_delete_line" =~ ^[0-9]+$ &&
+      "$orphan_dump_line" =~ ^[0-9]+$ &&
+      "$orphan_parent_resume_line" =~ ^[0-9]+$ &&
+      "$orphan_parent_zero_line" -lt "$orphan_delete_line" &&
+      "$orphan_delete_line" -lt "$orphan_dump_line" &&
+      "$orphan_dump_line" -lt "$orphan_parent_resume_line" ]]; then
+  pass 'checkpoint orphan deletion is ordered parent-zero then UID-delete then backup then parent-resume'
+else
+  fail 'checkpoint orphan deletion ordering' "$(cat "$KUBECTL_LOG")"
+fi
+CREATE_CONTROL_PLANE_DRIFT="$CREATE_PARENT/control-plane-drift-checkpoint"
+reset_stub
+expect_failure 'checkpoint revalidates exact active Cloud control plane adjacent to parent resume' \
+  'active runner control plane is not exact' \
+  env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+  VALUES_FILE="$VALUES_FIXTURE" STUB_MODE=checkpoint-active-control-plane-drift \
+  STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+  "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_CONTROL_PLANE_DRIFT"
+control_plane_parent_resume_count="$(grep -Ec -- \
+  'scale deployment bot-orchestrator .*--replicas=1' "$KUBECTL_LOG" || :)"
+control_plane_verifier_count="$(cat \
+  "$STUB_STATE_DIR/runner-control-plane-verifier-count" 2>/dev/null || :)"
+if [[ "$control_plane_parent_resume_count" == 0 &&
+      "$control_plane_verifier_count" =~ ^[2-9][0-9]*$ &&
+      -f "$STUB_STATE_DIR/replicas-bot-orchestrator" &&
+      "$(cat "$STUB_STATE_DIR/replicas-bot-orchestrator")" == 0 ]]; then
+  pass 'Role, VAP or effective-RBAC drift keeps parent authority at zero'
+else
+  fail 'control-plane drift resumed token-bearing parent authority' \
+    "verifier-count=$control_plane_verifier_count $(cat "$KUBECTL_LOG")"
+fi
 published_manifest_sha="$(sha256_digest "$CREATE_FINAL/SHA256SUMS")"
 reset_stub
 expect_failure 'checkpoint creation refuses an existing final directory without overwrite' 'Refusing same-second or existing' env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$VALUES_FIXTURE" "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_FINAL"
@@ -1381,11 +3607,11 @@ if [[ ! -e "$CREATE_FAILED" && ! -e "$CREATE_FAILED.yenhubs-publish-lock" ]] && 
 CREATE_EMPTY_ACTIVE="$CREATE_PARENT/empty-active-checkpoint"
 reset_stub
 expect_failure 'checkpoint creation rejects an empty active DB baseline before helper creation' 'Active owned-file DB baseline is empty or duplicated' env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$VALUES_FIXTURE" STUB_MODE=zero-db-active "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_EMPTY_ACTIVE"
-if [[ "$(grep -c 'create -f -' "$KUBECTL_LOG")" == "1" ]]; then pass 'empty active DB baseline creates only the operation lock'; else fail 'empty active DB baseline creates only the operation lock' "$(cat "$KUBECTL_LOG")"; fi
+if [[ "$(grep -c 'create -f -$' "$KUBECTL_LOG")" == "1" ]]; then pass 'empty active DB baseline creates only the operation lock'; else fail 'empty active DB baseline creates only the operation lock' "$(cat "$KUBECTL_LOG")"; fi
 CREATE_DUPLICATE_ACTIVE="$CREATE_PARENT/duplicate-active-checkpoint"
 reset_stub
 expect_failure 'checkpoint creation rejects duplicate active DB UUIDs before helper creation' 'Active owned-file DB baseline is empty or duplicated' env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$VALUES_FIXTURE" STUB_MODE=duplicate-db-uuids "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_DUPLICATE_ACTIVE"
-if [[ "$(grep -c 'create -f -' "$KUBECTL_LOG")" == "1" ]]; then pass 'duplicate active DB UUIDs create only the operation lock'; else fail 'duplicate active DB UUIDs create only the operation lock' "$(cat "$KUBECTL_LOG")"; fi
+if [[ "$(grep -c 'create -f -$' "$KUBECTL_LOG")" == "1" ]]; then pass 'duplicate active DB UUIDs create only the operation lock'; else fail 'duplicate active DB UUIDs create only the operation lock' "$(cat "$KUBECTL_LOG")"; fi
 CREATE_LOCKED="$CREATE_PARENT/locked-checkpoint"
 mkdir "$CREATE_LOCKED.yenhubs-publish-lock"
 printf 'other-owner\n' >"$CREATE_LOCKED.yenhubs-publish-lock/sentinel"

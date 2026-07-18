@@ -89,8 +89,14 @@ uncaught errors.
 
 ## Deployment Rules
 
-- Standard path: GitHub Actions image build, digest pin,
-  `npm run gen-hcce`, `kubectl diff`, then `kubectl apply -f hcce.yaml`.
+- Standard path: GitHub Actions image build, digest pin, set the tracked runner
+  activation/recovery inputs, `npm run gen-hcce`, review `kubectl diff` without
+  emitting Secret bodies, then run the guarded `npm run apply`. Never bypass
+  the generated-manifest verifier, global operation Lease or fail-closed
+  activation checks with a raw `kubectl apply -f hcce.yaml`.
+- Introduce or repair the runner control plane only through separately
+  regenerated `bootstrap`, `admission` and `active` manifests, in that order.
+  `restore-fence` is reserved for the coordinated checkpoint-restore workflow.
 - Never edit generated `hcce.yaml`. Fix the tracked generator and regenerate.
 - Never apply manual RBAC patches after generation.
 - If Actions, GHCR, generation or apply fails, stop and report the exact failure.

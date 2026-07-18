@@ -22,6 +22,10 @@ RESTORE_POD=""
 RESTORE_NETWORK_POLICY=""
 DB_CONSUMERS=(reticulum pgbouncer pgbouncer-t bot-orchestrator coturn)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PARENT_LEASE_HOLDER="${YENHUBS_PARENT_LEASE_HOLDER:-}"
+PARENT_LEASE_UID="${YENHUBS_PARENT_LEASE_UID:-}"
+PARENT_PROCESS_PID="${YENHUBS_PARENT_PROCESS_PID:-}"
+PARENT_PROCESS_START_IDENTITY="${YENHUBS_PARENT_PROCESS_START_IDENTITY:-}"
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
 
@@ -57,6 +61,10 @@ RESTORE_NETWORK_POLICY_UID=""
 PVC_MONITOR_PID=""
 PVC_MONITOR_STOP=""
 PVC_MONITOR_FAILURE=""
+RUNNER_WATCH_PID=""
+RUNNER_WATCH_STOP=""
+RUNNER_WATCH_FAILURE=""
+RUNNER_WATCH_READY=""
 RESTORE_PHASE="validating"
 
 stop_pvc_monitor() {
@@ -75,6 +83,27 @@ stop_pvc_monitor() {
     return 1
   fi
   [[ "$monitor_status" -eq 0 ]]
+}
+
+start_runner_watch() {
+  : >"$RUNNER_WATCH_STOP"
+  : >"$RUNNER_WATCH_FAILURE"
+  : >"$RUNNER_WATCH_READY"
+  chmod 600 "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY"
+  recovery_start_no_managed_bot_runner_watch \
+    "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" RUNNER_WATCH_PID
+}
+
+stop_runner_watch() {
+  local status=0
+  [[ -n "$RUNNER_WATCH_PID" ]] || return 2
+  if ! recovery_stop_no_managed_bot_runner_watch \
+    "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" \
+    "$RUNNER_WATCH_PID"; then
+    status=1
+  fi
+  RUNNER_WATCH_PID=""
+  [[ "$status" == 0 ]]
 }
 
 restore_pod_spec_is_exact() {
@@ -219,6 +248,10 @@ final_cleanup() {
   local cleanup_status=0
   local pod_cleanup_status=0
   trap - EXIT ERR INT TERM
+  if [[ -n "$RUNNER_WATCH_PID" ]]; then
+    recovery_discard_no_managed_bot_runner_watch "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_PID"
+    RUNNER_WATCH_PID=""
+  fi
   if ! stop_pvc_monitor; then
     cleanup_status=1
   fi
@@ -262,6 +295,11 @@ trap 'storage_restore_interrupted 143' TERM
 recovery_materialize_checkpoint "$ARCHIVE_PATH" "$SCRIPT_DIR/validate-checkpoint.sh"
 
 if [[ "$CLEAR_STALE_HELPER" == "1" ]]; then
+  recovery_adopt_parent_operation_serialization \
+    "$PARENT_LEASE_HOLDER" "$PARENT_LEASE_UID" \
+    "$PARENT_PROCESS_PID" "$PARENT_PROCESS_START_IDENTITY"
+  unset YENHUBS_PARENT_LEASE_HOLDER YENHUBS_PARENT_LEASE_UID \
+    YENHUBS_PARENT_PROCESS_PID YENHUBS_PARENT_PROCESS_START_IDENTITY
   recovery_require_cluster_identity
   recovery_require_pvc_identity ret-pvc
   clear_stale_helper_resources
@@ -283,6 +321,9 @@ RESTORED_META_UUIDS="$VALIDATION_DIR/restored-meta-uuids"
 RESTORED_PATHS="$VALIDATION_DIR/restored-paths"
 PVC_MONITOR_STOP="$VALIDATION_DIR/monitor-stop"
 PVC_MONITOR_FAILURE="$VALIDATION_DIR/monitor-failure"
+RUNNER_WATCH_STOP="$VALIDATION_DIR/runner-watch-stop"
+RUNNER_WATCH_FAILURE="$VALIDATION_DIR/runner-watch-failure"
+RUNNER_WATCH_READY="$VALIDATION_DIR/runner-watch-ready"
 : >"$DB_ACTIVE_UUIDS"
 : >"$QUIESCED_DB_ACTIVE_UUIDS"
 : >"$RESTORED_BLOB_UUIDS"
@@ -329,7 +370,18 @@ fi
 
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
-recovery_kubectl rollout status deployment/pgsql -n "$NAMESPACE" --timeout=5m >/dev/null
+recovery_require_restore_target_binding
+if ! recovery_require_live_runner_control_plane_matches_checkpoint \
+  "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"; then
+  printf 'The live runner control-plane identity does not match the checkpoint inventory.\n' >&2
+  exit 1
+fi
+if ! recovery_require_live_images_match_checkpoint \
+  "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"; then
+  printf 'The live workload image inventory does not exactly match the checkpoint.\n' >&2
+  exit 1
+fi
+recovery_wait_for_deployment_rollout pgsql 300
 PGSQL_PODS_JSON="$(recovery_kubectl get pod -n "$NAMESPACE" -l app=pgsql -o json)"
 if ! PGSQL_POD_INFO="$(recovery_exact_ready_deployment_pod_info \
   "$PGSQL_PODS_JSON" pgsql pgsql)"; then
@@ -385,6 +437,11 @@ if [[ "$PREFLIGHT" == "1" ]]; then
 fi
 
 recovery_require_confirmation CONFIRM_RESTORE_STORAGE ret-pvc "$RECOVERY_PVC_UID"
+recovery_adopt_parent_operation_serialization \
+  "$PARENT_LEASE_HOLDER" "$PARENT_LEASE_UID" \
+  "$PARENT_PROCESS_PID" "$PARENT_PROCESS_START_IDENTITY"
+unset YENHUBS_PARENT_LEASE_HOLDER YENHUBS_PARENT_LEASE_UID \
+  YENHUBS_PARENT_PROCESS_PID YENHUBS_PARENT_PROCESS_START_IDENTITY
 if [[ -z "${RECOVERY_CONSUMER_CONTRACT_JSON:-}" ]] ||
    ! recovery_consumer_contract_is_acceptable "$RECOVERY_CONSUMER_CONTRACT_JSON" ||
    [[ "$(jq -r '.operation_id' <<<"$RECOVERY_CONSUMER_CONTRACT_JSON")" != \
@@ -468,6 +525,7 @@ for index in "${!RESTORE_DEPLOYMENTS[@]}"; do
   recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
     "${RESTORE_DEPLOYMENTS[$index]}" 0
 done
+recovery_wait_for_no_managed_bot_runner_pods 180s
 recovery_require_exact_pvc_consumers ret-pvc
 
 # The driver already restored this exact DB contract. Recheck it and the full
@@ -476,6 +534,7 @@ recovery_require_exact_pvc_consumers ret-pvc
 # storage extraction even if the child is invoked incorrectly outside the
 # driver.
 recovery_require_operation_lock
+recovery_require_no_managed_bot_runner_pods
 require_pgsql_source
 if ! recovery_capture_live_database_contract "$PGSQL_POD" "$QUIESCED_DATABASE_CONTRACT" ||
    ! recovery_database_contracts_match \
@@ -503,10 +562,12 @@ fi
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 recovery_require_operation_lock
+recovery_require_no_managed_bot_runner_pods
 recovery_require_exact_pvc_consumers ret-pvc
+start_runner_watch
 # The deny-all policy is create-only and must be admitted exactly before the
 # PVC helper pod exists. Its selector is unique to this operation_id.
-cat <<EOF | recovery_kubectl create -f - >/dev/null
+cat <<EOF | recovery_kubectl_mutate create -f - >/dev/null
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -536,7 +597,7 @@ require_owned_restore_network_policy
 
 # Create-only is intentional. A unique operation name plus the exact admitted
 # UID/spec prevents adoption of a concurrent or stale helper.
-cat <<EOF | recovery_kubectl create -f - >/dev/null
+cat <<EOF | recovery_kubectl_mutate create -f - >/dev/null
 apiVersion: v1
 kind: Pod
 metadata:
@@ -581,7 +642,7 @@ spec:
         readOnly: false
 EOF
 RESTORE_POD_CREATED=1
-recovery_kubectl wait --for=condition=Ready "pod/$RESTORE_POD" -n "$NAMESPACE" --timeout=180s >/dev/null
+recovery_wait_for_pod_ready "$RESTORE_POD" 180
 recovery_require_operation_lock
 require_owned_restore_network_policy
 recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD"
@@ -609,6 +670,7 @@ monitor_pvc_during_extraction() {
     if ! recovery_require_cluster_identity ||
        ! recovery_require_pvc_identity ret-pvc ||
        ! recovery_require_operation_lock ||
+       ! recovery_require_no_managed_bot_runner_pods ||
        ! require_owned_restore_network_policy ||
        ! recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD" ||
        ! require_owned_restore_pod; then
@@ -625,13 +687,17 @@ RESTORE_PHASE="restoring"
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 recovery_require_operation_lock
+recovery_require_no_managed_bot_runner_pods
+recovery_require_no_managed_bot_runner_watch_healthy \
+  "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" "$RUNNER_WATCH_PID"
 require_owned_restore_network_policy
 recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD"
 require_owned_restore_pod
 monitor_pvc_during_extraction &
 PVC_MONITOR_PID=$!
 if gzip -cd "$RECOVERY_STORAGE_COPY" |
-  recovery_kubectl exec -i -n "$NAMESPACE" "$RESTORE_POD" -- tar -C /storage -xf -; then
+  recovery_kubectl_stream_mutate 3600 exec -i -n "$NAMESPACE" "$RESTORE_POD" -- \
+    tar -C /storage -xf -; then
   extraction_status=0
 else
   extraction_status=$?
@@ -648,6 +714,9 @@ fi
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 recovery_require_operation_lock
+recovery_require_no_managed_bot_runner_pods
+recovery_require_no_managed_bot_runner_watch_healthy \
+  "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" "$RUNNER_WATCH_PID"
 require_owned_restore_network_policy
 recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD"
 require_owned_restore_pod
@@ -676,8 +745,13 @@ if [[ "$RESTORED_BLOBS" != "$ARCHIVE_BLOB_COUNT" ||
   exit 1
 fi
 
+recovery_require_no_managed_bot_runner_pods
 cleanup_restore_pod
 cleanup_restore_network_policy
+if ! stop_runner_watch; then
+  printf 'Managed bot-runner event watcher failed during storage restore.\n' >&2
+  exit 1
+fi
 RESTORE_PHASE="coordinated_hold"
 trap - ERR
 printf 'Storage restore validated and held quiescent for coordinated resume: checkpoint=%s pvc_uid=%s\n' \

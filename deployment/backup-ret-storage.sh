@@ -25,8 +25,8 @@ fi
 
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
-recovery_kubectl rollout status deployment/reticulum -n "$NAMESPACE" --timeout=5m >/dev/null
-recovery_kubectl rollout status deployment/pgsql -n "$NAMESPACE" --timeout=5m >/dev/null
+recovery_wait_for_deployment_rollout reticulum 300
+recovery_wait_for_deployment_rollout pgsql 300
 
 RET_PODS_JSON="$(recovery_kubectl get pod -n "$NAMESPACE" -l app=reticulum -o json)"
 PGSQL_PODS_JSON="$(recovery_kubectl get pod -n "$NAMESPACE" -l app=pgsql -o json)"
@@ -214,7 +214,7 @@ monitor_storage_backup() {
 }
 monitor_storage_backup &
 MONITOR_PID=$!
-if recovery_kubectl exec -n "$NAMESPACE" -c reticulum "$RET_POD" -- \
+if recovery_kubectl_stream 3600 exec -n "$NAMESPACE" -c reticulum "$RET_POD" -- \
   tar -C /storage -cf - owned | gzip -c > "$PARTIAL_PATH"; then
   archive_status=0
 else

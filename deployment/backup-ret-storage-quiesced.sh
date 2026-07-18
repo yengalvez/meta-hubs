@@ -21,6 +21,10 @@ PARENT_DUMP_SHA256="${RECOVERY_DUMP_SHA256:-}"
 PARENT_STORAGE_SHA256="${RECOVERY_STORAGE_SHA256:-}"
 PARENT_NAMESPACE_UID="${RECOVERY_NAMESPACE_UID:-}"
 PARENT_PVC_UID="${RECOVERY_PVC_UID:-}"
+PARENT_LEASE_HOLDER="${YENHUBS_PARENT_LEASE_HOLDER:-}"
+PARENT_LEASE_UID="${YENHUBS_PARENT_LEASE_UID:-}"
+PARENT_PROCESS_PID="${YENHUBS_PARENT_PROCESS_PID:-}"
+PARENT_PROCESS_START_IDENTITY="${YENHUBS_PARENT_PROCESS_START_IDENTITY:-}"
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
 RECOVERY_CHECKPOINT_STAMP="$PARENT_CHECKPOINT_STAMP"
@@ -28,6 +32,11 @@ RECOVERY_DUMP_SHA256="$PARENT_DUMP_SHA256"
 RECOVERY_STORAGE_SHA256="$PARENT_STORAGE_SHA256"
 RECOVERY_NAMESPACE_UID="$PARENT_NAMESPACE_UID"
 RECOVERY_PVC_UID="$PARENT_PVC_UID"
+recovery_adopt_parent_operation_serialization \
+  "$PARENT_LEASE_HOLDER" "$PARENT_LEASE_UID" \
+  "$PARENT_PROCESS_PID" "$PARENT_PROCESS_START_IDENTITY"
+unset YENHUBS_PARENT_LEASE_HOLDER YENHUBS_PARENT_LEASE_UID \
+  YENHUBS_PARENT_PROCESS_PID YENHUBS_PARENT_PROCESS_START_IDENTITY
 
 [[ ! -e "$OUTPUT_PATH" && ! -L "$OUTPUT_PATH" ]] || {
   printf 'Refusing to overwrite an existing storage backup.\n' >&2
@@ -171,6 +180,7 @@ for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
     exit 1
   }
 done
+recovery_require_no_managed_bot_runner_pods
 recovery_require_exact_pvc_consumers ret-pvc
 
 PGSQL_PODS_JSON="$(recovery_kubectl get pod -n "$NAMESPACE" -l app=pgsql -o json)"
@@ -201,7 +211,7 @@ if [[ ! -s "$DB_ACTIVE_BEFORE" ]] ||
 fi
 
 recovery_require_operation_lock
-cat <<EOF | recovery_kubectl create -f - >/dev/null
+cat <<EOF | recovery_kubectl_mutate create -f - >/dev/null
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -232,7 +242,7 @@ helper_policy_is_exact "$policy_json" || {
 
 recovery_require_operation_lock
 require_helper_policy
-cat <<EOF | recovery_kubectl create -f - >/dev/null
+cat <<EOF | recovery_kubectl_mutate create -f - >/dev/null
 apiVersion: v1
 kind: Pod
 metadata:
@@ -277,8 +287,7 @@ spec:
         readOnly: true
 EOF
 HELPER_POD_CREATED=1
-recovery_kubectl wait --for=condition=Ready "pod/$HELPER_POD" \
-  -n "$NAMESPACE" --timeout=180s >/dev/null
+recovery_wait_for_pod_ready "$HELPER_POD" 180
 pod_json="$(recovery_kubectl get pod "$HELPER_POD" -n "$NAMESPACE" -o json)"
 HELPER_POD_UID="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' \
   <<<"$pod_json")"
@@ -292,6 +301,7 @@ monitor() {
   while [[ ! -e "$MONITOR_STOP" ]]; do
     if ! recovery_require_operation_lock ||
        ! recovery_require_pvc_identity ret-pvc ||
+       ! recovery_require_no_managed_bot_runner_pods ||
        ! require_helper_policy || ! require_helper_pod ||
        ! recovery_require_exact_pvc_consumers ret-pvc "$HELPER_POD"; then
       printf 'failed\n' >"$MONITOR_FAILURE"
@@ -322,7 +332,7 @@ missing_active="$(comm -23 "$DB_ACTIVE_BEFORE" "$WORK_DIR/blobs")"
 
 monitor &
 MONITOR_PID=$!
-if recovery_kubectl exec -n "$NAMESPACE" "$HELPER_POD" -- \
+if recovery_kubectl_stream_guarded 3600 exec -n "$NAMESPACE" "$HELPER_POD" -- \
   tar -C /storage -cf - owned | gzip -c >"$PARTIAL_PATH"; then
   archive_status=0
 else
@@ -368,6 +378,7 @@ if ! recovery_database_contracts_match "$CONTRACT_BEFORE" "$CONTRACT_AFTER" ||
   exit 1
 fi
 
+recovery_require_no_managed_bot_runner_pods
 delete_helper_pod
 delete_helper_policy
 PAIR_COUNT="$(wc -l <"$WORK_DIR/archive-blobs" | tr -d ' ')"

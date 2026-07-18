@@ -15,6 +15,7 @@ source "$SCRIPT_DIR/lib/recovery-safety.sh"
 VALUES_SOURCE_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 VALUES_FILE=""
 NAMESPACE="${NAMESPACE:-hcce}"
+RUNNER_NAMESPACE="hcce-bot-runners"
 ROOM_SMOKE_PATH="${ROOM_SMOKE_PATH:-/VJopCY3/inicio}"
 
 failures=0
@@ -79,6 +80,42 @@ jq_check() {
   fi
 }
 
+capture_bot_runner_pods() {
+  local destination="$1"
+  chmod 600 "$destination"
+  recovery_kubectl get pod -n "$RUNNER_NAMESPACE" -o json >"$destination" || return 1
+  jq -e --arg namespace "$RUNNER_NAMESPACE" '
+    .apiVersion == "v1" and .kind == "PodList" and
+    (.metadata.resourceVersion | type == "string" and length > 0) and
+    (.items | type == "array") and
+    all(.items[];
+      .metadata.namespace == $namespace and
+      (.metadata.name | type == "string" and length > 0) and
+      (.metadata.uid | type == "string" and length > 0))
+  ' "$destination" >/dev/null
+}
+
+bot_auth_can_i_matches() {
+  local principal_namespace="$1"
+  local service_account="$2"
+  local target_namespace="$3"
+  local verb="$4"
+  local resource="$5"
+  local expected="$6"
+  local answer status
+  if answer="$(recovery_kubectl auth can-i "$verb" "$resource" -n "$target_namespace" \
+       --as="system:serviceaccount:$principal_namespace:$service_account" 2>/dev/null)"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ "$expected" == "yes" ]]; then
+    [[ "$status" == "0" && "$answer" == "yes" ]]
+  else
+    [[ "$status" == "1" && "$answer" == "no" ]]
+  fi
+}
+
 printf 'YenHubs live reactivation verification\n\n'
 
 for command_name in kubectl jq node curl dig gzip tar; do
@@ -107,9 +144,11 @@ fi
 hubs_image="$(yaml_value OVERRIDE_HUBS_IMAGE)"
 reticulum_image="$(yaml_value OVERRIDE_RETICULUM_IMAGE)"
 bot_image="$(yaml_value OVERRIDE_BOT_ORCHESTRATOR_IMAGE)"
+bot_runner_image="$(yaml_value OVERRIDE_BOT_RUNNER_IMAGE)"
 if ! reactivation_image_override_is_exact hubs "$hubs_image" ||
    ! reactivation_image_override_is_exact reticulum "$reticulum_image" ||
-   ! reactivation_image_override_is_exact bot-orchestrator "$bot_image"; then
+   ! reactivation_image_override_is_exact bot-orchestrator "$bot_image" ||
+   ! reactivation_image_override_is_exact bot-runner "$bot_runner_image"; then
   fail "Los overrides core no usan repositorios confiables y digests exactos"
 fi
 expected_images_json="$(jq -cn \
@@ -198,8 +237,9 @@ if ! deployments_json="$(recovery_kubectl get deployment -n "$NAMESPACE" -o json
 fi
 
 if reactivation_deployments_are_acceptable "$deployments_json" \
-  "$hubs_image" "$reticulum_image" "$bot_image" "$expected_images_json"; then
-  pass "Los 13 pares Deployment/contenedor coinciden exactamente con el candidato"
+  "$hubs_image" "$reticulum_image" "$bot_image" "$expected_images_json" \
+  "$bot_runner_image"; then
+  pass "Los 13 pares Deployment/contenedor y la imagen runner coinciden con el candidato"
 else
   fail "Inventario live, digests o procedencia no coinciden con el candidato exacto"
 fi
@@ -218,6 +258,105 @@ if reticulum_hpas_json="$(recovery_kubectl get horizontalpodautoscaler -n "$NAME
   pass "Ningun HPA puede escalar Reticulum"
 else
   fail "No se pudo excluir un HPA dirigido a Reticulum"
+fi
+
+runner_control_plane_verifier="$SCRIPT_DIR/../hubs-cloud/community-edition/apply/verify-live-runner-control-plane.js"
+runner_manifest_path="${HCCE_MANIFEST_PATH:-$SCRIPT_DIR/../hubs-cloud/community-edition/hcce.yaml}"
+if [[ -f "$runner_control_plane_verifier" && ! -L "$runner_control_plane_verifier" &&
+      -f "$runner_manifest_path" && ! -L "$runner_manifest_path" ]] &&
+   HCCE_INPUT_VALUES_PATH="$VALUES_FILE" \
+   HCCE_MANIFEST_PATH="$runner_manifest_path" \
+   KUBECTL_CONTEXT="$EXPECTED_KUBE_CONTEXT" \
+     node "$runner_control_plane_verifier"; then
+  pass "Control-plane runner, VAP, RBAC y namespace dedicado coinciden con el manifiesto"
+else
+  fail "Control-plane runner, VAP, RBAC o namespace dedicado contienen drift"
+fi
+
+bot_pull_secret_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-pull-secret.XXXXXX")"
+bot_runner_pull_secret_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-runner-pull-secret.XXXXXX")"
+bot_deployments_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-deployments.XXXXXX")"
+reactivation_register_temp_path "$bot_pull_secret_file"
+reactivation_register_temp_path "$bot_runner_pull_secret_file"
+reactivation_register_temp_path "$bot_deployments_file"
+chmod 600 "$bot_pull_secret_file" "$bot_runner_pull_secret_file" \
+  "$bot_deployments_file"
+if recovery_kubectl get secret bot-images-pull -n "$NAMESPACE" -o json \
+     >"$bot_pull_secret_file" &&
+   recovery_kubectl get secret bot-images-pull -n "$RUNNER_NAMESPACE" -o json \
+     >"$bot_runner_pull_secret_file" &&
+   printf '%s' "$deployments_json" | jq -e '.' >"$bot_deployments_file" &&
+   node "$SCRIPT_DIR/verify-bot-image-pull-config.mjs" \
+     --values "$VALUES_FILE" --secret "$bot_pull_secret_file" --namespace "$NAMESPACE" \
+     --runner-secret "$bot_runner_pull_secret_file" --runner-namespace "$RUNNER_NAMESPACE" \
+     --deployments "$bot_deployments_file" --verify-registry; then
+  pass "Ambos Pull Secrets/namespaces y checksums bot coinciden con la snapshot privada"
+else
+  fail "Pull Secret, checksums o dominios de credencial bot tienen drift"
+fi
+
+bot_rbac_exact=true
+for allowed_rule in "create pods" "delete pods" "get pods" "list pods"; do
+  read -r allowed_verb allowed_resource <<<"$allowed_rule"
+  if ! bot_auth_can_i_matches "$NAMESPACE" bot-orchestrator "$RUNNER_NAMESPACE" \
+    "$allowed_verb" "$allowed_resource" yes; then
+    bot_rbac_exact=false
+  fi
+done
+dangerous_denied_rules=(
+  "watch pods" "patch pods" "update pods" "deletecollection pods"
+  "get pods/log" "create pods/exec" "create pods/attach" "create pods/portforward"
+  "create pods/eviction" "update pods/ephemeralcontainers" "patch pods/ephemeralcontainers"
+  "get secrets" "list secrets" "watch secrets" "create secrets" "update secrets"
+  "patch secrets" "delete secrets" "deletecollection secrets"
+  "get configmaps" "list configmaps" "watch configmaps" "create configmaps"
+  "update configmaps" "patch configmaps" "delete configmaps" "deletecollection configmaps"
+  "get serviceaccounts" "list serviceaccounts" "watch serviceaccounts"
+  "create serviceaccounts" "update serviceaccounts" "patch serviceaccounts"
+  "delete serviceaccounts" "deletecollection serviceaccounts" "create serviceaccounts/token"
+  "get roles" "list roles" "watch roles" "create roles" "update roles" "patch roles"
+  "delete roles" "deletecollection roles" "bind roles" "escalate roles"
+  "get rolebindings" "list rolebindings" "watch rolebindings" "create rolebindings"
+  "update rolebindings" "patch rolebindings" "delete rolebindings" "deletecollection rolebindings"
+  "get deployments.apps" "list deployments.apps" "watch deployments.apps"
+  "create deployments.apps" "update deployments.apps" "patch deployments.apps"
+  "delete deployments.apps" "deletecollection deployments.apps"
+  "bind clusterroles.rbac.authorization.k8s.io"
+  "escalate clusterroles.rbac.authorization.k8s.io"
+  "impersonate users" "impersonate groups" "impersonate serviceaccounts"
+)
+rbac_principal_targets=(
+  "$NAMESPACE bot-orchestrator $RUNNER_NAMESPACE parent-runner"
+  "$NAMESPACE bot-orchestrator $NAMESPACE parent-parent"
+  "$RUNNER_NAMESPACE bot-runner $RUNNER_NAMESPACE runner-runner"
+  "$RUNNER_NAMESPACE bot-runner $NAMESPACE runner-parent"
+)
+for principal_target in "${rbac_principal_targets[@]}"; do
+  read -r principal_namespace service_account target_namespace target_kind \
+    <<<"$principal_target"
+  for denied_rule in "${dangerous_denied_rules[@]}"; do
+    read -r denied_verb denied_resource <<<"$denied_rule"
+    # The parent's only runner-namespace grant is the four allowlisted Pod
+    # verbs checked above. Every item in this matrix remains denied.
+    if ! bot_auth_can_i_matches "$principal_namespace" "$service_account" \
+      "$target_namespace" "$denied_verb" "$denied_resource" no; then
+      bot_rbac_exact=false
+    fi
+  done
+  if [[ "$target_kind" != parent-runner ]]; then
+    for denied_rule in "create pods" "delete pods" "get pods" "list pods"; do
+      read -r denied_verb denied_resource <<<"$denied_rule"
+      if ! bot_auth_can_i_matches "$principal_namespace" "$service_account" \
+        "$target_namespace" "$denied_verb" "$denied_resource" no; then
+        bot_rbac_exact=false
+      fi
+    done
+  fi
+done
+if [[ "$bot_rbac_exact" == true ]]; then
+  pass "SelfSubjectAccessReview confirma parent minimo y runner sin autoridad API"
+else
+  fail "El RBAC efectivo concede de mas o niega una operacion minima del parent"
 fi
 
 # jq variables are intentionally evaluated by jq, not by this shell.
@@ -254,32 +393,25 @@ jq_check "$deployments_json" \
     .securityContext.seccompProfile.type == "RuntimeDefault" and
     ([.volumeMounts[]? | select(.name == "storage") | .mountPropagation] | map(select(. != null)) | length) == 0)'
 
-# jq variables are intentionally evaluated by jq, not by this shell.
-# shellcheck disable=SC2016
-jq_check "$deployments_json" \
-  "Bot orchestrator endurecido con probes, deadline, navmesh y recuperacion" \
-  "El runtime de bot-orchestrator no coincide con el baseline" '
-  [.items[] | select(.metadata.name == "bot-orchestrator") |
-    .spec.template.spec.containers[] | select(.name == "bot-orchestrator")] as $containers |
-  ($containers | length) == 1 and
-  all($containers[];
-    . as $container |
-    (reduce ($container.env // [])[] as $item ({}; .[$item.name] = $item.value)) as $env |
-    $container.securityContext.runAsNonRoot == true and
-    $container.securityContext.runAsUser == 1000 and
-    $container.securityContext.runAsGroup == 1000 and
-    $container.securityContext.allowPrivilegeEscalation == false and
-    (($container.securityContext.capabilities.drop // []) | index("ALL") != null) and
-    $container.securityContext.seccompProfile.type == "RuntimeDefault" and
-    $container.livenessProbe.httpGet.path == "/health" and
-    $container.readinessProbe.httpGet.path == "/ready" and
-    $env.OPENAI_TOTAL_BUDGET_MS == "4000" and
-    $env.GHOST_NAVIGATION_MODE == "navmesh_preferred" and
-    $env.GHOST_NAVIGATION_REQUIRE_NAVMESH == "true" and
-    $env.GHOST_NAVMESH_MAX_TRIANGLES == "50000" and
-    $env.GHOST_NAVMESH_MAX_ROUTE_POINTS == "64" and
-    $env.GHOST_NAVMESH_MAX_SNAP_DISTANCE_M == "3" and
-    $env.RUNNER_STALE_RESTART_MS == "30000")'
+bot_orchestrator_deployment_file=""
+if bot_orchestrator_deployment_file="$(
+     mktemp "${TMPDIR:-/tmp}/yenhubs-bot-orchestrator-deployment.XXXXXX"
+   )"; then
+  reactivation_register_temp_path "$bot_orchestrator_deployment_file"
+  chmod 600 "$bot_orchestrator_deployment_file"
+fi
+if [[ -n "$bot_orchestrator_deployment_file" ]] &&
+   jq -e '[.items[] | select(.metadata.name == "bot-orchestrator")] |
+     select(length == 1) | .[0]' <<<"$deployments_json" >"$bot_orchestrator_deployment_file" &&
+   node "$SCRIPT_DIR/verify-bot-orchestrator-deployment.mjs" \
+     --values "$VALUES_FILE" \
+     --namespace "$NAMESPACE" \
+     --runner-namespace "$RUNNER_NAMESPACE" \
+     --deployment "$bot_orchestrator_deployment_file"; then
+  pass "Bot orchestrator coincide con el contrato completo y canonico del generador"
+else
+  fail "El Deployment bot-orchestrator contiene campos parciales, extra o inseguros"
+fi
 
 jq_check "$deployments_json" \
   "Dialog y Photomnemonic conservan UID/GID, seccomp y probes auditados" \
@@ -309,18 +441,17 @@ jq_check "$deployments_json" \
 # jq variables are intentionally evaluated by jq, not by this shell.
 # shellcheck disable=SC2016
 jq_check "$deployments_json" \
-  "Huellas BOT/DB, tokens de servicio y Coturn coinciden con el baseline" \
-  "Huellas, tokens de servicio o imagen Coturn no coinciden" '
-  ([.items[] | select(.metadata.name == "reticulum" or .metadata.name == "bot-orchestrator") |
-    .spec.template.metadata.annotations["yenhubs.org/bot-access-key-checksum"]]) as $bot_checks |
+  "Huellas DB, automount de servicio y Coturn coinciden con el baseline" \
+  "Huellas DB, automount o imagen Coturn no coinciden" '
   ([.items[] | select(.metadata.name == "reticulum" or .metadata.name == "pgbouncer" or
     .metadata.name == "pgbouncer-t" or .metadata.name == "coturn") |
     .spec.template.metadata.annotations["yenhubs.org/db-credential-checksum"]]) as $db_checks |
-  ($bot_checks | length) == 2 and ($bot_checks | unique | length) == 1 and
-  ($bot_checks[0] | type == "string" and test("^[a-fA-F0-9]{64}$")) and
   ($db_checks | length) == 4 and ($db_checks | unique | length) == 1 and
   ($db_checks[0] | type == "string" and test("^[a-fA-F0-9]{64}$")) and
-  all(.items[] | select(.metadata.name != "haproxy"); .spec.template.spec.automountServiceAccountToken == false) and
+  all(.items[] | select(.metadata.name != "haproxy" and .metadata.name != "bot-orchestrator");
+    .spec.template.spec.automountServiceAccountToken == false) and
+  ([.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.automountServiceAccountToken] == [true]) and
   ([.items[] | select(.metadata.name == "haproxy") | .spec.template.spec.serviceAccountName] == ["haproxy-sa"]) and
   all(.items[] | select(.metadata.name == "coturn") | .spec.template.spec.containers[];
     .image != "docker.io/mozillareality/coturn@sha256:8380269c7bb2dc369f4126251199f0d603711debe8537b22cb7be470a50c51ce")'
@@ -328,7 +459,7 @@ jq_check "$deployments_json" \
 printf '\nNetworkPolicy\n'
 if policies_json="$(recovery_kubectl get networkpolicy -n "$NAMESPACE" -o json)" &&
    reactivation_network_policies_are_exact "$policies_json"; then
-  pass "Las seis NetworkPolicies globales son exactas, sin reglas extra"
+  pass "Las seis NetworkPolicies de aplicacion son exactas; el runner dedicado se valido aparte"
 else
   fail "NetworkPolicies ausentes, adicionales o con ingress/egress no auditado"
 fi
@@ -545,10 +676,49 @@ if printf '%s' "$deployments_json" | jq -e '
   [.items[] | select(.metadata.name == "bot-orchestrator") |
     select(.spec.replicas == 1 and (.status.readyReplicas // 0) == 1)] | length == 1
 ' >/dev/null; then
-  port_forward_log="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-health.XXXXXX")"
+  runner_gate_inputs_ready=true
+  runner_parent_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-parent.XXXXXX")"
+  runner_pods_before_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-pods-before.XXXXXX")"
+  runner_pods_after_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-pods-after.XXXXXX")"
+  runner_health_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-health-json.XXXXXX")"
+  runner_readiness_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-readiness-json.XXXXXX")"
+  for runner_temp_file in "$runner_parent_file" "$runner_pods_before_file" \
+    "$runner_pods_after_file" "$runner_health_file" "$runner_readiness_file"; do
+    reactivation_register_temp_path "$runner_temp_file"
+    chmod 600 "$runner_temp_file"
+  done
+  if ! runner_parent_pods_json="$(
+       recovery_kubectl get pod -n "$NAMESPACE" -l app=bot-orchestrator -o json
+     )" ||
+     ! runner_parent_info="$(
+       recovery_exact_ready_deployment_pod_info \
+         "$runner_parent_pods_json" bot-orchestrator bot-orchestrator
+     )"; then
+    fail "No hay un unico Pod padre bot-orchestrator Ready con owner exacto"
+    runner_gate_inputs_ready=false
+  else
+    IFS=$'\t' read -r runner_parent_name runner_parent_uid runner_parent_deployment_uid \
+      <<<"$runner_parent_info"
+    if [[ -z "$bot_orchestrator_deployment_file" ]] ||
+       ! recovery_kubectl get deployment bot-orchestrator -n "$NAMESPACE" -o json \
+         >"$bot_orchestrator_deployment_file" ||
+       ! jq -e --arg uid "$runner_parent_deployment_uid" '
+         .apiVersion == "apps/v1" and .kind == "Deployment" and
+         .metadata.uid == $uid
+       ' "$bot_orchestrator_deployment_file" >/dev/null ||
+       ! jq -e --arg uid "$runner_parent_uid" '
+         [.items[] | select(.metadata.uid == $uid)] | select(length == 1) | .[0]
+       ' <<<"$runner_parent_pods_json" >"$runner_parent_file" ||
+       ! capture_bot_runner_pods "$runner_pods_before_file"; then
+      fail "No se pudo fijar Deployment, Pod padre y primer snapshot de runners"
+      runner_gate_inputs_ready=false
+    fi
+  fi
+  if [[ "$runner_gate_inputs_ready" == true ]]; then
+    port_forward_log="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-health.XXXXXX")"
   chmod 600 "$port_forward_log"
   recovery_kubectl port-forward --address 127.0.0.1 -n "$NAMESPACE" \
-    deployment/bot-orchestrator :5001 >"$port_forward_log" 2>&1 &
+    "pod/$runner_parent_name" :5001 >"$port_forward_log" 2>&1 &
   port_forward_pid=$!
   forwarded_port=""
   attempt=0
@@ -605,11 +775,48 @@ if printf '%s' "$deployments_json" | jq -e '
     else
       fail "El endpoint /ready no confirma todos los runners configurados"
     fi
+    if [[ "$runner_gate_inputs_ready" == true ]] &&
+       recovery_kubectl get deployment bot-orchestrator -n "$NAMESPACE" -o json \
+         >"$bot_orchestrator_deployment_file" &&
+       jq -e --arg namespace "$NAMESPACE" --arg uid "$runner_parent_deployment_uid" '
+         .apiVersion == "apps/v1" and .kind == "Deployment" and
+         .metadata.namespace == $namespace and .metadata.name == "bot-orchestrator" and
+         .metadata.uid == $uid
+       ' "$bot_orchestrator_deployment_file" >/dev/null &&
+       recovery_kubectl get pod "$runner_parent_name" -n "$NAMESPACE" -o json \
+         >"$runner_parent_file" &&
+       runner_parent_snapshot="$(<"$runner_parent_file")" &&
+       jq -e --arg namespace "$NAMESPACE" --arg name "$runner_parent_name" \
+         --arg uid "$runner_parent_uid" '
+         .apiVersion == "v1" and .kind == "Pod" and
+         .metadata.namespace == $namespace and .metadata.name == $name and
+         .metadata.uid == $uid
+       ' "$runner_parent_file" >/dev/null &&
+       recovery_require_pod_deployment_ownership "$runner_parent_snapshot" \
+         bot-orchestrator "$runner_parent_deployment_uid" &&
+       capture_bot_runner_pods "$runner_pods_after_file" &&
+       printf '%s' "$health" | jq -e '.' >"$runner_health_file" &&
+       printf '%s' "$readiness" | jq -e '.' >"$runner_readiness_file" &&
+       node "$SCRIPT_DIR/verify-bot-runner-pods.mjs" \
+         --values "$VALUES_FILE" \
+         --namespace "$NAMESPACE" \
+         --runner-namespace "$RUNNER_NAMESPACE" \
+         --deployment "$bot_orchestrator_deployment_file" \
+         --parent "$runner_parent_file" \
+         --pods-before "$runner_pods_before_file" \
+         --pods-after "$runner_pods_after_file" \
+         --health "$runner_health_file" \
+         --readiness "$runner_readiness_file"; then
+      pass "Cada sala usa un Pod runner estable, Ready, aislado y ligado al padre/digest"
+    else
+      fail "Los Pods runner no cumplen identidad, aislamiento, digest o estabilidad exactos"
+    fi
   elif [[ -n "$port_forward_pid" ]]; then
     fail "El port-forward no anuncio un puerto efimero valido"
   fi
-  if ! stop_port_forward; then fail "El port-forward no cerro de forma controlada"; fi
-  if [[ -n "$port_forward_log" ]]; then rm -f -- "$port_forward_log"; port_forward_log=""; fi
+    if ! stop_port_forward; then fail "El port-forward no cerro de forma controlada"; fi
+    if [[ -n "$port_forward_log" ]]; then rm -f -- "$port_forward_log"; port_forward_log=""; fi
+  fi
 else
   fail "bot-orchestrator no esta Ready 1/1"
 fi

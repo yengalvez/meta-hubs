@@ -9,6 +9,20 @@
 > revisados y también faltan HTTPS/auth del collector, aislamiento egress de host, identidad física de generadores,
 > prueba cgroup de terminación, policy base-owned y atestación del fencing de Reticulum ya integrado. La suite local valida esos bloqueos. No
 > existe evidencia de carga ni certificación de capacidad para esos objetivos.
+>
+> Actualización de fuente del 18 de julio: Cloud final
+> `5392495b077249edcedfb3092551201645f648f1` integra `AUD-075` tras los PR
+> `#11` a `development` (`ebe960794735d378149966b78090e22acc60cc26`) y `#12` a
+> `master` (`5392495b077249edcedfb3092551201645f648f1`), con CI Cloud verde.
+> Define una imagen/Pod endurecido por sala y parent separado entre dos
+> namespaces, con cuota, admisión, RBAC y ocho NetworkPolicies. Pasan
+> orquestador 128/128, generador 30/30 con 58 recursos, Reticulum 430 + 5 y los
+> gates raíz normal/`--full`: seguridad 43/43, recuperación 239/239, Pods
+> 45/45, pull 19/19 y Deployment 18/18. No se han construido los dos digests ni
+> creado checkpoint, desplegado o atestado la topología; el arnés de capacidad
+> sigue en 115/115 fail-closed sin ejecución física. `AUD-078` permanece como
+> diseño separado pendiente. Por tanto la readiness física y toda cifra de
+> capacidad permanecen bloqueadas.
 
 ## Resumen ejecutivo
 
@@ -48,10 +62,13 @@ Medición realizada el 16 de julio de 2026:
 | Bot backend | `ghost` |
 | Capacidad configurada | 5 salas activas, 10 bots por sala |
 | Estado observado | 2 salas activas, 0 en cola |
-| Bot orchestrator | ~140 MB en cgroup con `app.js` y dos ghost runners |
+| Bot orchestrator | ~140 MB en un cgroup con `app.js` y dos ghost runners process-local (baseline live, no prueba del candidato aislado) |
 
 Las reservas de Kubernetes no equivalen al consumo real: sirven para que el scheduler coloque pods. Para decidir un
-escalado hay que instalar metricas y realizar pruebas de carga, no extrapolar solo desde `requests`.
+escalado hay que instalar metricas y realizar pruebas de carga, no extrapolar solo desde `requests`. La separación por
+Pod existe en fuente, pero aún no aporta una sola muestra física: hay que medir
+parent y runners por cgroup/digest en staging y live antes de comparar coste o
+capacidad con el baseline process-local.
 
 ## Coste actual estimado
 
@@ -120,8 +137,9 @@ Las defensas actuales son deliberadas:
 
 La siguiente fase exige una clave Ed25519 externa revisada; productores, reglas, scrape e inventario Prometheus
 reales; timestamp de fuente, resets y scope de run; collector HTTPS con TLS/auth; aislamiento egress de host;
-identidad física/cgroup y prueba de cero procesos; y despliegue/atestación del arbitraje con fencing de base de datos
-ya integrado antes de más de una réplica de Reticulum. Policy y atestación de readiness deben proceder del baseline
+identidad física/cgroup y prueba de cero procesos; y despliegue/atestación del
+Pod por sala y del arbitraje con fencing de base de datos ya integrados antes de
+más de una réplica de Reticulum. Policy y atestación de readiness deben proceder del baseline
 controlado por el propietario. También hacen
 falta presupuesto, ventana y revisión independiente. Hasta entonces no hay un `PASSED` físico posible.
 
@@ -270,8 +288,9 @@ Es factible como objetivo de plataforma, pero no con el nodo unico actual ni sin
 - Probar 30 con escena optimizada, avatares ligeros, audio controlado y clientes desktop.
 - Pasar a varios nodos con autoscaling.
 - Escalar Dialog/mediasoup; mantener Reticulum exactamente en una réplica mientras
-  el fencing PostgreSQL integrado no esté desplegado/atestado y no se hayan
-  probado los gates de storage, readiness y Endpoints para dos réplicas frías.
+  el aislamiento por Pod y el fencing PostgreSQL integrados no estén
+  desplegados/atestados y no se hayan probado los gates de storage, readiness y
+  Endpoints para dos réplicas frías.
 - Externalizar o hacer altamente disponible Postgres, almacenamiento y sesiones.
 - Medir CPU, RAM, red, SFU consumers, FPS cliente y tiempos de join.
 
@@ -345,12 +364,17 @@ migracion transparente.
 5. `Completado como scaffolding local`: definir escenarios 30/100/300/10.000, variantes 0/5/10 bots, contrato de
    evidencia, driver confinado, semántica por tipo y criterios provisionales; las 39 métricas de servidor permanecen
    explícitamente `unavailable` y la ejecución física está bloqueada.
-6. Implementar y revisar productores/reglas/scrape/inventario, collector HTTPS/TLS/auth, egress de host,
+6. `Completado e integrado en fuente, no desplegado`: aislar parent y un runner
+   por Pod, en dos namespaces con cuota/admisión/RBAC y ocho NetworkPolicies,
+   usando dos imágenes/digests, token v1 y lease UUID/epoch DB. Construir por
+   Actions, desplegar Reticulum-first y atestar `/transport-ready`, `/ready`,
+   recursos, red y cgroups antes de retirar el bloqueo físico.
+7. Implementar y revisar productores/reglas/scrape/inventario, collector HTTPS/TLS/auth, egress de host,
    identidad+cgroup+terminación de generadores, clave del propietario y policy/atestación base-owned. Mantener
    Reticulum en una réplica hasta desplegar y atestar el lease persistente con
    fencing y validar por separado la topología multi-réplica.
-7. Ejecutar primero local smoke y luego pruebas controladas de 10, 20, 25 y 30 usuarios, sin saltar etapas ante una
+8. Ejecutar primero local smoke y luego pruebas controladas de 10, 20, 25 y 30 usuarios, sin saltar etapas ante una
    parada o evidencia incompleta.
-8. Solo después modelar con datos medidos el escalado a 300 CCU y diseñar el allocator de salas.
-9. Mantener 100 por sala como experimento no certificante y 10.000 como modelo de arquitectura hasta contar con una
+9. Solo después modelar con datos medidos el escalado a 300 CCU y diseñar el allocator de salas.
+10. Mantener 100 por sala como experimento no certificante y 10.000 como modelo de arquitectura hasta contar con una
    plataforma multi-cluster y validación independiente.
