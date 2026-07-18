@@ -140,6 +140,8 @@ require_command mise
 (
   cd "$ROOT_DIR/hubs-cloud/community-edition/services/reticulum"
   mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- \
+    env MIX_ENV=test mix deps.get
+  mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- \
     env MIX_ENV=test mix format --check-formatted
   mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- \
     env MIX_ENV=test mix compile --warnings-as-errors

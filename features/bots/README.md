@@ -90,12 +90,18 @@ bots activa. Un propietario ordinario puede conservar exactamente la
 configuración ya aprobada mientras cambia otros datos de la sala, o desactivar
 bots; no puede reactivarlos ni variar count, movilidad, chat o prompt. Alcanzar
 `MAX_ACTIVE_ROOMS` rechaza la operación de alta sin mutar la sala. Estos son
-contratos del candidato local, no del runtime live actual.
+contratos integrados en las ramas base, no del runtime live actual.
 
-Las configuraciones activas heredadas todavía no tienen un marcador persistido
-de aprobación ni una cuarentena ejecutable fail-closed. Antes de autostart o
-rollout hay que obtener un inventario exacto redacted y registrar aprobación
-del propietario, o migrarlas a un estado deshabilitado/cuarentenado verificable.
+Cloud `34d1d3a8d3cc` persiste en `ret0.bot_config_approvals` el candidato exacto,
+su fingerprint, el último estado aprobado y la atribución de la decisión. La
+migración inicial conserva el JSON heredado y cambia únicamente
+`bots.enabled` a `false`, de modo que ninguna configuración previa puede
+autoiniciarse. Hubs `674ece411691` añade al Admin un inventario redactado y
+acciones individuales de aprobar o poner en cuarentena; nunca devuelve ni
+renderiza prompt o JSON crudo. Un cambio exacto posterior invalida la
+aprobación, y runtime, chat y registro del runner fallan cerrados hasta una nueva
+decisión. Antes del rollout hay que revisar y aprobar individualmente el
+inventario; la integración de fuentes no equivale a esa decisión operativa.
 
 ### Navmesh obligatorio y recuperación
 
@@ -191,6 +197,9 @@ implementado ni desplegado.
   producción.
 - La autoridad de leases del orquestador sigue siendo local al proceso y carece
   de fencing persistente en DB; no autorizar autoridades concurrentes.
+- El código de aprobación/cuarentena está integrado pero no desplegado; tras la
+  migración debe revisarse el inventario redactado y aprobar cada configuración
+  válida antes de reactivar bots.
 - El aviso `room_stop` es best-effort. La desactivación persistida y el snapshot
   periódico convergen, pero un fallo HTTP no garantiza la parada inmediata del
   runner.

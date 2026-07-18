@@ -25,7 +25,7 @@ staging, capacidad ni producción.
 | Full-body/RPM | normalizacion GLB, skeleton, locomocion Mixamo e IK | `src/components/player-info.js`, `src/components/fullbody-locomotion.js`, `src/components/ik-controller.js`, `src/utils/avatar-*.js`, `src/utils/mixamo-shared-animations.js` |
 | Sitting | reserva Phoenix v2 versionada antes de mover, identidad Spoke estable, `isSitting` replicado y salida fail-closed | `src/utils/waypoint-reservation-*`, `src/utils/waypoint-entity-identity.js`, loaders/sistemas waypoint, `src/utils/hub-channel.js`, `src/react-components/ui-root.js` |
 | Avatar upload | import local Admin, preview y GLB privado no listado neutral a proveedor | `admin/src/react-components/import-content.js`, `src/react-components/avatar-editor.js`, `src/react-components/media-browser.js`, `src/react-components/room/PrivateGlbHelpModal.js` |
-| Bots | entidad NAF con namespace/ACK autoritativos, `bot-path`, chat privado con capacidad exacta por canal y settings 0..10 | `src/components/bot-*.js`, `src/network-schemas.js`, `src/systems/bot-runner-system.js`, `src/react-components/room/BotChatPanel*`, `src/react-components/room/RoomSettingsSidebar*`, `src/utils/bot-chat-lifecycle.js` |
+| Bots | entidad NAF con namespace/ACK autoritativos, `bot-path`, chat privado con capacidad exacta por canal, settings 0..10 y Admin de aprobación redactada | `src/components/bot-*.js`, `src/network-schemas.js`, `src/systems/bot-runner-system.js`, `src/react-components/room/BotChatPanel*`, `src/react-components/room/RoomSettingsSidebar*`, `admin/src/react-components/bot-config-approvals.js`, `src/utils/bot-chat-lifecycle.js` |
 | UI/i18n | Obsidian Aurora, espanol forzado, responsive y badge | `src/react-components/**`, `src/assets/locales/es.json`, `src/utils/i18n.js` |
 | Estabilidad | guards de transform, cookie parsing, assets runtime | `src/components/*transform*`, `src/utils/identity.js`, `webpack.config.js`, `RetPageOriginDockerfile` |
 
@@ -41,7 +41,7 @@ Assets propios que deben sobrevivir:
 | Area | Contrato propio | Archivos de mayor riesgo |
 | --- | --- | --- |
 | Generador | 44 recursos, un LB, TLS/cert-manager, RBAC, digests y hardening | `community-edition/generate_script/hcce.yam`, `index.js`, `verify-generated-manifest.js` |
-| Reticulum | bots/NAF autoritativos, admisión global serializada, capacidad de chat por canal, reservas de waypoint, uploads, storage, seguridad, OTP 27 y SMTP | `services/reticulum/lib/ret/**`, `lib/ret_web/**`, `priv/repo/migrations/**`, `config/**`, `mix.*` |
+| Reticulum | bots/NAF autoritativos, admisión global serializada, aprobación/cuarentena exacta, capacidad de chat por canal, reservas de waypoint, uploads, storage, seguridad, OTP 27 y SMTP | `services/reticulum/lib/ret/**`, `lib/ret_web/**`, `priv/repo/migrations/**`, `config/**`, `mix.*` |
 | Bot orchestrator | GPT-5 Nano reply-only, moderación/deadline fail-closed, Presence/ACK y readiness | `services/bot-orchestrator/app.js`, `run-bot.js`, `run-ghost-runner.js`, tests |
 | Navegacion bots | GLB parcial, navmesh obligatorio, A*, recuperación limpia, `spawbot-*`, static | `services/bot-orchestrator/run-ghost-runner.js` |
 | Dialog | Node 22, Mediasoup, auth y runtime non-root | `services/dialog/**` |
@@ -67,6 +67,9 @@ Cambiar estos contratos exige compatibilidad hacia atras o migracion:
   - prompt limitado;
 - admisión global de configuraciones activas serializada en PostgreSQL, con
   `MAX_ACTIVE_ROOMS` idéntico en Reticulum y bot-orchestrator;
+- tabla `bot_config_approvals`, un registro por sala, con JSON candidato y
+  aprobado exactos, fingerprint canónico, estado `approved`/`quarantined`,
+  actor, motivo y timestamps; cualquier cambio exacto exige nueva aprobación;
 - template/schema NAF `#remote-bot-avatar`, namespace exacto
   `room-bot-<hub_sid>-bot-<1..10>`, `bot-info`, `bot-path` y ACK de first sync;
 - archivos Reticulum: DB metadata + pares cifrados `.blob`/`.meta.json`;
@@ -107,8 +110,10 @@ Cambiar estos contratos exige compatibilidad hacia atras o migracion:
   potencialmente expuestos antes de cualquier mutación.
 - Un runner por pod/contenedor con frontera OS, credencial y recursos propios;
   fencing persistente en DB para leases de autoridad.
-- Aprobación persistida o cuarentena ejecutable para configuraciones activas
-  heredadas; `room_stop` sigue siendo best-effort.
+- La aprobación/cuarentena está integrada pero no desplegada: la primera
+  migración debe producir un inventario redactado y cada configuración válida
+  requiere una decisión individual antes de reactivarse. `room_stop` sigue
+  siendo best-effort.
 - Capacidad física, builds de imágenes por Actions, staging y aceptación live
   siguen pendientes; los gates de fuentes no miden CCU ni autorizan rollout
   público.

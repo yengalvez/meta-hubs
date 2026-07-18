@@ -43,14 +43,13 @@ Sala de aceptacion: <https://meta-hubs.org/VJopCY3/inicio>
 | Ruta | Rama base | Fuente final auditada | Fuente del runtime live |
 | --- | --- | --- | --- |
 | Root | `main` | commit que contiene este handoff | `a0a2b59cad80e0b07f9b2a2f82c2020781163570` |
-| `hubs/` | `master` | `d7f0c2fc40bb17e36e428b425064d2d47c7cdcbe` | `a7214eb882d19c98b2c8516489e0ed1fb7401c75` |
-| `hubs-cloud/` | `master` | `b7b752f8247b30b22df241bfad2be795c5733420` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
+| `hubs/` | `master` | `674ece41169117a1a842af9cf5d256a10cc43df0` | `a7214eb882d19c98b2c8516489e0ed1fb7401c75` |
+| `hubs-cloud/` | `master` | `34d1d3a8d3cce257b367ab8c960a0b92649961ca` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
 
-Los gitlinks conservan las fuentes exactas auditadas. Hubs `d7f0c2fc4` ya es
-ancestro de `master` mediante el merge `6f1f5315696c`; Hubs Cloud `b7b752f` es
-ancestro de `development` mediante `c5d39e0c930` y de `master` mediante
-`2164851185da`. Estos merges no cambian el runtime hasta construir nuevas
-imagenes por Actions y desplegarlas por digest.
+Los gitlinks conservan las fuentes exactas auditadas. Hubs `674ece411691` y Hubs
+Cloud `34d1d3a8d3cc` son los heads integrados de `master`; incluyen los cortes
+anteriores y el cierre `AUD-077`. Estos merges no cambian el runtime hasta
+construir nuevas imagenes por Actions y desplegarlas por digest.
 
 Estado de publicación comprobado el 18 de julio:
 
@@ -59,20 +58,27 @@ Estado de publicación comprobado el 18 de julio:
 - Hubs Cloud PR `#1`: fusionado en `development` como `c5d39e0c930`; PR `#2`
   `development -> master`: fusionado como `2164851185da`, con guard, Security,
   Services, Spoke y Reticulum PostgreSQL 12/14 verdes.
+- Hubs PR `#4`: fusionado en `master` como `674ece411691`; 97/97 pruebas,
+  Security, Admin build y Storybook verdes.
+- Hubs Cloud PR `#3`: fusionado en `development` como `43753e8aea49`; PR `#4`
+  `development -> master`: fusionado como `cc70e4023622`, con guard, Security,
+  release build y Reticulum PostgreSQL 12/14 verdes.
+- Hubs Cloud PR `#5`: fusionado en `development` como `356dce328f9d`; PR `#6`
+  `development -> master`: fusionado como `34d1d3a8d3cc`. La prueba de entidades
+  espera los ACK, comprueba el conjunto completo y selecciona el PDF por `nid`.
 - Meta-hubs PR minimo `#2`, `codex/gitleaks-policy-bootstrap -> main`: fusionado
   como `f79175d`. La politica ya procede de la base y no de la rama candidata.
-- Meta-hubs PR `#1`, `codex/final-audit-readiness -> main`: gate de código verde
-  en `9d2679d` mediante los runs `29621665409` y `29621667500`, después de
-  corregir SC2119, SC2015 y portabilidad GNU/BSD. Queda fusionar el PR raíz.
+- Meta-hubs PR `#1`, `codex/final-audit-readiness -> main`: fusionado como
+  `4481e9628b76` después de corregir SC2119, SC2015 y portabilidad GNU/BSD.
 
 La integración Git y el CI de fuentes están cerrados en GO sobre Hubs
-`d7f0c2fc4` y Hubs Cloud `b7b752f`. Este resultado acredita código, suites,
+`674ece411691` y Hubs Cloud `34d1d3a8d3cc`. Este resultado acredita código, suites,
 builds de verificación y ramas base; no sustituye los valores live de la tabla.
 No se han construido imágenes candidatas de rollout, ni existe aceptación de
 staging, capacidad o producción. No actualizar digests live hasta completar el
 flujo publicado de seguridad, build y rollout.
 
-El candidato de bots añade dos contratos que tampoco forman parte del runtime
+El candidato de bots añade tres contratos que tampoco forman parte del runtime
 live de la tabla:
 
 - Reticulum serializa en una transacción PostgreSQL la admisión global de salas
@@ -88,6 +94,11 @@ live de la tabla:
   capacidad exacta base64url de 32 caracteres, el canal, sala, bot, cuenta y
   epochs capturados para aceptar una respuesta tardía; no se publica en Phoenix
   Presence y una segunda sesión de la misma cuenta no puede reutilizarla.
+- `ret0.bot_config_approvals` conserva candidato y aprobado exactos con
+  fingerprint y atribución. La migración desactiva únicamente `bots.enabled`,
+  el Admin solo muestra inventario redactado y cada decisión es individual.
+  Runtime, chat y registro del runner fallan cerrados ante configuración no
+  aprobada o modificada.
 
 El gate separado de Spoke también pasó localmente con Node 16.13.2/Yarn 1:
 68/68 pruebas, lint y build. Spoke conserva su deuda legacy; este resultado no
@@ -229,9 +240,9 @@ El GO de integración Git y CI de fuentes no levanta los siguientes bloqueos:
   cgroup compartidos;
 - los leases de autoridad del orquestador no tienen fencing persistente en DB;
   no se puede operar más de una autoridad concurrente con garantías;
-- las configuraciones activas heredadas carecen de aprobación persistida y de
-  una cuarentena ejecutable fail-closed; se exige inventario exacto redacted y
-  aprobación del propietario o migración antes de permitir autostart;
+- la aprobación/cuarentena ya está integrada pero no desplegada: la migración
+  debe producir el inventario redactado y cada configuración válida necesita
+  una aprobación individual antes de permitir autostart;
 - `room_stop` es best-effort: DB y snapshots terminan convergiendo, pero un fallo
   de la llamada no garantiza detener inmediatamente el runner;
 - no se ejecutó carga física ni aceptación staging/live. No hay capacidad
@@ -269,23 +280,28 @@ El GO de integración Git y CI de fuentes no levanta los siguientes bloqueos:
 
 ## Auditoria y pruebas realizadas
 
-El cierre del 18 de julio integró en Git Hubs `d7f0c2fc4`, Hubs Cloud
-`b7b752f` y el gate Spoke 68/68+lint+build, con CI de fuentes verde. Su dictamen
+El cierre del 18 de julio integró en Git Hubs `674ece411691`, Hubs Cloud
+`34d1d3a8d3cc` y el gate Spoke 68/68+lint+build, con CI de fuentes verde. Su dictamen
 no autoriza rollout: las cifras y verificaciones live siguientes pertenecen al
 baseline de producción del 16 de julio y no prueban el nuevo runtime.
 
-- Hubs: check, lint, 12 unit tests, build; Hubs/Admin audit de produccion en 0.
-- Admin: tests, lint y build.
+- Root: 36 regresiones de seguridad y 142 de recuperación.
+- Hubs: check, lint, 97 unit tests y build; audit de producción en 0.
+- Admin: lint, build y audit de producción en 0.
 - Hubs CE: generator y verificador de 44 recursos; audit en 0.
-- Reticulum: format, compile warnings-as-errors, 305 tests, 0 fallos, 3 excluidos.
-- Bot orchestrator: 22 tests y audit en 0.
+- Reticulum: format, compile warnings-as-errors, 411 tests + 5 properties,
+  0 fallos y 3 excluidos.
+- Bot orchestrator: 102 tests y audit en 0.
 - Dialog: lint, 2 tests y audit en 0.
 - Photomnemonic: syntax/check, 7 tests y audit en 0.
 - Coturn: test de entrypoint.
 - Spoke: lint, unit y build con Node 16.13.2/Yarn 1.
+- Navegador local: 11 contratos; capacidad: 115/115 con ejecución física
+  deliberadamente bloqueada y sin certificación.
 - Gitleaks, Actionlint, ShellCheck, SBOM y Trivy.
-- Navegador real desktop/movil: sin errores JS/HTTP, escena lista y cinco bots.
-- Live: 12 deployments Ready, TLS/DNS/DB/storage/assets/CSP/ghost runner, 0 fallos/avisos.
+- Baseline live histórico: navegador real desktop/móvil sin errores JS/HTTP,
+  escena lista y cinco bots; 12 deployments Ready, TLS/DNS/DB/storage/assets/CSP
+  y ghost runner con 0 fallos/avisos. No acredita el candidato actual.
 - GitHub Actions de cierre: Hubs Security `29518981250`, Storybook
   `29518980804`, cloud Security `29520235224`, Services `29520235446`,
   Reticulum `29519815859` y root Security `29519331721`, todos correctos.
