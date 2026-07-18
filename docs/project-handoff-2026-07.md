@@ -44,11 +44,11 @@ Sala de aceptacion: <https://meta-hubs.org/VJopCY3/inicio>
 | --- | --- | --- | --- |
 | Root | `main` | commit que contiene este handoff | `a0a2b59cad80e0b07f9b2a2f82c2020781163570` |
 | `hubs/` | `master` | `674ece41169117a1a842af9cf5d256a10cc43df0` | `a7214eb882d19c98b2c8516489e0ed1fb7401c75` |
-| `hubs-cloud/` | `master` | `34d1d3a8d3cce257b367ab8c960a0b92649961ca` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
+| `hubs-cloud/` | `master` | `0f151eb88da117cb2cffd74dcd8f91f984e91986` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
 
 Los gitlinks conservan las fuentes exactas auditadas. Hubs `674ece411691` y Hubs
-Cloud `34d1d3a8d3cc` son los heads integrados de `master`; incluyen los cortes
-anteriores y el cierre `AUD-077`. Estos merges no cambian el runtime hasta
+Cloud `0f151eb88da1` son los heads integrados de `master`; incluyen los cortes
+anteriores y los cierres `AUD-076`/`AUD-077`. Estos merges no cambian el runtime hasta
 construir nuevas imagenes por Actions y desplegarlas por digest.
 
 Estado de publicación comprobado el 18 de julio:
@@ -66,13 +66,16 @@ Estado de publicación comprobado el 18 de julio:
 - Hubs Cloud PR `#5`: fusionado en `development` como `356dce328f9d`; PR `#6`
   `development -> master`: fusionado como `34d1d3a8d3cc`. La prueba de entidades
   espera los ACK, comprueba el conjunto completo y selecciona el PDF por `nid`.
+- Hubs Cloud PR `#7`: fusionado en `development` como `04278c69646b`; PR `#8`
+  `development -> master`: fusionado como `0f151eb88da1`. El fencing PostgreSQL
+  de `AUD-076` pasó PostgreSQL 12/14, Services, Spoke, Security y release build.
 - Meta-hubs PR minimo `#2`, `codex/gitleaks-policy-bootstrap -> main`: fusionado
   como `f79175d`. La politica ya procede de la base y no de la rama candidata.
 - Meta-hubs PR `#1`, `codex/final-audit-readiness -> main`: fusionado como
   `4481e9628b76` después de corregir SC2119, SC2015 y portabilidad GNU/BSD.
 
 La integración Git y el CI de fuentes están cerrados en GO sobre Hubs
-`674ece411691` y Hubs Cloud `34d1d3a8d3cc`. Este resultado acredita código, suites,
+`674ece411691` y Hubs Cloud `0f151eb88da1`. Este resultado acredita código, suites,
 builds de verificación y ramas base; no sustituye los valores live de la tabla.
 No se han construido imágenes candidatas de rollout, ni existe aceptación de
 staging, capacidad o producción. No actualizar digests live hasta completar el
@@ -238,8 +241,9 @@ El GO de integración Git y CI de fuentes no levanta los siguientes bloqueos:
   potencialmente expuestos, verificándolos solo por presencia o huella;
 - cada runner sigue sin aislamiento OS/pod por bot, con UID, namespace PID y
   cgroup compartidos;
-- los leases de autoridad del orquestador no tienen fencing persistente en DB;
-  no se puede operar más de una autoridad concurrente con garantías;
+- el fencing PostgreSQL de leases está integrado y probado en fuentes, pero no
+  desplegado ni atestado; el baseline live sigue siendo process-local y no se
+  puede operar más de una autoridad concurrente;
 - la aprobación/cuarentena ya está integrada pero no desplegada: la migración
   debe producir el inventario redactado y cada configuración válida necesita
   una aprobación individual antes de permitir autostart;
@@ -281,7 +285,7 @@ El GO de integración Git y CI de fuentes no levanta los siguientes bloqueos:
 ## Auditoria y pruebas realizadas
 
 El cierre del 18 de julio integró en Git Hubs `674ece411691`, Hubs Cloud
-`34d1d3a8d3cc` y el gate Spoke 68/68+lint+build, con CI de fuentes verde. Su dictamen
+`0f151eb88da1` y el gate Spoke 68/68+lint+build, con CI de fuentes verde. Su dictamen
 no autoriza rollout: las cifras y verificaciones live siguientes pertenecen al
 baseline de producción del 16 de julio y no prueban el nuevo runtime.
 
@@ -289,9 +293,9 @@ baseline de producción del 16 de julio y no prueban el nuevo runtime.
 - Hubs: check, lint, 97 unit tests y build; audit de producción en 0.
 - Admin: lint, build y audit de producción en 0.
 - Hubs CE: generator y verificador de 44 recursos; audit en 0.
-- Reticulum: format, compile warnings-as-errors, 411 tests + 5 properties,
+- Reticulum: format, compile warnings-as-errors, 418 tests + 5 properties,
   0 fallos y 3 excluidos.
-- Bot orchestrator: 102 tests y audit en 0.
+- Bot orchestrator: 103 tests y audit en 0.
 - Dialog: lint, 2 tests y audit en 0.
 - Photomnemonic: syntax/check, 7 tests y audit en 0.
 - Coturn: test de entrypoint.

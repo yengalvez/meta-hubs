@@ -16,8 +16,9 @@ used for a load run. All 39 server-side observability contracts are explicitly
 `unavailable`: this repository contains no reviewed metric producers,
 recording rules, scrape inventory or per-source freshness proof for them. The
 remote HTTPS/authentication boundary, OS-level egress isolation, physical host
-identity, cgroup termination proof, base-owned readiness policy and Reticulum
-database fencing are also absent. `npm run validate` lists each missing
+identity, cgroup termination proof and a base-owned readiness policy are also
+absent. Database fencing is integrated in source, but no deployed policy or
+environment attestation exists. `npm run validate` lists each missing
 prerequisite and always reports `physicalExecutionAllowed: false` and
 `certified: false`. Its numeric harness ceilings are safety bounds, not
 measured capacity.
@@ -137,10 +138,12 @@ secrets in this file.
 templates. Replace every placeholder from the actual staging inventory and
 sign the completed unsigned object. Never put credentials or private key
 material in either document.
-Because `BotRunnerLease` is process-local, the snapshot currently requires
-exactly one Reticulum replica. That singleton is a safety constraint, not
-capacity evidence. Reticulum must not scale beyond one until lease arbitration
-and fencing are database-backed and independently reviewed.
+The checked-in snapshot still records the deployed baseline as process-local
+and therefore requires exactly one Reticulum replica. The source implementation
+now has PostgreSQL lease arbitration and fencing, but that does not attest a
+deployment. The singleton is a safety constraint, not capacity evidence.
+Reticulum must not scale beyond one until fencing is deployed and attested and
+the separate readiness, Endpoint and `ret-pvc` RWO gates pass staging review.
 
 ## Browser and workload semantics
 
@@ -445,9 +448,10 @@ SKU/count and the real DigitalOcean SKU identifiers (`s-2vcpu-4gb`,
 
 The existing 30/100/300 design is not factorial and extrapolates roughly 33x
 in both participants and room count. In addition, 10,000-participant topology
-work would require Reticulum horizontal scaling, which is prohibited while
-`BotRunnerLease` remains process-local. Consequently the current model returns
-`state: INSUFFICIENT` and emits no fit, node count or cost range. It cannot emit
-actionable output until crossed measurements remain within 3x and a reviewed
-database arbitration/fencing policy exists. A future successful model would
+work would require Reticulum horizontal scaling, which remains prohibited while
+the checked-in environment has no deployed and attested database-fencing
+policy. Consequently the current model returns `state: INSUFFICIENT` and emits
+no fit, node count or cost range. It cannot emit actionable output until crossed
+measurements remain within 3x and the reviewed fencing and multi-replica
+operational policies exist. A future successful model would
 still return `certified: false` and `physicalExecutionAllowed: false`.

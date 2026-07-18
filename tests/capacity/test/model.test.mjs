@@ -155,7 +155,7 @@ test("10,000 model emits no projection without factorial evidence, bounded extra
   assert.deepEqual(reorderedModel.reasons, model.reasons);
 });
 
-test("Reticulum remains exactly one replica until BotRunnerLease has database arbitration and fencing", () => {
+test("Reticulum remains exactly one replica until database fencing is deployed and attested", () => {
   assert.equal(validateEnvironmentSnapshot(makeTestEnvironment(), undefined, undefined, {
     productionOnly: false
   }).replicas.reticulum, 1);

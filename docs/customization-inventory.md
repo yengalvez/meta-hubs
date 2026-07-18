@@ -109,7 +109,8 @@ Cambiar estos contratos exige compatibilidad hacia atras o migracion:
 - `AUD-065`: checkpoint fresco DB+storage y rotación coordinada de secretos
   potencialmente expuestos antes de cualquier mutación.
 - Un runner por pod/contenedor con frontera OS, credencial y recursos propios;
-  fencing persistente en DB para leases de autoridad.
+  desplegar y atestar el fencing persistente en DB ya integrado para los leases
+  de autoridad.
 - La aprobación/cuarentena está integrada pero no desplegada: la primera
   migración debe producir un inventario redactado y cada configuración válida
   requiere una decisión individual antes de reactivarse. `room_stop` sigue
