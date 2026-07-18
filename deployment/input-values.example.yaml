@@ -75,6 +75,10 @@ OVERRIDE_PGBOUNCER_IMAGE: "No"
 # Check available tags at https://hub.docker.com/r/hubsfoundation/hubs/tags
 OVERRIDE_HUBS_IMAGE: "hubsfoundation/hubs:stable-3108"
 OVERRIDE_BOT_ORCHESTRATOR_IMAGE: "No"
+OVERRIDE_BOT_RUNNER_IMAGE: "No"
+# Generate this only in the private 0600 values file with:
+# HCCE_INPUT_VALUES_PATH=... GHCR_USERNAME=... GHCR_TOKEN=... npm run set-bot-image-pull-config
+BOT_IMAGE_PULL_CONFIG_JSON_BASE64: "CHANGE_ME_private_docker_config_base64"
 
 OVERRIDE_SPOKE_IMAGE: "hubsfoundation/spoke:$Container_Tag"
 OVERRIDE_NEARSPARK_IMAGE: "No"
@@ -87,6 +91,14 @@ OVERRIDE_COTURN_IMAGE: "No"
 BOT_ACCESS_KEY: "change-me-legacy-binding-key-random-64chars"
 BOT_RUNNER_ACCESS_KEY: "change-me-runner-key-random-64chars-distinct"
 BOT_ORCHESTRATOR_ACCESS_KEY: "change-me-orchestrator-key-random-64chars-distinct"
+# First deployment advances bootstrap -> admission -> active through separate
+# standard generated-manifest applies. Recovery normally stays active; use
+# restore-fence only between restore-checkpoint prepare-fence and execute-fenced.
+BOT_RUNNER_ACTIVATION_PHASE: "bootstrap"
+BOT_RUNNER_RECOVERY_PHASE: "active"
+# Public replay-fence identifier, never derived from an access key. Generate a
+# fresh canonical lowercase UUID v4 for each restore before prepare-fence.
+BOT_RUNNER_RECOVERY_EPOCH: "11111111-1111-4111-8111-111111111111"
 DASHBOARD_ACCESS_KEY: "change-me-dashboard-key-random-64chars-distinct"
 # Bots/LLM configuration
 OPENAI_API_KEY: "change-me-openai-api-key"

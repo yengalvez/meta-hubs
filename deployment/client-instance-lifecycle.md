@@ -48,6 +48,11 @@ Baseline YenHubs actual:
 3. Crear tokens de GitHub/GHCR sin reutilizar credenciales personales.
 4. Crear claves OpenAI y DigitalOcean por cliente/proyecto cuando sea posible.
 5. Copiar `deployment/input-values.example.yaml` a un fichero local ignorado.
+   Para bots aislados, fijar por digest las dos imágenes
+   `bot-orchestrator`/`bot-runner` del mismo commit y generar
+   `BOT_IMAGE_PULL_CONFIG_JSON_BASE64` exclusivamente con
+   `npm run set-bot-image-pull-config`, pasando `GHCR_TOKEN` por entrada oculta
+   o entorno protegido y sin mostrarlo.
 6. Ejecutar el preflight antes de crear recursos:
 
    ```bash
@@ -95,6 +100,9 @@ Completar tambien:
 - avatar normal/full-body;
 - sitting;
 - bots y chat;
+- `/transport-ready` del padre, `/ready` autoritativo y exactamente un Pod
+  runner Ready por cada sala esperada, con digest/owner/generación exactos y
+  cero Pods gestionados stale, terminales o desconocidos;
 - backup y restore preflight de solo lectura.
 
 ## Operacion y cambios
@@ -116,6 +124,23 @@ Para una feature:
 7. carga fria;
 8. verificador;
 9. merge.
+
+Mientras `AUD-065` permanezca abierto, el checkpoint DB+storage y la rotación
+coordinada preceden incluso al build del siguiente candidato. El primer rollout
+de runners aislados usa tres manifiestos completos de 58 recursos, regenerados
+y aplicados con el wrapper guardado en orden `bootstrap -> admission -> active`.
+`bootstrap` introduce Reticulum compatible manteniendo inerte la autoridad;
+`admission` prueba policy/RBAC con el parent todavía parado; solo `active` puede
+levantar parent y runners. El rollback restaura primero el parent legacy contra
+el Reticulum compatible y solo después el Reticulum anterior, siempre con las
+credenciales nuevas. Un manifiesto viejo no poda los ServiceAccounts, Role,
+RoleBinding, Secret de pull ni NetworkPolicies nuevos; no declarar limpieza
+completa hasta inventariarlos y retirarlos mediante una transición trackeada.
+`process-local` sigue siendo el último baseline live aceptado y también puede
+usarse como rollback. Tras un rollback, los bots públicos permanecen
+deshabilitados y no se reabre ni se declara de nuevo aceptado hasta repetir
+preflight, verificador live y carga fría con las credenciales nuevas. Nunca es
+evidencia de capacidad.
 
 No usar atajos manuales salvo emergencia expresamente aprobada.
 
@@ -172,9 +197,31 @@ Debe contener:
 - `checkpoint-metadata.json`;
 - commits y submodulos;
 - `deployment-images.json` con los 12 Deployments, 13 pares exactos, ningun
-  `initContainer` ni contenedor efimero y todas las imagenes por digest;
+  `initContainer` ni contenedor efimero y todas las imagenes por digest. Su
+  schema 3 incluye `bot_runner_runtime`: modo legacy `process-local` con imagen
+  nula o modo `kubernetes-pod` con el digest exacto del runner;
 - `k8s-hcce-structure.json` e inventario DigitalOcean;
 - presencia de claves configuradas, nunca sus valores.
+
+Antes de leer DB o PVC, checkpoint y restore deben mantener a cero Reticulum,
+ambos Pgbouncers, bot-orchestrator y Coturn, y además esperar/monitorizar cero
+Pods dinámicos gestionados de `bot-runner`. La reaparición de uno bloquea la
+operación y la reanudación de escritores.
+
+El checkpoint autoriza antes de mutar exactamente una frontera: el baseline
+legacy `process-local` completo, sin autoridad ni namespace Kubernetes de
+runners, o el runtime `kubernetes-pod` con fase `active`, manifiesto,
+admission y RBAC exactos. Un binding parcial, una anotación unilateral o un
+namespace runner residual no pueden hacer fallback a legacy. El driver liga el
+modo al inventario y al fingerprint del Deployment y vuelve a validarlo antes
+de reanudar; una deriva deja el parent a cero y conserva el lock.
+
+Los inputs de values y, cuando corresponde, del manifiesto se copian antes del
+downtime a snapshots privados `0600` ligados a la ejecución. Los gates consumen
+solo esos snapshots. Checkpoint y restore reservan además la recuperación
+autoritativa al driver principal: un subshell puede devolver un error, pero no
+reanudar writers, duplicar el fencing ni liberar el lock. El contrato completo
+se documenta en `deployment/README.md`.
 
 ### 2. Validar recuperabilidad
 
@@ -257,9 +304,13 @@ que borrar el cluster elimina cualquier recurso de la cuenta.
    `retdb:<contexto>:<namespace>:<uid>:<stamp>:<db-sha>:<storage-sha>`.
 9. Restaurar despues el archive correspondiente de `ret-pvc`, con confirmacion
    ligada a `ret-pvc:<contexto>:<namespace>:<uid>:<stamp>:<db-sha>:<storage-sha>:<pvc-uid>`.
-10. Reiniciar servicios dependientes.
-11. Validar migrations, active owned files y pares fisicos.
-12. Ejecutar el verificador y la aceptacion funcional completa.
+10. Confirmar cero Pods runner dinámicos durante toda la restauración.
+11. Reiniciar servicios dependientes en el orden compatible: proxies,
+    Reticulum Ready y después Coturn/parent; los nuevos runner Pods solo pueden
+    aparecer tras abrir el control-plane.
+12. Validar migrations, active owned files, pares fisicos y el
+    `bot_runner_runtime` schema 3 contra el digest privado esperado.
+13. Ejecutar el verificador y la aceptacion funcional completa.
 
 Nunca combinar un dump de una fecha con un storage de otra.
 

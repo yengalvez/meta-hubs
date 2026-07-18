@@ -17,9 +17,15 @@ DUMP_PATH="$1"
 NAMESPACE="${NAMESPACE:-hcce}"
 PREFLIGHT="${RESTORE_PREFLIGHT:-${RESTORE_DRY_RUN:-0}}"
 COORDINATED="${RESTORE_COORDINATED:-0}"
+ALREADY_FENCED="${RESTORE_ALREADY_FENCED:-0}"
 DB_NAME="retdb"
 CONSUMERS=(reticulum pgbouncer pgbouncer-t bot-orchestrator coturn)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PARENT_LEASE_HOLDER="${YENHUBS_PARENT_LEASE_HOLDER:-}"
+PARENT_LEASE_UID="${YENHUBS_PARENT_LEASE_UID:-}"
+PARENT_PROCESS_PID="${YENHUBS_PARENT_PROCESS_PID:-}"
+PARENT_PROCESS_START_IDENTITY="${YENHUBS_PARENT_PROCESS_START_IDENTITY:-}"
+VALUES_SOURCE_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
 
@@ -34,6 +40,14 @@ if [[ "$COORDINATED" != "0" && "$COORDINATED" != "1" ]]; then
   printf 'RESTORE_COORDINATED must be 0 or 1.\n' >&2
   exit 2
 fi
+if [[ "$ALREADY_FENCED" != "0" && "$ALREADY_FENCED" != "1" ]]; then
+  printf 'RESTORE_ALREADY_FENCED must be 0 or 1.\n' >&2
+  exit 2
+fi
+if [[ "$ALREADY_FENCED" == "1" && "$COORDINATED" != "1" ]]; then
+  printf 'RESTORE_ALREADY_FENCED is valid only for a coordinated restore.\n' >&2
+  exit 2
+fi
 if [[ "$PREFLIGHT" == "0" && "$COORDINATED" != "1" ]]; then
   printf 'Destructive DB restore is only allowed through restore-checkpoint.sh coordination.\n' >&2
   exit 2
@@ -46,12 +60,20 @@ LIVE_CONTRACT_PATH=""
 QUIESCE_MONITOR_STOP=""
 QUIESCE_MONITOR_FAILURE=""
 QUIESCE_MONITOR_PID=""
+RUNNER_WATCH_STOP=""
+RUNNER_WATCH_FAILURE=""
+RUNNER_WATCH_READY=""
+RUNNER_WATCH_PID=""
 RESTORE_PHASE="validating"
 cleanup_restore() {
   if [[ -n "$QUIESCE_MONITOR_PID" ]]; then
     [[ -z "$QUIESCE_MONITOR_STOP" ]] || : >"$QUIESCE_MONITOR_STOP"
     wait "$QUIESCE_MONITOR_PID" 2>/dev/null || true
     QUIESCE_MONITOR_PID=""
+  fi
+  if [[ -n "$RUNNER_WATCH_PID" ]]; then
+    recovery_discard_no_managed_bot_runner_watch "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_PID"
+    RUNNER_WATCH_PID=""
   fi
   if [[ -n "$SQL_CHECK_PATH" ]]; then
     rm -f -- "$SQL_CHECK_PATH"
@@ -67,6 +89,9 @@ cleanup_restore() {
   fi
   [[ -z "$QUIESCE_MONITOR_STOP" ]] || rm -f -- "$QUIESCE_MONITOR_STOP"
   [[ -z "$QUIESCE_MONITOR_FAILURE" ]] || rm -f -- "$QUIESCE_MONITOR_FAILURE"
+  [[ -z "$RUNNER_WATCH_STOP" ]] || rm -f -- "$RUNNER_WATCH_STOP"
+  [[ -z "$RUNNER_WATCH_FAILURE" ]] || rm -f -- "$RUNNER_WATCH_FAILURE"
+  [[ -z "$RUNNER_WATCH_READY" ]] || rm -f -- "$RUNNER_WATCH_READY"
   recovery_cleanup_materialized_checkpoint
 }
 restore_interrupted() {
@@ -135,7 +160,23 @@ rm -f -- "$SQL_CHECK_PATH"
 SQL_CHECK_PATH=""
 
 recovery_require_cluster_identity
-recovery_kubectl rollout status deployment/pgsql -n "$NAMESPACE" --timeout=5m >/dev/null
+recovery_require_pvc_identity ret-pvc
+recovery_require_restore_target_binding
+if ! recovery_require_live_runner_control_plane_matches_checkpoint \
+  "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"; then
+  printf 'The live runner control-plane identity does not match the checkpoint inventory.\n' >&2
+  exit 1
+fi
+if ! recovery_require_live_images_match_checkpoint \
+  "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"; then
+  printf 'The live workload image inventory does not exactly match the checkpoint.\n' >&2
+  exit 1
+fi
+if [[ "$COORDINATED" != 1 ]]; then
+  recovery_require_restore_epoch_candidate \
+    "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" "$VALUES_SOURCE_FILE"
+fi
+recovery_wait_for_deployment_rollout pgsql 300
 PGSQL_PODS_JSON="$(recovery_kubectl get pod -n "$NAMESPACE" -l app=pgsql -o json)"
 if ! PGSQL_POD_INFO="$(recovery_exact_ready_deployment_pod_info \
   "$PGSQL_PODS_JSON" pgsql pgsql)"; then
@@ -160,6 +201,11 @@ if [[ "$PREFLIGHT" == "1" ]]; then
 fi
 
 recovery_require_confirmation CONFIRM_RESTORE "$DB_NAME"
+recovery_adopt_parent_operation_serialization \
+  "$PARENT_LEASE_HOLDER" "$PARENT_LEASE_UID" \
+  "$PARENT_PROCESS_PID" "$PARENT_PROCESS_START_IDENTITY"
+unset YENHUBS_PARENT_LEASE_HOLDER YENHUBS_PARENT_LEASE_UID \
+  YENHUBS_PARENT_PROCESS_PID YENHUBS_PARENT_PROCESS_START_IDENTITY
 recovery_require_pvc_identity ret-pvc
 if [[ -z "${RECOVERY_CONSUMER_CONTRACT_JSON:-}" ]] ||
    ! recovery_consumer_contract_is_acceptable "$RECOVERY_CONSUMER_CONTRACT_JSON" ||
@@ -184,8 +230,10 @@ for deployment in "${CONSUMERS[@]}"; do
   replica_count="$(jq -r '.original_replicas' <<<"$expected_entry")"
   deployment_selector="$(jq -r '.selector' <<<"$expected_entry")"
   deployment_fingerprint="$(jq -r '.fingerprint' <<<"$expected_entry")"
+  expected_current_replicas="$replica_count"
+  [[ "$ALREADY_FENCED" != "1" ]] || expected_current_replicas=0
   recovery_require_deployment_contract "$deployment" "$deployment_uid" \
-    "$replica_count" "$deployment_selector" "$deployment_fingerprint" || {
+    "$expected_current_replicas" "$deployment_selector" "$deployment_fingerprint" || {
     printf 'Post-lock consumer contract changed before DB quiescence: %s.\n' "$deployment" >&2
     exit 1
   }
@@ -200,16 +248,18 @@ RESTORE_PHASE="quiescing"
 # Target identity is checked immediately before the first Kubernetes mutation.
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
-for index in "${!RESTORE_DEPLOYMENTS[@]}"; do
-  recovery_require_operation_lock
-  DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
-    "${RESTORE_DEPLOYMENTS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
-    "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" \
-    "$(jq -r --arg name "${RESTORE_DEPLOYMENTS[$index]}" \
-      '.consumers[] | select(.name == $name) | .original_replicas' \
-      <<<"$RECOVERY_CONSUMER_CONTRACT_JSON")" 0 \
-    "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")"
-done
+if [[ "$ALREADY_FENCED" != "1" ]]; then
+  for index in "${!RESTORE_DEPLOYMENTS[@]}"; do
+    recovery_require_operation_lock
+    DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
+      "${RESTORE_DEPLOYMENTS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
+      "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" \
+      "$(jq -r --arg name "${RESTORE_DEPLOYMENTS[$index]}" \
+        '.consumers[] | select(.name == $name) | .original_replicas' \
+        <<<"$RECOVERY_CONSUMER_CONTRACT_JSON")" 0 \
+      "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")"
+  done
+fi
 
 for index in "${!RESTORE_DEPLOYMENTS[@]}"; do
   recovery_require_operation_lock
@@ -219,6 +269,7 @@ for index in "${!RESTORE_DEPLOYMENTS[@]}"; do
   recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
     "${RESTORE_DEPLOYMENTS[$index]}" 0
 done
+recovery_wait_for_no_managed_bot_runner_pods 180s
 
 require_quiesced_consumers() {
   local deployment selector pods
@@ -233,6 +284,7 @@ require_quiesced_consumers() {
     pods="$(recovery_kubectl get pod -n "$NAMESPACE" -l "app=$selector" -o name)" || return 1
     [[ -z "$pods" ]] || return 1
   done
+  recovery_require_no_managed_bot_runner_pods
 }
 
 start_quiesce_monitor() {
@@ -250,6 +302,18 @@ start_quiesce_monitor() {
     done
   ) &
   QUIESCE_MONITOR_PID=$!
+  RUNNER_WATCH_STOP="$(mktemp "${TMPDIR:-/tmp}/yenhubs-db-runner-stop.XXXXXX")"
+  RUNNER_WATCH_FAILURE="$(mktemp "${TMPDIR:-/tmp}/yenhubs-db-runner-failure.XXXXXX")"
+  RUNNER_WATCH_READY="$(mktemp "${TMPDIR:-/tmp}/yenhubs-db-runner-ready.XXXXXX")"
+  chmod 600 "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY"
+  if ! recovery_start_no_managed_bot_runner_watch \
+    "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" \
+    RUNNER_WATCH_PID; then
+    : >"$QUIESCE_MONITOR_STOP"
+    wait "$QUIESCE_MONITOR_PID" 2>/dev/null || :
+    QUIESCE_MONITOR_PID=""
+    return 1
+  fi
 }
 
 stop_quiesce_monitor() {
@@ -258,7 +322,14 @@ stop_quiesce_monitor() {
   : >"$QUIESCE_MONITOR_STOP"
   if wait "$QUIESCE_MONITOR_PID"; then status=0; else status=$?; fi
   QUIESCE_MONITOR_PID=""
-  [[ "$status" == 0 && ! -s "$QUIESCE_MONITOR_FAILURE" ]]
+  if [[ -s "$QUIESCE_MONITOR_FAILURE" ]]; then status=1; fi
+  if ! recovery_stop_no_managed_bot_runner_watch \
+    "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" \
+    "$RUNNER_WATCH_PID"; then
+    status=1
+  fi
+  RUNNER_WATCH_PID=""
+  [[ "$status" == 0 ]]
 }
 
 RESTORE_PHASE="restoring"
@@ -272,7 +343,7 @@ start_quiesce_monitor
 # ret_admin even though it is a NOLOGIN role.
 # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
 # shellcheck disable=SC2016
-recovery_kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec '
+recovery_kubectl_mutate exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec '
   psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres -q <<'\''SQL'\''
 DO $do$
 BEGIN
@@ -295,7 +366,7 @@ SQL
 require_quiesced_consumers
 require_pgsql_source
 gzip -cd "$RECOVERY_DUMP_COPY" |
-  recovery_kubectl exec -i -n "$NAMESPACE" "$PGSQL_POD" -- \
+  recovery_kubectl_stream_mutate 3600 exec -i -n "$NAMESPACE" "$PGSQL_POD" -- \
     sh -ec 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d retdb' >/dev/null
 
 require_quiesced_consumers
@@ -359,6 +430,7 @@ if ! stop_quiesce_monitor; then
   printf 'A DB consumer resumed during the destructive restore window.\n' >&2
   exit 1
 fi
+require_quiesced_consumers
 RESTORE_PHASE="coordinated_hold"
 trap - ERR
 printf 'Database restore validated and held quiescent for coordinated storage restore: checkpoint=%s\n' \

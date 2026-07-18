@@ -40,6 +40,10 @@ done < <(
 )
 shellcheck "$ROOT_DIR/hubs-cloud/community-edition/services/coturn/"*.sh
 (
+  cd "$ROOT_DIR/hubs-cloud/community-edition"
+  npm ci --ignore-scripts --no-audit
+)
+(
   cd "$ROOT_DIR/hubs-cloud/community-edition/services/bot-orchestrator"
   npm ci --ignore-scripts --no-audit
 )

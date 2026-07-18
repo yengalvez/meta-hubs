@@ -308,8 +308,10 @@ if [[ "$VALUES_PARSE_OK" == true ]]; then
     HUB_DOMAIN ADM_EMAIL DB_USER DB_PASS SMTP_SERVER SMTP_PORT SMTP_USER SMTP_PASS
     NODE_COOKIE GUARDIAN_KEY PHX_KEY PERMS_KEY BOT_ACCESS_KEY BOT_RUNNER_ACCESS_KEY
     BOT_ORCHESTRATOR_ACCESS_KEY DASHBOARD_ACCESS_KEY OPENAI_API_KEY
+    BOT_IMAGE_PULL_CONFIG_JSON_BASE64
     GENERATE_PERSISTENT_VOLUMES PERSISTENT_VOLUME_STORAGE_CLASS PERSISTENT_VOLUME_SIZE
     OVERRIDE_HUBS_IMAGE OVERRIDE_RETICULUM_IMAGE OVERRIDE_BOT_ORCHESTRATOR_IMAGE
+    OVERRIDE_BOT_RUNNER_IMAGE
     OVERRIDE_COTURN_IMAGE OVERRIDE_DIALOG_IMAGE OVERRIDE_HAPROXY_IMAGE
     OVERRIDE_NEARSPARK_IMAGE OVERRIDE_PGBOUNCER_IMAGE
     OVERRIDE_PHOTOMNEMONIC_IMAGE OVERRIDE_POSTGRES_IMAGE
@@ -356,6 +358,7 @@ if [[ "$VALUES_PARSE_OK" == true ]]; then
   hubs_image="$(yaml_value OVERRIDE_HUBS_IMAGE)"
   reticulum_image="$(yaml_value OVERRIDE_RETICULUM_IMAGE)"
   bot_image="$(yaml_value OVERRIDE_BOT_ORCHESTRATOR_IMAGE)"
+  bot_runner_image="$(yaml_value OVERRIDE_BOT_RUNNER_IMAGE)"
   CORE_IMAGES_VALID=true
   if reactivation_image_override_is_exact hubs "$hubs_image"; then
     pass "OVERRIDE_HUBS_IMAGE exacto"
@@ -374,6 +377,19 @@ if [[ "$VALUES_PARSE_OK" == true ]]; then
   else
     CORE_IMAGES_VALID=false
     fail "OVERRIDE_BOT_ORCHESTRATOR_IMAGE debe ser ghcr.io/yengalvez/bot-orchestrator@sha256:<64hex>"
+  fi
+  if reactivation_image_override_is_exact bot-runner "$bot_runner_image"; then
+    pass "OVERRIDE_BOT_RUNNER_IMAGE exacto"
+  else
+    CORE_IMAGES_VALID=false
+    fail "OVERRIDE_BOT_RUNNER_IMAGE debe ser ghcr.io/yengalvez/bot-runner@sha256:<64hex>"
+  fi
+  if node "$SCRIPT_DIR/verify-bot-image-pull-config.mjs" \
+      --values "$VALUES_FILE" --verify-registry; then
+    pass "La credencial kubelet exacta autentica ambos digests bot en GHCR"
+  else
+    CORE_IMAGES_VALID=false
+    fail "BOT_IMAGE_PULL_CONFIG_JSON_BASE64 no autentica ambos digests bot en GHCR"
   fi
   EXPECTED_IMAGES_JSON="$(jq -cn \
     --arg bot "$bot_image" \
@@ -415,8 +431,8 @@ if [[ "$VALUES_PARSE_OK" == true ]]; then
     if [[ "$ALL_IMAGES_VALID" == true ]] &&
        recovery_deployment_inventory_is_acceptable \
          "$BACKUP_DIR/deployment-images.json" "$checkpoint_namespace" \
-         "$checkpoint_namespace_uid" "$EXPECTED_IMAGES_JSON"; then
-      pass "Inventario del checkpoint ligado a los 13 overrides exactos"
+         "$checkpoint_namespace_uid" "$EXPECTED_IMAGES_JSON" "$bot_runner_image"; then
+      pass "Inventario ligado a 13 Deployments y a runtime runner legacy o digest exacto"
     else
       fail "Inventario del checkpoint no coincide con los overrides configurados"
     fi
@@ -543,6 +559,9 @@ fi
 
 if [[ "$VALUES_PARSE_OK" == true ]]; then
   while IFS=$'\t' read -r image_pair image_reference; do
+    if [[ "$image_pair" == "bot-orchestrator/bot-orchestrator" ]]; then
+      continue
+    fi
     check_registry_image "$image_pair" "$image_reference" "$github_token"
   done < <(jq -r 'to_entries[] | [.key,.value] | @tsv' <<<"$EXPECTED_IMAGES_JSON")
 fi

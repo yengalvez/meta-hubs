@@ -19,7 +19,8 @@ Hubs Community Edition 2.1.0 on DigitalOcean Kubernetes with automated SSL via c
 > joint DB+storage checkpoint exists and every potentially included secret has
 > been rotated through the procedures in this runbook. Verify only by hashes,
 > configured-key presence and redacted reports; never reopen/print the ignored
-> manifest to inventory values.
+> manifest to inventory values. After that rotation, integrate and validate
+> `AUD-078` before dispatching candidate image builds.
 
 ---
 
@@ -43,7 +44,8 @@ HAProxy Ingress Controller (haproxytech/kubernetes-ingress:3.2)
     +---> Spoke (:8080)        -- Scene editor
     +---> Dialog (:4443)       -- WebRTC signaling (stream.domain)
     +---> Nearspark (:5000)    -- CORS image proxy (cors.domain)
-    +---> Bot orchestrator     -- Ghost runners + private AI chat proxy
+    +---> Bot orchestrator     -- Parent control plane + private AI chat proxy
+             +---> bot-runner Pods (integrated source: one per room/generation)
     +---> Coturn (:5349)       -- STUN/TURN for WebRTC NAT traversal
     +---> PostgreSQL (:5432)   -- Database (via pgbouncer)
 
@@ -55,8 +57,11 @@ cert-manager (namespace: cert-manager)
 
 ## Accepted Live State (July 2026)
 
-These images were built by the approved GitHub Actions workflows, deployed with the standard `gen-hcce` plus
-`kubectl apply` flow and validated in DOKS. They are pinned in the ignored local values file:
+These images were built by the approved GitHub Actions workflows, deployed by
+the procedure accepted at that historical cut and validated in DOKS. This table
+records the last accepted live baseline; it is not an instruction to bypass the
+current phase-aware `npm run apply` driver. The images are pinned in the ignored
+local values file:
 
 | Component | Live image | Actions run |
 |-----------|-----------------|-------------|
@@ -76,6 +81,23 @@ Production uses `RUNNER_BACKEND=ghost`, `GHOST_NAVIGATION_MODE=navmesh_preferred
 `MAX_BOTS_PER_ROOM=10`. Cloud commit `5a82de5` adds `mobility=static`, safe partial GLB loading and A* navigation over
 the Spoke navmesh while retaining the room config and prompt/runtime guardrails from the earlier audit.
 The exact bot digest is `sha256:325c5c10e4ee039518693771c0974a0e5c876dcf54c443295e84490f4fa8ec53`.
+
+`AUD-075` is closed in source at Cloud
+`5392495b077249edcedfb3092551201645f648f1`, not in the live images above. Cloud
+PR `#11` was merged into `development` as
+`ebe960794735d378149966b78090e22acc60cc26`; PR `#12` promoted that exact line
+to `master` as `5392495b077249edcedfb3092551201645f648f1`. The integrated source
+separates parent and runner into two images and creates one hardened runner Pod
+per room/generation. Cloud passes 128/128 orchestrator tests, 30/30 generator
+tests over the exact 58-resource inventory, and Reticulum 430 tests + 5
+properties. The root normal and `--full` gates are green: security 43,
+recovery 239, runner Pods 45, pull configuration 19, orchestrator Deployment
+18, Hubs 97, browser 11, capacity 115 fail-closed and Spoke 68. This is source
+and validation closure only: no new image build, digest, checkpoint, deployment,
+staging/live rollout or live attestation is claimed here.
+The subrepository heads are integrated, but the root gitlink is still only in
+the `codex/aud075-integration` candidate worktree and requires its PR/CI to
+root `main`.
 
 Node ghost is the only production/authenticated runner. Chromium is retained
 only as a legacy/local browser diagnostic without `--runner`; its renderer is
@@ -213,9 +235,12 @@ Pricing references: [DOKS](https://docs.digitalocean.com/products/kubernetes/det
 - Adding nodes (or extra node pools) increases monthly cost immediately.
 - Increasing PVC sizes increases block storage cost.
 
-For normal feature iteration, build with the approved GitHub Actions workflow, update the local image override, run
-`gen-hcce`, review the generated manifest and deploy with `kubectl apply`. Do not use `kubectl set image` or another
-deployment path unless the owner explicitly approves an emergency exception.
+For normal feature iteration, build with the approved GitHub Actions workflow,
+update the local image override, run `npm run gen-hcce`, review
+`kubectl --context "$EXPECTED_KUBE_CONTEXT" diff -f hcce.yaml` and deploy with
+the tracked Cloud `npm run apply` driver. Do not invoke `kubectl apply` directly
+for `hcce.yaml`, use `kubectl set image` or choose another deployment path; the
+driver owns the serialized, phase-aware mutation and its fail-closed gates.
 
 ---
 
@@ -386,8 +411,15 @@ Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
 - `OVERRIDE_HUBS_IMAGE` - set this to the digest-pinned custom client image when you ship client-side features
   (official `hubsfoundation/hubs:*` images do not include local code changes)
 - `OVERRIDE_BOT_ORCHESTRATOR_IMAGE` - set this to the digest-pinned custom bot image when room bots/chat are enabled
+- `OVERRIDE_BOT_RUNNER_IMAGE` - set this to the independently digest-pinned
+  ghost data-plane image; both bot overrides must come from the same accepted
+  Cloud commit
+- `BOT_IMAGE_PULL_CONFIG_JSON_BASE64` - kubelet-only registry configuration for
+  the generated `bot-images-pull` Secret. Never construct, decode or print this
+  value by hand; use the tracked updater below
 - `BOT_ACCESS_KEY` - legacy binding key consumed only by Reticulum
-- `BOT_RUNNER_ACCESS_KEY` - ghost runner join/snapshot key shared only by Reticulum and the runner parent/child
+- `BOT_RUNNER_ACCESS_KEY` - legacy process-local transition key retained only by
+  Reticulum; neither candidate bot image receives it
 - `BOT_ORCHESTRATOR_ACCESS_KEY` - key shared only by Reticulum and the bot-orchestrator parent HTTP service
 - `DASHBOARD_ACCESS_KEY` - Reticulum administrative-route key
 - all four internal credentials must be distinct random strings of at least 32 characters; rotate them only in the
@@ -404,6 +436,27 @@ Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
 Every `OVERRIDE_*_IMAGE` used by a Deployment must be `repository@sha256:<digest>`. After an Actions build, resolve
 the published tag to its registry digest, update the ignored local values and regenerate. The verifier deliberately
 fails on `stable-latest`, `*-latest` and version tags, even when they currently point at the expected bytes.
+
+Set or rotate the private bot-image pull config from
+`hubs-cloud/community-edition/` in Bash. `GHCR_TOKEN` must arrive through hidden
+input or an already protected environment variable; never put it in argv,
+tracked YAML or terminal output:
+
+```bash
+read -r -p "GHCR username: " GHCR_USERNAME
+read -r -s -p "GHCR read-packages token: " GHCR_TOKEN; echo
+export GHCR_USERNAME GHCR_TOKEN
+HCCE_INPUT_VALUES_PATH=/absolute/path/to/deployment/input-values.local.yaml \
+  npm run set-bot-image-pull-config
+unset GHCR_TOKEN GHCR_USERNAME
+```
+
+The updater atomically changes only `BOT_IMAGE_PULL_CONFIG_JSON_BASE64`, forces
+the private input to mode `0600` and emits no credential. The generator rejects
+empty credentials or a docker config that does not cover both selected bot
+image registries. The resulting `bot-images-pull` Secret is referenced only by
+the parent and runner ServiceAccounts through `imagePullSecrets`; it is never
+mounted into either Node container.
 
 Do not modify either secret-bearing values file with an in-place Perl/Ruby command. A replacement containing
 `@sha256` can be interpolated and corrupt the file. Use this safe pattern instead:
@@ -438,10 +491,11 @@ independent random values in `deployment/input-values.local.yaml`, copy that fil
 `hubs-cloud/community-edition/input-values.yaml`, run `npm run gen-hcce` and apply the generated manifest.
 
 The generator derives a SHA-256 checksum annotation for each credential. The
-manifest verifier binds the legacy and dashboard checksums only to Reticulum,
-and requires the runner/orchestrator checksums to match their exact Reticulum
-and bot-orchestrator consumers. Kubernetes then restarts the affected pod
-templates. Do not compensate with a manual one-sided rollout.
+manifest verifier binds the legacy bot, legacy master-runner and dashboard
+checksums only to Reticulum. Only the orchestrator checksum must match between
+Reticulum and the parent; the parent must not carry the master-runner checksum.
+Kubernetes then restarts the affected pod templates. Do not compensate with a
+manual one-sided rollout.
 
 After rotation, validate only those checksum annotations and filtered logging
 behavior. Phoenix logs must contain `[FILTERED]` for every access-key field;
@@ -462,46 +516,79 @@ Verify: `ls -lh hcce.yaml` should be 50-250KB.
 
 ### Step 8: Verify the generated manifest
 
-`npm run gen-hcce` now runs `verify-generated-manifest.js` automatically. Generation fails unless all of these
+`npm run gen-hcce` now runs `verify-generated-manifest.js` automatically. The
+final `AUD-075` source generates exactly 58 resources and fails unless all of
+these
 invariants hold:
 
 - `ret`, `dialog` and `nearspark` use cert-manager and per-ingress SSL redirect;
 - every application ingress selects `haproxy` through `spec.ingressClassName`;
 - global SSL redirect is disabled so ACME HTTP-01 solver ingresses remain reachable;
 - HAProxy does not use the legacy Mozilla image or security context;
-- every Deployment image is pinned by an exact SHA-256 digest;
+- every Deployment image and the separate runner image are pinned by an exact
+  SHA-256 digest;
 - PostgreSQL, Reticulum, Dialog and Coturn use `Recreate` for single-writer
   storage or exclusive host ports; bot-orchestrator also uses `Recreate` so an
   update never overlaps two authoritative runners;
 - Reticulum has exactly one desired replica, no `rollingUpdate` fields and no
   HPA targeting its Deployment;
 - Reticulum is non-privileged, drops every capability and has no propagated host mount;
-- bot-orchestrator runs as UID/GID 1000, drops every capability and uses RuntimeDefault seccomp;
+- bot-orchestrator runs as UID/GID 1000, drops every capability, uses
+  RuntimeDefault seccomp and receives only its namespaced Pod-control
+  ServiceAccount;
+- every dynamic runner uses the second digest, UID/GID 10001, a tokenless/RBAC-
+  free ServiceAccount, read-only root, bounded `/tmp`, requests/limits, drop-ALL
+  capabilities and RuntimeDefault seccomp;
 - Photomnemonic runs as UID/GID 1000, drops every capability, uses RuntimeDefault seccomp and exposes only its
   audited HTTP health probes;
-- Reticulum and bot-orchestrator carry the same bot-key checksum annotation;
-- bot-orchestrator uses `/health` for liveness and authoritative `/ready` for
-  readiness, requires navmesh, allows only ghost autostart and fixes the shared
-  OpenAI deadline to 4 seconds;
+- Reticulum and bot-orchestrator carry the same orchestrator-key checksum, while
+  the master runner key remains only in Reticulum;
+- bot-orchestrator uses `/health` for liveness and `/transport-ready` for its
+  Kubernetes readiness probe. The latter opens only after orphan cleanup;
+  authoritative bot acceptance remains `/ready`, with navmesh, lease/epoch,
+  config and spawn ACKs required;
 - Reticulum, both PgBouncer pools and Coturn carry one matching DB-credential checksum;
-- every Deployment except HAProxy disables service-account token automounting;
+- every Deployment except HAProxy and bot-orchestrator disables service-account
+  token automounting; both exceptions use separate least-privilege accounts;
 - Coturn does not use the known credential-leaking image;
 - HAProxy has startup, readiness and liveness probes on `/healthz:1042`;
 - all 13 containers have audited requests/memory limits and no CPU limit;
-- the five internal NetworkPolicies keep the exact audited caller/port matrix;
+- the inventory contains exactly the primary namespace and
+  `hcce-bot-runners`; the latter enforces, audits and warns at Pod Security
+  `restricted` v1.34;
+- there are exactly two equal `bot-images-pull` Secrets, one per namespace,
+  referenced by the two bot ServiceAccounts only as `imagePullSecrets`;
+- `bot-runner-capacity` limits the runner namespace to 10 Pods, 250 mCPU/1280
+  MiB of requests and 5 CPU/5 GiB of limits;
+- the cluster-scoped `ValidatingAdmissionPolicy/bot-runner-pods.yenhubs.org`
+  and its exact `Deny` binding admit only the generated runner-Pod contract;
+- the parent ServiceAccount receives create/delete/get/list Pod authority only
+  through the Role/RoleBinding in `hcce-bot-runners`; the same-named legacy
+  Role in the primary namespace has zero rules and both legacy objects carry
+  `yenhubs.org/legacy-runner-authority: neutralized`;
+- all eight NetworkPolicies keep the exact audited caller/port matrix. The two
+  runner policies deny all ingress/default traffic, then allow only DNS,
+  parent control and public TCP/443 egress;
 - the Photomnemonic egress policy permits only kube-dns and public IPv4 TCP/80,443 while excluding private/reserved
   destinations;
 - HAProxy RBAC contains CRD and Gateway API permissions;
 - no obsolete self-signed bootstrap secret or unresolved placeholder remains;
-- exactly one `LoadBalancer` service and two 10 GiB DigitalOcean PVCs are generated.
+- exactly one `LoadBalancer` service, two 10 GiB DigitalOcean PVCs and 58 total
+  resources are generated.
 
 Do not edit `hcce.yaml` manually. Fix the tracked template or input values and regenerate it.
 
 ### Step 9: Apply
 
 ```bash
-kubectl apply -f hcce.yaml
+kubectl --context "$EXPECTED_KUBE_CONTEXT" diff -f hcce.yaml
+KUBECTL_CONTEXT="$EXPECTED_KUBE_CONTEXT" npm run apply
 ```
+
+`npm run apply` reruns the generated-manifest verifier before its first cluster
+mutation, requires that the pinned context is also the current context, holds
+the global operation Lease and applies the generated resources sequentially.
+Do not replace it with a direct `kubectl apply -f hcce.yaml`.
 
 ### Step 10: Verify HAProxy RBAC and rollout
 
@@ -648,8 +735,9 @@ When you modify the Hubs client, Reticulum, or any configuration:
 cd hubs-cloud/community-edition
 npm run gen-hcce
 
-# 3. Apply only after the automatic manifest verifier passes
-kubectl apply -f hcce.yaml
+# 3. Inspect the complete generated change, then use the tracked apply driver
+kubectl --context "$EXPECTED_KUBE_CONTEXT" diff -f hcce.yaml
+KUBECTL_CONTEXT="$EXPECTED_KUBE_CONTEXT" npm run apply
 
 # 4. Verify
 kubectl get pods -n hcce            # All Running
@@ -692,6 +780,15 @@ Bot-orchestrator security gate before promotion:
   `room-bot-<hub_sid>-bot-<1..10>` identities and authoritative spawn ACKs.
   `/ready` must remain 503 while auth, navmesh, population, ACK or a new room
   configuration is pending; `/health=200` alone is not acceptance.
+- For the isolated runtime, require `/transport-ready=200` only as the parent
+  bootstrap probe, then prove `/ready=200` separately. The live verifier must
+  observe one stable Ready Pod per configured room, the exact runner digest,
+  parent-Pod UID ownership, generation/room-HMAC labels, the tokenless
+  `bot-runner` ServiceAccount and zero stale/terminal/unknown managed Pods.
+- Verify that `bot-images-pull` exists only as the generated kubelet pull
+  Secret, both bot ServiceAccounts reference it, neither container mounts it,
+  and the parent Role/RoleBinding has no verb/resource beyond the exact
+  generated Pod lifecycle contract.
 - Validate one neutral chat reply and one explicit human
   `go_to_waypoint` command after rollout; the action must be derived outside
   model output and revalidated by Reticulum.
@@ -727,6 +824,60 @@ Y después:
 kubectl -n hcce rollout restart deployment/reticulum
 kubectl -n hcce rollout status deployment/reticulum --timeout=300s
 ```
+
+### Rollout compatible de Reticulum y runners aislados
+
+`AUD-075`/`AUD-076` and the terminal-stop correction in `AUD-078` require a
+server-first transition through three complete generated manifests. Do not
+hand-edit, split or hotpatch `hcce.yaml`:
+
+1. From the last accepted live `process-local` baseline, create and validate a
+   fresh joint DB+storage checkpoint. Complete the coordinated `AUD-065`
+   rotation next, using the existing live digests and configuration so that the
+   rotation itself does not advance the candidate runtime. Verify the baseline
+   and rollback with current credentials before continuing.
+2. Integrate and validate `AUD-078` in its own Cloud branch and PR. Only after
+   `AUD-075` through `AUD-078` are in the accepted Cloud source may the approved
+   workflow build `bot-orchestrator` and `bot-runner` from that same commit.
+   Record both immutable digests and update the private pull config only in a
+   mode-`0600` values copy.
+3. Generate the complete 58-resource manifest with
+   `BOT_RUNNER_ACTIVATION_PHASE=bootstrap`. Review the context-pinned,
+   redacted `kubectl diff`, then apply it exclusively with
+   `KUBECTL_CONTEXT="$EXPECTED_KUBE_CONTEXT" npm run apply`. Reticulum and its
+   migrations become compatible while the parent and runner authority remain
+   fenced.
+4. Regenerate the same complete 58-resource inventory with phase `admission`,
+   review the diff and run the same wrapper. Require the admission policy,
+   effective RBAC checks and the negative unauthorized-Pod probe before
+   granting runner authority.
+5. Regenerate the complete 58-resource inventory with phase `active`, review
+   the diff and run the wrapper again. Require `/transport-ready`, authoritative
+   `/ready`, all eight NetworkPolicies and the live per-room Pod verifier.
+6. Complete cold desktop/mobile, 0/5/10 bot, chat/privacy, quarantine inventory,
+   terminal-stop acceptance and `./deployment/verify-live-reactivation.sh`.
+   Until every gate is green, the source integration is not a deployed or
+   attested result.
+
+A new runner cannot authenticate against old Reticulum; this is expected
+fail-closed behavior, not permission to bypass the order. Rollback is the
+reverse compatibility sequence: first disable/quarantine public bots and prove
+zero managed runner Pods, then apply a complete generated rollback phase that
+restores the previous process-local parent while retaining compatible new
+Reticulum.
+Verify legacy authentication privately, and only then apply the generated old
+Reticulum manifest. The current live `process-local` runtime remains the last
+accepted historical baseline. If a candidate rollout returns to it, keep public
+bots disabled and do not reopen or re-declare that rollback accepted until the
+current preflight, live verifier and cold-browser gates pass with the rotated
+credentials. It is never evidence for capacity certification.
+
+Applying the older manifest does **not** prune objects it no longer contains.
+Do not declare rollback clean merely because the old Deployments are Ready:
+inventory the candidate ServiceAccounts, Role, RoleBinding,
+`bot-images-pull` Secret and runner NetworkPolicy. Keep them inert while no
+managed runner Pod exists, then remove them only through a reviewed tracked
+cleanup/prune transition. Do not improvise manual RBAC or Secret patches.
 
 ---
 
@@ -779,7 +930,8 @@ The cheapest and most reliable loop is:
 2. Build + push the image in **GitHub Actions** (no DO CPU/RAM usage, avoids in-cluster OOM builds).
 3. Resolve the published registry digest and update `OVERRIDE_HUBS_IMAGE` as `repository@sha256:<digest>` in the local
    values file.
-4. Run `npm run gen-hcce`, review the diff, and deploy with `kubectl apply`.
+4. Run `npm run gen-hcce`, review the complete context-pinned `kubectl diff`,
+   and deploy with `KUBECTL_CONTEXT="$EXPECTED_KUBE_CONTEXT" npm run apply`.
 5. Verify the rollout and restart Reticulum to refresh page-origin HTML.
 
 Concrete commands (after the image exists in your registry):
@@ -789,7 +941,8 @@ cd /Users/Shared/Gits/YenHubs
 cp deployment/input-values.local.yaml hubs-cloud/community-edition/input-values.yaml
 cd hubs-cloud/community-edition
 npm run gen-hcce
-kubectl apply -f hcce.yaml
+kubectl --context "$EXPECTED_KUBE_CONTEXT" diff -f hcce.yaml
+KUBECTL_CONTEXT="$EXPECTED_KUBE_CONTEXT" npm run apply
 kubectl -n hcce rollout status deployment/hubs --timeout=300s
 kubectl -n hcce get deployment hubs -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
 
@@ -884,7 +1037,11 @@ Common failures:
 - `failed to read dockerfile: open Dockerfile: no such file or directory` on `hubs-cloud` bot-orchestrator builds: the workflow already defaults to `Override_Code_Path=community-edition/services/bot-orchestrator` and `Override_Dockerfile=community-edition/services/bot-orchestrator/Dockerfile`. Do not set `Override_Dockerfile=Dockerfile`; leave it empty or pass the full path.
 - `Invalid workflow file ... Unrecognized named-value: 'secrets'`: the `hubs/.github/workflows/hubs-RetPageOrigin.yml` workflow had a job-level `if:` that referenced `secrets.*` on a job that calls a reusable workflow (`uses:`). GitHub Actions rejects this at parse time. Fix: gate that job using `github.repository_owner` (or an explicit repo var like `ENABLE_TURKEY_GITOPS`) and pass secrets only in the `secrets:` block, not in the job `if:`.
 - Docker tag errors when building from branches like `codex/foo`: Docker tags cannot contain `/`. Fix: sanitize the tag in CI (replace `/` with `-`) or set `Override_Image_Tag` to a slash-free value.
-- `bot-orchestrator` `ErrImagePull` after `kubectl apply`: `hcce.yaml` may point to `$Container_Dockerhub_Username/bot-orchestrator:$Container_Tag` (often unresolved in forks). Fix by setting `OVERRIDE_BOT_ORCHESTRATOR_IMAGE` to a valid pushed image, or temporarily scale `deployment/bot-orchestrator` to `0` until the image exists.
+- `bot-orchestrator` or dynamic `bot-runner` `ErrImagePull`: require both exact
+  digests, regenerate `BOT_IMAGE_PULL_CONFIG_JSON_BASE64` through the hidden
+  updater and rerun preflight. If either image is unavailable, stop; restore the
+  previous generated manifest through the compatible rollback order instead of
+  scaling or patching workloads by hand.
 
 ### Room join error: `Imposible conectarse a esta sala` + `JsonWebTokenError: invalid signature`
 
@@ -909,8 +1066,12 @@ Prevention:
 
 ### Durable rollout
 
-The durable rollout is the GitHub Actions + local image override + `gen-hcce` + `kubectl apply` sequence above. Local
-Docker builds, in-cluster builds and runtime-only patches are not approved deployment methods for this project.
+The durable rollout is checkpoint and coordinated rotation first, then accepted
+source (`AUD-078` included), GitHub Actions images, immutable local overrides,
+three complete 58-resource generations (`bootstrap` -> `admission` -> `active`)
+and the context-pinned `npm run apply` driver for every phase. Local Docker
+builds, direct `kubectl apply -f hcce.yaml`, in-cluster builds and runtime-only
+patches are not approved deployment methods for this project.
 
 ### GHCR notes (if using `ghcr.io`)
 
@@ -921,20 +1082,17 @@ Docker builds, in-cluster builds and runtime-only patches are not approved deplo
 
 #### Cluster Pull Auth (Private GHCR)
 
-Recommended: attach the pull secret to the **default ServiceAccount** in the namespace so you never forget it in YAML:
+The historical live baseline can still contain registry authentication created
+under its earlier procedure. Treat that state as inventory only: do not repeat
+manual `kubectl create secret` or ServiceAccount patches for the candidate.
 
-```bash
-kubectl create secret generic ghcr-pull -n hcce \
-  --type=kubernetes.io/dockerconfigjson \
-  --from-file=.dockerconfigjson=/path/to/dockerconfig.json
-
-kubectl patch serviceaccount default -n hcce \
-  --type=merge \
-  -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
-```
-
-Do not patch individual Deployments. Attach the secret to the default
-ServiceAccount so generated manifests and future workloads use the same policy.
+The candidate uses the generated dedicated `bot-images-pull` contract. The
+58-resource generator creates that Secret and binds it explicitly to
+`bot-orchestrator` and `bot-runner`
+ServiceAccounts. Populate its private source only with
+`npm run set-bot-image-pull-config` and hidden/environment `GHCR_TOKEN`; never
+print or decode `BOT_IMAGE_PULL_CONFIG_JSON_BASE64`, and never attach the pull
+Secret to a container volume.
 
 > Important: if `BASE_ASSETS_PATH` is not set during build, pages may reference `/assets/...` and return 404 in production domains that serve assets from `assets.<domain>/hubs/`.
 >
@@ -1081,8 +1239,38 @@ ALLOW_CHECKPOINT_DOWNTIME=1 ./deployment/create-checkpoint.sh
 La opción de downtime es obligatoria: el comando toma un lock global
 inmutable, captura el contrato post-lock y lleva Reticulum, ambos Pgbouncers,
 bot-orchestrator y Coturn exactamente a cero mediante CAS antes de leer DB o
-PVC. Si no puede reanudar bajo las mismas UID/resourceVersion/plantillas,
-retiene el lock y deja los escritores a cero para revisión.
+PVC. Además espera y monitoriza cero Pods dinámicos gestionados de `bot-runner`
+durante toda la quiescencia; si reaparece uno, falla cerrado y no reanuda
+escritores. Si no puede reanudar bajo las mismas
+UID/resourceVersion/plantillas, retiene el lock y deja los escritores a cero
+para revisión.
+
+Antes de la primera mutación, `create-checkpoint.sh` clasifica y liga una de dos
+fronteras exactas. El baseline histórico `process-local` solo es admisible con
+su Deployment legacy completo, token de ServiceAccount desactivado, sin
+bindings ni anotaciones del runner aislado y sin el namespace
+`hcce-bot-runners`. El modo `kubernetes-pod` exige el manifiesto `active`,
+admission, Role y RBAC efectivo exactos. Cualquier mezcla, fase parcial o
+namespace residual selecciona el gate aislado y falla: nunca cae al camino
+legacy. El modo capturado se vuelve a comprobar mientras los writers están a
+cero y justo antes de reanudar el parent; si cambia, conserva el lock y la
+autoridad del parent permanece parada.
+
+Antes de cualquier mutación del clúster, el driver liga los valores locales a
+una copia privada `0600`, inmutable para esa ejecución. En modo
+`kubernetes-pod` liga además el manifiesto generado antes de reducir workloads;
+`process-local` no requiere ese manifiesto. Todos los gates posteriores
+consumen exclusivamente esas copias y las eliminan al salir. Una rotación
+posterior de los ficheros originales no cambia la autorización capturada ni
+impide la reanudación exacta; una deriva durante la copia falla antes del
+downtime.
+
+Las trampas `ERR` heredadas por sustituciones de comando o procesos en segundo
+plano solo propagan el fallo. Esos subshells contienen copias obsoletas del
+estado de ownership y nunca pueden reanudar escritores ni liberar locks. Solo
+el shell principal ejecuta una única recuperación autoritativa; si la
+reanudación exacta no es posible, conserva el lock y los escritores permanecen
+detenidos.
 
 El dump verifica esquema y migraciones; el backup de storage exige que cada `owned_file` activo tenga su par
 `.blob`/`.meta.json` y que no exista ningun par fisico incompleto. Puede incluir pares completos adicionales en estado
@@ -1102,8 +1290,12 @@ Kubernetes es solo estructural: omite
 valores de entorno, comandos, argumentos y valores de anotaciones; de los
 ConfigMap conserva solo los nombres de claves. El inventario exige los 12
 Deployments, 13 pares Deployment/contenedor, ningun `initContainer` ni
-contenedor efimero, todos los digests y paridad exacta con los overrides
-privados capturados desde una copia
+contenedor efimero. `deployment-images.json` usa schema 3 y añade
+`bot_runner_runtime`: el rollback legacy es exactamente
+`{mode:"process-local",image:null}`; el runtime aislado es
+`{mode:"kubernetes-pod",image:"...@sha256:..."}`, ligado al override privado
+exacto de `bot-runner`. Todos los digests y la paridad con los overrides se
+capturan desde una copia
 temporal `0600`. Todos los artefactos se crean con `umask 077` y permisos
 `0600`. El directorio final aparece mediante un unico `mv` solo despues de
 validar contenido y checksums; una colision o fallo elimina unicamente el
@@ -1292,7 +1484,9 @@ only in their read-only `*_PREFLIGHT=1` modes. The driver records the original
 replicas and keeps Reticulum, both Pgbouncers, bot-orchestrator and Coturn at
 zero continuously from before the DB drop until the DB contract, exact active
 UUID set, restored PVC pairs and live target identities have all passed. There
-is no intermediate DB-only scale-up. The storage child independently holds all
+must also be zero managed dynamic `bot-runner` Pods throughout quiesce and
+restore; their reappearance aborts the operation and preserves the fail-closed
+state. There is no intermediate DB-only scale-up. The storage child independently holds all
 five consumers at zero and rechecks both the checksummed DB contract and the
 exact active UUID set immediately before creating its restore pod. Before the
 first DB mutation, the driver creates an immutable, create-only ConfigMap lock
@@ -1303,6 +1497,11 @@ exact metadata at every destructive phase; it deletes the lock only after the
 complete ordered resume succeeds. It resumes Pgbouncer first, then Reticulum
 and only after Reticulum is Ready starts Coturn and bot-orchestrator, whose
 readiness depends on an authoritative Reticulum snapshot.
+
+El fail-close del restore también tiene un único propietario: solo el driver
+principal puede volver a cercar consumidores, retener el lock o completar la
+recuperación. Un error o reintento dentro de un subshell devuelve estado al
+driver, pero no puede duplicar el fencing ni liberar el lock.
 
 ```bash
 # Optional component diagnosis remains read-only.
@@ -1405,7 +1604,9 @@ When resuming the project:
 3. Reinstall cert-manager and reapply `/Users/Shared/Gits/YenHubs/deployment/ingress-class.yaml` plus `/Users/Shared/Gits/YenHubs/deployment/cluster-issuer.yaml`.
 4. Copy the local `input-values.local.yaml` back into `hubs-cloud/community-edition/input-values.yaml`.
 5. Run `npm ci && npm run gen-hcce`; the command verifies TLS, ingress class, RBAC and the single-LB invariant.
-6. Apply the generated file unchanged with `kubectl apply -f hcce.yaml`.
+6. Complete the tracked `bootstrap` -> `admission` -> `active` generation,
+   context-pinned diff and `npm run apply` sequence documented above; never
+   hand-edit or apply `hcce.yaml` directly.
 7. Restore DB and the matching fresh/empty `ret-pvc` only through
    `deployment/restore-checkpoint.sh`; never resume between the two halves.
 8. Confirm the driver brings proxies and Reticulum Ready before bot-orchestrator.

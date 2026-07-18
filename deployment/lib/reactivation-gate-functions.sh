@@ -119,6 +119,9 @@ reactivation_image_override_is_exact() {
     bot-orchestrator)
       [[ "$image" =~ ^ghcr\.io/yengalvez/bot-orchestrator@sha256:[a-fA-F0-9]{64}$ ]]
       ;;
+    bot-runner)
+      [[ "$image" =~ ^ghcr\.io/yengalvez/bot-runner@sha256:[a-fA-F0-9]{64}$ ]]
+      ;;
     *)
       return 2
       ;;
@@ -134,6 +137,9 @@ reactivation_image_for_pair_is_trusted() {
   case "$pair" in
     bot-orchestrator/bot-orchestrator)
       [[ "$repository" == ghcr.io/yengalvez/bot-orchestrator ]]
+      ;;
+    bot-runner/bot-runner)
+      [[ "$repository" == ghcr.io/yengalvez/bot-runner ]]
       ;;
     coturn/coturn)
       [[ "$repository" == ghcr.io/yengalvez/coturn ]]
@@ -242,7 +248,7 @@ reactivation_bot_health_is_acceptable() {
     type == "object" and
     .ok == true and
     .runner_backend_default == "ghost" and
-    .runner_backend_canary_hubs == [] and
+    (.runner_backend_canary_room_count | type == "number" and floor == . and . == 0) and
     .ghost_navigation_mode == "navmesh_preferred" and
     .ghost_navigation_require_navmesh == true and
     .llm_enabled == true and
@@ -273,12 +279,15 @@ reactivation_deployments_are_acceptable() {
   local reticulum_image="$3"
   local bot_image="$4"
   local expected_images_json="$5"
+  local runner_image="${6:-}"
   [[ -n "$payload" ]] || return 1
   reactivation_image_map_is_trusted "$expected_images_json" || return 1
+  reactivation_image_override_is_exact bot-runner "$runner_image" || return 1
   jq -e \
     --arg hubs "$hubs_image" \
     --arg reticulum "$reticulum_image" \
     --arg bot "$bot_image" \
+    --arg runner "$runner_image" \
     --argjson expected_images "$expected_images_json" '
     def expected_deployments:
       ["bot-orchestrator", "coturn", "dialog", "haproxy", "hubs", "nearspark",
@@ -323,7 +332,10 @@ reactivation_deployments_are_acceptable() {
     ([.items[] | select(.metadata.name == "reticulum") | .spec.template.spec.containers[] |
       select(.name == "reticulum") | .image] == [$reticulum]) and
     ([.items[] | select(.metadata.name == "bot-orchestrator") | .spec.template.spec.containers[] |
-      select(.name == "bot-orchestrator") | .image] == [$bot])
+      select(.name == "bot-orchestrator") | .image] == [$bot]) and
+    ([.items[] | select(.metadata.name == "bot-orchestrator") |
+      .spec.template.spec.containers[] | select(.name == "bot-orchestrator") |
+      (.env // [])[] | select(.name == "BOT_RUNNER_IMAGE") | .value] == [$runner])
   ' >/dev/null 2>&1 <<<"$payload"
 }
 
@@ -351,6 +363,44 @@ reactivation_hpas_do_not_target_reticulum() {
       .spec.scaleTargetRef.apiVersion == "apps/v1" and
       .spec.scaleTargetRef.kind == "Deployment" and
       .spec.scaleTargetRef.name == "reticulum")] | length) == 0
+  ' >/dev/null 2>&1 <<<"$payload"
+}
+
+reactivation_bot_control_plane_is_acceptable() {
+  local payload="${1:-}"
+  local namespace="${2:-}"
+  [[ -n "$payload" && "$namespace" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || return 2
+  jq -e --arg namespace "$namespace" '
+    type == "object" and
+    (keys | sort) == ["parent_role", "parent_role_binding", "parent_service_account", "runner_service_account"] and
+    .parent_service_account.apiVersion == "v1" and
+    .parent_service_account.kind == "ServiceAccount" and
+    .parent_service_account.metadata.name == "bot-orchestrator" and
+    .parent_service_account.metadata.namespace == $namespace and
+    .parent_service_account.automountServiceAccountToken == true and
+    .parent_service_account.imagePullSecrets == [{name:"bot-images-pull"}] and
+    .runner_service_account.apiVersion == "v1" and
+    .runner_service_account.kind == "ServiceAccount" and
+    .runner_service_account.metadata.name == "bot-runner" and
+    .runner_service_account.metadata.namespace == $namespace and
+    .runner_service_account.automountServiceAccountToken == false and
+    .runner_service_account.imagePullSecrets == [{name:"bot-images-pull"}] and
+    .parent_role.apiVersion == "rbac.authorization.k8s.io/v1" and
+    .parent_role.kind == "Role" and
+    .parent_role.metadata.name == "bot-orchestrator-runner-pods" and
+    .parent_role.metadata.namespace == $namespace and
+    (.parent_role.rules | type == "array" and length == 1) and
+    (.parent_role.rules[0].apiGroups == [""]) and
+    (.parent_role.rules[0].resources == ["pods"]) and
+    ((.parent_role.rules[0].verbs | sort) == ["create","delete","get","list"]) and
+    .parent_role_binding.apiVersion == "rbac.authorization.k8s.io/v1" and
+    .parent_role_binding.kind == "RoleBinding" and
+    .parent_role_binding.metadata.name == "bot-orchestrator-runner-pods" and
+    .parent_role_binding.metadata.namespace == $namespace and
+    .parent_role_binding.roleRef == {
+      apiGroup:"rbac.authorization.k8s.io",kind:"Role",name:"bot-orchestrator-runner-pods"
+    } and
+    .parent_role_binding.subjects == [{kind:"ServiceAccount",name:"bot-orchestrator",namespace:$namespace}]
   ' >/dev/null 2>&1 <<<"$payload"
 }
 
@@ -383,7 +433,20 @@ reactivation_network_policies_are_exact() {
       "pgsql-ingress", "photomnemonic-ingress", "photomnemonic-egress"
     ] | sort) and
     ([.items[].metadata.name] | unique | length) == 6 and
-    ingress_contract("bot-orchestrator-ingress"; "bot-orchestrator"; ["reticulum"]; 5001) and
+    (policy("bot-orchestrator-ingress")) == {
+      podSelector:{matchLabels:{app:"bot-orchestrator"}},
+      policyTypes:["Ingress"],
+      ingress:[{
+        from:[
+          {podSelector:{matchLabels:{app:"reticulum"}}},
+          {
+            podSelector:{matchLabels:{app:"bot-runner","yenhubs.org/managed-by":"bot-orchestrator"}},
+            namespaceSelector:{matchLabels:{"kubernetes.io/metadata.name":"hcce-bot-runners"}}
+          }
+        ],
+        ports:[{protocol:"TCP",port:5001}]
+      }]
+    } and
     ingress_contract("pgbouncer-ingress"; "pgbouncer"; ["reticulum"]; 5432) and
     ingress_contract("pgbouncer-t-ingress"; "pgbouncer-t"; ["reticulum"]; 5432) and
     ingress_contract("pgsql-ingress"; "pgsql"; ["pgbouncer", "pgbouncer-t"]; 5432) and

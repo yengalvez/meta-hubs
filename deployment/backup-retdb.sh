@@ -26,6 +26,10 @@ PARENT_DUMP_SHA256="${RECOVERY_DUMP_SHA256:-}"
 PARENT_STORAGE_SHA256="${RECOVERY_STORAGE_SHA256:-}"
 PARENT_NAMESPACE_UID="${RECOVERY_NAMESPACE_UID:-}"
 PARENT_PVC_UID="${RECOVERY_PVC_UID:-}"
+PARENT_LEASE_HOLDER="${YENHUBS_PARENT_LEASE_HOLDER:-}"
+PARENT_LEASE_UID="${YENHUBS_PARENT_LEASE_UID:-}"
+PARENT_PROCESS_PID="${YENHUBS_PARENT_PROCESS_PID:-}"
+PARENT_PROCESS_START_IDENTITY="${YENHUBS_PARENT_PROCESS_START_IDENTITY:-}"
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
 if [[ "$COORDINATED" == 1 ]]; then
@@ -34,7 +38,12 @@ if [[ "$COORDINATED" == 1 ]]; then
   RECOVERY_STORAGE_SHA256="$PARENT_STORAGE_SHA256"
   RECOVERY_NAMESPACE_UID="$PARENT_NAMESPACE_UID"
   RECOVERY_PVC_UID="$PARENT_PVC_UID"
+  recovery_adopt_parent_operation_serialization \
+    "$PARENT_LEASE_HOLDER" "$PARENT_LEASE_UID" \
+    "$PARENT_PROCESS_PID" "$PARENT_PROCESS_START_IDENTITY"
 fi
+unset YENHUBS_PARENT_LEASE_HOLDER YENHUBS_PARENT_LEASE_UID \
+  YENHUBS_PARENT_PROCESS_PID YENHUBS_PARENT_PROCESS_START_IDENTITY
 
 if [[ "$COORDINATED" != 0 && "$COORDINATED" != 1 ]]; then
   printf 'BACKUP_COORDINATED must be 0 or 1.\n' >&2
@@ -51,6 +60,7 @@ require_backup_guard() {
     recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
       "$deployment" 0 || return 1
   done
+  recovery_require_no_managed_bot_runner_pods
 }
 
 if [[ -e "$OUTPUT_PATH" || -e "$CONTRACT_OUTPUT_PATH" ]]; then
@@ -86,7 +96,7 @@ if [[ "$COORDINATED" == 1 ]]; then
     exit 1
   }
 fi
-recovery_kubectl rollout status deployment/pgsql -n "$NAMESPACE" --timeout=5m >/dev/null
+recovery_wait_for_deployment_rollout pgsql 300
 
 PGSQL_PODS_JSON="$(recovery_kubectl get pod -n "$NAMESPACE" -l app=pgsql -o json)"
 if ! PGSQL_POD_INFO="$(recovery_exact_ready_deployment_pod_info \
@@ -117,10 +127,18 @@ ACTIVE_FILES="$(jq -r '.critical_counts.active_owned_files' "$CONTRACT_BEFORE")"
 recovery_require_cluster_identity
 require_backup_guard
 require_pgsql_source
-# Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
-# shellcheck disable=SC2016
-recovery_kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- \
-  sh -ec 'pg_dump -U "$POSTGRES_USER" --format=plain retdb' |
+run_dump_stream() {
+  # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
+  # shellcheck disable=SC2016
+  if [[ "$COORDINATED" == 1 ]]; then
+    recovery_kubectl_stream_guarded 3600 exec -n "$NAMESPACE" "$PGSQL_POD" -- \
+      sh -ec 'pg_dump -U "$POSTGRES_USER" --format=plain retdb'
+  else
+    recovery_kubectl_stream 3600 exec -n "$NAMESPACE" "$PGSQL_POD" -- \
+      sh -ec 'pg_dump -U "$POSTGRES_USER" --format=plain retdb'
+  fi
+}
+run_dump_stream |
   gzip -9 > "$PARTIAL_PATH"
 chmod 600 "$PARTIAL_PATH"
 

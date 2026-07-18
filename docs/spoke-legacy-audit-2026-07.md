@@ -8,16 +8,22 @@ no es una actualización masiva: es recuperar un gate de pruebas fiable, reducir
 riesgos en incrementos pequeños y preservar sin regresiones los contratos de
 autoría y publicación que usa YenHubs.
 
+> **Addendum activo — 18 de julio de 2026:** la corrección del gate ya forma
+> parte de Cloud `master` final
+> `5392495b077249edcedfb3092551201645f648f1`, después de las promociones Cloud
+> completadas. El worktree raíz candidato fija ese commit, pero su PR/CI hacia
+> root `main` sigue pendiente. Esta integración de fuente y sus 68/68 pruebas,
+> lint y build no atribuyen una nueva imagen de Spoke, despliegue ni aceptación
+> funcional del candidato en staging/live.
+
 A fecha de esta auditoría:
 
 - producción continúa usando la imagen de Spoke fijada por digest que figura en
   el handoff (`sha256:f5120264938e189e702f835182ed4a28a5ce20b140d7262bc2a3074e6d0b6657`);
 - el cambio original `0edd75b` (`Fix Spoke unit test discovery`) se integró como
-  commit terminal `b7b752f` de `codex/bot-safety-final`; el puntero candidato
-  raíz ya fija ese commit y ambas ramas estan publicadas, pero todavia no
-  pertenecen a las ramas base ni estan desplegadas;
-- Hubs Cloud PR `#1` esta `CLEAN` y verde contra `development`; despues de su
-  merge queda el paso separado `development -> master`;
+  `b7b752f` dentro de la línea que culmina en Cloud `master`
+  `5392495b077249edcedfb3092551201645f648f1`; los PR de promoción de Cloud ya
+  están fusionados, mientras el puntero raíz final sigue pendiente de PR;
 - el cambio modifica una sola línea de `package.json`: entrega el glob entre
   comillas a AVA para que AVA, y no el shell local, descubra la suite;
 - con Node `16.13.2` y Yarn `1.22.22`, el comando corregido ejecutó localmente
@@ -28,8 +34,9 @@ A fecha de esta auditoría:
   en la imagen runtime.
 
 Por tanto, Spoke está **operativo en producción**, mientras que la corrección
-del gate esta publicada y validada como **candidata**, pero no fusionada ni
-desplegada. Cualquier modernización descrita aquí sigue siendo trabajo separado.
+del gate está fusionada y validada en la **fuente candidata**, pero esa fuente
+no tiene una nueva imagen ni está desplegada o aceptada live. Cualquier
+modernización descrita aquí sigue siendo trabajo separado.
 
 ## Alcance y evidencia
 
@@ -44,12 +51,13 @@ La revisión cubrió, sin mutar producción:
 - reproducción de esta sesión sobre `0edd75b` con Node `16.13.2`, Yarn
   `1.22.22` y `yarn unit-tests`: `68 tests passed` en 6,09 s;
 - repeticion sobre `b7b752f` dentro del gate raiz completo y del job Spoke del
-  PR Cloud `#1`, con lint, 68/68 y build verdes;
+  PR Cloud inicial, seguida por las promociones que culminan en
+  `5392495b0772`, con lint, 68/68 y build verdes;
 - la documentación de despliegue, handoff y auditoría vigente.
 
-La reproducción 68/68 ya cuenta con evidencia local integrada y CI durable. No
-sustituye el merge en `development`, el paso posterior `development -> master`,
-una imagen candidata ni la aceptacion funcional de Spoke en staging.
+La reproducción 68/68 ya cuenta con evidencia local integrada y CI durable en
+las ramas base Cloud. No sustituye el PR del gitlink raíz, una imagen candidata
+ni la aceptación funcional de Spoke en staging/live.
 
 No se ejecutó una actualización de dependencias, construcción de imagen,
 rollout ni operación de escritura sobre un proyecto Spoke real.

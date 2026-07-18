@@ -23,13 +23,27 @@ anticipar conflictos, nunca como baseline automatico de produccion.
 
 ## Corte integrado del 18 de julio
 
-La integración validada se apoya en Hubs `674ece411691` y Hubs Cloud
-`0f151eb88da1`, ambos en `master`. Incluye la capacidad base64url exacta de 32
+La integración validada se apoya en Hubs
+`674ece41169117a1a842af9cf5d256a10cc43df0` y Hubs Cloud
+`5392495b077249edcedfb3092551201645f648f1`, ambos en `master`. Incluye
+`AUD-075`: parent y runner separados, un Pod por sala/generación, token v1
+seguido de lease/epoch DB, dos imágenes y control Kubernetes mínimo. Incluye
+además la capacidad base64url exacta de 32
 caracteres por canal para chat privado, la admisión global serializada de salas
 con bots, la aprobación/cuarentena persistente exacta de configuraciones y el
 fencing PostgreSQL de autoridad por sala. El
-gate Spoke pasó 68/68 pruebas, lint y build con Node 16.13.2/Yarn 1. Es GO de Git
-y CI de fuentes, no de builds de imágenes, carga física, staging ni live.
+gate Spoke pasó 68/68 pruebas, lint y build con Node 16.13.2/Yarn 1. Para
+el head final pasan 128/128 pruebas del orquestador, 30/30 del generador, 58
+recursos, Reticulum 430 pruebas + 5 properties y CI Cloud. Los gates raíz normal
+y `--full` pasan con seguridad 43, recuperación 239, Pods 45, pull 19,
+Deployment 18, Hubs 97, navegador 11, capacidad 115 fail-closed, Dialog 2,
+Photomnemonic 7 y Spoke 68. No se afirma build de imágenes, checkpoint nuevo,
+carga física, staging, deploy ni aceptación live.
+
+Esos commits ya pertenecen a las ramas base de los subrepositorios. El root
+solo los fija por ahora en el worktree candidato `codex/aud075-integration`:
+queda pendiente su PR/CI hacia root `main`, por lo que no debe describirse aún
+el gitlink raíz como integrado.
 
 ## Preparar remotos
 
@@ -66,9 +80,9 @@ El script:
 
 En el corte integrado del 18 de julio de 2026:
 
-- Hubs esta 87 commits propios por delante de `prod-2026-03-11` y no le falta
+- Hubs esta 89 commits propios por delante de `prod-2026-03-11` y no le falta
   ningun commit de esa release;
-- Hubs CE esta 85 commits propios por delante de `2.1.0` y no le falta ningun
+- Hubs CE esta 103 commits propios por delante de `2.1.0` y no le falta ningun
   commit de esa release;
 - hay 13 commits Hubs y 5 Hubs CE no publicados en los respectivos `master`
   oficiales;
@@ -135,11 +149,11 @@ Reglas de resolucion:
 | Networking/NAF | usuario remoto, namespace/ACK de bots, tipos `networkId`, late join, remove/reconnect |
 | Media/avatar upload | normal, full-body/RPM histórico, GLB neutral, preview, privado y featured |
 | Room settings/Reticulum | persistencia, permisos y normalizacion backend |
-| Bots | admisión global, aprobación/cuarentena exacta y migración fail-closed, Presence/auth, spawn ACK, navmesh obligatorio, `/ready`, capacidad exacta por canal, chat, moderación/deadline, rate limit y privacidad |
+| Bots | admisión global, aprobación/cuarentena, token v1 + lease UUID/epoch DB, un Pod por sala, parent/runner credentials y digests separados, reconciliación/UID exactos, `/transport-ready`, Presence/ACK/navmesh `/ready`, chat, moderación/deadline, rate limit y privacidad |
 | UI/i18n | desktop, tablet, movil, espanol y escena 3D visible |
 | Spoke | 68/68 pruebas y lint/build legacy; después login, abrir proyecto, guardar y publicar en copia segura |
 | Dialog/Coturn | entrada de sala y audio entre dos clientes |
-| Generator/Kubernetes | 44 recursos, un LB, digests, TLS, RBAC y diff seguro |
+| Generator/Kubernetes | 58 recursos, dos namespaces, un LB, dos digests bot, pull Secret privado, cuota, ValidatingAdmissionPolicy+binding, ServiceAccounts/RBAC efectivos mínimos, ocho NetworkPolicies, TLS y diff seguro |
 
 ## Conflictos previsibles
 
@@ -160,12 +174,44 @@ El inventario detallado esta en `docs/customization-inventory.md`.
 ## Integracion y rollback
 
 Antes de desplegar el código integrado siguen bloqueando: `AUD-065` (checkpoint fresco
-DB+storage y rotación coordinada), aislamiento OS/pod por runner, despliegue y
-atestación del fencing DB ya integrado, revisión y aprobación individual del
+DB+storage y rotación coordinada), construcción/despliegue/atestación del
+aislamiento por Pod y del fencing DB ya integrados, revisión y aprobación individual del
 inventario que generará la migración ya integrada, y una parada autoritativa
 más fuerte que el `room_stop` best-effort. También
 faltan builds de imágenes por Actions, carga física, staging y aceptación live;
 ningún gate de fuentes mide capacidad ni autoriza rollout público.
+
+El orden de la campaña vigente es estricto: primero cerrar el gitlink raíz de
+`AUD-075`; después crear el checkpoint y completar la rotación `AUD-065` sobre
+el baseline live; a continuación implementar y fusionar `AUD-078` en una rama
+Cloud separada; solo entonces construir las imágenes por Actions y desplegar el
+candidato. Un build anterior no sustituye ni adelanta checkpoint o rotación.
+
+El cambio de runners se promociona con dos imágenes del mismo commit y tres
+manifiestos completos de 58 recursos, regenerados sucesivamente con
+`BOT_RUNNER_ACTIVATION_PHASE=bootstrap`, `admission` y `active`. Cada fase se
+aplica exclusivamente desde `hubs-cloud/community-edition` mediante
+`npm run apply` y un `KUBECTL_CONTEXT` exacto. El wrapper verifica el manifiesto,
+serializa la mutación con el Lease global, mantiene el parent y los runners
+parados hasta completar policy/RBAC/probe, y vuelve a cercar la autoridad si
+detecta error o deriva. No usar un `kubectl apply -f hcce.yaml` directo para
+saltar esa máquina de estados.
+
+Los 58 recursos abarcan los namespaces `hcce` y `hcce-bot-runners`, cuota,
+ValidatingAdmissionPolicy+binding, RBAC mínimo comprobado con revisiones
+efectivas y ocho NetworkPolicies. Rollback en orden inverso: cero Pods runner,
+parent legacy contra Reticulum compatible y solo después Reticulum antiguo.
+El runtime `process-local` sigue siendo el último baseline live aceptado. Si se
+usa como rollback de un candidato, los bots públicos permanecen deshabilitados
+y no se reabre ni se declara aceptado de nuevo hasta superar preflight,
+verificador live y carga fría actuales con las credenciales rotadas.
+
+`kubectl apply` de un manifiesto viejo no poda ServiceAccounts, Role,
+RoleBinding, `bot-images-pull` ni NetworkPolicy ausentes de ese YAML. El rollback
+debe inventariarlos y mantenerlos inertes hasta una limpieza trackeada; no usar
+parches manuales. El pull config se actualiza exclusivamente con
+`npm run set-bot-image-pull-config`, `GHCR_TOKEN` oculto/en entorno y sin mostrar
+`BOT_IMAGE_PULL_CONFIG_JSON_BASE64`.
 
 Una release solo se acepta cuando:
 

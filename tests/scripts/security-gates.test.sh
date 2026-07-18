@@ -35,11 +35,13 @@ else
   fail_test "live acceptance status matrix"
 fi
 
-bot_health_good='{"ok":true,"runner_backend_default":"ghost","runner_backend_canary_hubs":[],"ghost_navigation_mode":"navmesh_preferred","ghost_navigation_require_navmesh":true,"llm_enabled":true,"model":"gpt-5-nano","max_bots_per_room":10,"max_active_rooms":5}'
-bot_health_bad='{"ok":true,"runner_backend_default":"ghost","runner_backend_canary_hubs":[],"ghost_navigation_mode":"navmesh_preferred","ghost_navigation_require_navmesh":false,"llm_enabled":true,"model":"gpt-5-nano","max_bots_per_room":10,"max_active_rooms":5}'
+bot_health_good='{"ok":true,"runner_backend_default":"ghost","runner_backend_canary_room_count":0,"ghost_navigation_mode":"navmesh_preferred","ghost_navigation_require_navmesh":true,"llm_enabled":true,"model":"gpt-5-nano","max_bots_per_room":10,"max_active_rooms":5}'
+bot_health_bad='{"ok":true,"runner_backend_default":"ghost","runner_backend_canary_room_count":0,"ghost_navigation_mode":"navmesh_preferred","ghost_navigation_require_navmesh":false,"llm_enabled":true,"model":"gpt-5-nano","max_bots_per_room":10,"max_active_rooms":5}'
 if reactivation_bot_health_is_acceptable "$bot_health_good" &&
   ! reactivation_bot_health_is_acceptable "$bot_health_bad" &&
   ! reactivation_bot_health_is_acceptable "${bot_health_good/\"llm_enabled\":true/\"llm_enabled\":false}" &&
+  ! reactivation_bot_health_is_acceptable "${bot_health_good/\"runner_backend_canary_room_count\":0/\"runner_backend_canary_room_count\":1}" &&
+  ! reactivation_bot_health_is_acceptable "${bot_health_good/\"runner_backend_canary_room_count\":0/\"runner_backend_canary_hubs\":[]}" &&
   ! reactivation_bot_health_is_acceptable ''; then
   pass_test "bot liveness contract requires ghost, navmesh and audited model limits"
 else
@@ -116,9 +118,12 @@ else
 fi
 
 printf -v digest '%064d' 0
+bot_runner_image="ghcr.io/yengalvez/bot-runner@sha256:$digest"
 if reactivation_image_override_is_exact hubs "ghcr.io/yengalvez/hubs@sha256:$digest" &&
   reactivation_image_override_is_exact reticulum "ghcr.io/yengalvez/reticulum@sha256:$digest" &&
   reactivation_image_override_is_exact bot-orchestrator "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" &&
+  reactivation_image_override_is_exact bot-runner "$bot_runner_image" &&
+  reactivation_image_for_pair_is_trusted bot-runner/bot-runner "$bot_runner_image" &&
   ! reactivation_image_override_is_exact hubs "ghcr.io/yengalvez/hubs:latest" &&
   ! reactivation_image_override_is_exact hubs "ghcr.io/other/hubs@sha256:$digest"; then
   pass_test "image overrides require exact repository and 64-hex digest"
@@ -126,10 +131,29 @@ else
   fail_test "image override contract"
 fi
 
+if node "$ROOT_DIR/tests/scripts/bot-orchestrator-deployment.test.mjs"; then
+  pass_test "bot parent Deployment verifier rejects unsafe fields and accepts only Kubernetes defaults"
+else
+  fail_test "bot parent Deployment contract"
+fi
+
+if node "$ROOT_DIR/tests/scripts/bot-runner-pods.test.mjs"; then
+  pass_test "live runner Pod verifier rejects identity, HMAC, token, digest, security and TOCTOU drift"
+else
+  fail_test "live runner Pod verifier contract"
+fi
+
+if node "$ROOT_DIR/tests/scripts/bot-image-pull-config.test.mjs"; then
+  pass_test "bot pull config verifier binds both images and both exact live Secrets/namespaces without disclosure"
+else
+  fail_test "bot image pull credential contract"
+fi
+
 deployments_good="$(jq -cn \
   --arg hubs "ghcr.io/yengalvez/hubs@sha256:$digest" \
   --arg reticulum "ghcr.io/yengalvez/reticulum@sha256:$digest" \
-  --arg bot "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" '
+  --arg bot "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
+  --arg runner "$bot_runner_image" '
   def item($name; $containers): {
     metadata:{name:$name},
     spec:{replicas:1,strategy:{type:"Recreate"},template:{spec:{initContainers:[],containers:$containers}}},
@@ -137,7 +161,8 @@ deployments_good="$(jq -cn \
   };
   def image($name): "ghcr.io/yengalvez/" + $name + "@sha256:" + ("a" * 64);
   {items:[
-    item("bot-orchestrator";[{name:"bot-orchestrator",image:$bot}]),
+    item("bot-orchestrator";[{name:"bot-orchestrator",image:$bot,
+      env:[{name:"BOT_RUNNER_IMAGE",value:$runner}]}]),
     item("coturn";[{name:"coturn",image:image("coturn")}]),
     item("dialog";[{name:"dialog",image:image("dialog")}]),
     item("haproxy";[{name:"haproxy",image:image("haproxy")}]),
@@ -193,57 +218,57 @@ if reactivation_deployments_are_acceptable "$deployments_good" \
     "ghcr.io/yengalvez/hubs@sha256:$digest" \
     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
-    "$expected_deployment_images" &&
+    "$expected_deployment_images" "$bot_runner_image" &&
   ! reactivation_deployments_are_acceptable "$deployments_evil_core" \
     "ghcr.io/yengalvez/hubs@sha256:$digest" \
     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
-    "$expected_deployment_images" &&
+    "$expected_deployment_images" "$bot_runner_image" &&
   ! reactivation_deployments_are_acceptable "$deployments_evil_noncore" \
     "ghcr.io/yengalvez/hubs@sha256:$digest" \
     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
-    "$expected_deployment_images" &&
+    "$expected_deployment_images" "$bot_runner_image" &&
   ! reactivation_deployments_are_acceptable "$deployments_with_init" \
     "ghcr.io/yengalvez/hubs@sha256:$digest" \
     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
-    "$expected_deployment_images" &&
+    "$expected_deployment_images" "$bot_runner_image" &&
   ! reactivation_deployments_are_acceptable "$deployments_with_ephemeral" \
     "ghcr.io/yengalvez/hubs@sha256:$digest" \
     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
-    "$expected_deployment_images" &&
+    "$expected_deployment_images" "$bot_runner_image" &&
   ! reactivation_deployments_are_acceptable "$deployments_two_bot_replicas" \
     "ghcr.io/yengalvez/hubs@sha256:$digest" \
     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
-    "$expected_deployment_images" &&
+    "$expected_deployment_images" "$bot_runner_image" &&
   ! reactivation_deployments_are_acceptable "$deployments_bot_rolling" \
     "ghcr.io/yengalvez/hubs@sha256:$digest" \
     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
-    "$expected_deployment_images" &&
+    "$expected_deployment_images" "$bot_runner_image" &&
   ! reactivation_deployments_are_acceptable "$deployments_two_reticulum_replicas" \
     "ghcr.io/yengalvez/hubs@sha256:$digest" \
     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
-    "$expected_deployment_images" &&
+    "$expected_deployment_images" "$bot_runner_image" &&
   ! reactivation_deployments_are_acceptable "$deployments_reticulum_residual_rolling" \
     "ghcr.io/yengalvez/hubs@sha256:$digest" \
     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
-    "$expected_deployment_images" &&
+    "$expected_deployment_images" "$bot_runner_image" &&
   ! reactivation_deployments_are_acceptable "$deployments_swapped_pair" \
     "ghcr.io/yengalvez/hubs@sha256:$digest" \
     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
-    "$expected_deployment_images" &&
+    "$expected_deployment_images" "$bot_runner_image" &&
   ! reactivation_deployments_are_acceptable "$deployments_extra" \
     "ghcr.io/yengalvez/hubs@sha256:$digest" \
     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
-    "$expected_deployment_images"; then
+    "$expected_deployment_images" "$bot_runner_image"; then
   pass_test "live deployment inventory binds all 13 candidate images and rejects overlap, init/ephemeral containers, replica drift, pair swaps and extras"
 else
   fail_test "exact live deployment inventory contract"
@@ -269,6 +294,42 @@ if reactivation_reticulum_deployment_is_singleton "$reticulum_singleton" &&
   pass_test "Reticulum authority is singleton, Recreate-only, HPA-free and pod UID/owner checked in both root gates"
 else
   fail_test "Reticulum singleton authority contract"
+fi
+
+bot_control_plane_good="$(jq -cn '
+  {
+    parent_service_account:{apiVersion:"v1",kind:"ServiceAccount",
+      metadata:{name:"bot-orchestrator",namespace:"hcce"},
+      automountServiceAccountToken:true,imagePullSecrets:[{name:"bot-images-pull"}]},
+    runner_service_account:{apiVersion:"v1",kind:"ServiceAccount",
+      metadata:{name:"bot-runner",namespace:"hcce"},
+      automountServiceAccountToken:false,imagePullSecrets:[{name:"bot-images-pull"}]},
+    parent_role:{apiVersion:"rbac.authorization.k8s.io/v1",kind:"Role",
+      metadata:{name:"bot-orchestrator-runner-pods",namespace:"hcce"},
+      rules:[{apiGroups:[""],resources:["pods"],verbs:["create","delete","get","list"]}]},
+    parent_role_binding:{apiVersion:"rbac.authorization.k8s.io/v1",kind:"RoleBinding",
+      metadata:{name:"bot-orchestrator-runner-pods",namespace:"hcce"},
+      roleRef:{apiGroup:"rbac.authorization.k8s.io",kind:"Role",name:"bot-orchestrator-runner-pods"},
+      subjects:[{kind:"ServiceAccount",name:"bot-orchestrator",namespace:"hcce"}]}
+  }
+')"
+bot_control_extra_verb="$(jq -c '.parent_role.rules[0].verbs += ["watch"]' <<<"$bot_control_plane_good")"
+bot_control_runner_token="$(jq -c '.runner_service_account.automountServiceAccountToken = true' <<<"$bot_control_plane_good")"
+bot_control_extra_pull="$(jq -c '.runner_service_account.imagePullSecrets += [{name:"rogue"}]' <<<"$bot_control_plane_good")"
+bot_control_extra_subject="$(jq -c '.parent_role_binding.subjects += [{kind:"ServiceAccount",name:"rogue",namespace:"hcce"}]' <<<"$bot_control_plane_good")"
+bot_control_bad_ref="$(jq -c '.parent_role_binding.roleRef.name = "cluster-admin"' <<<"$bot_control_plane_good")"
+if reactivation_bot_control_plane_is_acceptable "$bot_control_plane_good" hcce &&
+  ! reactivation_bot_control_plane_is_acceptable "$bot_control_extra_verb" hcce &&
+  ! reactivation_bot_control_plane_is_acceptable "$bot_control_runner_token" hcce &&
+  ! reactivation_bot_control_plane_is_acceptable "$bot_control_extra_pull" hcce &&
+  ! reactivation_bot_control_plane_is_acceptable "$bot_control_extra_subject" hcce &&
+  ! reactivation_bot_control_plane_is_acceptable "$bot_control_bad_ref" hcce &&
+  grep -Eq 'deletecollection pods' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
+  grep -Eq 'create pods/exec' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
+  grep -Eq 'watch secrets' "$ROOT_DIR/deployment/verify-live-reactivation.sh"; then
+  pass_test "runner control plane rejects extra grants, token mounts, pull secrets, subjects and role refs"
+else
+  fail_test "runner control-plane and effective RBAC contract"
 fi
 
 reticulum_health_controller="${RETICULUM_HEALTH_CONTROLLER_PATH:-$ROOT_DIR/hubs-cloud/community-edition/services/reticulum/lib/ret_web/controllers/health_controller.ex}"
@@ -303,7 +364,23 @@ network_policies_good="$(jq -cn '
      "192.168.0.0/16","198.18.0.0/15","198.51.100.0/24","203.0.113.0/24",
      "224.0.0.0/4","240.0.0.0/4"];
   {items:[
-    ingress("bot-orchestrator-ingress";"bot-orchestrator";["reticulum"];5001),
+    {
+      metadata:{name:"bot-orchestrator-ingress"},
+      spec:{
+        podSelector:{matchLabels:{app:"bot-orchestrator"}},
+        policyTypes:["Ingress"],
+        ingress:[{
+          from:[
+            {podSelector:{matchLabels:{app:"reticulum"}}},
+            {
+              podSelector:{matchLabels:{app:"bot-runner","yenhubs.org/managed-by":"bot-orchestrator"}},
+              namespaceSelector:{matchLabels:{"kubernetes.io/metadata.name":"hcce-bot-runners"}}
+            }
+          ],
+          ports:[{port:5001,protocol:"TCP"}]
+        }]
+      }
+    },
     ingress("pgbouncer-ingress";"pgbouncer";["reticulum"];5432),
     ingress("pgbouncer-t-ingress";"pgbouncer-t";["reticulum"];5432),
     ingress("pgsql-ingress";"pgsql";["pgbouncer","pgbouncer-t"];5432),
@@ -342,7 +419,7 @@ if reactivation_network_policies_are_exact "$network_policies_good" &&
   ! reactivation_network_policies_are_exact "$network_extra_rule" &&
   ! reactivation_network_policies_are_exact "$network_broad_peer" &&
   ! reactivation_network_policies_are_exact "$network_extra_egress"; then
-  pass_test "global NetworkPolicy inventory rejects every extra policy, rule and broad peer"
+  pass_test "six-policy parent inventory binds cross-namespace runner ingress and rejects extras"
 else
   fail_test "exact global NetworkPolicy inventory contract"
 fi
@@ -403,16 +480,89 @@ else
   fail_test "tracked values example must be usable by the safe parser"
 fi
 
+# The dollar-prefixed name below is the literal source contract, not a shell expansion.
+# shellcheck disable=SC2016
 if grep -Fn '|| true' "$ROOT_DIR/deployment/preflight-reactivation.sh" \
     "$ROOT_DIR/deployment/verify-live-reactivation.sh" >/dev/null ||
   grep -En 'output/latest-backup-path|output/checkpoints.*tail -1' \
     "$ROOT_DIR/deployment/preflight-reactivation.sh" >/dev/null ||
   ! grep -Eq 'BACKUP_DIR debe señalar explicitamente' "$ROOT_DIR/deployment/preflight-reactivation.sh" ||
-  ! grep -Eq 'deployment/bot-orchestrator :5001' "$ROOT_DIR/deployment/verify-live-reactivation.sh" ||
+  ! grep -Fq '"pod/$runner_parent_name" :5001' "$ROOT_DIR/deployment/verify-live-reactivation.sh" ||
   ! grep -Eq 'kill -0.*port_forward_pid' "$ROOT_DIR/deployment/verify-live-reactivation.sh"; then
-  fail_test "preflight/live scripts retain forbidden masking, implicit backup or fixed listener"
+  fail_test "preflight/live scripts retain forbidden masking, implicit backup or unpinned listener"
 fi
-pass_test "preflight requires an explicit backup and live verification uses a supervised ephemeral port"
+pass_test "preflight requires an explicit backup and live verification pins an owned Pod with an ephemeral port"
+
+deployment_refresh_line="$(grep -nF 'recovery_kubectl get deployment bot-orchestrator' \
+  "$ROOT_DIR/deployment/verify-live-reactivation.sh" | tail -1 | cut -d: -f1)"
+# The dollar-prefixed name is the literal source contract under inspection.
+# shellcheck disable=SC2016
+parent_refresh_line="$(grep -nF 'recovery_kubectl get pod "$runner_parent_name"' \
+  "$ROOT_DIR/deployment/verify-live-reactivation.sh" | tail -1 | cut -d: -f1)"
+runner_verifier_line="$(grep -nF 'verify-bot-runner-pods.mjs' \
+  "$ROOT_DIR/deployment/verify-live-reactivation.sh" | tail -1 | cut -d: -f1)"
+if [[ ! "$deployment_refresh_line" =~ ^[0-9]+$ ||
+      ! "$parent_refresh_line" =~ ^[0-9]+$ ||
+      ! "$runner_verifier_line" =~ ^[0-9]+$ ||
+      "$deployment_refresh_line" -ge "$parent_refresh_line" ||
+      "$parent_refresh_line" -ge "$runner_verifier_line" ]]; then
+  fail_test "live runner gate must refresh Deployment and parent Pod immediately before verification"
+fi
+pass_test "live runner gate refreshes Deployment and parent Pod before the exact final verifier"
+
+live_gate_path="$ROOT_DIR/deployment/verify-live-reactivation.sh"
+runner_capture_call="$(awk '
+  /^capture_bot_runner_pods\(\)/ { capture=1 }
+  capture { print }
+  capture && /^}/ { exit }
+' "$live_gate_path")"
+pull_verifier_call="$(awk '
+  /node .*verify-bot-image-pull-config\.mjs/ { capture=1 }
+  capture { print }
+  capture && /--verify-registry; then/ { exit }
+' "$live_gate_path")"
+orchestrator_verifier_call="$(awk '
+  /node .*verify-bot-orchestrator-deployment\.mjs/ { capture=1 }
+  capture { print }
+  capture && /--deployment .*; then/ { exit }
+' "$live_gate_path")"
+runner_pods_verifier_call="$(awk '
+  /node .*verify-bot-runner-pods\.mjs/ { capture=1 }
+  capture { print }
+  capture && /--readiness .*; then/ { exit }
+' "$live_gate_path")"
+# These dollar-prefixed names are literal callsite contracts under inspection.
+# shellcheck disable=SC2016
+if ! grep -Fq 'RUNNER_NAMESPACE="hcce-bot-runners"' "$live_gate_path" ||
+   [[ "$runner_capture_call" != *'recovery_kubectl get pod -n "$RUNNER_NAMESPACE" -o json'* ]] ||
+   [[ "$runner_capture_call" == *'-l app=bot-runner'* ||
+      "$runner_capture_call" == *'-l yenhubs.org/managed-by=bot-orchestrator'* ]] ||
+   [[ "$pull_verifier_call" != *'--secret "$bot_pull_secret_file" --namespace "$NAMESPACE"'* ]] ||
+   [[ "$pull_verifier_call" != *'--runner-secret "$bot_runner_pull_secret_file" --runner-namespace "$RUNNER_NAMESPACE"'* ]] ||
+   [[ "$pull_verifier_call" != *'--deployments "$bot_deployments_file" --verify-registry'* ]] ||
+   [[ "$orchestrator_verifier_call" != *'--namespace "$NAMESPACE"'* ||
+      "$orchestrator_verifier_call" != *'--runner-namespace "$RUNNER_NAMESPACE"'* ]] ||
+   [[ "$runner_pods_verifier_call" != *'--namespace "$NAMESPACE"'* ||
+      "$runner_pods_verifier_call" != *'--runner-namespace "$RUNNER_NAMESPACE"'* ]]; then
+  fail_test "live bot verifier callsites must pass both namespaces, both Secrets and registry proof"
+fi
+pass_test "live bot verifier callsites use all dedicated runner Pods and the complete CLI contracts"
+
+# Dollar-prefixed names below are literal source contracts under inspection.
+# shellcheck disable=SC2016
+if ! grep -Fq '"create serviceaccounts/token"' "$live_gate_path" ||
+   ! grep -Fq '"update pods/ephemeralcontainers"' "$live_gate_path" ||
+   ! grep -Fq '"create pods/eviction"' "$live_gate_path" ||
+   ! grep -Fq '"bind roles" "escalate roles"' "$live_gate_path" ||
+   ! grep -Fq '"impersonate users" "impersonate groups" "impersonate serviceaccounts"' \
+     "$live_gate_path" ||
+   ! grep -Fq '"$NAMESPACE bot-orchestrator $RUNNER_NAMESPACE parent-runner"' \
+     "$live_gate_path" ||
+   ! grep -Fq '"$RUNNER_NAMESPACE bot-runner $NAMESPACE runner-parent"' \
+     "$live_gate_path"; then
+  fail_test "live RBAC gate must deny escalation and mutation for both identities in both namespaces"
+fi
+pass_test "live RBAC callsite covers mutation, escalation, impersonation and both namespace directions"
 
 preflight_bin="$temp_root/preflight-bin"
 mkdir -p "$preflight_bin"
