@@ -372,6 +372,11 @@ resume_writers() {
   local index deployment contract uid resource_version replicas selector fingerprint
   local -a order=(1 2 0 4 3)
   recovery_require_operation_lock || return 1
+  # Classify mode drift before monitor reconstruction derives the runner
+  # namespaces. A partial isolated-runner binding must retain the exact
+  # semantic failure even when the synchronous guard and watcher race.
+  recovery_require_checkpoint_runner_mode_exact \
+    "$VALUES_SOURCE_FILE" "$CHECKPOINT_RUNNER_MODE" >/dev/null || return 1
   prepare_runner_monitor_for_resume || return 1
   [[ "$WRITERS_MUTATED" == 1 ]] || return 0
   recovery_require_no_managed_bot_runner_watch_healthy \
@@ -400,6 +405,11 @@ resume_writers() {
   for index in "${order[@]}"; do
     deployment="${CONSUMERS[$index]}"
     if [[ "$deployment" == bot-orchestrator ]]; then
+      # Re-check before any helper derives runner namespaces. The later gate
+      # remains intentionally adjacent to restoring parent authority and
+      # closes drift across the post-watch stable-absence window.
+      recovery_require_checkpoint_runner_mode_exact \
+        "$VALUES_SOURCE_FILE" "$CHECKPOINT_RUNNER_MODE" >/dev/null || return 1
       recovery_require_no_managed_bot_runner_watch_healthy \
         "$RUNNER_MONITOR_FAILURE" "$RUNNER_MONITOR_READY" \
         "$RUNNER_MONITOR_PID" || return 1

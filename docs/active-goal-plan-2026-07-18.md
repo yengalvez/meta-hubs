@@ -135,6 +135,42 @@ de `AUD-075` quedan integrados, todavía sin cambiar el runtime live.
 
 ### Fase 2 — cerrar inmediatamente `AUD-065`
 
+#### Fase 2A — completar primero el tooling de rotación
+
+- [ ] Crear una rama raíz propia `codex/aud065-process-local-rotation` desde el
+  `main` resultante de la Fase 1; no mezclar imágenes, dependencias, upstream,
+  `AUD-075`, `AUD-078` ni otra modernización.
+- [ ] Implementar un coordinador trackeado y context-pinned que rote únicamente
+  el baseline `process-local` y los mismos digests live, sin usar el apply
+  histórico desnudo ni introducir recursos candidatos de `AUD-075`.
+- [ ] Implementar la transición segura de `DB_PASS` en el rol PostgreSQL
+  persistente, con rollback mediante la credencial nueva y prueba de rechazo de
+  la anterior; actualizar solo el Secret no cuenta como rotación de la base.
+- [ ] Añadir verificación de paridad de `PERMS_KEY` entre Reticulum y Dialog
+  únicamente por huella, sin imprimir el valor.
+- [ ] Añadir un diff de rollout redactado: recursos no-Secret por estructura y
+  Secrets solo por presencia/huella; nunca enviar `data` o `stringData` a la
+  salida diagnóstica.
+- [ ] Cubrir coordinador, fallo parcial, rollback y redacción con fixtures; pasar
+  los gates proporcionales, revisión independiente, PR/CI y merge antes de crear
+  el checkpoint live.
+
+Resultado intermedio: existe una ruta reproducible para rotar el runtime que ya
+funciona sin adelantar el candidato ni revelar secretos.
+
+#### Fase 2B — preparar credenciales sin invalidar todavía el baseline
+
+- [ ] Crear por canales privados las credenciales externas nuevas necesarias y
+  preparar las internas nuevas, manteniendo válidas las anteriores hasta que el
+  rollout coordinado haya sido aceptado.
+- [ ] Hacer disponible el fichero privado en el worktree final mediante una ruta
+  absoluta o una copia regular `0600`, nunca mediante Git, symlink, chat o
+  salida de terminal; no abrirlo ni usarlo como evidencia.
+- [ ] Preparar values anterior/nuevo y rollback como snapshots privados `0600`,
+  comprobando solo esquema, presencia y huellas.
+
+#### Fase 2C — checkpoint y rotación inmediata
+
 - [ ] Confirmar contexto Kubernetes, namespace, UID, PVC, Deployments e imágenes
   mediante rutas redactadas; no abrir ni imprimir manifiestos privados.
 - [ ] Crear un checkpoint nuevo con `./deployment/create-checkpoint.sh` que
@@ -302,6 +338,8 @@ secretos ni reemplazar la evidencia original.
 | 2026-07-18 14:20 CEST | Fase 1: publicación del candidato | Commit raíz `9e7b860`, push de `codex/aud075-integration` y PR `meta-hubs #5` hacia `main`; el PR incluye este plan activo y declara explícitamente que no hubo mutación live | Esperar CI, corregir únicamente fallos reales y fusionar el PR |
 | 2026-07-18 14:23 CEST | Fase 1: corrección CI focal | El run `29644117855` pasó gitlinks, Gitleaks y Actionlint, pero el ShellCheck Linux señaló `SC2317` en el callback `heartbeat_stop`, invocado indirectamente por `trap`; se amplió la supresión existente `SC2329` exclusivamente a `SC2317,SC2329`. `bash -n`, ShellCheck local y `git diff --check` vuelven a pasar | Publicar la corrección mínima y exigir un nuevo run verde sobre su SHA exacto |
 | 2026-07-18 14:36 CEST | Fase 1: reproducibilidad desde clone limpio | Los runs `29644229034`/`29644229946` ya pasan ShellCheck, pero revelaron `Cannot find module 'yaml'`: el workflow instalaba solo el orquestador aunque dos verificadores raíz importan el parser declarado y lockeado por Community Edition. Workflow y `verify-project.sh` instalan ahora ambos paquetes propietarios con `npm ci --ignore-scripts --no-audit`; revisión independiente confirma la frontera. `verify-project.sh` vuelve a pasar con seguridad 43/43, recuperación 239/239, Gitleaks y auditoría upstream | Publicar el fix hermético y exigir dos ejecuciones CI verdes sobre el nuevo SHA |
+| 2026-07-18 15:04 CEST | Fase 1: orden determinista del fail-close en Linux | Los runs `29644657391`/`29644658348` pasan instalación limpia y 43/43 gates de seguridad, pero Linux permite que el watcher de Pods detecte dos derivas parciales antes del gate semántico; ambos runs conservan parent a cero y lock retenido, aunque 237/239 tests exigen el diagnóstico exacto. `resume_writers` revalida ahora el modo antes de derivar namespaces, conserva el gate posterior TOCTOU y pasa el foco 61/61, ShellCheck y la suite completa 239/239 | Repetir checks estáticos, publicar el ajuste y exigir dos runs verdes sobre el SHA exacto |
+| 2026-07-18 15:04 CEST | Preparación de Fase 2, solo lectura | Auditoría independiente confirma que el checkpoint `process-local` es fail-closed, pero no existe todavía coordinador compliant para rotar el rol PostgreSQL, atestar `PERMS_KEY` por huella ni producir un diff redactado sin adelantar `AUD-075`; el fichero privado solo está disponible como regular `0600` fuera del worktree candidato | Se añade Fase 2A de tooling antes de gastar el checkpoint/TTL; Fase 1 continúa siendo la activa y producción permanece intacta |
 
 Mientras se completa la Fase 1, la copia autoritativa está en el worktree
 indicado al principio. Después de fusionarla, continuar desde la versión
