@@ -100,6 +100,33 @@ export function verifyBotPullConfig({
   return true;
 }
 
+// Validate a credential transition without returning either credential or a
+// reusable digest. Re-encoding or reformatting the same Docker config must not
+// count as a rotation: the GHCR token itself has to change.
+export function verifyBotPullConfigRotation({
+  oldEncoded,
+  newEncoded,
+  botImage,
+  runnerImage
+}) {
+  verifyBotPullConfig({ encoded: oldEncoded, botImage, runnerImage });
+  verifyBotPullConfig({ encoded: newEncoded, botImage, runnerImage });
+  const oldCredential = canonicalGhcrCredential(oldEncoded);
+  const newCredential = canonicalGhcrCredential(newEncoded);
+  const oldToken = Buffer.from(oldCredential.token, "utf8");
+  const newToken = Buffer.from(newCredential.token, "utf8");
+  try {
+    if (oldToken.length === newToken.length &&
+        crypto.timingSafeEqual(oldToken, newToken)) {
+      reject("credential_not_rotated");
+    }
+  } finally {
+    oldToken.fill(0);
+    newToken.fill(0);
+  }
+  return true;
+}
+
 function canonicalGhcrCredential(encoded) {
   let parsed;
   try {
@@ -134,7 +161,7 @@ function canonicalGhcrCredential(encoded) {
     separator <= 0 || !username.trim() || username.includes(":") ||
     !token.trim() || /[\u0000-\u001f\u007f]/u.test(decodedCredential)
   ) reject("credential_contract");
-  return { basic: credential.auth };
+  return { basic: credential.auth, username, token };
 }
 
 async function boundedResponseText(response, maximumBytes, code) {

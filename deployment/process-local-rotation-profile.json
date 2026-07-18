@@ -1,0 +1,378 @@
+{
+  "schema_version": 1,
+  "profile_id": "yenhubs-process-local-credential-rotation-v1",
+  "runner_mode": "process-local",
+  "baseline_provenance": {
+    "cloud_source_commit": "5a82de5387d7296cd01470d5136b2c07c2d5c7ac",
+    "historical_generated_resource_count": 42
+  },
+  "namespace_value_key": "Namespace",
+  "baseline_resource_identities": [
+    { "apiVersion": "v1", "kind": "Namespace", "namespace": null, "name": "$Namespace" },
+    { "apiVersion": "v1", "kind": "Secret", "namespace": "$Namespace", "name": "configs" },
+    { "apiVersion": "networking.k8s.io/v1", "kind": "Ingress", "namespace": "$Namespace", "name": "ret" },
+    { "apiVersion": "networking.k8s.io/v1", "kind": "Ingress", "namespace": "$Namespace", "name": "dialog" },
+    { "apiVersion": "networking.k8s.io/v1", "kind": "Ingress", "namespace": "$Namespace", "name": "nearspark" },
+    { "apiVersion": "v1", "kind": "ConfigMap", "namespace": "$Namespace", "name": "ret-config" },
+    { "apiVersion": "apps/v1", "kind": "Deployment", "namespace": "$Namespace", "name": "reticulum" },
+    { "apiVersion": "v1", "kind": "Service", "namespace": "$Namespace", "name": "ret" },
+    { "apiVersion": "apps/v1", "kind": "Deployment", "namespace": "$Namespace", "name": "bot-orchestrator" },
+    { "apiVersion": "v1", "kind": "Service", "namespace": "$Namespace", "name": "bot-orchestrator" },
+    { "apiVersion": "v1", "kind": "Service", "namespace": "$Namespace", "name": "pgsql" },
+    { "apiVersion": "apps/v1", "kind": "Deployment", "namespace": "$Namespace", "name": "pgsql" },
+    { "apiVersion": "apps/v1", "kind": "Deployment", "namespace": "$Namespace", "name": "pgbouncer" },
+    { "apiVersion": "v1", "kind": "Service", "namespace": "$Namespace", "name": "pgbouncer" },
+    { "apiVersion": "apps/v1", "kind": "Deployment", "namespace": "$Namespace", "name": "pgbouncer-t" },
+    { "apiVersion": "v1", "kind": "Service", "namespace": "$Namespace", "name": "pgbouncer-t" },
+    { "apiVersion": "apps/v1", "kind": "Deployment", "namespace": "$Namespace", "name": "hubs" },
+    { "apiVersion": "v1", "kind": "Service", "namespace": "$Namespace", "name": "hubs" },
+    { "apiVersion": "apps/v1", "kind": "Deployment", "namespace": "$Namespace", "name": "spoke" },
+    { "apiVersion": "v1", "kind": "Service", "namespace": "$Namespace", "name": "spoke" },
+    { "apiVersion": "apps/v1", "kind": "Deployment", "namespace": "$Namespace", "name": "nearspark" },
+    { "apiVersion": "v1", "kind": "Service", "namespace": "$Namespace", "name": "nearspark" },
+    { "apiVersion": "v1", "kind": "Service", "namespace": "$Namespace", "name": "speelycaptor" },
+    { "apiVersion": "apps/v1", "kind": "Deployment", "namespace": "$Namespace", "name": "photomnemonic" },
+    { "apiVersion": "v1", "kind": "Service", "namespace": "$Namespace", "name": "photomnemonic" },
+    { "apiVersion": "apps/v1", "kind": "Deployment", "namespace": "$Namespace", "name": "dialog" },
+    { "apiVersion": "v1", "kind": "Service", "namespace": "$Namespace", "name": "dialog" },
+    { "apiVersion": "apps/v1", "kind": "Deployment", "namespace": "$Namespace", "name": "coturn" },
+    { "apiVersion": "v1", "kind": "Service", "namespace": "$Namespace", "name": "coturn" },
+    { "apiVersion": "v1", "kind": "ConfigMap", "namespace": "$Namespace", "name": "haproxy-tcp-config" },
+    { "apiVersion": "v1", "kind": "ConfigMap", "namespace": "$Namespace", "name": "haproxy-config" },
+    { "apiVersion": "apps/v1", "kind": "Deployment", "namespace": "$Namespace", "name": "haproxy" },
+    { "apiVersion": "v1", "kind": "Service", "namespace": "$Namespace", "name": "lb" },
+    { "apiVersion": "v1", "kind": "ServiceAccount", "namespace": "$Namespace", "name": "haproxy-sa" },
+    { "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole", "namespace": null, "name": "haproxy-cr" },
+    { "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding", "namespace": null, "name": "haproxy-rb" },
+    { "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "namespace": "$Namespace", "name": "bot-orchestrator-ingress" },
+    { "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "namespace": "$Namespace", "name": "pgsql-ingress" },
+    { "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "namespace": "$Namespace", "name": "pgbouncer-ingress" },
+    { "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "namespace": "$Namespace", "name": "pgbouncer-t-ingress" },
+    { "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "namespace": "$Namespace", "name": "photomnemonic-ingress" },
+    { "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "namespace": "$Namespace", "name": "photomnemonic-egress" }
+  ],
+  "projected_resources": {
+    "secret": "configs"
+  },
+  "bound_resources": {
+    "config_map": "ret-config"
+  },
+  "required_deployments": [
+    "bot-orchestrator",
+    "coturn",
+    "dialog",
+    "haproxy",
+    "hubs",
+    "nearspark",
+    "pgbouncer",
+    "pgbouncer-t",
+    "photomnemonic",
+    "pgsql",
+    "reticulum",
+    "spoke"
+  ],
+  "secret_keys": [
+    "ADM_EMAIL",
+    "BOT_ACCESS_KEY",
+    "DB_HOST",
+    "DB_HOST_T",
+    "DB_NAME",
+    "DB_PASS",
+    "DB_USER",
+    "GUARDIAN_KEY",
+    "HUB_DOMAIN",
+    "NODE_COOKIE",
+    "OPENAI_API_KEY",
+    "PERMS_KEY",
+    "PGRST_DB_URI",
+    "PGRST_JWT_SECRET",
+    "PHX_KEY",
+    "PSQL",
+    "SKETCHFAB_API_KEY",
+    "SMTP_PASS",
+    "SMTP_PORT",
+    "SMTP_SERVER",
+    "SMTP_USER",
+    "TENOR_API_KEY"
+  ],
+  "derived_secret_keys": [
+    "PGRST_JWT_SECRET"
+  ],
+  "invariant_secret_keys": [
+    "ADM_EMAIL",
+    "DB_HOST",
+    "DB_HOST_T",
+    "DB_NAME",
+    "DB_USER",
+    "HUB_DOMAIN",
+    "SMTP_PORT",
+    "SMTP_SERVER",
+    "SMTP_USER"
+  ],
+  "required_rotated_secret_keys": [
+    "BOT_ACCESS_KEY",
+    "DB_PASS",
+    "GUARDIAN_KEY",
+    "NODE_COOKIE",
+    "OPENAI_API_KEY",
+    "PERMS_KEY",
+    "PHX_KEY",
+    "SMTP_PASS"
+  ],
+  "rotate_if_configured_secret_keys": [
+    "SKETCHFAB_API_KEY",
+    "TENOR_API_KEY"
+  ],
+  "ret_config_data_key": "config.toml.template",
+  "ret_config_placeholder_counts": {
+    "ADM_EMAIL": 1,
+    "BOT_ACCESS_KEY": 2,
+    "DB_HOST": 2,
+    "DB_HOST_T": 1,
+    "DB_NAME": 3,
+    "DB_PASS": 3,
+    "DB_USER": 3,
+    "DOMAIN": 2,
+    "GUARDIAN_KEY": 1,
+    "HUB_DOMAIN": 7,
+    "IMG_PROXY": 1,
+    "PERMS_KEY": 1,
+    "PHOTOMNEMONIC": 1,
+    "PHX_KEY": 1,
+    "POD_NS": 5,
+    "SKETCHFAB_API_KEY": 1,
+    "SMTP_PASS": 1,
+    "SMTP_PORT": 1,
+    "SMTP_SERVER": 2,
+    "SMTP_USER": 1,
+    "SPEELYCAPTOR": 1,
+    "STORAGE_QUOTA_GB": 1,
+    "TENOR_API_KEY": 1,
+    "YTDL_HOST": 1
+  },
+  "ret_config_forbidden_value_keys": [
+    "BOT_ACCESS_KEY",
+    "DB_PASS",
+    "GUARDIAN_KEY",
+    "NODE_COOKIE",
+    "OPENAI_API_KEY",
+    "PERMS_KEY",
+    "PGRST_DB_URI",
+    "PGRST_JWT_SECRET",
+    "PHX_KEY",
+    "PSQL",
+    "SKETCHFAB_API_KEY",
+    "SMTP_PASS",
+    "TENOR_API_KEY"
+  ],
+  "secret_env_bindings": [
+    { "deployment": "bot-orchestrator", "container": "bot-orchestrator", "env": "BOT_ACCESS_KEY", "key": "BOT_ACCESS_KEY" },
+    { "deployment": "bot-orchestrator", "container": "bot-orchestrator", "env": "OPENAI_API_KEY", "key": "OPENAI_API_KEY" },
+    { "deployment": "coturn", "container": "coturn", "env": "PSQL", "key": "PSQL" },
+    { "deployment": "dialog", "container": "dialog", "env": "perms_key", "key": "PERMS_KEY" },
+    { "deployment": "pgbouncer", "container": "pgbouncer", "env": "DB_USER", "key": "DB_USER" },
+    { "deployment": "pgbouncer", "container": "pgbouncer", "env": "DB_PASSWORD", "key": "DB_PASS" },
+    { "deployment": "pgbouncer-t", "container": "pgbouncer-t", "env": "DB_USER", "key": "DB_USER" },
+    { "deployment": "pgbouncer-t", "container": "pgbouncer-t", "env": "DB_PASSWORD", "key": "DB_PASS" },
+    { "deployment": "pgsql", "container": "postgresql", "env": "POSTGRES_USER", "key": "DB_USER" },
+    { "deployment": "pgsql", "container": "postgresql", "env": "POSTGRES_PASSWORD", "key": "DB_PASS" },
+    { "deployment": "pgsql", "container": "postgresql", "env": "POSTGRES_DB", "key": "DB_NAME" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_NODE_COOKIE", "key": "NODE_COOKIE" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_HUB_DOMAIN", "key": "HUB_DOMAIN" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_DOMAIN", "key": "HUB_DOMAIN" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_DB_USER", "key": "DB_USER" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_DB_PASS", "key": "DB_PASS" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_DB_NAME", "key": "DB_NAME" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_DB_HOST", "key": "DB_HOST" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_DB_HOST_T", "key": "DB_HOST_T" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_GUARDIAN_KEY", "key": "GUARDIAN_KEY" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_PERMS_KEY", "key": "PERMS_KEY" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_PHX_KEY", "key": "PHX_KEY" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_SMTP_SERVER", "key": "SMTP_SERVER" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_SMTP_PORT", "key": "SMTP_PORT" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_SMTP_USER", "key": "SMTP_USER" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_SMTP_PASS", "key": "SMTP_PASS" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_ADM_EMAIL", "key": "ADM_EMAIL" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_SKETCHFAB_API_KEY", "key": "SKETCHFAB_API_KEY" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_TENOR_API_KEY", "key": "TENOR_API_KEY" },
+    { "deployment": "reticulum", "container": "reticulum", "env": "turkeyCfg_BOT_ACCESS_KEY", "key": "BOT_ACCESS_KEY" },
+    { "deployment": "reticulum", "container": "postgrest", "env": "PGRST_DB_URI", "key": "PGRST_DB_URI" },
+    { "deployment": "reticulum", "container": "postgrest", "env": "PGRST_JWT_SECRET", "key": "PGRST_JWT_SECRET" }
+  ],
+  "database_uri_contracts": {
+    "PGRST_DB_URI": {
+      "host_value_key": "DB_HOST",
+      "port": "5432"
+    },
+    "PSQL": {
+      "host_literal": "pgsql",
+      "port": "5432"
+    }
+  },
+  "image_pairs": [
+    {
+      "deployment": "bot-orchestrator",
+      "container": "bot-orchestrator",
+      "value_key": "OVERRIDE_BOT_ORCHESTRATOR_IMAGE",
+      "repositories": ["ghcr.io/yengalvez/bot-orchestrator"]
+    },
+    {
+      "deployment": "coturn",
+      "container": "coturn",
+      "value_key": "OVERRIDE_COTURN_IMAGE",
+      "repositories": ["ghcr.io/yengalvez/coturn"]
+    },
+    {
+      "deployment": "dialog",
+      "container": "dialog",
+      "value_key": "OVERRIDE_DIALOG_IMAGE",
+      "repositories": ["ghcr.io/yengalvez/dialog"]
+    },
+    {
+      "deployment": "haproxy",
+      "container": "haproxy",
+      "value_key": "OVERRIDE_HAPROXY_IMAGE",
+      "repositories": [
+        "ghcr.io/yengalvez/haproxy",
+        "docker.io/haproxytech/kubernetes-ingress",
+        "haproxytech/kubernetes-ingress"
+      ]
+    },
+    {
+      "deployment": "hubs",
+      "container": "hubs",
+      "value_key": "OVERRIDE_HUBS_IMAGE",
+      "repositories": ["ghcr.io/yengalvez/hubs"]
+    },
+    {
+      "deployment": "nearspark",
+      "container": "nearspark",
+      "value_key": "OVERRIDE_NEARSPARK_IMAGE",
+      "repositories": [
+        "ghcr.io/yengalvez/nearspark",
+        "docker.io/mozillareality/nearspark",
+        "mozillareality/nearspark"
+      ]
+    },
+    {
+      "deployment": "pgbouncer",
+      "container": "pgbouncer",
+      "value_key": "OVERRIDE_PGBOUNCER_IMAGE",
+      "repositories": [
+        "ghcr.io/yengalvez/pgbouncer",
+        "docker.io/edoburu/pgbouncer",
+        "edoburu/pgbouncer"
+      ]
+    },
+    {
+      "deployment": "pgbouncer-t",
+      "container": "pgbouncer-t",
+      "value_key": "OVERRIDE_PGBOUNCER_IMAGE",
+      "repositories": [
+        "ghcr.io/yengalvez/pgbouncer",
+        "docker.io/edoburu/pgbouncer",
+        "edoburu/pgbouncer"
+      ]
+    },
+    {
+      "deployment": "photomnemonic",
+      "container": "photomnemonic",
+      "value_key": "OVERRIDE_PHOTOMNEMONIC_IMAGE",
+      "repositories": ["ghcr.io/yengalvez/photomnemonic"]
+    },
+    {
+      "deployment": "pgsql",
+      "container": "postgresql",
+      "value_key": "OVERRIDE_POSTGRES_IMAGE",
+      "repositories": [
+        "ghcr.io/yengalvez/postgres",
+        "docker.io/library/postgres",
+        "postgres"
+      ]
+    },
+    {
+      "deployment": "reticulum",
+      "container": "postgrest",
+      "value_key": "OVERRIDE_POSTGREST_IMAGE",
+      "repositories": [
+        "ghcr.io/yengalvez/postgrest",
+        "docker.io/postgrest/postgrest",
+        "postgrest/postgrest"
+      ]
+    },
+    {
+      "deployment": "reticulum",
+      "container": "reticulum",
+      "value_key": "OVERRIDE_RETICULUM_IMAGE",
+      "repositories": ["ghcr.io/yengalvez/reticulum"]
+    },
+    {
+      "deployment": "spoke",
+      "container": "spoke",
+      "value_key": "OVERRIDE_SPOKE_IMAGE",
+      "repositories": ["ghcr.io/yengalvez/spoke"]
+    }
+  ],
+  "rotation_revision_deployments": [
+    "bot-orchestrator",
+    "coturn",
+    "dialog",
+    "pgbouncer",
+    "pgbouncer-t",
+    "reticulum"
+  ],
+  "db_checksum_deployments": [
+    "coturn",
+    "pgbouncer",
+    "pgbouncer-t",
+    "reticulum"
+  ],
+  "bot_access_checksum_deployments": [
+    "bot-orchestrator",
+    "reticulum"
+  ],
+  "perms_fingerprint_deployments": [
+    "dialog",
+    "reticulum"
+  ],
+  "annotations": {
+    "credential_revision": "yenhubs.org/aud065-credential-revision",
+    "database_checksum": "yenhubs.org/db-credential-checksum",
+    "bot_access_key_checksum": "yenhubs.org/bot-access-key-checksum",
+    "perms_public_key_sha256": "yenhubs.org/perms-public-key-sha256"
+  },
+  "forbidden": {
+    "resource_names": [
+      "bot-images-pull",
+      "bot-runner",
+      "bot-runner-capacity",
+      "bot-runner-pods.yenhubs.org",
+      "bot-orchestrator-runner-pods",
+      "hcce-bot-runners"
+    ],
+    "annotation_keys": [
+      "yenhubs.org/bot-runner-recovery-epoch",
+      "yenhubs.org/bot-runner-recovery-phase",
+      "yenhubs.org/legacy-runner-authority",
+      "yenhubs.org/runner-activation-phase"
+    ],
+    "secret_domain_keys": [
+      "BOT_ORCHESTRATOR_ACCESS_KEY",
+      "BOT_RUNNER_ACCESS_KEY",
+      "DASHBOARD_ACCESS_KEY"
+    ],
+    "bot_orchestrator_env_names": [
+      "BOT_ORCHESTRATOR_ACCESS_KEY",
+      "BOT_RUNNER_ACCESS_KEY",
+      "BOT_RUNNER_IMAGE",
+      "BOT_RUNNER_RECOVERY_EPOCH",
+      "DASHBOARD_ACCESS_KEY",
+      "ORCHESTRATOR_POD_NAME",
+      "ORCHESTRATOR_POD_UID",
+      "POD_NAMESPACE",
+      "RUNNER_CONTROL_URL",
+      "RUNNER_NAMESPACE",
+      "RUNNER_POD_NAMESPACE"
+    ]
+  }
+}

@@ -46,17 +46,16 @@ Sala de aceptacion: <https://meta-hubs.org/VJopCY3/inicio>
 
 | Ruta | Rama base | Fuente candidata auditada | Fuente del runtime live |
 | --- | --- | --- | --- |
-| Root | `main` | `codex/aud075-integration` (PR raíz pendiente) | `a0a2b59cad80e0b07f9b2a2f82c2020781163570` |
+| Root | `main` | `9f4ada1` (PR raíz `#5` fusionado) | `a0a2b59cad80e0b07f9b2a2f82c2020781163570` |
 | `hubs/` | `master` | `674ece41169117a1a842af9cf5d256a10cc43df0` | `a7214eb882d19c98b2c8516489e0ed1fb7401c75` |
 | `hubs-cloud/` | `master` | `5392495b077249edcedfb3092551201645f648f1` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
 
 Hubs `674ece411691` y Cloud `5392495b0772` son los heads finales integrados en
-sus ramas `master`. Pasan 128/128 pruebas del orquestador, 30/30 del generador,
-430 pruebas Reticulum + 5 properties y el CI de Cloud. El worktree candidato
-raíz `codex/aud075-integration` fija esos gitlinks y sus gates normal y `--full`
-están verdes, pero el puntero de Cloud todavía no pertenece a root `main`: falta
-el PR raíz y su CI. Ningún cambio de fuente modifica el runtime hasta construir
-imágenes por Actions y desplegarlas por digest.
+sus ramas `master`; root `main=9f4ada1` fija ambos tras fusionar el PR `#5` con
+CI verde. Pasan 128/128 pruebas del orquestador, 30/30 del generador, 430
+pruebas Reticulum + 5 properties y los gates raíz normal y `--full`. Ningún
+cambio de fuente modifica el runtime hasta construir imágenes por Actions y
+desplegarlas por digest.
 
 Estado de publicación comprobado el 18 de julio:
 
@@ -88,11 +87,12 @@ Estado de publicación comprobado el 18 de julio:
   como `f79175d`. La politica ya procede de la base y no de la rama candidata.
 - Meta-hubs PR `#1`, `codex/final-audit-readiness -> main`: fusionado como
   `4481e9628b76` después de corregir SC2119, SC2015 y portabilidad GNU/BSD.
+- Meta-hubs PR `#5`, `codex/aud075-integration -> main`: fusionado como
+  `9f4ada1`; fija Hubs `674ece411691` y Cloud `5392495b0772` sin build ni deploy.
 
-La integración de los subrepositorios y su CI está cerrada en GO sobre Hubs
-`674ece411691` y Hubs Cloud `5392495b0772`; la integración raíz sigue pendiente
-del PR de `codex/aud075-integration` a `main`. Ninguno de esos resultados
-sustituye los valores live de la tabla. No se han construido las dos imágenes
+La integración de los subrepositorios y la raíz está cerrada en Git sobre Hubs
+`674ece411691`, Hubs Cloud `5392495b0772` y root `main=9f4ada1`. Ninguno de esos
+resultados sustituye los valores live de la tabla. No se han construido las dos imágenes
 candidatas de `AUD-075`, ni existe checkpoint nuevo o aceptación de staging,
 capacidad o producción. No actualizar digests live hasta completar el flujo
 publicado de seguridad, build y rollout.
@@ -276,7 +276,10 @@ La evidencia local de fuente no levanta los siguientes bloqueos:
 
 - `AUD-065`: antes de cualquier mutación de producción hay que crear un
   checkpoint fresco de DB+storage y rotar coordinadamente todos los secretos
-  potencialmente expuestos, verificándolos solo por presencia o huella;
+  potencialmente expuestos, verificándolos solo por presencia o huella. La
+  ruta candidata es `deployment/rotate-process-local-credentials.sh` y su
+  contrato completo está en `deployment/README.md`; todavía no está fusionada
+  ni ejecutada live y no debe sustituirse por un apply o parche manual;
 - aislamiento y fencing están integrados y probados en fuente, pero no
   desplegados ni atestados; el baseline live aceptado sigue siendo
   `process-local`, y un rollback a él no puede reabrirse después sin repetir los
@@ -319,9 +322,8 @@ La evidencia local de fuente no levanta los siguientes bloqueos:
 
 ## Auditoria y pruebas realizadas
 
-El cierre de los subrepositorios integra Hubs `674ece411691` y Hubs Cloud
-`5392495b0772` con CI de fuentes verde. El gitlink raíz es todavía candidato en
-`codex/aud075-integration` y requiere PR/CI hacia `main`. Las cifras y
+El cierre integra Hubs `674ece411691` y Hubs Cloud `5392495b0772` en root
+`main=9f4ada1`, con CI de fuentes verde. Las cifras y
 verificaciones live históricas pertenecen al baseline de producción del 16 de
 julio y no prueban el nuevo runtime.
 
@@ -373,34 +375,38 @@ No desplegar `upstream/master`. Seguir `docs/development-workflow.md` y preserva
 
 ## Deploy correcto
 
-1. cerrar y fusionar el PR raíz de `AUD-075`;
-2. crear el checkpoint completo exigido por el addendum;
-3. completar la rotación coordinada y verificar solo por huellas;
-4. en una rama Cloud separada, implementar, validar y fusionar `AUD-078` sin
+1. finalizar los gates, PR/CI y merge del tooling aislado de `AUD-065`;
+2. preparar y sellar las credenciales privadas nuevas sin aplicarlas todavía;
+3. crear el checkpoint completo exigido por el addendum;
+4. completar la rotación coordinada, promover la fuente canónica, exigir
+   `aud065_rotation_verified` en el auditor live de solo lectura y ejecutar
+   únicamente los smokes funcionales estrechos de esa rotación; el verificador
+   global 0/0 se reserva para el candidato completo;
+5. en una rama Cloud separada, implementar, validar y fusionar `AUD-078` sin
    mezclar dependencias ni upstream;
-5. ejecutar los gates finales sobre los commits y gitlinks exactos;
-6. GitHub Actions: construir parent y runner desde el mismo commit Cloud final;
-7. fijar ambos digests en values local y actualizar
+6. ejecutar los gates finales sobre los commits y gitlinks exactos;
+7. GitHub Actions: construir parent y runner desde el mismo commit Cloud final;
+8. fijar ambos digests en values local y actualizar
    `BOT_IMAGE_PULL_CONFIG_JSON_BASE64` solo mediante
    `npm run set-bot-image-pull-config` con `GHCR_TOKEN` oculto/en entorno;
-8. generar el manifiesto completo de 58 recursos con
+9. generar el manifiesto completo de 58 recursos con
    `BOT_RUNNER_ACTIVATION_PHASE=bootstrap`, revisar el diff por la vía redactada
    y ejecutar `npm run apply` con `KUBECTL_CONTEXT` fijado;
-9. regenerar con fase `admission`, revisar el diff y ejecutar de nuevo
+10. regenerar con fase `admission`, revisar el diff y ejecutar de nuevo
    `npm run apply`; el wrapper mantiene el parent parado, comprueba la
    ValidatingAdmissionPolicy, atesta RBAC efectivo y exige que el probe no
    autorizado sea denegado antes de conceder autoridad;
-10. regenerar con fase `active`, revisar el diff y ejecutar `npm run apply`; solo
+11. regenerar con fase `active`, revisar el diff y ejecutar `npm run apply`; solo
    esta transición puede levantar el parent después de verificar Lease global,
    ausencia estable de runners y control-plane exacto;
-11. no sustituir esas tres transiciones por un `kubectl apply` directo: ante
+12. no sustituir esas tres transiciones por un `kubectl apply` directo: ante
     error o deriva el wrapper falla cerrado y vuelve a cercar la autoridad;
-11. verificar los dos namespaces, cuota, ValidatingAdmissionPolicy+binding,
+13. verificar los dos namespaces, cuota, ValidatingAdmissionPolicy+binding,
     RBAC efectivo, ocho NetworkPolicies, `/transport-ready`, `/ready` y
     exactamente un Pod runner por sala;
-12. si cambia Hubs, reiniciar Reticulum;
-13. carga fria real desktop/mobile, consola y red sin errores ni warnings;
-14. `deployment/verify-live-reactivation.sh` con 0/0.
+14. si cambia Hubs, reiniciar Reticulum;
+15. carga fria real desktop/mobile, consola y red sin errores ni warnings;
+16. `deployment/verify-live-reactivation.sh` con 0/0.
 
 Rollback en orden inverso: cero runner Pods y bots públicos deshabilitados,
 parent legacy contra Reticulum compatible, verificar auth privada, y solo

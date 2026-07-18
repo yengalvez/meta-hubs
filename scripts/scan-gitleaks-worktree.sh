@@ -8,6 +8,7 @@ umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TEMP_ROOT="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
   printf 'Usage: %s REPOSITORY [REPOSITORY_RELATIVE_CONFIG]\n' "$0" >&2
@@ -35,7 +36,7 @@ if [[ -n "$CONFIG_PATH" ]]; then
   fi
 fi
 
-SCAN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yenhubs-gitleaks-worktree.XXXXXX")"
+SCAN_DIR="$(mktemp -d "$TEMP_ROOT/yenhubs-gitleaks-worktree.XXXXXX")"
 SCAN_DIR_OWNED=1
 CONFIG_SNAPSHOT=""
 cleanup_scan() {
@@ -61,7 +62,7 @@ trap 'scan_interrupted 130' INT
 trap 'scan_interrupted 143' TERM
 
 if [[ -n "$CONFIG_RESOLVED" ]]; then
-  CONFIG_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/yenhubs-gitleaks-policy.XXXXXX")"
+  CONFIG_SNAPSHOT="$(mktemp "$TEMP_ROOT/yenhubs-gitleaks-policy.XXXXXX")"
   chmod 600 "$CONFIG_SNAPSHOT"
   if ! node "$ROOT_DIR/deployment/snapshot-private-file.mjs" \
     "$CONFIG_RESOLVED" "$CONFIG_SNAPSHOT" --allow-public-source; then

@@ -660,6 +660,76 @@ fi
 [[ -z "$linked_snapshot" ]] || fail_test "linked snapshot must not publish a path"
 pass_test "private snapshot rejects every symlinked source component"
 
+hardlink_source="$temp_root/private-values-hardlink-source.yaml"
+hardlink_source_alias="$temp_root/private-values-hardlink-source-alias.yaml"
+hardlink_source_destination="$temp_root/private-values-hardlink-source.snapshot"
+printf 'PRIVATE: hardlinked-source\n' >"$hardlink_source"
+chmod 600 "$hardlink_source"
+ln "$hardlink_source" "$hardlink_source_alias"
+: >"$hardlink_source_destination"
+chmod 600 "$hardlink_source_destination"
+if node "$ROOT_DIR/deployment/snapshot-private-file.mjs" \
+  "$hardlink_source_alias" "$hardlink_source_destination" >/dev/null 2>&1; then
+  fail_test "private snapshot rejects a hardlinked source"
+fi
+[[ ! -e "$hardlink_source_destination" ]] ||
+  fail_test "hardlinked source rejection removes the unpublished destination"
+pass_test "private snapshot rejects a hardlinked source before copying"
+
+hardlink_destination_source="$temp_root/private-values-hardlink-destination-source.yaml"
+hardlink_destination="$temp_root/private-values-hardlink-destination"
+hardlink_destination_alias="$temp_root/private-values-hardlink-destination-alias"
+printf 'PRIVATE: source-for-hardlinked-destination\n' >"$hardlink_destination_source"
+chmod 600 "$hardlink_destination_source"
+printf 'PRESERVE: hardlinked-destination\n' >"$hardlink_destination"
+chmod 600 "$hardlink_destination"
+ln "$hardlink_destination" "$hardlink_destination_alias"
+if node "$ROOT_DIR/deployment/snapshot-private-file.mjs" \
+  "$hardlink_destination_source" "$hardlink_destination_alias" >/dev/null 2>&1; then
+  fail_test "private snapshot rejects a hardlinked destination"
+fi
+[[ "$(cat "$hardlink_destination")" == 'PRESERVE: hardlinked-destination' ]] ||
+  fail_test "hardlinked destination was truncated before rejection"
+pass_test "private snapshot rejects a hardlinked destination before truncation"
+
+directory_activity_source="$temp_root/private-values-directory-activity.yaml"
+directory_activity_destination="$temp_root/private-values-directory-activity.snapshot"
+directory_activity_sibling="$temp_root/private-values-directory-activity-sibling"
+dd if=/dev/zero of="$directory_activity_source" bs=1048576 count=1 seek=255 2>/dev/null
+chmod 600 "$directory_activity_source"
+: >"$directory_activity_destination"
+chmod 600 "$directory_activity_destination"
+set +e
+node "$ROOT_DIR/deployment/snapshot-private-file.mjs" \
+  "$directory_activity_source" "$directory_activity_destination" >/dev/null 2>&1 &
+directory_activity_pid=$!
+directory_activity_observed=false
+for _directory_activity_poll in $(seq 1 10000); do
+  if ! kill -0 "$directory_activity_pid" 2>/dev/null; then break; fi
+  if [[ "$(wc -c <"$directory_activity_destination" | tr -d ' ')" -gt 0 ]] &&
+      kill -STOP "$directory_activity_pid" 2>/dev/null; then
+    if mkdir "$directory_activity_sibling" 2>/dev/null; then
+      directory_activity_observed=true
+    fi
+    kill -CONT "$directory_activity_pid" 2>/dev/null
+    break
+  fi
+done
+wait "$directory_activity_pid"
+directory_activity_status=$?
+set -e
+if [[ -d "$directory_activity_sibling" ]]; then
+  rmdir "$directory_activity_sibling"
+fi
+if [[ "$directory_activity_observed" == true &&
+      "$directory_activity_status" -eq 0 &&
+      -f "$directory_activity_destination" ]] &&
+    cmp -s "$directory_activity_source" "$directory_activity_destination"; then
+  pass_test "private snapshot tolerates legitimate sibling-directory activity"
+else
+  fail_test "private snapshot sibling-directory activity contract"
+fi
+
 toctou_source="$temp_root/private-values-toctou.yaml"
 toctou_destination="$temp_root/private-values-toctou.snapshot"
 dd if=/dev/zero of="$toctou_source" bs=1048576 count=1 seek=255 2>/dev/null
@@ -1034,6 +1104,52 @@ if [[ "$(awk '!/^[[:space:]]*(#|$)/ {print $1"\t"$2}' "$baseline_file")" == $'hu
   pass_test "base-owned Gitleaks policies, production baselines and full ShellCheck scope are pinned"
 else
   fail_test "base-owned Gitleaks policy, production baselines or ShellCheck scope"
+fi
+
+aud065_aggregate="$ROOT_DIR/scripts/test-aud065.sh"
+aud065_inventory_ok=true
+for aud065_test in \
+  test-aud065-operation-lock.sh \
+  test-aud065-pgsql-barrier.sh \
+  test-process-local-db-rotation.sh \
+  test-process-local-db-rotation-postgres.sh \
+  test-process-local-rotation-coordinator.sh \
+  process-local-rotation.test.mjs \
+  process-local-rotation-operation.test.mjs \
+  process-local-source-transition.test.mjs \
+  prepare-process-local-rotation.test.mjs \
+  materialize-process-local-replacements.test.mjs \
+  private-artifact-publication.test.mjs \
+  project-process-local-values.test.mjs \
+  capture-process-local-baseline.test.mjs \
+  redacted-rollout-contract.test.mjs; do
+  [[ "$(grep -Fc "/$aud065_test\"" "$aud065_aggregate")" == 1 ]] || \
+    aud065_inventory_ok=false
+done
+if [[ -x "$aud065_aggregate" && "$aud065_inventory_ok" == true ]] &&
+  [[ "$(grep -Fc 'scripts/test-aud065.sh' \
+    "$ROOT_DIR/scripts/verify-project.sh")" == 1 ]] &&
+  [[ "$(grep -Fc 'bash scripts/test-aud065.sh' \
+    "$ROOT_DIR/.github/workflows/project-security.yml")" == 1 ]] &&
+  grep -Eq '^  aud065-postgres:$' \
+    "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  grep -Fq -- '- "12.19"' "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  grep -Fq -- '- "14.23"' "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  grep -Fq 'PLDB_PGHOST: 127.0.0.1' \
+    "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  grep -Fq "PLDB_PGPORT: \${{ job.services.postgres.ports['5432'] }}" \
+    "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  grep -Fq 'PLDB_SETUP_PASSWORD: SetupFixturePassword_CCCCCCCCCCCC' \
+    "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  grep -Fq "PLDB_POSTGRES_CONTAINER_ID: \${{ job.services.postgres.id }}" \
+    "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  grep -Fq 'run: bash tests/recovery/test-process-local-db-rotation-postgres.sh' \
+    "$ROOT_DIR/.github/workflows/project-security.yml" &&
+  ! grep -Eq 'tests/(recovery/test-aud065|recovery/test-process-local|scripts/.*process-local)' \
+    "$ROOT_DIR/scripts/verify-project.sh"; then
+  pass_test "AUD-065 aggregate and external PostgreSQL 12/14 CI matrix are pinned"
+else
+  fail_test "AUD-065 aggregate, local gate or PostgreSQL CI matrix drift"
 fi
 
 printf '\n%d security gate regression tests passed\n' "$test_count"

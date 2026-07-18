@@ -257,7 +257,7 @@ make_deployments_json() {
       item("pgbouncer"; [{name:"pgbouncer",image:("ghcr.io/yengalvez/pgbouncer@sha256:"+("1"*64))}]),
       item("pgbouncer-t"; [{name:"pgbouncer-t",image:("ghcr.io/yengalvez/pgbouncer@sha256:"+("1"*64))}]),
       item("photomnemonic"; [{name:"photomnemonic",image:("ghcr.io/yengalvez/photomnemonic@sha256:"+("3"*64))}]),
-      item("pgsql"; [{name:"pgsql",image:("ghcr.io/yengalvez/postgres@sha256:"+("4"*64))}]),
+      item("pgsql"; [{name:"postgresql",image:("ghcr.io/yengalvez/postgres@sha256:"+("4"*64))}]),
       item("reticulum"; [{name:"postgrest",image:("ghcr.io/yengalvez/postgrest@sha256:"+("5"*64))},{name:"reticulum",image:("ghcr.io/yengalvez/reticulum@sha256:"+("6"*64))}]),
       item("spoke"; [{name:"spoke",image:("ghcr.io/yengalvez/spoke@sha256:"+("7"*64))}])
     ]}
@@ -304,6 +304,8 @@ jq '
     .spec.template.spec.volumes) = [{
       name:"bot-orchestrator-tmp",emptyDir:{sizeLimit:"256Mi"}
     }] |
+  (.items[] | select(.metadata.name == "pgsql") |
+    .spec.template.spec.containers[0].name) = "postgresql" |
   (.items[] | select(.metadata.name == "bot-orchestrator") |
     .spec.template.spec.containers[0]) += {
       securityContext:{
@@ -312,8 +314,8 @@ jq '
         capabilities:{drop:["ALL"]},seccompProfile:{type:"RuntimeDefault"}
       },
       env:[
-        {name:"BOT_RUNNER_ACCESS_KEY",valueFrom:{secretKeyRef:{
-          name:"configs",key:"BOT_RUNNER_ACCESS_KEY"}}},
+        {name:"BOT_ACCESS_KEY",valueFrom:{secretKeyRef:{
+          name:"configs",key:"BOT_ACCESS_KEY"}}},
         {name:"RUNNER_AUTOSTART",value:"true"},
         {name:"RUNNER_BACKEND",value:"ghost"},
         {name:"GHOST_RUNNER_SCRIPT",value:"/app/run-ghost-runner.js"}
@@ -321,10 +323,44 @@ jq '
       volumeMounts:[{name:"bot-orchestrator-tmp",mountPath:"/tmp"}]
     }
 ' "$STUB_DEPLOYMENTS_JSON" >"$LEGACY_DEPLOYMENTS_JSON"
+LEGACY_WRONG_ACCESS_KEY_DEPLOYMENTS_JSON="$TMP_DIR/deployments-legacy-wrong-access-key.json"
+jq '
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.containers[0].env[] |
+    select(.name == "BOT_ACCESS_KEY")) = {
+      name:"BOT_RUNNER_ACCESS_KEY",valueFrom:{secretKeyRef:{
+        name:"configs",key:"BOT_RUNNER_ACCESS_KEY"}}
+    }
+' "$LEGACY_DEPLOYMENTS_JSON" >"$LEGACY_WRONG_ACCESS_KEY_DEPLOYMENTS_JSON"
+LEGACY_MIXED_ACCESS_KEYS_DEPLOYMENTS_JSON="$TMP_DIR/deployments-legacy-mixed-access-keys.json"
+jq '
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.containers[0].env) += [{
+      name:"BOT_RUNNER_ACCESS_KEY",valueFrom:{secretKeyRef:{
+        name:"configs",key:"BOT_RUNNER_ACCESS_KEY"}}
+    }]
+' "$LEGACY_DEPLOYMENTS_JSON" >"$LEGACY_MIXED_ACCESS_KEYS_DEPLOYMENTS_JSON"
+LEGACY_MIXED_PGSQL_DEPLOYMENTS_JSON="$TMP_DIR/deployments-legacy-mixed-pgsql.json"
+jq '
+  (.items[] | select(.metadata.name == "pgsql") |
+    .spec.template.spec.containers[0].name) = "pgsql"
+' "$LEGACY_DEPLOYMENTS_JSON" >"$LEGACY_MIXED_PGSQL_DEPLOYMENTS_JSON"
+LEGACY_RET_CONFIG_JSON="$TMP_DIR/ret-config-legacy.json"
+jq -cn '{apiVersion:"v1",kind:"ConfigMap",metadata:{name:"ret-config",
+  namespace:"hcce",uid:"ret-config-uid",resourceVersion:"ret-config-rv"},
+  data:{"config.toml.template":"legacy = \"<BOT_ACCESS_KEY>\"\n"}}' \
+  >"$LEGACY_RET_CONFIG_JSON"
+LEGACY_CONFIGS_SECRET_JSON="$TMP_DIR/configs-legacy.json"
+jq -cn '{apiVersion:"v1",kind:"Secret",metadata:{name:"configs",
+  namespace:"hcce",uid:"configs-uid",resourceVersion:"configs-rv"},
+  data:{BOT_ACCESS_KEY:"eA=="}}' >"$LEGACY_CONFIGS_SECRET_JSON"
+export LEGACY_RET_CONFIG_JSON LEGACY_CONFIGS_SECRET_JSON
 KUBERNETES_DEPLOYMENTS_JSON="$TMP_DIR/deployments-kubernetes-runner.json"
 jq --arg image "$RUNNER_DIGEST_IMAGE" '
   (.items[] | select(.metadata.name == "bot-orchestrator") |
     .spec.strategy) = {type:"Recreate"} |
+  (.items[] | select(.metadata.name == "pgsql") |
+    .spec.template.spec.containers[0].name) = "pgsql" |
   (.items[] | select(.metadata.name == "bot-orchestrator") |
     .spec.template.spec.serviceAccountName) = "bot-orchestrator" |
   (.items[] | select(.metadata.name == "bot-orchestrator") |
@@ -362,7 +398,7 @@ make_checkpoint() {
       deployments:[.items[]|{name:.metadata.name,uid:.metadata.uid,
         replicas:.spec.replicas,init_containers:[],
         containers:[.spec.template.spec.containers[]|{name,image}]}]}' \
-    "$STUB_DEPLOYMENTS_JSON" >"$directory/deployment-images.json"
+    "$LEGACY_DEPLOYMENTS_JSON" >"$directory/deployment-images.json"
   printf 'A=configured\n' >"$directory/configured-value-keys.txt"
   printf 'cluster\n' >"$directory/digitalocean-cluster.json"
   printf 'lbs\n' >"$directory/digitalocean-load-balancers.json"
@@ -605,6 +641,12 @@ if [[ "$joined" == "get serviceaccount bot-orchestrator -n hcce --ignore-not-fou
     printf '%s' '{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"bot-orchestrator","namespace":"hcce","uid":"residual-sa-uid"}}'
   exit 0
 fi
+if [[ "$joined" == "get secret bot-images-pull -n hcce --ignore-not-found -o json" ]]; then
+  if [[ "${STUB_HCCE_PULL_SECRET:-absent}" == present ]]; then
+    printf '%s' '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"bot-images-pull","namespace":"hcce","uid":"fixture-pull-uid","resourceVersion":"fixture-pull-rv"}}'
+  fi
+  exit 0
+fi
 if [[ "$joined" == "get role bot-orchestrator-runner-pods -n hcce --ignore-not-found -o json" ]]; then
   [[ "${STUB_RUNNER_RESIDUAL:-}" != role ]] ||
     printf '%s' '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"bot-orchestrator-runner-pods","namespace":"hcce","uid":"residual-role-uid"}}'
@@ -664,6 +706,14 @@ if [[ "$joined" == get\ validatingadmissionpolicy*\ bot-runner-pods.yenhubs.org\
 fi
 if [[ "$joined" == get\ namespace\ * ]]; then printf '%s' "${STUB_NAMESPACE_UID:-fixture-uid}"; exit 0; fi
 if [[ "$joined" == get\ pvc\ ret-pvc*"jsonpath"* ]]; then printf '%s' "${STUB_PVC_UID:-fixture-pvc-uid}"; exit 0; fi
+if [[ "$joined" == "get configmap ret-config -n hcce -o json" ]]; then
+  cat "${STUB_RET_CONFIG_JSON:-$LEGACY_RET_CONFIG_JSON}"
+  exit 0
+fi
+if [[ "$joined" == "get secret configs -n hcce -o json" ]]; then
+  cat "${STUB_CONFIGS_SECRET_JSON:-$LEGACY_CONFIGS_SECRET_JSON}"
+  exit 0
+fi
 if [[ "$joined" == "get configmap yenhubs-recovery-operation-lock -n hcce -o json" ]]; then
   [[ -f "$STUB_STATE_DIR/restore-lock.yaml" ]] || exit 1
   lock_count_file="$STUB_STATE_DIR/restore-lock-get-count"
@@ -2051,6 +2101,170 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-process-local ]]; then
     STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
     VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
     "$ROOT_DIR/deployment/capture-instance-state.sh" "$process_local_capture"
+  if jq -e '
+    [.deployments[] | select(.name == "pgsql") | .containers[].name] ==
+      ["postgresql"]
+  ' "$process_local_capture/deployment-images.json" >/dev/null; then
+    pass 'focused process-local inventory preserves pgsql/postgresql'
+  else
+    fail 'focused process-local inventory preserves pgsql/postgresql' \
+      'historical container identity was not captured'
+  fi
+  reset_stub
+  expect_failure 'focused process-local capture rejects BOT_RUNNER_ACCESS_KEY substitution' \
+    'partial Kubernetes runner bindings' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_WRONG_ACCESS_KEY_DEPLOYMENTS_JSON" \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    "$ROOT_DIR/deployment/capture-instance-state.sh" \
+    "$TMP_DIR/process-local-focus-wrong-key"
+  reset_stub
+  expect_failure 'focused process-local capture rejects mixed access-key contracts' \
+    'partial Kubernetes runner bindings' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_MIXED_ACCESS_KEYS_DEPLOYMENTS_JSON" \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    "$ROOT_DIR/deployment/capture-instance-state.sh" \
+    "$TMP_DIR/process-local-focus-mixed-keys"
+  reset_stub
+  expect_failure 'focused process-local capture rejects pgsql/pgsql mixture' \
+    'historical AUD-065 contract' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_MIXED_PGSQL_DEPLOYMENTS_JSON" \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    "$ROOT_DIR/deployment/capture-instance-state.sh" \
+    "$TMP_DIR/process-local-focus-mixed-pgsql"
+
+  for candidate_key in BOT_ORCHESTRATOR_ACCESS_KEY DASHBOARD_ACCESS_KEY; do
+    candidate_fixture="$TMP_DIR/process-local-parent-env-$candidate_key.json"
+    jq --arg name "$candidate_key" '
+      (.items[] | select(.metadata.name == "bot-orchestrator") |
+        .spec.template.spec.containers[0].env) += [{name:$name,value:"fixture"}]
+    ' "$LEGACY_DEPLOYMENTS_JSON" >"$candidate_fixture"
+    reset_stub
+    expect_failure "focused process-local capture rejects parent $candidate_key" \
+      'partial Kubernetes runner bindings' \
+      env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+      STUB_DEPLOYMENTS_JSON="$candidate_fixture" \
+      VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+      "$ROOT_DIR/deployment/capture-instance-state.sh" \
+      "$TMP_DIR/process-local-focus-parent-env-$candidate_key"
+  done
+
+  candidate_fixture="$TMP_DIR/process-local-parent-pull-secret.json"
+  jq '(.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.imagePullSecrets) = [{name:"bot-images-pull"}]' \
+    "$LEGACY_DEPLOYMENTS_JSON" >"$candidate_fixture"
+  reset_stub
+  expect_failure 'focused process-local capture rejects parent imagePullSecrets' \
+    'partial Kubernetes runner bindings' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+    STUB_DEPLOYMENTS_JSON="$candidate_fixture" \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    "$ROOT_DIR/deployment/capture-instance-state.sh" \
+    "$TMP_DIR/process-local-focus-parent-pull-secret"
+
+  candidate_fixture="$TMP_DIR/process-local-parent-key-checksum.json"
+  jq '(.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.metadata.annotations) = {
+      "yenhubs.org/bot-orchestrator-access-key-checksum":("a" * 64)
+    }' "$LEGACY_DEPLOYMENTS_JSON" >"$candidate_fixture"
+  reset_stub
+  expect_failure 'focused process-local capture rejects parent candidate checksum' \
+    'partial Kubernetes runner bindings' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+    STUB_DEPLOYMENTS_JSON="$candidate_fixture" \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    "$ROOT_DIR/deployment/capture-instance-state.sh" \
+    "$TMP_DIR/process-local-focus-parent-key-checksum"
+
+  for candidate_env in \
+    turkeyCfg_BOT_RUNNER_ACCESS_KEY \
+    turkeyCfg_BOT_ORCHESTRATOR_ACCESS_KEY \
+    turkeyCfg_DASHBOARD_ACCESS_KEY \
+    turkeyCfg_BOT_RUNNER_RECOVERY_EPOCH; do
+    candidate_fixture="$TMP_DIR/process-local-ret-env-$candidate_env.json"
+    jq --arg name "$candidate_env" '
+      (.items[] | select(.metadata.name == "reticulum") |
+        .spec.template.spec.containers[] | select(.name == "reticulum") |
+        .env) = [{name:$name,value:"fixture"}]
+    ' "$LEGACY_DEPLOYMENTS_JSON" >"$candidate_fixture"
+    reset_stub
+    expect_failure "focused process-local capture rejects Reticulum $candidate_env" \
+      'partial Kubernetes runner bindings' \
+      env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+      STUB_DEPLOYMENTS_JSON="$candidate_fixture" \
+      VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+      "$ROOT_DIR/deployment/capture-instance-state.sh" \
+      "$TMP_DIR/process-local-focus-ret-env-$candidate_env"
+  done
+
+  for checksum_name in \
+    yenhubs.org/bot-runner-access-key-checksum \
+    yenhubs.org/bot-orchestrator-access-key-checksum \
+    yenhubs.org/dashboard-access-key-checksum; do
+    checksum_slug="${checksum_name##*/}"
+    candidate_fixture="$TMP_DIR/process-local-ret-checksum-$checksum_slug.json"
+    jq --arg name "$checksum_name" '
+      (.items[] | select(.metadata.name == "reticulum") |
+        .spec.template.metadata.annotations) = {($name):("b" * 64)}
+    ' "$LEGACY_DEPLOYMENTS_JSON" >"$candidate_fixture"
+    reset_stub
+    expect_failure "focused process-local capture rejects Reticulum $checksum_slug" \
+      'partial Kubernetes runner bindings' \
+      env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+      STUB_DEPLOYMENTS_JSON="$candidate_fixture" \
+      VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+      "$ROOT_DIR/deployment/capture-instance-state.sh" \
+      "$TMP_DIR/process-local-focus-ret-checksum-$checksum_slug"
+  done
+
+  for secret_key in \
+    BOT_RUNNER_ACCESS_KEY BOT_ORCHESTRATOR_ACCESS_KEY DASHBOARD_ACCESS_KEY; do
+    candidate_secret="$TMP_DIR/process-local-configs-$secret_key.json"
+    jq --arg name "$secret_key" '.data[$name] = "eA=="' \
+      "$LEGACY_CONFIGS_SECRET_JSON" >"$candidate_secret"
+    reset_stub
+    expect_failure "focused process-local capture rejects configs/$secret_key" \
+      'configs Secret contains isolated-runner credentials' \
+      env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+      STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+      STUB_CONFIGS_SECRET_JSON="$candidate_secret" \
+      VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+      "$ROOT_DIR/deployment/capture-instance-state.sh" \
+      "$TMP_DIR/process-local-focus-configs-$secret_key"
+  done
+
+  for marker_slug in runner-key orchestrator-key dashboard-key recovery-epoch section; do
+    case "$marker_slug" in
+      runner-key) marker='<BOT_RUNNER_ACCESS_KEY>' ;;
+      orchestrator-key) marker='<BOT_ORCHESTRATOR_ACCESS_KEY>' ;;
+      dashboard-key) marker='<DASHBOARD_ACCESS_KEY>' ;;
+      recovery-epoch) marker='<BOT_RUNNER_RECOVERY_EPOCH>' ;;
+      section) marker='[ret."Elixir.Ret.BotOrchestrator"]' ;;
+    esac
+    candidate_config="$TMP_DIR/process-local-ret-config-$marker_slug.json"
+    jq --arg marker "$marker" '.data["config.toml.template"] += $marker' \
+      "$LEGACY_RET_CONFIG_JSON" >"$candidate_config"
+    reset_stub
+    expect_failure "focused process-local capture rejects ret-config $marker_slug" \
+      'Reticulum config contains isolated-runner markers' \
+      env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+      STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+      STUB_RET_CONFIG_JSON="$candidate_config" \
+      VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+      "$ROOT_DIR/deployment/capture-instance-state.sh" \
+      "$TMP_DIR/process-local-focus-ret-config-$marker_slug"
+  done
+
+  reset_stub
+  expect_failure 'focused process-local capture rejects hcce bot-images-pull Secret' \
+    'partial Kubernetes runner bindings' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+    STUB_HCCE_PULL_SECRET=present VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    "$ROOT_DIR/deployment/capture-instance-state.sh" \
+    "$TMP_DIR/process-local-focus-hcce-pull-secret"
   reset_stub
   expect_success 'focused process-local checkpoint publishes and resumes exactly' \
     env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
@@ -2059,6 +2273,22 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-process-local ]]; then
     STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
     STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
     "$ROOT_DIR/deployment/create-checkpoint.sh" "$process_local_checkpoint"
+  reset_stub
+  expect_failure 'focused mixed PostgreSQL identity blocks checkpoint before downtime' \
+    'historical AUD-065 contract' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_MIXED_PGSQL_DEPLOYMENTS_JSON" \
+    STORAGE_BACKUP_MONITOR_INTERVAL_SECONDS=0.01 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" \
+    "$TMP_DIR/process-local-focus-checkpoint-mixed-pgsql"
+  if grep -Eq ' scale .*--replicas=(0|1)' "$KUBECTL_LOG"; then
+    fail 'focused mixed PostgreSQL identity performs zero writer scale mutations' \
+      "$(cat "$KUBECTL_LOG")"
+  else
+    pass 'focused mixed PostgreSQL identity performs zero writer scale mutations'
+  fi
   reset_stub
   expect_failure 'focused process-local mode drift blocks every writer resume' \
     'Checkpoint runner mode changed while writers were fenced' \
@@ -2354,6 +2584,46 @@ expect_failure 'serialization Lease ownership loss is detected before further mu
     recovery_acquire_operation_serialization root-recovery
     trap '\''recovery_release_operation_serialization >/dev/null 2>&1 || :'\'' EXIT
     recovery_require_operation_serialization
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
+# These calls deliberately place the supervisor under an `if`, matching the
+# coordinator callsites where Bash disables implicit errexit inside functions.
+# Both Lease boundaries must therefore propagate failure explicitly.
+# shellcheck disable=SC2016
+expect_failure 'supervised stream rejects Lease loss before launching kubectl under a conditional caller' '' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
+    set -Eeuo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_process_start_identity() { printf "fixture-start\n"; }
+    recovery_process_identity_is_live() { :; }
+    recovery_require_operation_serialization() { return 1; }
+    if recovery_kubectl_stream_supervised 1 5 get namespace hcce -o json; then
+      exit 0
+    else
+      exit 1
+    fi
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
+# shellcheck disable=SC2016
+expect_failure 'supervised stream cannot overwrite final Lease loss with a successful kubectl status' '' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
+    set -Eeuo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    LEASE_CALLS=0
+    recovery_process_start_identity() { printf "fixture-start\n"; }
+    recovery_process_identity_is_live() { :; }
+    recovery_require_operation_serialization() {
+      LEASE_CALLS=$((LEASE_CALLS + 1))
+      [[ "$LEASE_CALLS" == 1 ]]
+    }
+    kill() { return 1; }
+    if recovery_kubectl_stream_supervised 1 5 get namespace hcce -o json; then
+      exit 0
+    else
+      exit 1
+    fi
   ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
 
 reset_stub
@@ -3124,12 +3394,24 @@ if jq -e '.items[0].data_keys == ["credential"] and .items[0].binary_data_keys =
     mode:"process-local",image:null,control_plane:{state:"legacy-absent"},
     recovery_epoch:{state:"legacy-absent"}}
   and (.deployments | length) == 12
+  and ([.deployments[] | select(.name == "pgsql") | .containers[].name] ==
+    ["postgresql"])
 ' "$CAPTURE_DIR/deployment-images.json" >/dev/null; then pass 'capture preserves exact deployments and explicit legacy runner rollback mode'; else fail 'capture preserves exact deployments and explicit legacy runner rollback mode' 'invalid inventory'; fi
 if bash -c 'source "$1"; recovery_deployment_inventory_is_acceptable "$2" hcce fixture-uid' _ \
   "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$CAPTURE_DIR/deployment-images.json"; then
   pass 'checkpoint inventory accepts the explicit process-local runner rollback mode'
 else
   fail 'checkpoint inventory accepts the explicit process-local runner rollback mode' 'valid rollback inventory rejected'
+fi
+PROCESS_LOCAL_WRONG_PGSQL_INVENTORY="$TMP_DIR/deployment-images-process-local-wrong-pgsql.json"
+jq '(.deployments[] | select(.name == "pgsql") | .containers[0].name) = "pgsql"' \
+  "$CAPTURE_DIR/deployment-images.json" >"$PROCESS_LOCAL_WRONG_PGSQL_INVENTORY"
+if bash -c 'source "$1"; recovery_deployment_inventory_is_acceptable "$2" hcce fixture-uid' _ \
+  "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$PROCESS_LOCAL_WRONG_PGSQL_INVENTORY"; then
+  fail 'process-local inventory rejects the AUD-075 pgsql/pgsql identity' \
+    'mixed process-local inventory accepted'
+else
+  pass 'process-local inventory rejects the AUD-075 pgsql/pgsql identity'
 fi
 BOUND_PROCESS_LOCAL_INVENTORY="$TMP_DIR/deployment-images-process-local-bound-epoch.json"
 jq --arg epoch "$CHECKPOINT_RUNNER_EPOCH" '
@@ -3178,6 +3460,8 @@ KUBERNETES_RUNNER_INVENTORY="$TMP_DIR/deployment-images-kubernetes-runner.json"
 jq --arg image "$RUNNER_DIGEST_IMAGE" --arg epoch "$CHECKPOINT_RUNNER_EPOCH" '
   .bot_runner_runtime.mode = "kubernetes-pod" |
   .bot_runner_runtime.image = $image |
+  (.deployments[] | select(.name == "pgsql") |
+    .containers[0].name) = "pgsql" |
   .bot_runner_runtime.recovery_epoch = {
     state:"bound",value:$epoch
   } |
@@ -3209,6 +3493,16 @@ if bash -c 'source "$1"; recovery_deployment_inventory_is_acceptable "$2" hcce f
   pass 'checkpoint inventory accepts one expected digest-pinned Kubernetes runner image'
 else
   fail 'checkpoint inventory accepts one expected digest-pinned Kubernetes runner image' 'valid Kubernetes runner inventory rejected'
+fi
+KUBERNETES_WRONG_PGSQL_INVENTORY="$TMP_DIR/deployment-images-kubernetes-wrong-pgsql.json"
+jq '(.deployments[] | select(.name == "pgsql") | .containers[0].name) = "postgresql"' \
+  "$KUBERNETES_RUNNER_INVENTORY" >"$KUBERNETES_WRONG_PGSQL_INVENTORY"
+if bash -c 'source "$1"; recovery_deployment_inventory_is_acceptable "$2" hcce fixture-uid' _ \
+  "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$KUBERNETES_WRONG_PGSQL_INVENTORY"; then
+  fail 'Kubernetes runner inventory rejects historical pgsql/postgresql fallback' \
+    'mixed Kubernetes inventory accepted'
+else
+  pass 'Kubernetes runner inventory rejects historical pgsql/postgresql fallback'
 fi
 MISSING_RUNNER_CONTROL_RESOURCE="$TMP_DIR/deployment-images-kubernetes-runner-missing-resource.json"
 jq '.bot_runner_runtime.control_plane.namespaced_resources |= map(select(.name != "bot-runner-egress"))' \

@@ -62,11 +62,12 @@ reactivation_values_file_is_private() {
 reactivation_snapshot_private_file() {
   local destination_variable="$1"
   local source_path="$2"
-  local snapshot_path helper_dir
+  local snapshot_path snapshot_dir helper_dir
   [[ -n "$destination_variable" && -f "$source_path" && ! -L "$source_path" ]] || return 1
   reactivation_values_file_is_private "$source_path" || return 1
   helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)" || return 1
-  snapshot_path="$(mktemp "${TMPDIR:-/tmp}/yenhubs-values-snapshot.XXXXXX")" || return 1
+  snapshot_dir="$(cd "${TMPDIR:-/tmp}" && pwd -P)" || return 1
+  snapshot_path="$(mktemp "$snapshot_dir/yenhubs-values-snapshot.XXXXXX")" || return 1
   reactivation_register_temp_path "$snapshot_path"
   if ! node "$helper_dir/snapshot-private-file.mjs" "$source_path" "$snapshot_path"; then
     return 1

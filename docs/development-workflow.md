@@ -40,10 +40,9 @@ Deployment 18, Hubs 97, navegador 11, capacidad 115 fail-closed, Dialog 2,
 Photomnemonic 7 y Spoke 68. No se afirma build de imágenes, checkpoint nuevo,
 carga física, staging, deploy ni aceptación live.
 
-Esos commits ya pertenecen a las ramas base de los subrepositorios. El root
-solo los fija por ahora en el worktree candidato `codex/aud075-integration`:
-queda pendiente su PR/CI hacia root `main`, por lo que no debe describirse aún
-el gitlink raíz como integrado.
+Esos commits ya pertenecen a las ramas base de los subrepositorios y root
+`main=9f4ada1` los fija tras el PR `#5`. Esta integración no implica build,
+despliegue ni aceptación live.
 
 ## Preparar remotos
 
@@ -181,9 +180,14 @@ más fuerte que el `room_stop` best-effort. También
 faltan builds de imágenes por Actions, carga física, staging y aceptación live;
 ningún gate de fuentes mide capacidad ni autoriza rollout público.
 
-El orden de la campaña vigente es estricto: primero cerrar el gitlink raíz de
-`AUD-075`; después crear el checkpoint y completar la rotación `AUD-065` sobre
-el baseline live; a continuación implementar y fusionar `AUD-078` en una rama
+El orden de la campaña vigente es estricto: primero terminar y fusionar el
+tooling `AUD-065`; después preparar las fuentes privadas, crear el checkpoint y
+completar la rotación sobre el baseline live exclusivamente con
+`deployment/rotate-process-local-credentials.sh`, la operación privada sellada,
+la promoción atómica y el auditor read-only `aud065_rotation_verified`
+descritos en `deployment/README.md`; el verificador global 0/0 se reserva para
+la aceptación final del control plane aislado. A continuación implementar y fusionar
+`AUD-078` en una rama
 Cloud separada; solo entonces construir las imágenes por Actions y desplegar el
 candidato. Un build anterior no sustituye ni adelanta checkpoint o rotación.
 

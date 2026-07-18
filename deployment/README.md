@@ -95,9 +95,9 @@ recovery 239, runner Pods 45, pull configuration 19, orchestrator Deployment
 18, Hubs 97, browser 11, capacity 115 fail-closed and Spoke 68. This is source
 and validation closure only: no new image build, digest, checkpoint, deployment,
 staging/live rollout or live attestation is claimed here.
-The subrepository heads are integrated, but the root gitlink is still only in
-the `codex/aud075-integration` candidate worktree and requires its PR/CI to
-root `main`.
+The subrepository heads and root gitlinks are integrated in root
+`main=9f4ada1` through PR `#5`. No candidate image, checkpoint, deployment or
+live acceptance is implied by that source integration.
 
 Node ghost is the only production/authenticated runner. Chromium is retained
 only as a legacy/local browser diagnostic without `--runner`; its renderer is
@@ -247,6 +247,8 @@ driver owns the serialized, phase-aware mutation and its fail-closed gates.
 ## Prerequisites
 
 - **Node.js** v20+ ([nodejs.org](https://nodejs.org))
+- **System Python 3** available as `python3` through the restricted
+  `/usr/bin:/bin` path (required by the owner-private `dir_fd` helpers)
 - **kubectl** matching your cluster version ([kubernetes.io](https://kubernetes.io/docs/tasks/tools/))
 - **Helm** v3+ ([helm.sh](https://helm.sh/docs/intro/install/))
 - **Git**
@@ -482,7 +484,11 @@ one quoted line with each PEM newline encoded as the literal two characters
 scalars are deliberately rejected. The Hubs CE generator restores the physical
 newlines before validating and deriving the public key.
 
-### Rotate the four internal credentials safely
+### Rotate the four internal credentials safely for the later AUD-075 rollout
+
+This subsection belongs only to the later 58-resource candidate rollout after
+AUD-065 and AUD-078 are integrated. Do not generate or apply that manifest to
+rotate the current `process-local` baseline; use the AUD-065 coordinator below.
 
 None of `BOT_ACCESS_KEY`, `BOT_RUNNER_ACCESS_KEY`,
 `BOT_ORCHESTRATOR_ACCESS_KEY` or `DASHBOARD_ACCESS_KEY` may be printed,
@@ -503,6 +509,218 @@ never copy a live value into a shell search or diagnostic. Production accepted
 the former single-key contract on 2026-07-14; the four-domain candidate is not
 live and requires the fresh checkpoint plus coordinated rotation mandated by
 AUD-065 before rollout.
+
+### AUD-065: coordinated rotation of the live `process-local` baseline
+
+`deployment/rotate-process-local-credentials.sh` is the only approved mutation
+path for closing AUD-065. It operates on the exact historical 42-resource
+`process-local` inventory and keeps all 13 live image digests unchanged. It does
+not generate or apply the AUD-075 manifest and must not be combined with an
+upstream update, image change or dependency upgrade.
+
+The private new-values copy must retain every invariant field and rotate all of
+`BOT_ACCESS_KEY`, `BOT_RUNNER_ACCESS_KEY`, `BOT_ORCHESTRATOR_ACCESS_KEY`,
+`DASHBOARD_ACCESS_KEY`, `BOT_IMAGE_PULL_CONFIG_JSON_BASE64`, `DB_PASS`,
+`GUARDIAN_KEY`, `NODE_COOKIE`, `OPENAI_API_KEY`, `PERMS_KEY`, `PHX_KEY` and
+`SMTP_PASS`. Rotate `SKETCHFAB_API_KEY` and `TENOR_API_KEY` too when they are
+configured. The three candidate-only bot domains and pull credential are bound
+and promoted in the private values source but are deliberately not projected
+into the live `process-local` bundle. The tool validates both DB URIs against
+the DB fields, derives the JWT field, verifies the Reticulum/Dialog `PERMS_KEY`
+relationship using cryptographic material without printing it, and rejects
+rendered credentials inside `ConfigMap/ret-config`.
+
+All four bot-domain values must be distinct and contain at least 32 characters;
+the live `BOT_ACCESS_KEY` must meet that same minimum. The new `DB_PASS` must be
+32 to 128 characters using only ASCII letters, digits, `_` and `-`. `plan`
+rejects any other contract before reporting readiness.
+
+Do not start this procedure until the AUD-065 tooling is merged, its local and
+CI gates are green, and a fresh joint DB+storage checkpoint has passed the
+restore and checksum gates. The two values sources and checkpoint are private
+inputs, not diagnostic files:
+
+- use absolute paths with no symlink component;
+- values sources must be regular, single-link, owner-owned mode `0600` files;
+- the parent of the canonical values source must be owned by the current user
+  and must not be writable by group or other users;
+- the checkpoint and operation parent must be owner-owned mode `0700`
+  directories;
+- the operation directory itself must not exist before `plan`;
+- never print, diff, edit or copy any operation artifact into a task, terminal
+  transcript or PR.
+
+Run from a clean root `main` at the merged AUD-065 tooling commit. Record that
+commit as non-secret evidence and do not change checkout or executable files
+between `plan`, any recovery command and terminal verification. Before creating
+live credentials or checkpoint data, require both project gates:
+
+```bash
+test "$(git branch --show-current)" = main
+test -z "$(git status --porcelain)"
+./scripts/verify-project.sh
+./scripts/verify-project.sh --full
+```
+
+Create the checkpoint through the tracked `## Backups` procedure with
+`ALLOW_CHECKPOINT_DOWNTIME=1`, then run the combined read-only restore preflight
+with `RESTORE_CHECKPOINT_PREFLIGHT=1`. The default rollout freshness ceiling is
+24 hours (`MAX_CHECKPOINT_AGE_SECONDS=86400`); repeat the checkpoint whenever
+that TTL expires or DB, storage, values, commits, images or inventory change.
+Keep a maintenance window with no content or deployment mutation from before
+`plan` until the terminal audit, provider revocations and closure record are
+complete. The global Lease serializes this coordinator, and source promotion
+repeatedly verifies the path, inode and bytes before an atomic rename. A POSIX
+rename or unlink is not a linearizable compare-and-swap against an unrelated
+process running as the same local user. Therefore no editor, updater, autosave
+or other same-user process may write anywhere in this operation's local
+contract: the old/new values sources and their parents, the checkpoint, the
+operation directory and its parent, the canonical values source and its parent,
+or any private staging/output directory used by AUD-065. This exclusion begins
+before `plan` and remains absolute through `execute`, any `resume`/`rollback`,
+the terminal `audit`, external revocation checks and the closure record.
+Directory-FD anchoring prevents pathname substitution from redirecting a
+mutation, but it does not turn POSIX filesystems into a linearizable CAS against
+an actively hostile writer with the same UID.
+
+Pin the target explicitly. The values below are placeholders; obtain the
+approved context and UIDs from the verified checkpoint/inventory without
+printing secret-bearing files:
+
+```bash
+export NAMESPACE=hcce
+export EXPECTED_KUBE_CONTEXT='<approved-kubernetes-context>'
+export EXPECTED_NAMESPACE_UID='<checkpoint-namespace-uid>'
+export EXPECTED_RET_PVC_UID='<checkpoint-ret-pvc-uid>'
+
+export AUD065_CHECKPOINT='/absolute/private/checkpoint-directory'
+export AUD065_OLD_VALUES='/absolute/private/old-values.yaml'
+export AUD065_NEW_VALUES='/absolute/private/new-values.yaml'
+export AUD065_OPERATION_PARENT='/absolute/private/aud065-operations'
+export AUD065_OPERATION="$AUD065_OPERATION_PARENT/aud065-20260718-01"
+
+install -d -m 0700 "$AUD065_OPERATION_PARENT"
+./scripts/test-aud065.sh
+```
+
+First create and seal a read-only plan. This performs exact Kubernetes reads
+and creates private local evidence, but it performs zero Kubernetes mutations:
+
+```bash
+MAX_CHECKPOINT_AGE_SECONDS=86400 \
+./deployment/rotate-process-local-credentials.sh plan \
+  --operation-directory "$AUD065_OPERATION" \
+  --checkpoint-directory "$AUD065_CHECKPOINT" \
+  --old-values-source "$AUD065_OLD_VALUES" \
+  --new-values-source "$AUD065_NEW_VALUES" \
+  --rotation-revision aud065-20260718-01
+```
+
+The only successful output is `aud065_plan_ready`. A failed plan is not a
+partially valid operation: retain its private directory for diagnosis, do not
+modify it, and create a new operation identity after correcting the cause.
+
+Reconfirm checkpoint freshness and then execute the exact sealed operation.
+Both `plan` and the initial `execute` reject a future, expired or invalid TTL
+before any Lease, lock or Kubernetes mutation. Once mutation has begun,
+`resume`, `rollback` and `audit` deliberately remain available if wall-clock
+time later crosses that TTL so recovery cannot be stranded:
+
+```bash
+MAX_CHECKPOINT_AGE_SECONDS=86400 \
+./deployment/rotate-process-local-credentials.sh execute \
+  --operation-directory "$AUD065_OPERATION" \
+  --checkpoint-directory "$AUD065_CHECKPOINT"
+```
+
+The durable state sequence is:
+
+| State | Proven boundary |
+| --- | --- |
+| `preflight` | global Lease and HMAC-bound operation lock acquired |
+| `quiesced` | six consumers at zero, PostgreSQL policy closed by CAS, probe blocked three times, no client sessions |
+| `db-rotated` | persistent PostgreSQL role classifies as the new verifier |
+| `bundle-applied` | exact Secret plus six zero-replica Deployment replacements completed by UID/resourceVersion CAS |
+| `verified` | pools and consumers use the new runtime values, old `DB_PASS` is rejected specifically for authentication, images/config/runtime and redacted report are exact |
+| `cleanup-authorized` | cleanup permission is durable before policy-marker or probe removal; final and released evidence can be terminally bound |
+
+On any ordinary error, `INT` or `TERM`, the coordinator attempts to close the
+existing PostgreSQL policy, proves the CNI block and stops all six consumers
+before exiting. The operation lock is deliberately retained. Do not delete the
+lock, probe or private directory and do not repair the cluster with manual
+`kubectl` commands. Resume the same identity instead:
+
+```bash
+./deployment/rotate-process-local-credentials.sh resume \
+  --operation-directory "$AUD065_OPERATION" \
+  --checkpoint-directory "$AUD065_CHECKPOINT"
+```
+
+Re-entry derives truth from the authenticated lock, policy, resource UIDs and
+private artifacts. It accepts the DB role only as exactly old or new; an
+unknown verifier fails closed and the previous DB password is never restored.
+`resume` is also the correct recovery command after an interrupted cleanup or
+after the terminal record was written but the client did not receive success.
+
+If the normal forward path is deliberately abandoned while the durable state
+is `db-rotated` or `bundle-applied`, the exceptional bounded baseline-recovery
+path accepts only the already-new DB credential and converges to the same
+rotated `process-local` terminal:
+
+```bash
+./deployment/rotate-process-local-credentials.sh rollback \
+  --operation-directory "$AUD065_OPERATION" \
+  --checkpoint-directory "$AUD065_CHECKPOINT"
+```
+
+This command is not a credential reversal. It applies or revalidates the same
+new bundle, never restores the previous Secret or password, and rejects every
+other starting state. Use `resume` for ordinary re-entry from any durable
+state; use the `rollback` CLI only to assert this narrower one-way recovery from
+`db-rotated` or `bundle-applied`.
+
+The mutating coordinator completes only with the exact output
+`aud065_rotation_complete`. Then run its separate read-only live audit:
+
+```bash
+./deployment/rotate-process-local-credentials.sh audit \
+  --operation-directory "$AUD065_OPERATION" \
+  --checkpoint-directory "$AUD065_CHECKPOINT"
+```
+
+Its only successful output is `aud065_rotation_verified`. The audit creates no
+Lease, takes no lock, executes no callback and performs no Kubernetes mutation.
+It reauthenticates the terminal operation and source promotion, requires the
+exact 42-resource `process-local` inventory, all 12 baseline Deployments ready,
+the six rotated consumers exact, checkpoint image continuity, released-normal
+PostgreSQL policy, absent probe and absent operation lock.
+
+Do not use `./deployment/verify-live-reactivation.sh` as the `AUD-065` gate: it
+correctly requires the later `AUD-075` isolated-runner control plane. Its full
+zero-failure/zero-warning result and cold desktop/mobile acceptance belong to
+Fase 6, after `AUD-075` and `AUD-078` are deployed. At this baseline stage run
+only the narrow functional smokes for credential rotation. Record only rotated
+key names, operation state and safe verdicts; never record the operation ID,
+HMACs, private baselines or credential material.
+
+Do not treat runtime convergence as provider revocation. Keep the operation and
+old-values source private until each applicable external trust domain has
+completed this sequence: new credential accepted, old credential revoked at
+the provider, old credential rejected specifically as authentication failure,
+then the new credential accepted again. A timeout, DNS failure, rate limit or
+provider `5xx` is inconclusive and never proves revocation. Apply the sequence
+to OpenAI, SMTP, GHCR package pulls and configured Sketchfab/Tenor credentials;
+also perform the documented functional chat, magic-link and asset-provider
+smokes. The previous candidate-only bot keys and pull token are superseded by
+the sealed, promoted values source; their replacements are deliberately not
+applied to the legacy runtime.
+
+Only after terminal re-entry, the process-local live gate, provider rejection
+and functional acceptance may the old-values source and operation directory be
+removed from active plaintext storage. Keep the joint checkpoint according to
+the backup policy. The promoted root values file remains the only canonical
+source for future generation: pass it through `HCCE_INPUT_VALUES_PATH` and do
+not reuse an older ignored `hubs-cloud/community-edition/input-values.yaml`.
 
 ### Step 7: Generate hcce.yaml
 
@@ -1001,8 +1219,14 @@ preflight reports 0 failures and 0 warnings.
 For the next rotation:
 
 ```bash
-# Supply through the environment or Keychain, never commit it or put it in argv.
-export GITHUBTOKEN='<new token with read:packages>'
+# Read through /dev/tty without placing the token in shell history, argv or
+# Git. A `security find-generic-password ... -w` Keychain lookup captured into
+# this variable is also acceptable on macOS.
+GITHUBTOKEN="$(bash -c '
+  IFS= read -r -s -p "New GHCR token (read:packages): " token </dev/tty
+  printf "\n" >/dev/tty
+  printf "%s" "$token"
+')"
 
 # Let Docker consume the token through stdin and create a private temporary
 # dockerconfig. kubectl receives only the file path, never the credential.
