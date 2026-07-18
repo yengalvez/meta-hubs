@@ -2304,7 +2304,7 @@ recovery_start_operation_serialization_heartbeat() {
   chmod 600 "$RECOVERY_SERIALIZATION_HEARTBEAT_STOP" \
     "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE"
   (
-    # shellcheck disable=SC2329 # Invoked indirectly by the TERM/INT trap.
+    # shellcheck disable=SC2317,SC2329 # Invoked indirectly by the TERM/INT trap.
     heartbeat_stop() {
       [[ "$sleeper_pid" =~ ^[1-9][0-9]*$ ]] || exit 0
       kill -TERM "$sleeper_pid" 2>/dev/null || :
