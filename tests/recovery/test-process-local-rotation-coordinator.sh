@@ -1027,8 +1027,7 @@ linked_pending="$PUBLISH_OP/.evidence.json.pending-$(printf 'a%.0s' {1..32})"
 ln "$PUBLISH_OP/evidence.json" "$linked_pending"
 aud065_reconcile_private_file "$PUBLISH_OP/evidence.json"
 if [[ ! -e "$linked_pending" ]] &&
-   [[ "$(stat -f '%l' "$PUBLISH_OP/evidence.json" 2>/dev/null ||
-     stat -c '%h' "$PUBLISH_OP/evidence.json")" == 1 ]]; then
+   [[ "$(aud065_link_count "$PUBLISH_OP/evidence.json")" == 1 ]]; then
   pass 'private evidence reentry reconciles the durable two-link publication cut'
 else
   fail 'private evidence reentry reconciles the durable two-link publication cut'
