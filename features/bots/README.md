@@ -17,10 +17,11 @@ identidad, spawn, actualizaciones y comandos.
 > runners ghost en pods o contenedores distintos con credenciales y recursos
 > propios.
 
-El corte local integrado usa Hubs `d7f0c2fc4` y Hubs Cloud `b7b752f`. Spoke
-pasó aparte 68/68 pruebas, lint y build con Node 16.13.2/Yarn 1. El dictamen es
-GO de integración local únicamente: no se ejecutaron carga física, Actions,
-staging ni aceptación live.
+El corte integrado usa Hubs `674ece411691` y Hubs Cloud `0f151eb88da1`. Spoke
+pasó 68/68 pruebas, lint y build con Node 16.13.2/Yarn 1; el fencing de
+autoridad pasó Reticulum 418 pruebas + 5 properties, orquestador 103/103 y
+generador 26/26. El dictamen es GO de integración Git/CI únicamente: no se
+ejecutaron carga física, builds de rollout, staging ni aceptación live.
 
 Límites de seguridad por defecto:
 
@@ -92,7 +93,7 @@ bots; no puede reactivarlos ni variar count, movilidad, chat o prompt. Alcanzar
 `MAX_ACTIVE_ROOMS` rechaza la operación de alta sin mutar la sala. Estos son
 contratos integrados en las ramas base, no del runtime live actual.
 
-Cloud `34d1d3a8d3cc` persiste en `ret0.bot_config_approvals` el candidato exacto,
+Cloud `0f151eb88da1` persiste en `ret0.bot_config_approvals` el candidato exacto,
 su fingerprint, el último estado aprobado y la atribución de la decisión. La
 migración inicial conserva el JSON heredado y cambia únicamente
 `bots.enabled` a `false`, de modo que ninguna configuración previa puede
@@ -174,6 +175,24 @@ El orquestador solo cuenta un bot como activo después del ACK autoritativo. Ant
 un spawn fallido intenta retirar el objeto de forma best-effort y aplica un
 reintento acotado; no anuncia una población que Reticulum no confirmó.
 
+### Fencing PostgreSQL de autoridad
+
+`ret0.bot_runner_leases` conserva una fila o tombstone por sala con UUID de
+lease, holder Reticulum, sesión de canal, expiración y un epoch global limitado
+al entero seguro de JavaScript que no puede ciclar. La adquisición usa lock
+advisory por sala, lock de fila y reloj PostgreSQL; concede 15 segundos y se
+renueva cada 5. Renovación y release son CAS del tuple completo; takeover tras
+expiración y revoke consumen un epoch nuevo. No hay fallback local ante error
+de base de datos.
+
+Spawn, updates, removals, NAF raw, ACK y entrega final de chat revalidan el
+fence exacto bajo el mismo lock. Cada `bot_command` lleva lease+epoch y el ghost
+descarta comandos ausentes o stale. Esto cerca autoridades antiguas entre
+procesos, pero no convierte por sí solo la topología en HA: el generador y el
+verificador siguen exigiendo una réplica Reticulum, `Recreate` y sin HPA hasta
+que un rollout separado pruebe dos réplicas frías, readiness/Endpoints y la
+restricción `ret-pvc` RWO.
+
 ### Bloqueo de aislamiento de procesos
 
 El candidato actual ejecuta el padre y todos los ghost runners bajo UID 1000 en
@@ -195,8 +214,9 @@ implementado ni desplegado.
 - `AUD-065` exige checkpoint fresco de DB+storage y rotación coordinada de todos
   los secretos potencialmente expuestos antes de cualquier mutación de
   producción.
-- La autoridad de leases del orquestador sigue siendo local al proceso y carece
-  de fencing persistente en DB; no autorizar autoridades concurrentes.
+- El fencing PostgreSQL de leases está integrado y probado, pero aún no
+  desplegado ni atestado; el baseline live sigue siendo process-local y no debe
+  autorizar autoridades concurrentes.
 - El código de aprobación/cuarentena está integrado pero no desplegado; tras la
   migración debe revisarse el inventario redactado y aprobar cada configuración
   válida antes de reactivar bots.

@@ -49,7 +49,7 @@
     "prometheus-run-bound-baseline-not-tracked",
     "prometheus-scrape-configuration-not-tracked",
     "readiness-review-attestation-not-verified",
-    "reticulum-db-arbitration-fencing-not-implemented",
+    "reticulum-db-arbitration-fencing-not-deployed-and-attested",
     "source-timestamp-freshness-not-proven"
   ]
 }

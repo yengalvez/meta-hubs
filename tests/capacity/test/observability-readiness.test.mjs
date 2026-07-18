@@ -53,7 +53,7 @@ test("readiness enumerates every missing prerequisite and candidate-local hashes
   assert.equal(readiness.baseReview.baseOwnedPolicySha256, null);
   assert.equal(readiness.baseReview.reviewAttestationSha256, null);
   assert.ok(readiness.missingPrerequisites.includes("base-owned-readiness-policy-not-materialized"));
-  assert.ok(readiness.missingPrerequisites.includes("reticulum-db-arbitration-fencing-not-implemented"));
+  assert.ok(readiness.missingPrerequisites.includes("reticulum-db-arbitration-fencing-not-deployed-and-attested"));
   assert.ok(readiness.missingPrerequisites.includes("prometheus-query-semantics-not-tracked"));
   assert.ok(readiness.missingPrerequisites.includes("prometheus-run-bound-baseline-not-tracked"));
   assert.ok(readiness.missingPrerequisites.includes("metric-unavailable:reticulum.errorCount"));

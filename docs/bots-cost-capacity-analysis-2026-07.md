@@ -7,7 +7,7 @@
 > versionado está vacío y toda ejecución
 > física falla cerrada no solo por confianza: las 39 métricas de servidor carecen de productores/reglas/scrape
 > revisados y también faltan HTTPS/auth del collector, aislamiento egress de host, identidad física de generadores,
-> prueba cgroup de terminación, policy base-owned y fencing de Reticulum. La suite local valida esos bloqueos. No
+> prueba cgroup de terminación, policy base-owned y atestación del fencing de Reticulum ya integrado. La suite local valida esos bloqueos. No
 > existe evidencia de carga ni certificación de capacidad para esos objetivos.
 
 ## Resumen ejecutivo
@@ -120,8 +120,9 @@ Las defensas actuales son deliberadas:
 
 La siguiente fase exige una clave Ed25519 externa revisada; productores, reglas, scrape e inventario Prometheus
 reales; timestamp de fuente, resets y scope de run; collector HTTPS con TLS/auth; aislamiento egress de host;
-identidad física/cgroup y prueba de cero procesos; y arbitraje/fencing de base de datos antes de más de una réplica de
-Reticulum. Policy y atestación de readiness deben proceder del baseline controlado por el propietario. También hacen
+identidad física/cgroup y prueba de cero procesos; y despliegue/atestación del arbitraje con fencing de base de datos
+ya integrado antes de más de una réplica de Reticulum. Policy y atestación de readiness deben proceder del baseline
+controlado por el propietario. También hacen
 falta presupuesto, ventana y revisión independiente. Hasta entonces no hay un `PASSED` físico posible.
 
 ## Diagnostico historico: por que atravesaban estructuras
@@ -268,8 +269,9 @@ Es factible como objetivo de plataforma, pero no con el nodo unico actual ni sin
 - Mantener 20-25 como valor operativo general.
 - Probar 30 con escena optimizada, avatares ligeros, audio controlado y clientes desktop.
 - Pasar a varios nodos con autoscaling.
-- Escalar Dialog/mediasoup; mantener Reticulum exactamente en una réplica mientras `BotRunnerLease` sea local al
-  proceso y no exista arbitraje con fencing en base de datos.
+- Escalar Dialog/mediasoup; mantener Reticulum exactamente en una réplica mientras
+  el fencing PostgreSQL integrado no esté desplegado/atestado y no se hayan
+  probado los gates de storage, readiness y Endpoints para dos réplicas frías.
 - Externalizar o hacer altamente disponible Postgres, almacenamiento y sesiones.
 - Medir CPU, RAM, red, SFU consumers, FPS cliente y tiempos de join.
 
@@ -304,15 +306,16 @@ Para 100 asistentes hay alternativas:
 
 El escenario `total-10000-model` nunca ejecuta carga. Actualmente tampoco proyecta nodos: los puntos 30/100/300
 confunden participantes con número de salas, el salto a 10.000 es de unas 33 veces frente al máximo medido y falta
-fencing distribuido para Reticulum. El gate exige diseño factorial participantes×salas, repeticiones, extrapolación
-máxima de 3x y arbitraje de base de datos antes de emitir cifras o costes. Diez mil usuarios totales podría plantearse como una
+desplegar/atestar el fencing distribuido para Reticulum. El gate exige diseño factorial participantes×salas,
+repeticiones, extrapolación máxima de 3x y arbitraje de base de datos atestado antes de emitir cifras o costes. Diez mil usuarios totales podría plantearse como una
 plataforma multi-cluster futura, no como 100 salas Hubs de 100:
 
 - cientos de salas de 20-30;
 - directorio de eventos y asignador de capacidad;
 - varios clusters/regiones;
 - Dialog/mediasoup particionado por sala;
-- Reticulum escalable solo después de sustituir el lease local por arbitraje persistente con fencing;
+- Reticulum escalable solo después de desplegar/atestar el arbitraje persistente
+  con fencing ya integrado y superar los gates multi-réplica de storage y readiness;
 - CDN/objeto storage;
 - observabilidad, pruebas de carga y operacion 24/7.
 
@@ -344,7 +347,8 @@ migracion transparente.
    explícitamente `unavailable` y la ejecución física está bloqueada.
 6. Implementar y revisar productores/reglas/scrape/inventario, collector HTTPS/TLS/auth, egress de host,
    identidad+cgroup+terminación de generadores, clave del propietario y policy/atestación base-owned. Mantener
-   Reticulum en una réplica hasta disponer de lease persistente con fencing.
+   Reticulum en una réplica hasta desplegar y atestar el lease persistente con
+   fencing y validar por separado la topología multi-réplica.
 7. Ejecutar primero local smoke y luego pruebas controladas de 10, 20, 25 y 30 usuarios, sin saltar etapas ante una
    parada o evidencia incompleta.
 8. Solo después modelar con datos medidos el escalado a 300 CCU y diseñar el allocator de salas.

@@ -116,8 +116,11 @@ Persistent/exclusive workloads have explicit safe update strategies:
 
 - `pgsql` and `reticulum`: exact `Recreate` with no residual
   `rollingUpdate`; Reticulum remains at exactly one replica and has no HPA.
-  While `BotRunnerLease` and the channel authority are process-local, a second
-  Reticulum process would be split-brain even if it shared PostgreSQL/PVC.
+  Bot-runner authority is database-fenced in the integrated source, but the
+  live baseline is not yet migrated or attested. Even after that rollout, a
+  second Reticulum replica remains prohibited until staging proves readiness,
+  Endpoint behavior and the `ret-pvc` RWO placement constraint with two cold
+  replicas.
 - `dialog` and `coturn`: `Recreate`, so two revisions never compete for host ports `4443`/`5349` on the single node.
 - HAProxy: startup, readiness and liveness checks on `/healthz:1042`; startup has up to 120 seconds before liveness
   may restart it.
