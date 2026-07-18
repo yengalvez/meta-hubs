@@ -905,6 +905,9 @@ aud065_pgsql_barrier_capture_normal() {
     AUD065_PGSQL_NORMAL_METADATA_SHA256 AUD065_PGSQL_NORMAL_SPEC_SHA256
 }
 aud065_operation_tool() { printf '%s\n' "$*" >>"$BARRIER_LOG"; }
+# The real function is sourced above; a later fixture override must not make
+# this invocation look like a forward reference to older ShellCheck releases.
+# shellcheck disable=SC2218
 aud065_bind_or_adopt_barrier
 if rg -q -- '--policy-resource-version rv-77' "$BARRIER_LOG" &&
    [[ "$AUD065_PGSQL_POLICY_RESOURCE_VERSION" == rv-77 ]] &&
@@ -919,7 +922,7 @@ aud065_operation_tool() {
   [[ "$1" != "$BARRIER_FAILURE" ]]
 }
 # Invoked indirectly by aud065_bind_or_adopt_barrier.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 aud065_crash_point() {
   [[ "crash:$1" != "$BARRIER_FAILURE" ]]
 }
@@ -1214,7 +1217,7 @@ aud065_emit_runtime_password() { printf 'fixture-password-never-logged\n'; }
 recovery_require_operation_serialization() { :; }
 recovery_require_operation_lock() { :; }
 # Invoked indirectly by the sourced probe function.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 recovery_kubectl_stream_guarded() { IFS= read -r _discard || :; return 1; }
 expect_failure 'old-password rejection never accepts a kubectl or network failure' \
   aud065_probe_fresh_auth old pgbouncer reject
@@ -1649,7 +1652,7 @@ AUD065_RELEASED_BASELINE="$AUD065_OPERATION_DIRECTORY/released.json"
 AUD065_REPORT="$AUD065_OPERATION_DIRECTORY/report.json"
 aud065_sha256() { return 99; }
 # Invoked indirectly by aud065_write_or_verify_terminal.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 aud065_operation_tool() { printf '%s\n' "$*" >>"$TERMINAL_LOG"; }
 aud065_write_or_verify_terminal lock-terminal-uid
 if [[ "$(sed -n '1p' "$TERMINAL_LOG")" == write-terminal-from-artifacts* ]] &&
