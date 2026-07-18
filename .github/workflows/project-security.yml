@@ -144,8 +144,10 @@ jobs:
           done < <(find deployment scripts tests/recovery tests/scripts -type f -name '*.sh' -print0)
 
       - name: Install readiness contract test dependencies
-        working-directory: hubs-cloud/community-edition/services/bot-orchestrator
-        run: npm ci --ignore-scripts --no-audit
+        working-directory: hubs-cloud/community-edition
+        run: |
+          npm ci --ignore-scripts --no-audit
+          npm --prefix services/bot-orchestrator ci --ignore-scripts --no-audit
 
       - name: Run security gate regression tests
         run: |
