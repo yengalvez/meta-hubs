@@ -51,7 +51,7 @@ RECOVERY_STORAGE_SHA256="$(printf 'b%.0s' {1..64})"
 PGSQL_IMAGE="docker.io/mozillareality/postgres@sha256:$(printf 'd%.0s' {1..64})"
 
 normal_policy() {
-  local uid="${1:-policy-uid}" rv="${2:-10}"
+  local uid="policy-uid" rv="10"
   jq -cn --arg uid "$uid" --arg rv "$rv" --argjson spec "$(aud065_pgsql_normal_spec_json)" '{
     apiVersion:"networking.k8s.io/v1",kind:"NetworkPolicy",
     metadata:{
