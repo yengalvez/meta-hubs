@@ -108,10 +108,10 @@ for invalid_helper_kind in missing symlink directory; do
 done
 
 python_preflight_body="$(declare -f aud065_require_python_helper_environment)"
-if rg -q -F 'PATH=/usr/bin:/bin command -v python3' <<<"$python_preflight_body" &&
-   rg -q -F 'os.supports_dir_fd' <<<"$python_preflight_body" &&
-   rg -q -F 'getattr(os, "pread", None)' <<<"$python_preflight_body" &&
-   rg -q -F 'getattr(os, "pwrite", None)' <<<"$python_preflight_body"; then
+if grep -qF 'PATH=/usr/bin:/bin command -v python3' <<<"$python_preflight_body" &&
+   grep -qF 'os.supports_dir_fd' <<<"$python_preflight_body" &&
+   grep -qF 'getattr(os, "pread", None)' <<<"$python_preflight_body" &&
+   grep -qF 'getattr(os, "pwrite", None)' <<<"$python_preflight_body"; then
   pass 'Python preflight binds the helper runtime to its minimum filesystem capabilities'
 else
   fail 'Python preflight binds the helper runtime to its minimum filesystem capabilities'
@@ -178,36 +178,36 @@ fi
 expect_failure 'default checkpoint freshness rejects age 86401 seconds' \
   run_freshness_fixture 100 86501 default
 
-if rg -q -F '"$AUD065_OLD_VALUES_COPY" "$AUD065_OLD_SNAPSHOT"' \
+if grep -qF "\"\$AUD065_OLD_VALUES_COPY\" \"\$AUD065_OLD_SNAPSHOT\"" \
      <<<"$driver_plan_body" &&
-   rg -q -F '"$AUD065_NEW_VALUES_COPY" "$AUD065_NEW_SNAPSHOT"' \
+   grep -qF "\"\$AUD065_NEW_VALUES_COPY\" \"\$AUD065_NEW_SNAPSHOT\"" \
      <<<"$driver_plan_body" &&
-   ! rg -q -F '"$AUD065_OLD_VALUES_SOURCE" "$AUD065_OLD_SNAPSHOT"' \
+   ! grep -qF "\"\$AUD065_OLD_VALUES_SOURCE\" \"\$AUD065_OLD_SNAPSHOT\"" \
      <<<"$driver_plan_body" &&
-   ! rg -q -F '"$AUD065_NEW_VALUES_SOURCE" "$AUD065_NEW_SNAPSHOT"' \
+   ! grep -qF "\"\$AUD065_NEW_VALUES_SOURCE\" \"\$AUD065_NEW_SNAPSHOT\"" \
      <<<"$driver_plan_body"; then
   pass 'process-local projections derive only from sealed full-source copies'
 else
   fail 'process-local projections derive only from sealed full-source copies'
 fi
-if [[ "$(rg -n -F 'aud065_verify_source_state new' \
+if [[ "$(grep -nF 'aud065_verify_source_state new' \
        <<<"$driver_missing_terminal_body" | cut -d: -f1)" -lt \
-      "$(rg -n -F 'aud065_verify_terminal_record' \
+      "$(grep -nF 'aud065_verify_terminal_record' \
        <<<"$driver_missing_terminal_body" | cut -d: -f1)" ]]; then
   pass 'missing-lock terminal fast path first requires exact canonical new source'
 else
   fail 'missing-lock terminal fast path first requires exact canonical new source'
 fi
-if ! rg -q 'aud065_acquire_lease|aud065_create_or_adopt_lock|recovery_acquire_operation_lock|recovery_kubectl_mutate|aud065_run_(rotation|rollback)_callbacks|aud065_scale_deployment_exact|aud065_verify_or_create_report|aud065_capture_and_verify_released_state' \
+if ! grep -qE 'aud065_acquire_lease|aud065_create_or_adopt_lock|recovery_acquire_operation_lock|recovery_kubectl_mutate|aud065_run_(rotation|rollback)_callbacks|aud065_scale_deployment_exact|aud065_verify_or_create_report|aud065_capture_and_verify_released_state' \
      <<<"$driver_audit_body"; then
   pass 'audit body contains no Lease, lock creation, callback, mutation, scale or report recreation path'
 else
   fail 'audit body contains no Lease, lock creation, callback, mutation, scale or report recreation path'
 fi
-if [[ "$(rg -c 'aud065_require_checkpoint_freshness' <<<"$driver_plan_body")" == 1 ]] &&
-   [[ "$(rg -c 'aud065_require_checkpoint_freshness' <<<"$driver_execute_body")" == 1 ]] &&
-   rg -q -F 'if [[ "$mode" == execute ]]' <<<"$driver_execute_body" &&
-   ! rg -q 'aud065_require_checkpoint_freshness' <<<"$driver_audit_body"; then
+if [[ "$(grep -cF 'aud065_require_checkpoint_freshness' <<<"$driver_plan_body")" == 1 ]] &&
+   [[ "$(grep -cF 'aud065_require_checkpoint_freshness' <<<"$driver_execute_body")" == 1 ]] &&
+   grep -qF "if [[ \"\$mode\" == execute ]]" <<<"$driver_execute_body" &&
+   ! grep -qF 'aud065_require_checkpoint_freshness' <<<"$driver_audit_body"; then
   pass 'freshness gates plan and initial execute but never resume, rollback or audit'
 else
   fail 'freshness gates plan and initial execute but never resume, rollback or audit'
@@ -223,14 +223,14 @@ for scratch_worker in \
   aud065_verify_or_create_report \
   aud065_verify_fresh_cleanup_gate \
   aud065_rb_validate_bundle_quiesced; do
-  if ! rg -q 'aud065_with_scratch_directory' <<<"$(declare -f "$scratch_worker")"; then
+  if ! grep -qF 'aud065_with_scratch_directory' <<<"$(declare -f "$scratch_worker")"; then
     scratch_worker_failure="$scratch_worker"
     break
   fi
 done
 if [[ -z "$scratch_worker_failure" ]] &&
-   [[ "$(rg -c 'aud065_make_scratch_directory' "$DRIVER")" == 2 ]] &&
-   ! rg -q 'scratch="\$\(aud065_make_scratch_directory' "$DRIVER"; then
+   [[ "$(grep -cF 'aud065_make_scratch_directory' "$DRIVER")" == 2 ]] &&
+   ! grep -qF "scratch=\"\$(aud065_make_scratch_directory" "$DRIVER"; then
   pass 'every private scratch worker is routed through the identity-bound finally helper'
 else
   fail 'every private scratch worker is routed through the identity-bound finally helper'
@@ -518,7 +518,7 @@ expected_audit_order=$'lock-read\noperation-checkpoint\nsource:new\nprocess-loca
 if [[ "$AUDIT_FIXTURE_STATUS" == 0 &&
       "$AUDIT_FIXTURE_OUTPUT" == aud065_rotation_verified &&
       "$(cat "$AUDIT_LOG")" == "$expected_audit_order" ]] &&
-   ! rg -q '^FORBIDDEN:' "$AUDIT_LOG"; then
+   ! grep -qE '^FORBIDDEN:' "$AUDIT_LOG"; then
   pass 'audit proves the exact terminal state with two lock reads and zero mutation or Lease paths'
 else
   fail 'audit proves the exact terminal state with two lock reads and zero mutation or Lease paths'
@@ -530,7 +530,7 @@ for audit_drift in lock-start lock-final source-drift source-drift-final \
   run_audit_fixture "$audit_drift" "$drift_log"
   if [[ "$AUDIT_FIXTURE_STATUS" != 0 &&
         "$AUDIT_FIXTURE_OUTPUT" != *aud065_rotation_verified* ]] &&
-     ! rg -q '^FORBIDDEN:' "$drift_log"; then
+     ! grep -qE '^FORBIDDEN:' "$drift_log"; then
     pass "audit fails closed without mutation for $audit_drift"
   else
     fail "audit fails closed without mutation for $audit_drift"
@@ -824,7 +824,7 @@ MAX_CHECKPOINT_AGE_SECONDS=100
 plan_output="$(aud065_plan)"
 PATH="$old_path"
 expect_equal "$plan_output" aud065_plan_ready 'plan returns a value-free success token'
-if ! rg -q '^kubectl:' "$PLAN_LOG"; then
+if ! grep -qE '^kubectl:' "$PLAN_LOG"; then
   pass 'plan performs zero Kubernetes mutations in the fixture'
 else
   fail 'plan performs zero Kubernetes mutations in the fixture'
@@ -845,8 +845,8 @@ for invalid_plan_contract in replicas policy config; do
   if invalid_output="$(aud065_plan 2>/dev/null)"; then
     fail "plan rejects invalid $invalid_plan_contract invariant before ready"
   elif [[ "$invalid_output" != *aud065_plan_ready* ]] &&
-       rg -q '^node:prepare-process-local-rotation.mjs:verify-plan$' "$PLAN_LOG" &&
-       ! rg -q '^kubectl:' "$PLAN_LOG"; then
+       grep -qE '^node:prepare-process-local-rotation.mjs:verify-plan$' "$PLAN_LOG" &&
+       ! grep -qE '^kubectl:' "$PLAN_LOG"; then
     pass "plan rejects invalid $invalid_plan_contract invariant before ready"
   else
     fail "plan rejects invalid $invalid_plan_contract invariant before ready"
@@ -909,10 +909,10 @@ aud065_operation_tool() { printf '%s\n' "$*" >>"$BARRIER_LOG"; }
 # this invocation look like a forward reference to older ShellCheck releases.
 # shellcheck disable=SC2218
 aud065_bind_or_adopt_barrier
-if rg -q -- '--policy-resource-version rv-77' "$BARRIER_LOG" &&
+if grep -qF -- '--policy-resource-version rv-77' "$BARRIER_LOG" &&
    [[ "$AUD065_PGSQL_POLICY_RESOURCE_VERSION" == rv-77 ]] &&
    ! find "$AUD065_OPERATION_DIRECTORY" -name '.barrier-capture.*' -print -quit |
-     rg -q .; then
+     grep -q .; then
   pass 'barrier capture binds current-shell globals without a swappable scratch path'
 else
   fail 'barrier capture binds current-shell globals without a swappable scratch path'
@@ -1076,20 +1076,20 @@ else
   fail 'successful external producer publishes only its complete pinned bytes'
 fi
 
-expect_equal "$(rg -o -F -- '--operation-directory "$AUD065_OPERATION_DIRECTORY"' \
+expect_equal "$(grep -oF -- "--operation-directory \"\$AUD065_OPERATION_DIRECTORY\"" \
   <<<"$driver_prepare_body" | wc -l | tr -d ' ')" 2 \
   'reentrant prepare and verification authenticate the operation directory'
 materialize_body="$(declare -f aud065_materialize_replacements)"
 apply_body="$(declare -f aud065_apply_bundle_exact)
 $(declare -f aud065_classify_bundle_iteration_in_scratch)"
-if [[ "$(rg -o -F -- '--operation-directory "$AUD065_OPERATION_DIRECTORY"' \
+if [[ "$(grep -oF -- "--operation-directory \"\$AUD065_OPERATION_DIRECTORY\"" \
        <<<"$materialize_body" | wc -l | tr -d ' ')" == 2 ]] &&
-   [[ "$(rg -n 'materialize|after-materialize-replacements|verify' \
+   [[ "$(grep -nE 'materialize|after-materialize-replacements|verify' \
        <<<"$materialize_body" | cut -d: -f2-)" == *materialize*after-materialize-replacements*verify* ]] &&
-   [[ "$(rg -o -F -- '--operation-directory "$AUD065_OPERATION_DIRECTORY"' \
+   [[ "$(grep -oF -- "--operation-directory \"\$AUD065_OPERATION_DIRECTORY\"" \
        <<<"$apply_body" | wc -l | tr -d ' ')" == 3 ]] &&
-   rg -q 'emit-verified' <<<"$apply_body" &&
-   ! rg -q -F '< "$AUD065_REPLACEMENTS_DIRECTORY' <<<"$apply_body"; then
+   grep -qF 'emit-verified' <<<"$apply_body" &&
+   ! grep -qF "< \"\$AUD065_REPLACEMENTS_DIRECTORY" <<<"$apply_body"; then
   pass 'all replacement operations authenticate inputs and CAS only verified emitted bytes'
 else
   fail 'all replacement operations authenticate inputs and CAS only verified emitted bytes'
@@ -1552,7 +1552,7 @@ aud065_pgsql_barrier_cleanup() {
 }
 if aud065_cb_complete >/dev/null 2>&1; then
   fail 'fresh verified-state drift blocks cleanup'
-elif ! rg -q '^cleanup-cas$' "$DRIFT_LOG"; then
+elif ! grep -qE '^cleanup-cas$' "$DRIFT_LOG"; then
   pass 'fresh verified-state drift blocks cleanup before policy or probe mutation'
 else
   fail 'fresh verified-state drift blocks cleanup before policy or probe mutation'
@@ -1657,11 +1657,11 @@ aud065_operation_tool() { printf '%s\n' "$*" >>"$TERMINAL_LOG"; }
 aud065_write_or_verify_terminal lock-terminal-uid
 if [[ "$(sed -n '1p' "$TERMINAL_LOG")" == write-terminal-from-artifacts* ]] &&
    [[ "$(sed -n '2p' "$TERMINAL_LOG")" == verify-terminal-from-artifacts* ]] &&
-   [[ "$(rg -c -- '--verified-baseline ' "$TERMINAL_LOG")" == 2 ]] &&
-   [[ "$(rg -c -- '--released-baseline ' "$TERMINAL_LOG")" == 2 ]] &&
-   [[ "$(rg -c -- '--expected-operation-id ' "$TERMINAL_LOG")" == 2 ]] &&
-   [[ "$(rg -c -- '--expected-operation-binding-sha256 ' "$TERMINAL_LOG")" == 2 ]] &&
-   ! rg -q -- '--(verified-baseline|released-baseline|report)-sha256' "$TERMINAL_LOG"; then
+   [[ "$(grep -cF -- '--verified-baseline ' "$TERMINAL_LOG")" == 2 ]] &&
+   [[ "$(grep -cF -- '--released-baseline ' "$TERMINAL_LOG")" == 2 ]] &&
+   [[ "$(grep -cF -- '--expected-operation-id ' "$TERMINAL_LOG")" == 2 ]] &&
+   [[ "$(grep -cF -- '--expected-operation-binding-sha256 ' "$TERMINAL_LOG")" == 2 ]] &&
+   ! grep -qE -- '--(verified-baseline|released-baseline|report)-sha256' "$TERMINAL_LOG"; then
   pass 'terminal helper pins and binds final-open and released-normal artifacts directly'
 else
   fail 'terminal helper pins and binds final-open and released-normal artifacts directly'
@@ -1855,12 +1855,12 @@ for closed_resume_state in verified cleanup-authorized; do
   else
     closed_resume_status=$?
   fi
-  cleanup_line="$(rg -n '^cleanup-cas$' "$CLOSED_RESUME_LOG" | cut -d: -f1)"
-  terminal_line="$(rg -n '^terminal$' "$CLOSED_RESUME_LOG" | cut -d: -f1)"
-  release_line="$(rg -n '^release-lock$' "$CLOSED_RESUME_LOG" | cut -d: -f1)"
+  cleanup_line="$(grep -nE '^cleanup-cas$' "$CLOSED_RESUME_LOG" | cut -d: -f1)"
+  terminal_line="$(grep -nE '^terminal$' "$CLOSED_RESUME_LOG" | cut -d: -f1)"
+  release_line="$(grep -nE '^release-lock$' "$CLOSED_RESUME_LOG" | cut -d: -f1)"
   if [[ "$closed_resume_status" == 0 ]] &&
      [[ "$(sed -n '1,3p' "$CLOSED_RESUME_LOG")" == $'consumers-absent\nsessions-zero\nsocket-unix' ]] &&
-     rg -q '^barrier-open$' "$CLOSED_RESUME_LOG" &&
+     grep -qE '^barrier-open$' "$CLOSED_RESUME_LOG" &&
      [[ "$cleanup_line" -lt "$terminal_line" && "$terminal_line" -lt "$release_line" ]]; then
     pass "$closed_resume_state closed fail-close state reopens, restarts and completes"
   else
@@ -2085,15 +2085,15 @@ for rollback_cut in "${!rollback_cut_names[@]}"; do
   else
     rollback_prefix_status=$?
   fi
-  replacement_count="$(rg -c '^replacement:' "$ROLLBACK_PREFIX_LOG" || :)"
+  replacement_count="$(grep -cE '^replacement:' "$ROLLBACK_PREFIX_LOG" || :)"
   replacement_count="${replacement_count:-0}"
   if [[ "$rollback_prefix_status" == 0 ]] &&
-     [[ "$(rg -c '^accepted:' "$ROLLBACK_PREFIX_LOG")" == 6 ]] &&
+     [[ "$(grep -cE '^accepted:' "$ROLLBACK_PREFIX_LOG")" == 6 ]] &&
      [[ "$replacement_count" == "$((7 - rollback_prefix))" ]] &&
      [[ "$(<"$ROLLBACK_PREFIX_OP/prefix.state")" == 7 ]] &&
-     rg -q '^transition:db-rotated->bundle-applied$' "$ROLLBACK_PREFIX_LOG" &&
-     rg -q '^complete$' "$ROLLBACK_PREFIX_LOG" &&
-     ! rg -q 'NNNNNNNN' "$ROLLBACK_PREFIX_LOG"; then
+     grep -qE '^transition:db-rotated->bundle-applied$' "$ROLLBACK_PREFIX_LOG" &&
+     grep -qE '^complete$' "$ROLLBACK_PREFIX_LOG" &&
+     ! grep -qF 'NNNNNNNN' "$ROLLBACK_PREFIX_LOG"; then
     pass "rollback resumes safely from ${rollback_cut_names[$rollback_cut]}"
   else
     fail "rollback resumes safely from ${rollback_cut_names[$rollback_cut]}"
@@ -2133,7 +2133,7 @@ new_password='NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN'
 printf '%s\n' "$new_password" | pldb_run_rollback_with_new ret0
 expect_equal "$(cat "$ROLLBACK_LOG")" $'guard\nquiesce\nassert-quiesced\nassert-new\nrollback-new-only\nstart-pools\nverify-pools\nstart-consumers\nverify-runtime\ncomplete' \
   'rollback callback path retains only the new DB credential'
-if ! rg -q "$new_password" "$ROLLBACK_LOG"; then
+if ! grep -qF -- "$new_password" "$ROLLBACK_LOG"; then
   pass 'rollback does not log credential material'
 else
   fail 'rollback does not log credential material'
