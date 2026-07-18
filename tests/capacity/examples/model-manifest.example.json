@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 3,
+  "modelObservedAt": "2026-07-17T12:00:00.000Z",
+  "assumptions": {
+    "operationalRoomsPerNodeCap": 8,
+    "headroomRatios": [0.2, 0.3, 0.4]
+  },
+  "bundles": [
+    { "runId": "REPLACE_WITH_ROOM_30_RUN_ID_1", "sha256": "REPLACE_WITH_ROOM_30_MANIFEST_SHA256_1", "path": "bundles/room-30-rep-1/manifest.json" },
+    { "runId": "REPLACE_WITH_ROOM_30_RUN_ID_2", "sha256": "REPLACE_WITH_ROOM_30_MANIFEST_SHA256_2", "path": "bundles/room-30-rep-2/manifest.json" },
+    { "runId": "REPLACE_WITH_ROOM_100_RUN_ID_1", "sha256": "REPLACE_WITH_ROOM_100_MANIFEST_SHA256_1", "path": "bundles/room-100-rep-1/manifest.json" },
+    { "runId": "REPLACE_WITH_ROOM_100_RUN_ID_2", "sha256": "REPLACE_WITH_ROOM_100_MANIFEST_SHA256_2", "path": "bundles/room-100-rep-2/manifest.json" },
+    { "runId": "REPLACE_WITH_TOTAL_300_RUN_ID_1", "sha256": "REPLACE_WITH_TOTAL_300_MANIFEST_SHA256_1", "path": "bundles/total-300-rep-1/manifest.json" },
+    { "runId": "REPLACE_WITH_TOTAL_300_RUN_ID_2", "sha256": "REPLACE_WITH_TOTAL_300_MANIFEST_SHA256_2", "path": "bundles/total-300-rep-2/manifest.json" }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "yenhubs-browser-contracts",
+  "private": true,
+  "version": "1.0.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test:unit": "node --test unit/*.unit.mjs",
+    "test:sitting": "playwright test sitting-occupancy.spec.mjs",
+    "test:cold": "playwright test cold-load.spec.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}

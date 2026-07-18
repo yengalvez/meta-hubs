@@ -51,7 +51,8 @@ Baseline YenHubs actual:
 6. Ejecutar el preflight antes de crear recursos:
 
    ```bash
-   ./deployment/preflight-reactivation.sh
+   BACKUP_DIR=/ruta/absoluta/checkpoint-fresco \
+     ./deployment/preflight-reactivation.sh
    ```
 
 ### 3. Crear infraestructura
@@ -94,7 +95,7 @@ Completar tambien:
 - avatar normal/full-body;
 - sitting;
 - bots y chat;
-- backup/restore dry-run.
+- backup y restore preflight de solo lectura.
 
 ## Operacion y cambios
 
@@ -132,6 +133,29 @@ corto, no para una pausa de semanas.
 
 ## Congelacion de una instancia
 
+Fijar primero la identidad exacta. No usar un contexto implicito ni reutilizar
+el UID despues de recrear el namespace:
+
+```bash
+export NAMESPACE=hcce
+export EXPECTED_KUBE_CONTEXT='<contexto-kubectl-exacto>'
+test "$(kubectl config current-context)" = "$EXPECTED_KUBE_CONTEXT"
+export EXPECTED_NAMESPACE_UID="$(
+  kubectl --context "$EXPECTED_KUBE_CONTEXT" get namespace "$NAMESPACE" \
+    -o jsonpath='{.metadata.uid}'
+)"
+test -n "$EXPECTED_NAMESPACE_UID"
+export EXPECTED_RET_PVC_UID="$(
+  kubectl --context "$EXPECTED_KUBE_CONTEXT" get pvc ret-pvc -n "$NAMESPACE" \
+    -o jsonpath='{.metadata.uid}'
+)"
+test -n "$EXPECTED_RET_PVC_UID"
+```
+
+Los scripts de backup y restore vuelven a comparar ambos valores antes de usar
+el cluster. Un namespace recreado con el mismo nombre tiene otro UID y queda
+bloqueado.
+
 ### 1. Crear checkpoint completo
 
 ```bash
@@ -142,21 +166,56 @@ Debe contener:
 
 - `retdb-*.sql.gz`;
 - `ret-storage-*.tar.gz`;
+- `database-contract.json` con schemas, relaciones, migraciones, SID de salas,
+  UUID/estado de `owned_files` y conteos exactos;
 - `SHA256SUMS`;
+- `checkpoint-metadata.json`;
 - commits y submodulos;
-- imagenes live;
-- inventario Kubernetes y DigitalOcean;
+- `deployment-images.json` con los 12 Deployments, 13 pares exactos, ningun
+  `initContainer` ni contenedor efimero y todas las imagenes por digest;
+- `k8s-hcce-structure.json` e inventario DigitalOcean;
 - presencia de claves configuradas, nunca sus valores.
 
 ### 2. Validar recuperabilidad
 
 ```bash
 gzip -t /ruta/retdb-*.sql.gz
-RESTORE_DRY_RUN=1 ./deployment/restore-retdb.sh /ruta/retdb-*.sql.gz
-RESTORE_STORAGE_DRY_RUN=1 \
+./deployment/validate-checkpoint.sh \
+  /ruta/retdb-*.sql.gz /ruta/ret-storage-*.tar.gz
+RESTORE_PREFLIGHT=1 ./deployment/restore-retdb.sh /ruta/retdb-*.sql.gz
+EXPECTED_RET_PVC_UID='<uid-exacto-ret-pvc>' RESTORE_STORAGE_PREFLIGHT=1 \
   ./deployment/restore-ret-storage.sh /ruta/ret-storage-*.tar.gz
-(cd /ruta/checkpoint && shasum -a 256 -c SHA256SUMS)
+RESTORE_CHECKPOINT_PREFLIGHT=1 \
+  ./deployment/restore-checkpoint.sh /ruta/checkpoint
+BACKUP_DIR=/ruta/checkpoint ./deployment/preflight-reactivation.sh
 ```
+
+`create-checkpoint.sh` ejecuta el validador de contenido antes de crear
+`SHA256SUMS`: extrae del dump los UUID activos de `ret0.owned_files` y exige
+que el tar contenga ambos ficheros `.blob`/`.meta.json`. Permite pares
+adicionales completos en estado diferido, pero no activos ausentes ni pares
+incompletos. Tambien exige que `database-contract.json` coincida exactamente
+con el DDL, las versiones de migracion y los conteos del dump. El checkpoint se
+construye en staging privado y solo se publica atomicamente tras validar todo;
+una colision o fallo no sobrescribe ni deja un directorio final parcial. Los
+modos `*_PREFLIGHT=1` son solo lectura; no crean una base temporal ni ensayan el
+restore real.
+
+La restauracion destructiva solo se permite mediante
+`deployment/restore-checkpoint.sh`: mantiene Reticulum, ambos Pgbouncers,
+bot-orchestrator y Coturn a cero desde antes del drop hasta validar juntos DB y
+PVC. No ejecutar los dos hijos destructivos por separado. Si falla, los
+consumidores permanecen a cero y conserva un lock global create-only ligado al
+checkpoint y al destino. Un segundo restore no puede cruzarlo. Al completar,
+el driver inicia proxies, Reticulum y despues bot/Coturn en orden de
+dependencia, y solo entonces elimina su lock. El pod temporal tambien es
+create-only: UID, token privado, spec admitida y montaje directo
+`ret-pvc` -> `/storage` deben coincidir exactamente durante toda la extraccion.
+
+Tras revisar un fallo, el lock retenido solo se elimina con
+`RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1`, los cinco consumidores a cero, ningun
+pod usando el PVC y `CONFIRM_CLEAR_RESTORE_LOCK` ligado al UID exacto del lock y
+del PVC. Ese modo no escala ni reanuda nada.
 
 Copiar el checkpoint a una segunda ubicacion cifrada. No borrar DigitalOcean
 hasta validar ambas copias.
@@ -190,14 +249,17 @@ que borrar el cluster elimina cualquier recurso de la cuenta.
 1. Recuperar los tres repos y el checkpoint.
 2. Confirmar los commits y digests del expediente.
 3. Renovar tokens caducados antes de crear el cluster.
-4. Ejecutar `deployment/preflight-reactivation.sh`.
+4. Ejecutar `BACKUP_DIR=/ruta/checkpoint deployment/preflight-reactivation.sh`.
 5. Recrear DOKS, cert-manager, ingress y DNS.
 6. Generar y aplicar el manifest.
-7. Restaurar primero PostgreSQL.
-8. Restaurar despues el archive correspondiente de `ret-pvc`.
-9. Reiniciar servicios dependientes.
-10. Validar migrations, active owned files y pares fisicos.
-11. Ejecutar el verificador y la aceptacion funcional completa.
+7. Volver a capturar `EXPECTED_NAMESPACE_UID` para el namespace recien creado.
+8. Restaurar primero PostgreSQL con confirmacion ligada a
+   `retdb:<contexto>:<namespace>:<uid>:<stamp>:<db-sha>:<storage-sha>`.
+9. Restaurar despues el archive correspondiente de `ret-pvc`, con confirmacion
+   ligada a `ret-pvc:<contexto>:<namespace>:<uid>:<stamp>:<db-sha>:<storage-sha>:<pvc-uid>`.
+10. Reiniciar servicios dependientes.
+11. Validar migrations, active owned files y pares fisicos.
+12. Ejecutar el verificador y la aceptacion funcional completa.
 
 Nunca combinar un dump de una fecha con un storage de otra.
 

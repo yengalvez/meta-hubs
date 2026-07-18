@@ -43,9 +43,9 @@ When a core edit is unavoidable, document:
 
 Never combine a feature, an upstream update and unrelated infrastructure
 modernization in one branch or rollout. An upstream merge that compiles is not
-accepted until third-person, sitting, RPM/Avaturn avatars, avatar import, bots,
-ghost runner, bot privacy, Spanish UI, Spoke ownership and deployment recovery
-have been revalidated where relevant.
+accepted until third-person, authoritative sitting, full-body/provider-neutral
+GLB avatars, avatar import, bots, ghost runner, bot privacy, Spanish UI, Spoke
+ownership and deployment recovery have been revalidated where relevant.
 
 ## Branch and Change Workflow
 
@@ -115,6 +115,9 @@ including reusable-workflow `secrets.*` expressions and GHCR `403` errors.
 - Local runtime values live only in `deployment/input-values.local.yaml`
   (`0600`, ignored by Git).
 - The generated Hubs CE values and manifest are ignored and may contain secrets.
+- Do not open, diff or print ignored generated manifests as a diagnostic. Use
+  the redacted verifier/inventory paths. If a value appears in task, terminal
+  or CI output, treat it as compromised and rotate it before rollout.
 - GitHub package credentials must be supplied through GitHub Actions secrets,
   an environment variable for preflight, or a Kubernetes image pull secret.
   Do not put PATs in workflow inputs or tracked YAML.
@@ -149,17 +152,26 @@ or reconstruction.
 
 ## Bots and AI
 
-- Production backend is Node ghost runner with
-  `GHOST_NAVIGATION_MODE=navmesh_preferred`; Chromium is diagnostic fallback.
+- The Node ghost runner is the only production and authenticated backend, with
+  `GHOST_NAVIGATION_MODE=navmesh_preferred` and required navmesh. Chromium is
+  retained only as a legacy/local browser diagnostic without `--runner`; it
+  cannot authenticate against hardened Reticulum because `BOT_RUNNER_ACCESS_KEY` is
+  not delivered to the renderer, does not count toward readiness and must never
+  receive that key through a URL or client-side state.
 - Bot scenes need a published Floor Plan/navmesh. Name patrol points
   `spawbot-*` and place them on the walkable surface.
 - `mobility=static` disables autonomous and LLM-triggered movement.
+- A runner is usable only after authenticated Presence, an exact per-room bot
+  namespace and authoritative spawn ACKs; readiness, not liveness, is the
+  rollout gate.
 - Re-test navmesh extraction/routing after Hubs, Spoke, Three.js,
   networked-aframe or Hubs CE updates.
 - Bot chat is private to the current browser session. YenHubs must not persist
   conversations or log message/prompt content.
-- OpenAI requests use `store:false`, moderation, bounded input/output,
-  pseudonymous safety IDs, structured output and allowlisted actions.
+- OpenAI requests use `store:false`, fail-closed moderation, one bounded total
+  deadline, pseudonymous safety IDs and reply-only structured output. The model
+  has no action authority; allowlisted movement is derived from an exact human
+  command and revalidated by Reticulum.
 - `store:false` is not Zero Data Retention; keep the user notice and review
   provider retention requirements before public events.
 
@@ -171,8 +183,11 @@ or reconstruction.
 - Operational administrator: `info@virtualmente.com`.
 - Room ownership and Spoke project ownership are separate records.
 - Permanent geometry and waypoint changes must be published from Spoke.
-- Sitting uses `Disable motion`; add `Clickable` when the Space target must be
-  visible after fully entering the room.
+- An authoritative sitting waypoint uses `Disable motion`, `Can be occupied`
+  and a stable published network identity; add `Clickable` when the Space
+  target must be visible after fully entering the room.
+- Deploy a compatible Reticulum reservation protocol before the Hubs client.
+  A mixed legacy window is fail-closed for accepting seat exclusivity.
 
 ## Archive Policy
 

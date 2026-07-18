@@ -1,0 +1,25 @@
+{
+  "name": "@yenhubs/capacity-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "test": "node --test",
+    "validate": "node ./bin/capacity.mjs validate",
+    "plan": "node ./bin/capacity.mjs plan",
+    "ack": "node ./bin/capacity.mjs ack",
+    "worker": "node ./bin/capacity.mjs worker",
+    "aggregate": "node ./bin/capacity.mjs aggregate",
+    "model": "node ./bin/capacity.mjs model",
+    "report": "node ./bin/capacity.mjs report",
+    "run": "node ./bin/capacity.mjs run",
+    "collector": "node ./bin/capacity-collector.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}

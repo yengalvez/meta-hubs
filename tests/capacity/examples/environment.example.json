@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "REPLACE_WITH_CANONICAL_ISO_TIMESTAMP",
+  "region": "REPLACE_WITH_REGION",
+  "nodePool": {
+    "sku": "REPLACE_WITH_NODE_SKU",
+    "nodeCount": 0
+  },
+  "replicas": {
+    "reticulum": 1,
+    "dialog": 0,
+    "coturn": 0
+  },
+  "deployment": {
+    "hubsCommit": "REPLACE_WITH_40_HEX_COMMIT",
+    "hubsImageDigest": "sha256:REPLACE_WITH_64_HEX_DIGEST",
+    "hubsCloudCommit": "REPLACE_WITH_40_HEX_COMMIT",
+    "reticulumImageDigest": "sha256:REPLACE_WITH_64_HEX_DIGEST",
+    "dialogImageDigest": "sha256:REPLACE_WITH_64_HEX_DIGEST",
+    "coturnImageDigest": "sha256:REPLACE_WITH_64_HEX_DIGEST",
+    "sceneId": "REPLACE_WITH_SCENE_ID",
+    "collectorMappingSha256": "REPLACE_WITH_64_HEX_MAPPING_SHA256"
+  },
+  "signature": {
+    "schemaVersion": 1,
+    "algorithm": "Ed25519",
+    "keyId": "REPLACE_WITH_TRACKED_PRODUCTION_KEY_ID",
+    "value": "REPLACE_WITH_BASE64URL_ED25519_SIGNATURE_AFTER_FILLING_ALL_FIELDS"
+  }
+}

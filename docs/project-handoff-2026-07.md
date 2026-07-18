@@ -2,12 +2,27 @@
 
 Este es el punto de entrada para continuar el proyecto sin depender de una conversacion anterior.
 
+> **Addendum activo — 18 de julio de 2026:** los hashes e imágenes de este
+> documento siguen describiendo producción el 16 de julio. El código para
+> reservas autoritativas de sitting, autenticación/readiness de bots, carga GLB
+> neutral a proveedor, arnés de capacidad y gate de Spoke ya está integrado en
+> las ramas base, pero aún no se ha construido ni desplegado como nuevo runtime.
+> Durante el trabajo se mostró contenido real del `hcce.yaml` local ignorado al
+> registro de la tarea. La exposición no produjo apply ni cambio live. Los
+> candidatos se publicaron después en ramas y PR separados, pero el próximo
+> rollout queda bloqueado hasta rotar de forma coordinada todos los
+> secretos potencialmente incluidos y verificar solo por huella. No volver a
+> abrir ni imprimir el manifiesto ignorado para inventariarlos. Además, el
+> candidato de bots no puede pasar a rollout público ni a certificación de
+> capacidad mientras padre y runners ghost compartan contenedor, UID, namespace
+> PID y cgroup; debe separarse cada runner con credenciales y recursos propios.
+
 ## Estado ejecutivo
 
 YenHubs esta operativo en <https://meta-hubs.org> y el verificador live informa 0 fallos y 0 avisos. La produccion usa:
 
-- Hubs `prod-2026-03-11` con 79 commits propios adicionales.
-- Hubs CE `2.1.0` con 79 commits propios adicionales.
+- Hubs sobre la release aceptada `prod-2026-03-11`.
+- Hubs CE sobre la release aceptada `2.1.0`.
 - Reticulum sobre Elixir 1.18.4 / OTP 27.
 - Ghost runner Node, no Chromium, con navmesh+A*.
 - Un cluster DOKS no-HA `hubs-ce` en `ams3`.
@@ -28,11 +43,55 @@ Sala de aceptacion: <https://meta-hubs.org/VJopCY3/inicio>
 | Ruta | Rama base | Fuente final auditada | Fuente del runtime live |
 | --- | --- | --- | --- |
 | Root | `main` | commit que contiene este handoff | `a0a2b59cad80e0b07f9b2a2f82c2020781163570` |
-| `hubs/` | `master` | `492625c5791fa540e752cc8300018a4e8252d3f4` | `a7214eb882d19c98b2c8516489e0ed1fb7401c75` |
-| `hubs-cloud/` | `master` | `4a1e3b9f2516851b015c17e968ea2cc4aabf4680` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
+| `hubs/` | `master` | `d7f0c2fc40bb17e36e428b425064d2d47c7cdcbe` | `a7214eb882d19c98b2c8516489e0ed1fb7401c75` |
+| `hubs-cloud/` | `master` | `b7b752f8247b30b22df241bfad2be795c5733420` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
 
-Los commits finales de auditoria/CI estan publicados en Git, pero no cambian el
-runtime hasta construir nuevas imagenes por Actions y desplegarlas por digest.
+Los gitlinks conservan las fuentes exactas auditadas. Hubs `d7f0c2fc4` ya es
+ancestro de `master` mediante el merge `6f1f5315696c`; Hubs Cloud `b7b752f` es
+ancestro de `development` mediante `c5d39e0c930` y de `master` mediante
+`2164851185da`. Estos merges no cambian el runtime hasta construir nuevas
+imagenes por Actions y desplegarlas por digest.
+
+Estado de publicación comprobado el 18 de julio:
+
+- Hubs PR `#3`: fusionado en `master` como `6f1f5315696c`; Security y Storybook
+  post-merge verdes.
+- Hubs Cloud PR `#1`: fusionado en `development` como `c5d39e0c930`; PR `#2`
+  `development -> master`: fusionado como `2164851185da`, con guard, Security,
+  Services, Spoke y Reticulum PostgreSQL 12/14 verdes.
+- Meta-hubs PR minimo `#2`, `codex/gitleaks-policy-bootstrap -> main`: fusionado
+  como `f79175d`. La politica ya procede de la base y no de la rama candidata.
+- Meta-hubs PR `#1`, `codex/final-audit-readiness -> main`: gate de código verde
+  en `9d2679d` mediante los runs `29621665409` y `29621667500`, después de
+  corregir SC2119, SC2015 y portabilidad GNU/BSD. Queda fusionar el PR raíz.
+
+La integración Git y el CI de fuentes están cerrados en GO sobre Hubs
+`d7f0c2fc4` y Hubs Cloud `b7b752f`. Este resultado acredita código, suites,
+builds de verificación y ramas base; no sustituye los valores live de la tabla.
+No se han construido imágenes candidatas de rollout, ni existe aceptación de
+staging, capacidad o producción. No actualizar digests live hasta completar el
+flujo publicado de seguridad, build y rollout.
+
+El candidato de bots añade dos contratos que tampoco forman parte del runtime
+live de la tabla:
+
+- Reticulum serializa en una transacción PostgreSQL la admisión global de salas
+  activas. Solo un administrador global no deshabilitado puede activar o
+  modificar bots; un propietario ordinario puede conservar la configuración
+  aprobada al cambiar otros datos o desactivarla. El alta que exceda el límite
+  se rechaza antes de persistir. Generador y verificador obligan a que Reticulum
+  y bot-orchestrator reciban el mismo `MAX_ACTIVE_ROOMS` (5 por defecto, máximo
+  duro 10).
+- Cada canal autenticado recibe una capacidad aleatoria privada para chat. Se
+  registra server-side solo tras entrar en la sala, se rota al iniciar sesión y
+  se invalida al cerrar sesión o terminar el canal. El cliente exige la
+  capacidad exacta base64url de 32 caracteres, el canal, sala, bot, cuenta y
+  epochs capturados para aceptar una respuesta tardía; no se publica en Phoenix
+  Presence y una segunda sesión de la misma cuenta no puede reutilizarla.
+
+El gate separado de Spoke también pasó localmente con Node 16.13.2/Yarn 1:
+68/68 pruebas, lint y build. Spoke conserva su deuda legacy; este resultado no
+autoriza un upgrade masivo ni demuestra publicar la escena en live.
 
 ## Imagenes live
 
@@ -80,7 +139,9 @@ Contenido validado:
 - commits, imagenes, Kubernetes, DigitalOcean y presencia de configuracion.
 - `SHA256SUMS` y dry-runs de DB/storage correctos.
 
-`output/latest-backup-path.txt` apunta al checkpoint vigente y esta ignorado. Mantener una segunda copia cifrada fuera
+`output/latest-backup-path.txt` conserva una referencia historica ignorada, pero
+el preflight actual no la selecciona: cada rollout debe pasar `BACKUP_DIR`
+explicitamente y crear un checkpoint fresco con el layout vigente. Mantener una segunda copia cifrada fuera
 del Mac antes de retirar infraestructura.
 
 ## Credenciales operativas
@@ -114,23 +175,104 @@ actual esta limpio.
 
 ### 3. Capacidad no certificada
 
-La topologia actual no tiene Metrics Server ni una prueba de carga representativa. No prometer 75, 300 o 10.000 CCU
-basandose solo en requests. La recomendacion oficial de Hubs sigue siendo alrededor de 25 usuarios dentro de una sala.
-Ver `docs/bots-cost-capacity-analysis-2026-07.md`.
+La topologia actual no tiene Metrics Server ni una prueba de carga
+representativa. `tests/capacity/` ya define y valida planes reproducibles para
+30/100 por sala, 300 totales y un modelo de 10.000, todos con variantes de
+0/5/10 bots; sus 115 pruebas pasan. El driver Playwright confinado está
+implementado, pero el almacén de confianza de producción está deliberadamente
+vacío: ninguna ejecución física puede empezar hasta que el propietario
+versione y revise su clave pública y exista un staging con el contrato exacto
+de collector/Prometheus. No se ejecutó carga; el modelo nunca certifica
+capacidad. No prometer 75, 300 o 10.000 CCU basándose en requests, fixtures o
+planes. La recomendación oficial de Hubs sigue siendo alrededor de 25 usuarios
+dentro de una sala. Ver
+`docs/bots-cost-capacity-analysis-2026-07.md`.
+
+### 4. Rotación reabierta para el próximo rollout
+
+La exposición accidental del manifiesto local al registro de esta tarea se
+trata como compromiso potencial aunque el fichero estuviera ignorado y el
+registro no sea público. Antes de construir/desplegar el siguiente candidato:
+
+1. crear el checkpoint DB+storage exigido;
+2. rotar mediante los runbooks vigentes todos los secretos que pudieran figurar
+   en el manifiesto generado, sin copiar valores a tickets, chat o shell output;
+3. mantener `PERMS_KEY` coherente entre Reticulum y Dialog y reiniciar los
+   consumidores que correspondan;
+4. comprobar hashes, filtros `[FILTERED]`, pulls GHCR y paridad de configuración;
+5. regenerar en temporal aislado, ejecutar `kubectl diff` sin imprimir Secrets y
+   exigir preflight 0/0 antes de cualquier apply.
+
+## Bloqueos y residuales del candidato de bots
+
+Aunque el hijo ghost recibe por entorno únicamente `BOT_RUNNER_ACCESS_KEY`, el
+padre y todos los runners siguen siendo procesos del mismo contenedor bajo UID
+1000, el mismo namespace PID y el mismo cgroup de memoria. La allowlist de
+entorno reduce exposición accidental, pero no constituye aislamiento frente a
+JavaScript comprometido: `/proc` puede exponer el entorno del padre, los
+procesos pueden señalizarse y una sola sala puede agotar el límite compartido y
+derribar todo el orquestador.
+
+Esto bloquea el rollout público del candidato y cualquier certificación de
+capacidad. La salida requerida es ejecutar cada runner en un pod o contenedor
+aislado, con namespace de proceso, credencial de runner, requests/limits y
+política de red propios; el padre debe conservar las credenciales OpenAI y de
+orquestación y comunicarse con los runners mediante un canal autenticado y
+mínimo. Este rediseño aún no está implementado ni desplegado.
+
+El GO de integración Git y CI de fuentes no levanta los siguientes bloqueos:
+
+- `AUD-065`: antes de cualquier mutación de producción hay que crear un
+  checkpoint fresco de DB+storage y rotar coordinadamente todos los secretos
+  potencialmente expuestos, verificándolos solo por presencia o huella;
+- cada runner sigue sin aislamiento OS/pod por bot, con UID, namespace PID y
+  cgroup compartidos;
+- los leases de autoridad del orquestador no tienen fencing persistente en DB;
+  no se puede operar más de una autoridad concurrente con garantías;
+- las configuraciones activas heredadas carecen de aprobación persistida y de
+  una cuarentena ejecutable fail-closed; se exige inventario exacto redacted y
+  aprobación del propietario o migración antes de permitir autostart;
+- `room_stop` es best-effort: DB y snapshots terminan convergiendo, pero un fallo
+  de la llamada no garantiza detener inmediatamente el runner;
+- no se ejecutó carga física ni aceptación staging/live. No hay capacidad
+  medida ni autorización de rollout público.
 
 ## Riesgos no bloqueantes
 
 - VR fisico no probado.
-- Carrera de dos usuarios por el mismo asiento pendiente.
+- El baseline live permite una doble ocupación transitoria y deja estado NAF
+  visual obsoleto tras ciertos cierres; el candidato autoritativo lo aborda,
+  pero falta E2E de dos navegadores en staging y aceptación cold live.
 - Guardado real de un Avaturn nuevo requiere checkpoint dedicado.
+- El cierre de Ready Player Me obliga a evitar una dependencia nueva del
+  proveedor; la recomendación actual es conservar GLB manual y ensayar
+  MPFB/MakeHuman local antes de contratar Avaturn/MetaPerson.
 - El bundle Hubs es grande (~8,4 MiB el entrypoint de sala).
 - Spoke conserva dependencias legacy y advisories; se valida con Node 16.13.2 y debe modernizarse como proyecto
   separado, no con un upgrade masivo.
 - `cowlib 2.18.0` mantiene dos avisos upstream sin release corregida; cualquier aviso Hex adicional falla CI.
-- La imagen ghost contiene Chromium como fallback diagnostico, aunque no lo ejecuta en produccion. Separar una imagen
-  ghost-only puede reducir tamano/superficie, no es necesario para el consumo runtime actual.
+- La imagen del orquestador conserva Chromium solo para diagnóstico browser
+  legacy/local, sin `--runner`; no es un fallback operativo ni autenticado. El
+  renderer no recibe `BOT_RUNNER_ACCESS_KEY`, por lo que Reticulum endurecido rechaza
+  ese navegador, nunca cuenta para readiness y la clave no debe pasarse por URL
+  ni estado cliente. Separar una imagen ghost-only reduciría tamaño/superficie.
+- La proximidad de 3 m para `Talk` sigue siendo UX, no autorización por
+  distancia. El candidato exige la capacidad privada exacta de un canal
+  autenticado que haya entrado en la misma sala; se rota al iniciar sesión, se
+  invalida al cerrar sesión o morir el canal y no se publica en Presence.
+  Validar distancia real aún exigiría una posición fresca y confiable
+  server-side.
+- La exploración sitting del baseline produjo 2 errores y 61 warnings de
+  navegador. El verificador operativo 0/0 no cubre esa misma superficie; el
+  próximo cierre exige consola/red/página sin errores ni warnings en cold
+  desktop y mobile.
 
 ## Auditoria y pruebas realizadas
+
+El cierre del 18 de julio integró en Git Hubs `d7f0c2fc4`, Hubs Cloud
+`b7b752f` y el gate Spoke 68/68+lint+build, con CI de fuentes verde. Su dictamen
+no autoriza rollout: las cifras y verificaciones live siguientes pertenecen al
+baseline de producción del 16 de julio y no prueban el nuevo runtime.
 
 - Hubs: check, lint, 12 unit tests, build; Hubs/Admin audit de produccion en 0.
 - Admin: tests, lint y build.
@@ -171,17 +313,18 @@ No desplegar `upstream/master`. Seguir `docs/development-workflow.md` y preserva
 ## Deploy correcto
 
 1. checkpoint;
-2. tests locales;
-3. commit/push;
-4. GitHub Actions;
-5. digest en values local;
-6. `npm run gen-hcce`;
-7. `kubectl diff` sin imprimir Secrets;
-8. `kubectl apply -f hcce.yaml` sin editarlo;
-9. rollout;
-10. si cambia Hubs, reiniciar Reticulum;
-11. carga fria real;
-12. `deployment/verify-live-reactivation.sh` con 0/0.
+2. rotación coordinada exigida por el addendum y verificación solo por huellas;
+3. tests locales;
+4. commit/push;
+5. GitHub Actions;
+6. digest en values local;
+7. `npm run gen-hcce` en aislamiento;
+8. `kubectl diff` sin imprimir Secrets;
+9. `kubectl apply -f hcce.yaml` sin editarlo;
+10. rollout;
+11. si cambia Hubs, reiniciar Reticulum;
+12. carga fria real desktop/mobile, consola y red sin errores ni warnings;
+13. `deployment/verify-live-reactivation.sh` con 0/0.
 
 No usar `kubectl set image`, hotpatches, builds in-cluster, `kubectl cp` ni parches manuales como flujo normal.
 
@@ -206,5 +349,9 @@ factura. Para alta, congelacion, restauracion o baja de un cliente usar
 - Auditoria: `docs/audit-2026-07.md`.
 - Desarrollo/upstream: `docs/development-workflow.md`.
 - Personalizaciones: `docs/customization-inventory.md`.
+- Evaluacion de avatares: `docs/avatar-provider-evaluation-2026-07.md`.
+- Capacidad: `docs/bots-cost-capacity-analysis-2026-07.md` y
+  `tests/capacity/README.md`.
+- Spoke legacy: `docs/spoke-legacy-audit-2026-07.md`.
 - Features: `features/`.
 - Archivo historico: `OLD/README.md`.

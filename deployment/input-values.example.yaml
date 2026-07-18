@@ -1,4 +1,4 @@
-# YenHubs - Hubs CE 2.0.0 Input Values Template
+# YenHubs - Hubs CE 2.1.0 Input Values Template
 # ================================================
 # Copy this file to hubs-cloud/community-edition/input-values.yaml and fill in your values.
 # IMPORTANT: this fork gitignores the working copy, but never force-add or commit real credentials.
@@ -47,19 +47,18 @@ PHX_KEY: "CHANGE_ME_use_openssl_rand_base64_48"
 # --- PERMS_KEY (required; keep stable) ---
 # RSA private key used to sign room permissions tokens (RS512). Dialog verifies these tokens using the key material.
 # If you omit this, the generator will create one, but you MUST persist it or you can break rooms after partial restarts.
-# Generate a key (example):
-#   openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt
-PERMS_KEY: |
-  -----BEGIN PRIVATE KEY-----
-  CHANGE_ME
-  -----END PRIVATE KEY-----
+# Generate a key, then encode each physical newline as the two characters `\n`.
+# The safe preflight parser intentionally rejects YAML block scalars. Keep the
+# entire PEM on this one quoted line; the Hubs CE generator restores newlines.
+PERMS_KEY: "-----BEGIN PRIVATE KEY-----\\nCHANGE_ME_BASE64_BODY\\n-----END PRIVATE KEY-----\\n"
 
 # --- Optional API keys (leave empty if not using) ---
 SKETCHFAB_API_KEY: ""
 TENOR_API_KEY: ""
 
 # --- Persistent Volumes ---
-GENERATE_PERSISTENT_VOLUMES: "Yes"
+GENERATE_PERSISTENT_VOLUMES: true
+ALLOW_MANUAL_HOSTPATH_STORAGE: false
 # DigitalOcean uses "do-block-storage". Other providers: "default", "gp2" (AWS), "standard" (GKE).
 PERSISTENT_VOLUME_STORAGE_CLASS: "do-block-storage"
 PERSISTENT_VOLUME_SIZE: "10Gi"
@@ -83,8 +82,13 @@ OVERRIDE_PHOTOMNEMONIC_IMAGE: "No"
 OVERRIDE_DIALOG_IMAGE: "No"
 OVERRIDE_COTURN_IMAGE: "No"
 
-# Bots/LLM secrets (required only if bots feature is enabled)
-BOT_ACCESS_KEY: "change-me-random-64chars"
+# Internal credentials use four distinct random values of at least 32 characters.
+# Never reuse one domain's credential in another domain.
+BOT_ACCESS_KEY: "change-me-legacy-binding-key-random-64chars"
+BOT_RUNNER_ACCESS_KEY: "change-me-runner-key-random-64chars-distinct"
+BOT_ORCHESTRATOR_ACCESS_KEY: "change-me-orchestrator-key-random-64chars-distinct"
+DASHBOARD_ACCESS_KEY: "change-me-dashboard-key-random-64chars-distinct"
+# Bots/LLM configuration
 OPENAI_API_KEY: "change-me-openai-api-key"
 OPENAI_MODEL: "gpt-5-nano"
 RUNNER_BACKEND: "ghost"

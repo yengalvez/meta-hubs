@@ -1,0 +1,283 @@
+{
+  "schemaVersion": 1,
+  "provisional": true,
+  "maxCollectorIntervalSeconds": 15,
+  "requiredCollectors": [
+    "client",
+    "webrtc",
+    "reticulum",
+    "load-balancer",
+    "kubernetes",
+    "database",
+    "coturn",
+    "dialog",
+    "generator",
+    "bots"
+  ],
+  "metrics": {
+    "join.failureRate": {
+      "max": 0.01,
+      "unit": "ratio",
+      "stop": true
+    },
+    "join.lobbyP95Ms": {
+      "max": 5000,
+      "unit": "ms",
+      "stop": true
+    },
+    "join.sceneP95Ms": {
+      "max": 15000,
+      "unit": "ms",
+      "stop": true
+    },
+    "client.consoleErrorCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "client.consoleWarningCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "client.fpsP10": {
+      "min": 30,
+      "unit": "fps",
+      "stop": true
+    },
+    "client.disconnectRate": {
+      "max": 0.01,
+      "unit": "ratio",
+      "stop": true
+    },
+    "client.httpRequestFailureCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "client.httpStatusErrorCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "client.websocketConcurrentCount": {
+      "max": 20,
+      "unit": "count",
+      "stop": true
+    },
+    "network.clientReceiveBytesPerSecond": {
+      "max": 50000000,
+      "unit": "bytes_per_second",
+      "stop": true
+    },
+    "network.clientSendBytesPerSecond": {
+      "max": 20000000,
+      "unit": "bytes_per_second",
+      "stop": true
+    },
+    "webrtc.packetLossP95": {
+      "max": 0.05,
+      "unit": "ratio",
+      "stop": true
+    },
+    "webrtc.rttP95Ms": {
+      "max": 300,
+      "unit": "ms",
+      "stop": true
+    },
+    "webrtc.audioFailureRate": {
+      "max": 0.01,
+      "unit": "ratio",
+      "stop": true
+    },
+    "avatar.networkUpdateGapP95Ms": {
+      "max": 1000,
+      "unit": "ms",
+      "stop": true
+    },
+    "reticulum.websocketDisconnectRate": {
+      "max": 0.01,
+      "unit": "ratio",
+      "stop": true
+    },
+    "reticulum.channelJoinP95Ms": {
+      "max": 1000,
+      "unit": "ms",
+      "stop": true
+    },
+    "reticulum.errorCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "kubernetes.cpuUtilization": {
+      "max": 0.8,
+      "unit": "ratio",
+      "stop": true,
+      "sustainedMs": 300000
+    },
+    "kubernetes.memoryUtilization": {
+      "max": 0.85,
+      "unit": "ratio",
+      "stop": true,
+      "sustainedMs": 300000
+    },
+    "kubernetes.podMemoryLimitUtilization": {
+      "max": 0.9,
+      "unit": "ratio",
+      "stop": true
+    },
+    "runtime.oomCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "runtime.evictionCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "runtime.workerDeathCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "runtime.restartCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "runtime.notReadySeconds": {
+      "max": 0,
+      "unit": "s",
+      "stop": true
+    },
+    "network.loadBalancer5xxRate": {
+      "max": 0.01,
+      "unit": "ratio",
+      "stop": true
+    },
+    "network.loadBalancerDropCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "network.loadBalancerP95Ms": {
+      "max": 1000,
+      "unit": "ms",
+      "stop": true
+    },
+    "network.loadBalancerRequestRate": {
+      "max": 100000,
+      "unit": "requests_per_second",
+      "stop": true
+    },
+    "database.connectionUtilizationP95": {
+      "max": 0.8,
+      "unit": "ratio",
+      "stop": true
+    },
+    "database.poolUtilizationP95": {
+      "max": 0.8,
+      "unit": "ratio",
+      "stop": true
+    },
+    "database.queryP95Ms": {
+      "max": 100,
+      "unit": "ms",
+      "stop": true
+    },
+    "database.poolWaitP95Ms": {
+      "max": 30,
+      "unit": "ms",
+      "stop": true
+    },
+    "database.deadlockCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "coturn.allocationFailureRate": {
+      "max": 0.01,
+      "unit": "ratio",
+      "stop": true
+    },
+    "coturn.relayFailureRate": {
+      "max": 0.01,
+      "unit": "ratio",
+      "stop": true
+    },
+    "coturn.trafficBytesPerSecond": {
+      "max": 1000000000,
+      "unit": "bytes_per_second",
+      "stop": true
+    },
+    "dialog.workerSaturationP95": {
+      "max": 0.8,
+      "unit": "ratio",
+      "stop": true
+    },
+    "dialog.eventLoopLagP95Ms": {
+      "max": 100,
+      "unit": "ms",
+      "stop": true
+    },
+    "dialog.errorCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "dialog.trafficMessagesPerSecond": {
+      "max": 100000,
+      "unit": "messages_per_second",
+      "stop": true
+    },
+    "generator.cpuUtilization": {
+      "max": 0.85,
+      "unit": "ratio",
+      "stop": true,
+      "sustainedMs": 30000
+    },
+    "generator.memoryUtilization": {
+      "max": 0.85,
+      "unit": "ratio",
+      "stop": true,
+      "sustainedMs": 30000
+    },
+    "generator.rssMiB": {
+      "max": 4096,
+      "unit": "MiB",
+      "stop": true
+    },
+    "generator.eventLoopLagP95Ms": {
+      "max": 100,
+      "unit": "ms",
+      "stop": true
+    },
+    "generator.browserProcessCount": {
+      "max": 4,
+      "unit": "count",
+      "stop": true
+    },
+    "generator.processCount": {
+      "max": 256,
+      "unit": "count",
+      "stop": true
+    },
+    "bots.appearanceP95Ms": {
+      "max": 15000,
+      "unit": "ms",
+      "stop": true
+    },
+    "bots.navmeshFailureCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    },
+    "bots.errorCount": {
+      "max": 0,
+      "unit": "count",
+      "stop": true
+    }
+  }
+}

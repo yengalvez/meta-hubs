@@ -21,6 +21,15 @@ verificables y reimplantables cuando Hubs Foundation publique una release.
 Las ramas `upstream/master` contienen trabajo no publicado. Se usan para
 anticipar conflictos, nunca como baseline automatico de produccion.
 
+## Corte integrado del 18 de julio
+
+La integración validada se apoya en Hubs `d7f0c2fc4`, incorporado a `master`
+mediante `6f1f5315696c`, y Hubs Cloud `b7b752f`, incorporado a `master` mediante
+`2164851185da`. Incluye la capacidad base64url exacta de 32 caracteres por canal
+para chat privado y la admisión global serializada de salas con bots. El gate
+Spoke pasó 68/68 pruebas, lint y build con Node 16.13.2/Yarn 1. Es GO de Git y CI
+de fuentes, no de builds de imágenes, carga física, staging ni live.
+
 ## Preparar remotos
 
 ```bash
@@ -54,11 +63,11 @@ El script:
 - hace un dry merge contra `upstream/master`;
 - no cambia ningun worktree.
 
-En el corte del 16 de julio de 2026:
+En el corte integrado del 18 de julio de 2026:
 
-- Hubs esta 79 commits propios por delante de `prod-2026-03-11` y no le falta
+- Hubs esta 87 commits propios por delante de `prod-2026-03-11` y no le falta
   ningun commit de esa release;
-- Hubs CE esta 79 commits propios por delante de `2.1.0` y no le falta ningun
+- Hubs CE esta 85 commits propios por delante de `2.1.0` y no le falta ningun
   commit de esa release;
 - hay 13 commits Hubs y 5 Hubs CE no publicados en los respectivos `master`
   oficiales;
@@ -121,20 +130,20 @@ Reglas de resolucion:
 | Area cambiada | Aceptacion minima |
 | --- | --- |
 | Camara, IK o avatar rig | primera/tercera persona, avatar normal y full-body |
-| Waypoints o character controller | movimiento, sit/stand, Space targets |
-| Networking/NAF | usuario remoto, bots, late join, remove/reconnect |
-| Media/avatar upload | normal, RPM/Avaturn, preview, privado y featured |
+| Waypoints o character controller | movimiento, reserva autoritativa de dos clientes, sit/stand, lease/disconnect y Space targets |
+| Networking/NAF | usuario remoto, namespace/ACK de bots, tipos `networkId`, late join, remove/reconnect |
+| Media/avatar upload | normal, full-body/RPM histórico, GLB neutral, preview, privado y featured |
 | Room settings/Reticulum | persistencia, permisos y normalizacion backend |
-| Bots | spawn, static/low, navmesh, chat, rate limit y privacidad |
+| Bots | admisión global, Presence/auth, spawn ACK, navmesh obligatorio, `/ready`, capacidad exacta por canal, chat, moderación/deadline, rate limit y privacidad |
 | UI/i18n | desktop, tablet, movil, espanol y escena 3D visible |
-| Spoke | login, abrir proyecto, guardar y publicar en copia segura |
+| Spoke | 68/68 pruebas y lint/build legacy; después login, abrir proyecto, guardar y publicar en copia segura |
 | Dialog/Coturn | entrada de sala y audio entre dos clientes |
 | Generator/Kubernetes | 44 recursos, un LB, digests, TLS, RBAC y diff seguro |
 
 ## Conflictos previsibles
 
-La personalizacion es amplia: frente a la release estable, Hubs modifica 146
-archivos y Hubs CE 111. No significa que cada update produzca 257 conflictos;
+La personalizacion es amplia: frente a la release estable, Hubs modifica 172
+archivos y Hubs CE 155. No significa que cada update produzca 327 conflictos;
 la mayoria de cambios estan aislados por componentes y servicios. Los puntos
 con mayor riesgo son:
 
@@ -148,6 +157,13 @@ con mayor riesgo son:
 El inventario detallado esta en `docs/customization-inventory.md`.
 
 ## Integracion y rollback
+
+Antes de desplegar el código integrado siguen bloqueando: `AUD-065` (checkpoint fresco
+DB+storage y rotación coordinada), aislamiento OS/pod por runner, fencing DB de
+leases, aprobación o cuarentena ejecutable de configuraciones activas heredadas
+y una parada autoritativa más fuerte que el `room_stop` best-effort. También
+faltan builds de imágenes por Actions, carga física, staging y aceptación live;
+ningún gate de fuentes mide capacidad ni autoriza rollout público.
 
 Una release solo se acepta cuando:
 

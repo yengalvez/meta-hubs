@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "capacity-staging-review-REPLACE",
+  "environment": "staging",
+  "approvedAt": "REPLACE_WITH_CANONICAL_ISO_TIMESTAMP",
+  "expiresAt": "REPLACE_WITH_CANONICAL_ISO_TIMESTAMP_WITHIN_31_DAYS",
+  "reviewerId": "REPLACE_WITH_REVIEWER_ID",
+  "targetOrigins": [
+    "https://capacity-staging.example.org"
+  ],
+  "collectorEndpoints": [
+    "https://collector-capacity-staging.example.org/v1/capacity-sample"
+  ],
+  "serviceOrigins": {
+    "hubs": [
+      "https://capacity-staging.example.org"
+    ],
+    "reticulum": [
+      "wss://reticulum-capacity-staging.example.org"
+    ],
+    "dialog": [
+      "wss://dialog-capacity-staging.example.org"
+    ],
+    "assets": [
+      "https://assets-capacity-staging.example.org"
+    ]
+  },
+  "coturnUrls": [
+    "stun:coturn-capacity-staging.example.org:3478",
+    "turn:coturn-capacity-staging.example.org:3478?transport=udp",
+    "turns:coturn-capacity-staging.example.org:5349?transport=tcp"
+  ],
+  "planBinding": {
+    "scenarioId": "REPLACE_WITH_SCENARIO_ID",
+    "targetTemplate": "REPLACE_WITH_CANONICAL_TARGET_OR_TEMPLATE",
+    "executionEnabled": true,
+    "environmentSha256": "REPLACE_WITH_SIGNED_ENVIRONMENT_DOCUMENT_SHA256"
+  },
+  "signature": {
+    "schemaVersion": 1,
+    "algorithm": "Ed25519",
+    "keyId": "REPLACE_WITH_TRACKED_PRODUCTION_KEY_ID",
+    "value": "REPLACE_WITH_BASE64URL_ED25519_SIGNATURE_AFTER_FILLING_ALL_FIELDS"
+  }
+}

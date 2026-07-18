@@ -19,53 +19,35 @@ require_command() {
   fi
 }
 
-scan_worktree() {
-  local repo="$1"
-  local config="${2:-}"
-  local tmp
-  local args=(detect --no-git --redact)
-
-  tmp="$(mktemp -d /tmp/yenhubs-gitleaks.XXXXXX)"
-  while IFS= read -r -d '' path; do
-    if [[ -L "$repo/$path" ]]; then
-      mkdir -p "$tmp/$(dirname "$path")"
-      ln -s "$(readlink "$repo/$path")" "$tmp/$path"
-    elif [[ -f "$repo/$path" ]]; then
-      mkdir -p "$tmp/$(dirname "$path")"
-      cat "$repo/$path" > "$tmp/$path"
-      chmod u+r "$tmp/$path"
-    fi
-  done < <(git -C "$repo" ls-files -z --cached --others --exclude-standard)
-  args+=(--source "$tmp")
-  if [[ -n "$config" ]]; then
-    args+=(--config "$repo/$config")
-  fi
-  gitleaks "${args[@]}"
-  if command -v chflags >/dev/null 2>&1; then
-    chflags -R nouchg "$tmp" 2>/dev/null || true
-  fi
-  chmod -R u+rwX "$tmp" 2>/dev/null || true
-  find "$tmp" -type f -delete
-  find "$tmp" -depth -type d -empty -delete
-}
-
 for command in git actionlint shellcheck gitleaks npm node; do
   require_command "$command"
 done
 
 printf '== Git and static checks ==\n'
+"$ROOT_DIR/scripts/verify-gitlinks.sh" "$ROOT_DIR"
 git -C "$ROOT_DIR" diff --check
 git -C "$ROOT_DIR/hubs" diff --check
 git -C "$ROOT_DIR/hubs-cloud" diff --check
 actionlint -shellcheck=shellcheck -color=false "$ROOT_DIR/.github/workflows/"*.yml
 actionlint -shellcheck=shellcheck -color=false "$ROOT_DIR/hubs/.github/workflows/"*.yml
 actionlint -shellcheck=shellcheck -color=false "$ROOT_DIR/hubs-cloud/.github/workflows/"*.yml
-shellcheck "$ROOT_DIR/deployment/"*.sh
-shellcheck "$ROOT_DIR/scripts/"*.sh
+while IFS= read -r -d '' shell_script; do
+  shellcheck -x "$shell_script"
+done < <(
+  find "$ROOT_DIR/deployment" "$ROOT_DIR/scripts" \
+    "$ROOT_DIR/tests/recovery" "$ROOT_DIR/tests/scripts" \
+    -type f -name '*.sh' -print0
+)
 shellcheck "$ROOT_DIR/hubs-cloud/community-edition/services/coturn/"*.sh
-scan_worktree "$ROOT_DIR"
-scan_worktree "$ROOT_DIR/hubs"
-scan_worktree "$ROOT_DIR/hubs-cloud" ".gitleaks.toml"
+(
+  cd "$ROOT_DIR/hubs-cloud/community-edition/services/bot-orchestrator"
+  npm ci --ignore-scripts --no-audit
+)
+"$ROOT_DIR/tests/scripts/security-gates.test.sh"
+"$ROOT_DIR/tests/recovery/test-recovery-safety.sh"
+"$ROOT_DIR/scripts/scan-gitleaks-worktree.sh" "$ROOT_DIR"
+"$ROOT_DIR/scripts/scan-gitleaks-worktree.sh" "$ROOT_DIR/hubs"
+"$ROOT_DIR/scripts/scan-gitleaks-worktree.sh" "$ROOT_DIR/hubs-cloud" ".gitleaks.toml"
 "$ROOT_DIR/scripts/audit-upstream.sh" --no-fetch
 
 if [[ "$FULL" != true ]]; then
@@ -87,12 +69,33 @@ printf '\n== Hubs client ==\n'
   npm run build
 )
 
+printf '\n== Root browser and capacity harnesses ==\n'
+(
+  cd "$ROOT_DIR/tests/browser"
+  npm ci
+  npm audit --omit=dev --audit-level=high
+  npm run test:unit
+  npm run test:sitting -- --list
+  npm run test:cold -- --list
+
+  cd "$ROOT_DIR/tests/capacity"
+  npm ci
+  npm audit --omit=dev --audit-level=high
+  npm test
+  npm run validate
+)
+
 printf '\n== Hubs CE Node services ==\n'
 (
   cd "$ROOT_DIR/hubs-cloud/community-edition"
   npm ci
   npm audit --omit=dev --audit-level=high
-  npm run gen-hcce
+  fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/yenhubs-hcce-fixture.XXXXXX")"
+  fixture_manifest="$fixture_dir/hcce.yaml"
+  trap 'find "$fixture_dir" -type f -delete; rmdir "$fixture_dir"' EXIT
+  HCCE_INPUT_VALUES_PATH="$PWD/input-values.ci.yaml" \
+    HCCE_OUTPUT_PATH="$fixture_manifest" node generate_script/index.js
+  HCCE_MANIFEST_PATH="$fixture_manifest" node generate_script/verify-generated-manifest.js
 
   for service in bot-orchestrator dialog photomnemonic; do
     cd "$ROOT_DIR/hubs-cloud/community-edition/services/$service"
@@ -120,8 +123,11 @@ printf '\n== Spoke ==\n'
 (
   cd "$ROOT_DIR/hubs-cloud/community-edition/services/spoke"
   PUPPETEER_SKIP_DOWNLOAD=true PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    NODE_PATH="$PWD/node_modules" \
     npx -y -p node@16.13.2 -p yarn@1.22.22 -- bash -c '
       set -e
+      node -e "if (process.version !== \"v16.13.2\") process.exit(1)"
+      yarn --version | grep -Fxq 1.22.22
       yarn install --frozen-lockfile
       yarn lint
       yarn unit-tests
