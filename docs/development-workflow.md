@@ -23,12 +23,12 @@ anticipar conflictos, nunca como baseline automatico de produccion.
 
 ## Corte integrado del 18 de julio
 
-La integración validada se apoya en Hubs `d7f0c2fc4`, incorporado a `master`
-mediante `6f1f5315696c`, y Hubs Cloud `b7b752f`, incorporado a `master` mediante
-`2164851185da`. Incluye la capacidad base64url exacta de 32 caracteres por canal
-para chat privado y la admisión global serializada de salas con bots. El gate
-Spoke pasó 68/68 pruebas, lint y build con Node 16.13.2/Yarn 1. Es GO de Git y CI
-de fuentes, no de builds de imágenes, carga física, staging ni live.
+La integración validada se apoya en Hubs `674ece411691` y Hubs Cloud
+`34d1d3a8d3cc`, ambos en `master`. Incluye la capacidad base64url exacta de 32
+caracteres por canal para chat privado, la admisión global serializada de salas
+con bots y la aprobación/cuarentena persistente exacta de configuraciones. El
+gate Spoke pasó 68/68 pruebas, lint y build con Node 16.13.2/Yarn 1. Es GO de Git
+y CI de fuentes, no de builds de imágenes, carga física, staging ni live.
 
 ## Preparar remotos
 
@@ -134,7 +134,7 @@ Reglas de resolucion:
 | Networking/NAF | usuario remoto, namespace/ACK de bots, tipos `networkId`, late join, remove/reconnect |
 | Media/avatar upload | normal, full-body/RPM histórico, GLB neutral, preview, privado y featured |
 | Room settings/Reticulum | persistencia, permisos y normalizacion backend |
-| Bots | admisión global, Presence/auth, spawn ACK, navmesh obligatorio, `/ready`, capacidad exacta por canal, chat, moderación/deadline, rate limit y privacidad |
+| Bots | admisión global, aprobación/cuarentena exacta y migración fail-closed, Presence/auth, spawn ACK, navmesh obligatorio, `/ready`, capacidad exacta por canal, chat, moderación/deadline, rate limit y privacidad |
 | UI/i18n | desktop, tablet, movil, espanol y escena 3D visible |
 | Spoke | 68/68 pruebas y lint/build legacy; después login, abrir proyecto, guardar y publicar en copia segura |
 | Dialog/Coturn | entrada de sala y audio entre dos clientes |
@@ -160,8 +160,9 @@ El inventario detallado esta en `docs/customization-inventory.md`.
 
 Antes de desplegar el código integrado siguen bloqueando: `AUD-065` (checkpoint fresco
 DB+storage y rotación coordinada), aislamiento OS/pod por runner, fencing DB de
-leases, aprobación o cuarentena ejecutable de configuraciones activas heredadas
-y una parada autoritativa más fuerte que el `room_stop` best-effort. También
+leases, revisión y aprobación individual del inventario que generará la
+migración ya integrada, y una parada autoritativa más fuerte que el `room_stop`
+best-effort. También
 faltan builds de imágenes por Actions, carga física, staging y aceptación live;
 ningún gate de fuentes mide capacidad ni autoriza rollout público.
 
