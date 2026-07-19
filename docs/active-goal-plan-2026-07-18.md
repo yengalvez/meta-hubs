@@ -2,7 +2,7 @@
 
 Última actualización: 19 de julio de 2026
 
-Estado actual: **EN EJECUCIÓN; Fase 2B, compatibilidad OLD integrada; siguiente casilla: credenciales externas por canal privado**
+Estado actual: **EN EJECUCIÓN; Fase 2B, OLD disponible y directorio privado preparados; credenciales externas pendientes**
 
 Worktree inicial: `/Users/Shared/Gits/YenHubs-aud075-root`
 
@@ -231,13 +231,33 @@ el preparador privado NEW antes de crear ninguna credencial.
 - [ ] Crear por canales privados las credenciales externas nuevas necesarias y
   preparar las internas nuevas, manteniendo válidas las anteriores hasta que el
   rollout coordinado haya sido aceptado.
-- [ ] Hacer disponible el fichero privado en el worktree final mediante una ruta
+- [x] Hacer disponible el fichero privado en el worktree final mediante una ruta
   absoluta o una copia regular `0600`, nunca mediante Git, symlink, chat o
-  salida de terminal; no abrirlo ni usarlo como evidencia.
+  salida de terminal; no abrirlo ni usarlo como evidencia. Sin leer contenido,
+  se verificó que `/Users/Shared/Gits/YenHubs/deployment/input-values.local.yaml`
+  es regular, owner-owned, single-link y `0600`, con padre owner-owned no
+  escribible por grupo/otros. El directorio NEW vacío
+  `/Users/yengalvez/.yenhubs-private/aud065-20260719-01` quedó owner-owned y
+  `0700`. Una comprobación componente a componente descartó symlinks en toda
+  la ruta OLD y en todos los componentes existentes de la ruta NEW; el target
+  `new-values.yaml` permanece ausente.
 - [ ] Preparar las fuentes completas anterior y nueva como ficheros privados
   regulares `0600`, comprobando solo contrato, presencia y atestaciones
   redactadas. No existe una tercera fuente de credenciales para `rollback` y no
   se crean todavía los snapshots sellados de la operación.
+
+Preflight privado de 19 de julio de 2026: `main=origin/main=f14f1f40869d`
+permanecía limpio con los gitlinks aceptados. Las tres etiquetas NEW
+revisionadas `OPENAI_API_KEY`, `SMTP_PASS` y `GHCR_TOKEN` seguían ausentes en
+Keychain; la comprobación consultó solo existencia y no solicitó ni mostró
+valores. Los formularios de proveedor quedaron preparados pero no enviados:
+OpenAI service account de proyecto y Mailtrap `Domain Admin` limitado al único
+dominio requerido, `meta-hubs.org`. GitHub PAT classic quedó detenido ante
+passkey con el enlace oficial de `write:packages` sin `repo`; después de la
+autenticación aún deben verificarse caducidad, `read:packages`,
+`write:packages` y ausencia de `repo` antes de generar. No se creó, leyó ni
+revocó credencial alguna, no existe NEW y no hubo acceso al clúster o
+producción.
 
 El preparador integrado de esta fase construye NEW sin editar valores a mano:
 lee proveedores desde etiquetas nuevas de macOS Keychain, entrega el frame solo
