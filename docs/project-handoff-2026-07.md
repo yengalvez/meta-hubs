@@ -2,22 +2,24 @@
 
 Este es el punto de entrada para continuar el proyecto sin depender de una conversacion anterior.
 
-> **Addendum activo — 18 de julio de 2026:** los hashes e imágenes de este
+> **Addendum activo — 19 de julio de 2026:** los hashes e imágenes de este
 > documento siguen describiendo producción el 16 de julio. El código para
 > reservas autoritativas de sitting, autenticación/readiness de bots, carga GLB
 > neutral a proveedor, arnés de capacidad y gate de Spoke ya está integrado en
 > las ramas base, pero aún no se ha construido ni desplegado como nuevo runtime.
 > Durante el trabajo se mostró contenido real del `hcce.yaml` local ignorado al
 > registro de la tarea. La exposición no produjo apply ni cambio live. Los
-> candidatos se publicaron después en ramas y PR separados, pero el próximo
-> rollout queda bloqueado hasta rotar de forma coordinada todos los
-> secretos potencialmente incluidos y verificar solo por huella. No volver a
-> abrir ni imprimir el manifiesto ignorado para inventariarlos. `AUD-075` ya
-> está integrado en Cloud `5392495b0772`: separa el parent y un Pod runner por
-> sala/generación y endurece su activación y recuperación. Las fuentes y CI
-> están verdes, pero no se han construido sus dos imágenes ni desplegado o
-> atestado esa topología. Por ello el rollout público y la certificación de
-> capacidad siguen bloqueados.
+> candidatos se publicaron después en ramas y PR separados. No volver a abrir ni
+> imprimir el manifiesto ignorado para inventariar valores. `AUD-075` ya está
+> integrado en Cloud `5392495b0772`: separa el parent y un Pod runner por
+> sala/generación y endurece su activación y recuperación. El orden vigente es:
+> fusionar el tooling de secuencia; integrar `AUD-078`; integrar en PR separados
+> el productor Cloud de procedencia/recibos y su consumidor raíz; construir sin
+> desplegar Reticulum, parent y runner en un único run; verificar el recibo y
+> cuatro bundles contra el gitlink Cloud integrado; checkpoint1; completar
+> OLD/NEW y rotar; checkpoint2; candidata bootstrap; recibos
+> `bootstrap -> admission -> active`; aceptación live/cold; y promoción. El
+> rollout público y la certificación de capacidad siguen bloqueados.
 
 ## Estado ejecutivo
 
@@ -240,16 +242,20 @@ dentro de una sala. Ver
 
 La exposición accidental del manifiesto local al registro de esta tarea se
 trata como compromiso potencial aunque el fichero estuviera ignorado y el
-registro no sea público. Antes de construir/desplegar el siguiente candidato:
+registro no sea público. Antes de desplegar el siguiente candidato:
 
-1. crear el checkpoint DB+storage exigido;
-2. rotar mediante los runbooks vigentes todos los secretos que pudieran figurar
-   en el manifiesto generado, sin copiar valores a tickets, chat o shell output;
-3. mantener `PERMS_KEY` coherente entre Reticulum y Dialog y reiniciar los
-   consumidores que correspondan;
-4. comprobar hashes, filtros `[FILTERED]`, pulls GHCR y paridad de configuración;
-5. regenerar en temporal aislado, ejecutar `kubectl diff` sin imprimir Secrets y
-   exigir preflight 0/0 antes de cualquier apply.
+1. integrar `AUD-078` y los PR Cloud/root de procedencia y recibos;
+2. permitir únicamente el build no-deploy conjunto de Reticulum, parent y
+   runner, y verificar sus cinco ficheros de evidencia;
+3. crear checkpoint1 DB+storage antes de completar OLD;
+4. completar OLD/NEW y rotar mediante los runbooks vigentes todos los secretos
+   que pudieran figurar en el manifiesto generado, sin copiar valores a tickets,
+   chat o shell output;
+5. crear checkpoint2 antes de la candidata;
+6. mantener `PERMS_KEY` coherente entre Reticulum y Dialog, comprobar hashes,
+   filtros `[FILTERED]`, pulls GHCR y paridad de configuración;
+7. regenerar en temporal aislado, ejecutar `kubectl diff` sin imprimir Secrets y
+   exigir preflight antes de cualquier apply.
 
 ## Bloqueos y residuales del candidato de bots
 
@@ -264,9 +270,10 @@ conserva OpenAI y la credencial de orquestación. La probe del Deployment usa
 `/ready`.
 
 Eso elimina el residual de implementación, pero no acredita el runtime. Faltan
-dos imágenes/digests construidos desde el mismo commit, el Secret privado
-generado, rollout Reticulum-first, prueba de un Pod exacto por sala y aceptación
-live. El runtime `process-local` es el último baseline live aceptado. Si un
+el run conjunto de tres imágenes/digests desde el mismo commit integrado, el
+recibo y cuatro bundles verificados, el Secret privado generado, rollout
+Reticulum-first, prueba de un Pod exacto por sala y aceptación live. El runtime
+`process-local` es el último baseline live aceptado. Si un
 rollout candidato vuelve a él como rollback, debe mantener los bots públicos
 deshabilitados y no reabrirse ni declararse aceptado de nuevo hasta superar el
 preflight, el verificador live y la carga fría vigentes con las credenciales
@@ -375,38 +382,64 @@ No desplegar `upstream/master`. Seguir `docs/development-workflow.md` y preserva
 
 ## Deploy correcto
 
-1. finalizar los gates, PR/CI y merge del tooling aislado de `AUD-065`;
-2. preparar y sellar las credenciales privadas nuevas sin aplicarlas todavía;
-3. crear el checkpoint completo exigido por el addendum;
-4. completar la rotación coordinada, promover la fuente canónica, exigir
-   `aud065_rotation_verified` en el auditor live de solo lectura y ejecutar
-   únicamente los smokes funcionales estrechos de esa rotación; el verificador
-   global 0/0 se reserva para el candidato completo;
-5. en una rama Cloud separada, implementar, validar y fusionar `AUD-078` sin
-   mezclar dependencias ni upstream;
-6. ejecutar los gates finales sobre los commits y gitlinks exactos;
-7. GitHub Actions: construir parent y runner desde el mismo commit Cloud final;
-8. fijar ambos digests en values local y actualizar
-   `BOT_IMAGE_PULL_CONFIG_JSON_BASE64` solo mediante
-   `npm run set-bot-image-pull-config` con `GHCR_TOKEN` oculto/en entorno;
-9. generar el manifiesto completo de 58 recursos con
+1. finalizar gates, PR/CI y merge de la corrección de secuencia, el completador
+   atómico de OLD y el preparador `create`/`verify` de candidata bootstrap;
+2. conservar las credenciales NEW en Keychain y todas las OLD válidas;
+3. en una rama Cloud separada, implementar, validar y fusionar `AUD-078` sin
+   mezclar dependencias ni upstream, y actualizar después el gitlink raíz;
+4. integrar en un PR Cloud distinto la procedencia conjunta de tres imágenes,
+   la igualdad exacta values/manifiesto y los recibos de fase bajo Lease; después
+   integrar en otro PR raíz su consumidor, que mantendrá bloqueados
+   `advance`/`promote` sin la cadena autenticada;
+5. justo antes del build, actualizar ambos `REGISTRY_PASSWORD` de Actions desde
+   el ítem NEW mediante el supervisor trackeado, sin revocar OLD;
+6. GitHub Actions: construir Reticulum, parent y runner en un único run desde el
+   commit Cloud final derivado del gitlink de un root `main=origin/main` limpio;
+   exigir exactamente cinco ficheros distintos —recibo JSON, bundle del recibo
+   y bundles OCI Reticulum/parent/runner— y no generar ni aplicar manifiesto. La
+   verificación usa un `DOCKER_CONFIG` efímero `0700`, `config.json` `0600`,
+   creado desde pull auth privado y eliminado incluso ante error;
+7. crear y validar el primer checkpoint conjunto DB+storage;
+8. antes del primer `kubectl`, congelar los cinco artefactos ya ligados en un
+   snapshot privado owner-only y consumir exclusivamente esa copia; completar
+   OLD bajo el Lease global por CAS desde el `Secret/ghcr-pull` live, el
+   `ServiceAccount/default` y el `Deployment/bot-orchestrator` ligado por
+   UID/resourceVersion/imagen OLD y herencia exacta de ese ServiceAccount sin
+   pull-secret override, junto al runner derivado del recibo+bundles,
+   donde el runner es solo binding de verificación y no existe argumento de
+   digest. Tras el CAS local, permitir rollback solo
+   después de renovar y reafirmar el Lease; pérdida de Lease o ACK ambiguo de
+   release conserva el completado exacto para reentrada. Después materializar
+   NEW por el bridge Keychain conservando todos los workloads live;
+9. completar la rotación coordinada, promover la fuente canónica, exigir
+   `aud065_rotation_verified`, reconciliar Actions y cerrar las revocaciones;
+   el verificador global 0/0 se reserva para el candidato completo;
+10. crear y validar un segundo checkpoint conjunto fresco y ligarlo a la
+    operación candidata privada;
+11. crear/verificar desde la fuente rotada una copia candidata separada,
+    derivando del mismo recibo+bundles Reticulum/parent/runner finales, pull NEW
+    y `bootstrap`, sin overrides manuales;
+12. generar el manifiesto completo de 58 recursos con
    `BOT_RUNNER_ACTIVATION_PHASE=bootstrap`, revisar el diff por la vía redactada
    y ejecutar `npm run apply` con `KUBECTL_CONTEXT` fijado;
-10. regenerar con fase `admission`, revisar el diff y ejecutar de nuevo
+13. consumir el recibo bootstrap para avanzar la copia a `admission`, regenerar, revisar el diff y
+   ejecutar de nuevo
    `npm run apply`; el wrapper mantiene el parent parado, comprueba la
    ValidatingAdmissionPolicy, atesta RBAC efectivo y exige que el probe no
    autorizado sea denegado antes de conceder autoridad;
-11. regenerar con fase `active`, revisar el diff y ejecutar `npm run apply`; solo
-   esta transición puede levantar el parent después de verificar Lease global,
-   ausencia estable de runners y control-plane exacto;
-12. no sustituir esas tres transiciones por un `kubectl apply` directo: ante
-    error o deriva el wrapper falla cerrado y vuelve a cercar la autoridad;
-13. verificar los dos namespaces, cuota, ValidatingAdmissionPolicy+binding,
+14. consumir el recibo admission para avanzar después a `active`, regenerar, revisar el diff y ejecutar
+   `npm run apply`; solo esta transición puede levantar el parent después de
+   verificar Lease global, ausencia estable de runners y control-plane exacto;
+15. no sustituir esas tres transiciones por un `kubectl apply` directo: ante
+   error o deriva el wrapper falla cerrado y vuelve a cercar la autoridad;
+16. verificar los dos namespaces, cuota, ValidatingAdmissionPolicy+binding,
     RBAC efectivo, ocho NetworkPolicies, `/transport-ready`, `/ready` y
     exactamente un Pod runner por sala;
-14. si cambia Hubs, reiniciar Reticulum;
-15. carga fria real desktop/mobile, consola y red sin errores ni warnings;
-16. `deployment/verify-live-reactivation.sh` con 0/0.
+17. si cambia Hubs, reiniciar Reticulum;
+18. carga fria real desktop/mobile, consola y red sin errores ni warnings;
+19. `deployment/verify-live-reactivation.sh` con 0/0 y solo entonces, con los
+    recibos active/live/cold encadenados, promover por CAS la copia candidata
+    `active` a la fuente canónica.
 
 Rollback en orden inverso: cero runner Pods y bots públicos deshabilitados,
 parent legacy contra Reticulum compatible, verificar auth privada, y solo

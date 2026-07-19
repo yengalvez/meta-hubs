@@ -12,15 +12,22 @@ Hubs Community Edition 2.1.0 on DigitalOcean Kubernetes with automated SSL via c
 > the only active deployment runbook and
 > `deployment/client-instance-lifecycle.md` for create/freeze/restore/retire.
 
-> **Current rollout block — 17 July 2026:** an ignored generated manifest with
+> **Current rollout block — 19 July 2026:** an ignored generated manifest with
 > real local values was displayed to the task log during candidate
 > diagnostics. It was neither committed nor applied and production was not
-> changed. Nevertheless, do not build or deploy the next candidate until a
-> joint DB+storage checkpoint exists and every potentially included secret has
-> been rotated through the procedures in this runbook. Verify only by hashes,
-> configured-key presence and redacted reports; never reopen/print the ignored
-> manifest to inventory values. After that rotation, integrate and validate
-> `AUD-078` before dispatching candidate image builds.
+> changed. Do not deploy the next candidate until every potentially included
+> secret has been rotated and a fresh joint DB+storage checkpoint has passed.
+> Verify only by hashes, configured-key presence and redacted reports; never
+> reopen/print the ignored manifest to inventory values. The historical OLD
+> source predates `bot-runner`, while the rotation gate deliberately requires an
+> official runner digest. Therefore the only pre-rotation build exception is:
+> merge the sequencing tooling, integrate `AUD-078`, then integrate the separate
+> Cloud provenance/phase-receipt producer and its root receipt consumer. From the
+> final Cloud gitlink fixed by a clean root `main=origin/main`, build Reticulum,
+> parent and runner in one approved GitHub Actions run **without generating or
+> applying a manifest**. Verify its receipt plus four bundles, create the first
+> checkpoint, use the derived runner solely to complete OLD and NEW, rotate the
+> unchanged live baseline, and create a second checkpoint before any deploy.
 
 ---
 
@@ -445,6 +452,10 @@ Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
 Every `OVERRIDE_*_IMAGE` used by a Deployment must be `repository@sha256:<digest>`. After an Actions build, resolve
 the published tag to its registry digest, update the ignored local values and regenerate. The verifier deliberately
 fails on `stable-latest`, `*-latest` and version tags, even when they currently point at the expected bytes.
+For the current AUD-065/AUD-078 campaign this generic maintenance instruction
+is superseded: never transcribe or override any of its three runtime digests.
+The OLD completer and candidate preparer derive them only from the jointly
+attested receipt and four offline bundles described below.
 
 Set or rotate the private bot-image pull config from
 `hubs-cloud/community-edition/` in Bash. `GHCR_TOKEN` must arrive through hidden
@@ -573,12 +584,15 @@ output. The materializer emits them only with the explicit
 `coordinator-cas-stream` purpose and rejects an interactive terminal target;
 the approved caller pipes that stream directly into the guarded CAS replace.
 
-Do not start `plan` or any coordinator execution until the AUD-065 tooling is
-merged, its local and CI gates are green, and a fresh joint DB+storage checkpoint
-has passed the restore and checksum gates. Credential preparation may begin
-after the merged-tooling gates on a clean `main`, but every old credential must
-remain valid and that preparation authorizes no Kubernetes mutation. The two
-values sources and checkpoint are private inputs, not diagnostic files:
+Do not start the OLD completer, materialize NEW, run `plan` or enter any
+coordinator execution until the sequencing tooling, `AUD-078`, the Cloud
+provenance/receipt producer and the root receipt consumer are merged, their gates
+are green, the one-run three-image build has been verified and a fresh joint
+DB+storage checkpoint has passed the restore and checksum gates. External NEW
+provider credentials may be created earlier on a clean `main`, but every OLD
+credential remains valid and that preparation authorizes neither values-source
+mutation nor Kubernetes mutation. The build artifacts, two values sources and
+checkpoint are private inputs, not diagnostic files:
 
 - use absolute paths with no symlink component;
 - values sources must be regular, single-link, owner-owned mode `0600` files;
@@ -633,6 +647,100 @@ internally and does not query an unconfigured optional item. A repeated
 revision prefix; never overwrite it with `-U`. Keep these NEW items separate
 from every OLD Keychain item through terminal audit and provider revocation.
 
+After the final provenance/receipt root PR is merged, run from a clean root
+whose `HEAD`, local `main` and `origin/main` are identical. The provenance
+verifier derives the only accepted Cloud commit from the `hubs-cloud` gitlink,
+requires the checkout to match it and requires that commit in `origin/master`;
+there is no production commit override. Require both project gates, then create
+and validate the first joint PostgreSQL+`ret-pvc` checkpoint before the OLD
+completer acquires the global Lease:
+
+```bash
+test "$(git branch --show-current)" = main
+test "$(git rev-parse HEAD)" = "$(git rev-parse refs/heads/main)"
+test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/main)"
+test -z "$(git status --porcelain)"
+./scripts/verify-project.sh
+./scripts/verify-project.sh --full
+ALLOW_CHECKPOINT_DOWNTIME=1 ./deployment/create-checkpoint.sh
+```
+
+Run the combined read-only restore preflight with
+`RESTORE_CHECKPOINT_PREFLIGHT=1`. The default rollout freshness ceiling is 24
+hours (`MAX_CHECKPOINT_AGE_SECONDS=86400`); repeat checkpoint1 whenever its TTL
+expires or DB, storage, values, commits, images or inventory change. Obtain the
+approved context and namespace UID only from that verified checkpoint/inventory.
+
+The historical canonical OLD source may predate the isolated runner and lack
+exactly `OVERRIDE_BOT_RUNNER_IMAGE` plus
+`BOT_IMAGE_PULL_CONFIG_JSON_BASE64`. In that state the NEW bridge must fail
+closed; do not add placeholders and do not use the Community Edition YAML
+reserializer. The one approved Actions artifact set contains five distinct
+files: the canonical receipt JSON, its receipt-attestation bundle, and one OCI
+bundle for each of Reticulum, parent and runner. After checkpoint1, complete OLD
+only through those five artifacts; never type or pass an image digest:
+
+```bash
+export AUD065_BUILD_ARTIFACTS='/absolute/private/runtime-image-build'
+export AUD065_BUILD_RECEIPT="$AUD065_BUILD_ARTIFACTS/receipt.json"
+export AUD065_RECEIPT_BUNDLE="$AUD065_BUILD_ARTIFACTS/receipt.bundle.json"
+export AUD065_RETICULUM_BUNDLE="$AUD065_BUILD_ARTIFACTS/reticulum.bundle.json"
+export AUD065_BOT_ORCHESTRATOR_BUNDLE="$AUD065_BUILD_ARTIFACTS/bot-orchestrator.bundle.json"
+export AUD065_BOT_RUNNER_BUNDLE="$AUD065_BUILD_ARTIFACTS/bot-runner.bundle.json"
+export AUD065_PRIVATE_WORK_DIRECTORY='/absolute/private/aud065-provenance-work'
+install -d -m 0700 "$AUD065_PRIVATE_WORK_DIRECTORY"
+
+aud065_complete_old() {
+  node ./deployment/complete-process-local-old-values.mjs "$1" \
+    --expected-kube-context "$EXPECTED_KUBE_CONTEXT" \
+    --expected-namespace-uid "$EXPECTED_NAMESPACE_UID" \
+    --receipt "$AUD065_BUILD_RECEIPT" \
+    --receipt-bundle "$AUD065_RECEIPT_BUNDLE" \
+    --bot-orchestrator-bundle "$AUD065_BOT_ORCHESTRATOR_BUNDLE" \
+    --bot-runner-bundle "$AUD065_BOT_RUNNER_BUNDLE" \
+    --reticulum-bundle "$AUD065_RETICULUM_BUNDLE" \
+    --private-work-directory "$AUD065_PRIVATE_WORK_DIRECTORY"
+}
+
+aud065_complete_old complete
+aud065_complete_old verify
+```
+
+The only successful outputs are `aud065_old_source_completed_v1` (or the
+idempotent `aud065_old_source_already_complete_v1`) and
+`aud065_old_source_verified_v1`. The tool has no source-path or credential
+or image argument. It derives the namespace from the code-owned canonical
+source, uses a preliminary context-pinned read-only capture of pull auth and
+`Deployment/bot-orchestrator` solely to verify all five artifacts, and derives
+only the runner binding needed by OLD
+from that verified receipt. The attested Reticulum and parent remain rollout
+candidates and are not required to match the unchanged process-local images.
+Before the first `kubectl`, it copies the five already bound
+inputs from their validated open descriptors into a random owner-only `0700`
+snapshot directory, keeps every copied file bound by inode and exact bytes, and
+uses only those snapshot paths for the preliminary capture and all subsequent
+attestation checks. Any source substitution, snapshot-directory replacement or
+incomplete cleanup fails closed; the snapshot is removed before the command can
+report success. The tracked helper creates an owner-only `0700` temporary
+`DOCKER_CONFIG` directory containing only `config.json` mode `0600`, passes it
+to `gh attestation verify`, then wipes/unlinks it even on failure; do not use
+`docker login`, a global Docker config or an inherited arbitrary
+`DOCKER_CONFIG`. The tool then acquires the Lease, makes the stable and post-CAS
+captures of `Secret/ghcr-pull`, `ServiceAccount/default` and
+`Deployment/bot-orchestrator`, binds the Deployment UID, resourceVersion,
+single parent container and exact OLD image, and requires that the Pod inherit
+the verified `ghcr-pull` only through `ServiceAccount/default` with no explicit
+pull-secret override. It verifies that live parent and the derived runner
+against GHCR, then performs one byte-preserving CAS.
+The runner value is only a pull-verification binding for AUD-065; no live
+workload or image is changed. A missing/aliased bundle, partial keyset,
+UID/resourceVersion drift or denied pull leaves OLD unmodified. After that
+local CAS, rollback is permitted only while a freshly refreshed and asserted
+global Lease still proves ownership. If Lease ownership becomes unprovable, or
+its release acknowledgement is ambiguous, preserve the exact completed bytes,
+return a reconciliation error and re-enter `complete`/`verify`; never infer
+permission to restore OLD from a stale Lease observation.
+
 Create a dedicated owner-private directory, point OLD at the existing regular
 `0600` source without printing it, and require NEW not to exist:
 
@@ -675,24 +783,10 @@ deleting or reusing it and diagnose through the value-free tests. Do not
 construct the V1 frame by hand or use the low-level FD interface outside a
 separately audited supervisor.
 
-Run from a clean root `main` that contains the merged AUD-065 tooling commit.
-Record the exact root commit as non-secret evidence and do not change checkout
-or executable files between `plan`, any recovery command and terminal
-verification. Before creating live credentials or checkpoint data, require both
-project gates:
-
-```bash
-test "$(git branch --show-current)" = main
-test -z "$(git status --porcelain)"
-./scripts/verify-project.sh
-./scripts/verify-project.sh --full
-```
-
-Create the checkpoint through the tracked `## Backups` procedure with
-`ALLOW_CHECKPOINT_DOWNTIME=1`, then run the combined read-only restore preflight
-with `RESTORE_CHECKPOINT_PREFLIGHT=1`. The default rollout freshness ceiling is
-24 hours (`MAX_CHECKPOINT_AGE_SECONDS=86400`); repeat the checkpoint whenever
-that TTL expires or DB, storage, values, commits, images or inventory change.
+Keep the clean accepted root commit recorded as non-secret evidence and do not
+change checkout or executable files between OLD completion, NEW preparation,
+`plan`, any recovery command and terminal verification. Revalidate checkpoint1
+immediately before `plan` and repeat it on expiry or drift.
 Keep a maintenance window with no content or deployment mutation from before
 `plan` until the terminal audit, provider revocations and closure record are
 complete. The global Lease serializes this coordinator, and source promotion
@@ -703,7 +797,7 @@ or other same-user process may write anywhere in this operation's local
 contract: the old/new values sources and their parents, the checkpoint, the
 operation directory and its parent, the canonical values source and its parent,
 or any private staging/output directory used by AUD-065. This exclusion begins
-before the first NEW preparation command and remains absolute through `plan`,
+before the OLD completer and remains absolute through NEW preparation, `plan`,
 `execute`, any `resume`/`rollback`, the terminal `audit`, external revocation
 checks and the closure record.
 Directory-FD anchoring prevents pathname substitution from redirecting a
@@ -829,14 +923,19 @@ PostgreSQL policy, absent probe and absent operation lock.
 Do not use `./deployment/verify-live-reactivation.sh` as the `AUD-065` gate: it
 correctly requires the later `AUD-075` isolated-runner control plane. Its full
 zero-failure/zero-warning result and cold desktop/mobile acceptance belong to
-Fase 6, after `AUD-075` and `AUD-078` are deployed. At this baseline stage run
+Fase 7, after `AUD-075` and `AUD-078` are deployed. At this baseline stage run
 only the narrow functional smokes for credential rotation. Record only rotated
 key names, operation state and safe verdicts; never record the operation ID,
 HMACs, private baselines or credential material.
 
-After that exact audit token, but before revoking the OLD GHCR PAT, update both
-GitHub Actions `REGISTRY_PASSWORD` secrets from the same NEW Keychain item. Run
-this only in the independent Terminal that owns the private rotation session;
+After `AUD-078`, the separate Cloud provenance/receipt PR and its root gitlink/
+consumer PR are merged, and the resulting exact Cloud commit is frozen by a
+clean `main=origin/main`, but immediately before the required pre-rotation
+Actions build, update both GitHub Actions
+`REGISTRY_PASSWORD` secrets from the same NEW Keychain item. This changes only
+masked repository secrets: the live `Secret/ghcr-pull` continues using OLD, OLD
+remains valid, and no manifest may be generated or applied. Run this only in the
+independent Terminal that owns the private rotation session;
 the credential travels through stdin and is never placed in argv, an environment
 variable, a workflow input or task output. Run exactly one supervisor instance
 with the same immutable revision prefix; never start concurrent invocations or
@@ -858,11 +957,13 @@ because OLD remains valid, a partial first-repository update is safe to retry.
 The two repository writes are not atomic and cannot be rolled back by reading a
 GitHub secret, so never revoke OLD after a partial/error result: re-run this
 supervisor with the same unchanged Keychain item until its fixed success token.
-Before revoking OLD, require the documented NEW digest pulls and non-publishing
-upload authorization to succeed. Then revoke OLD, require its rejection to be
-an explicit authentication failure, and repeat the same NEW checks. Record only
-repository names, run IDs/timestamps and safe verdicts. A network error or
-provider `5xx` is never revocation evidence.
+Do not revoke OLD after these builds. After the exact
+`aud065_rotation_verified` audit token, rerun the same supervisor with the same
+immutable Keychain item as terminal reconciliation, then require the documented
+NEW digest pulls and non-publishing upload authorization to succeed. Only then
+revoke OLD, require its rejection to be an explicit authentication failure, and
+repeat the same NEW checks. Record only repository names, run IDs/timestamps and
+safe verdicts. A network error or provider `5xx` is never revocation evidence.
 
 Do not treat runtime convergence as provider revocation. Only after the
 read-only audit has returned exactly `aud065_rotation_verified`, keep the
@@ -1213,33 +1314,118 @@ kubectl -n hcce rollout status deployment/reticulum --timeout=300s
 server-first transition through three complete generated manifests. Do not
 hand-edit, split or hotpatch `hcce.yaml`:
 
-1. From the last accepted live `process-local` baseline, create and validate a
-   fresh joint DB+storage checkpoint. Complete the coordinated `AUD-065`
-   rotation next, using the existing live digests and configuration so that the
-   rotation itself does not advance the candidate runtime. Verify the baseline
-   and rollback with current credentials before continuing.
-2. Integrate and validate `AUD-078` in its own Cloud branch and PR. Only after
-   `AUD-075` through `AUD-078` are in the accepted Cloud source may the approved
-   workflow build `bot-orchestrator` and `bot-runner` from that same commit.
-   Record both immutable digests and update the private pull config only in a
-   mode-`0600` values copy.
-3. Generate the complete 58-resource manifest with
+1. Merge the sequencing correction, OLD completer and bootstrap-only candidate
+   preparer before any
+   live read or local values mutation. Create the NEW provider credentials while
+   OLD remains valid, but do not materialize NEW while canonical OLD lacks its
+   exact runner binding.
+2. Integrate and validate `AUD-078` in its own Cloud branch and PR. Freeze the
+   accepted functional commit; do not mix the terminal-stop feature with the
+   rollout-evidence control plane.
+3. In a separate Cloud PR, add the fixed three-image provenance workflow, exact
+   values-to-manifest verification before the first `kubectl`, and authenticated
+   `bootstrap`/`admission`/`active` receipts under the global Lease. Merge that
+   Cloud PR first, then a separate root PR that updates the gitlink and enables
+   candidate phase transitions only when those receipts and the final
+   live/browser evidence verify. Until both PRs are integrated, the candidate
+   preparer intentionally supports only `create` and `verify` at `bootstrap`.
+4. Freeze that final Cloud `master` as the gitlink of a clean root
+   `main=origin/main`, update the two masked Actions registry
+   secrets from the NEW Keychain item, then build Reticulum,
+   `bot-orchestrator` and `bot-runner` from that exact commit in one approved
+   workflow run. Require exactly five distinct downloaded artifacts: the signed
+   canonical receipt JSON, its receipt bundle and the three OCI bundles for
+   Reticulum, parent and runner. Verify all four attestations against the Cloud
+   commit derived from the root gitlink, using only the tracked ephemeral
+   private `DOCKER_CONFIG`. This stage builds and records digests only; it never
+   generates or applies a manifest. A partial matrix is a failure.
+5. Create and validate the first fresh joint DB+storage checkpoint before the
+   OLD completer acquires the global serialization Lease.
+6. Complete canonical OLD through
+   `complete-process-local-old-values.mjs`: capture the exact live
+   `Secret/ghcr-pull`/`ServiceAccount/default` plus the UID, resourceVersion and
+   image of `Deployment/bot-orchestrator`, including exact inheritance from
+   `ServiceAccount/default` with no Pod pull-secret override; verify that
+   unchanged live parent plus the final runner derived from the receipt and four bundles under the
+   Lease, and add only the runner
+   verification binding and pull config by CAS. Then materialize and verify NEW
+   through the Keychain bridge. Every workload digest remains the currently
+   live `process-local` digest.
+7. Run the coordinated `AUD-065` plan/rotation/audit against the unchanged workload
+   baseline and require `aud065_rotation_verified`. Reconcile the Actions
+   secrets once more, complete provider revocations, and retain the sealed
+   OLD/NEW operation artifacts privately.
+8. Create and validate a second fresh joint DB+storage checkpoint after the
+   rotation. Bind its exact checksums, commits, context and namespace UID into
+   the private candidate rollout operation. From the promoted rotated source, use
+   `manage-process-local-candidate-values-from-keychain.mjs` to publish a
+   separate candidate copy deriving the final Reticulum/parent/runner digests
+   from those same five artifacts, with NEW pull config and phase `bootstrap`,
+   then verify and seal its exact bytes.
+   Run the final preflight. Do not edit the sealed AUD-065 sources or promote the
+   candidate yet.
+9. Generate the complete 58-resource manifest with
    `BOT_RUNNER_ACTIVATION_PHASE=bootstrap`. Review the context-pinned,
    redacted `kubectl diff`, then apply it exclusively with
    `KUBECTL_CONTEXT="$EXPECTED_KUBE_CONTEXT" npm run apply`. Reticulum and its
    migrations become compatible while the parent and runner authority remain
    fenced.
-4. Regenerate the same complete 58-resource inventory with phase `admission`,
+10. Consume the authenticated bootstrap receipt to advance the candidate copy
+   `bootstrap -> admission`. Regenerate the complete 58-resource inventory, verify it,
    review the diff and run the same wrapper. Require the admission policy,
    effective RBAC checks and the negative unauthorized-Pod probe before
    granting runner authority.
-5. Regenerate the complete 58-resource inventory with phase `active`, review
+11. Consume the chained admission receipt to advance `admission -> active`, regenerate, verify, review
    the diff and run the wrapper again. Require `/transport-ready`, authoritative
    `/ready`, all eight NetworkPolicies and the live per-room Pod verifier.
-6. Complete cold desktop/mobile, 0/5/10 bot, chat/privacy, quarantine inventory,
+12. Complete cold desktop/mobile, 0/5/10 bot, chat/privacy, quarantine inventory,
    terminal-stop acceptance and `./deployment/verify-live-reactivation.sh`.
-   Until every gate is green, the source integration is not a deployed or
-   attested result.
+   Only after every gate is green may the active candidate copy be promoted by
+   CAS to the canonical values path. Until then, source integration or image
+   publication is not a deployed or attested result.
+
+The bootstrap candidate copy is controlled only by the tracked preparer. Its
+parent must be an owner-private `0700` directory; the preparer uses that parent
+for an ephemeral `DOCKER_CONFIG` directory and `config.json` mode `0600`, wipes
+it after verification and derives all three images from the same five build
+artifacts. It accepts no image or commit argument. `create` is reentrant only
+for the exact already-published bytes:
+
+```bash
+export AUD065_CANDIDATE_VALUES='/absolute/private/candidate-values.yaml'
+
+# Reuse the exact receipt and four bundle paths verified before checkpoint1.
+test -n "$AUD065_BUILD_RECEIPT"
+test -n "$AUD065_RECEIPT_BUNDLE"
+test -n "$AUD065_RETICULUM_BUNDLE"
+test -n "$AUD065_BOT_ORCHESTRATOR_BUNDLE"
+test -n "$AUD065_BOT_RUNNER_BUNDLE"
+
+aud065_candidate_values() {
+  node ./deployment/manage-process-local-candidate-values-from-keychain.mjs "$@" \
+    --candidate-values-source "$AUD065_CANDIDATE_VALUES" \
+    --receipt "$AUD065_BUILD_RECEIPT" \
+    --receipt-bundle "$AUD065_RECEIPT_BUNDLE" \
+    --bot-orchestrator-bundle "$AUD065_BOT_ORCHESTRATOR_BUNDLE" \
+    --bot-runner-bundle "$AUD065_BOT_RUNNER_BUNDLE" \
+    --reticulum-bundle "$AUD065_RETICULUM_BUNDLE" \
+    --keychain-account "$AUD065_KEYCHAIN_ACCOUNT" \
+    --keychain-prefix "$AUD065_KEYCHAIN_PREFIX" \
+    --ghcr-username yengalvez
+}
+
+aud065_candidate_values create --expected-phase bootstrap
+aud065_candidate_values verify --expected-phase bootstrap
+```
+
+The fixed success outputs are `aud065_candidate_values_created` and
+`aud065_candidate_values_verified`. Both operations re-read the NEW GHCR token
+from Keychain, verify the receipt and four bundles against the integrated Cloud
+gitlink, validate all derived GHCR digests and preserve every non-authorized
+byte. `advance` and `promote` are deliberately absent from this tool until the
+separate Cloud receipt producer and root receipt consumer are integrated. Never
+edit the candidate between commands. The future promotion is the
+post-acceptance source-of-truth commit, not a rollout step.
 
 A new runner cannot authenticate against old Reticulum; this is expected
 fail-closed behavior, not permission to bypass the order. Rollback is the
@@ -1380,12 +1566,16 @@ and `Secret/ghcr-pull`. Pull by digest succeeds for Hubs, Reticulum and
 bot-orchestrator, and the credential can initiate a GHCR upload. The complete
 preflight reports 0 failures and 0 warnings.
 
-For the next rotation, create the replacement PAT through a private provider
-channel and keep the previous PAT valid. Update the macOS Keychain and the
-masked `REGISTRY_USERNAME`/`REGISTRY_PASSWORD` secrets in both GitHub
-repositories without placing the credential in argv, workflow inputs or task
-output. Put the same new credential into the private new-values source only via
-the tracked hidden-input updater. The AUD-065 coordinator then replaces
+Replacement state (2026-07-19): a revision-specific PAT with expiry and only
+`read:packages`/`write:packages` is stored in Keychain; the previous PAT remains
+valid and the replacement has not yet been copied into Actions or Kubernetes.
+Only after `AUD-078`, the Cloud provenance/receipt producer and its root
+gitlink/consumer are merged, and immediately before the resulting one-run
+no-deploy build, update the masked `REGISTRY_PASSWORD` in both GitHub
+repositories through the
+tracked supervisor, without placing the credential in argv, workflow inputs or
+task output. Put the same new credential into the private new-values source only
+via the tracked Keychain bridge. The AUD-065 coordinator then replaces
 `Secret/ghcr-pull` by UID/resourceVersion CAS and verifies
 `ServiceAccount/default` as a read-only invariant. Never use the former
 `kubectl apply` plus `kubectl patch serviceaccount` sequence: it bypasses the
@@ -1436,12 +1626,15 @@ Prevention:
 
 ### Durable rollout
 
-The durable rollout is checkpoint and coordinated rotation first, then accepted
-source (`AUD-078` included), GitHub Actions images, immutable local overrides,
-three complete 58-resource generations (`bootstrap` -> `admission` -> `active`)
-and the context-pinned `npm run apply` driver for every phase. Local Docker
-builds, direct `kubectl apply -f hcce.yaml`, in-cluster builds and runtime-only
-patches are not approved deployment methods for this project.
+The durable rollout order for this campaign is: merged sequencing tooling;
+integrated `AUD-078`; integrated Cloud provenance/phase receipts plus root
+consumer; one-run no-deploy Actions build of Reticulum, parent and runner;
+receipt+four-bundle verification; checkpoint1; OLD/NEW completion; coordinated
+rotation; checkpoint2; then three complete 58-resource generations
+(`bootstrap` -> `admission` -> `active`) and final live/cold acceptance before
+promotion. Every phase uses the context-pinned `npm run apply` driver. Local
+Docker builds, direct `kubectl apply -f hcce.yaml`, in-cluster builds and
+runtime-only patches are not approved deployment methods for this project.
 
 ### GHCR notes (if using `ghcr.io`)
 
@@ -1458,11 +1651,13 @@ manual `kubectl create secret` or ServiceAccount patches for the candidate.
 
 The candidate uses the generated dedicated `bot-images-pull` contract. The
 58-resource generator creates that Secret and binds it explicitly to
-`bot-orchestrator` and `bot-runner`
-ServiceAccounts. Populate its private source only with
-`npm run set-bot-image-pull-config` and hidden/environment `GHCR_TOKEN`; never
-print or decode `BOT_IMAGE_PULL_CONFIG_JSON_BASE64`, and never attach the pull
-Secret to a container volume.
+`bot-orchestrator` and `bot-runner` ServiceAccounts. For the current AUD-065
+campaign, populate its private source only through the tracked Keychain-backed
+candidate preparer; the NEW token is never accepted through argv/environment.
+The generic `set-bot-image-pull-config` helper above remains for separately
+approved future instance maintenance. Never print or decode
+`BOT_IMAGE_PULL_CONFIG_JSON_BASE64`, and never attach the pull Secret to a
+container volume.
 
 > Important: if `BASE_ASSETS_PATH` is not set during build, pages may reference `/assets/...` and return 404 in production domains that serve assets from `assets.<domain>/hubs/`.
 >

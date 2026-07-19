@@ -5,6 +5,7 @@
 *.key
 *_b64.txt
 input-values.local.yaml
+.input-values.local.yaml.aud065-new-*
 input-values.yaml
 hcce.yaml
 node_modules/

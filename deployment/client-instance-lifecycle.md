@@ -48,11 +48,16 @@ Baseline YenHubs actual:
 3. Crear tokens de GitHub/GHCR sin reutilizar credenciales personales.
 4. Crear claves OpenAI y DigitalOcean por cliente/proyecto cuando sea posible.
 5. Copiar `deployment/input-values.example.yaml` a un fichero local ignorado.
-   Para bots aislados, fijar por digest las dos imágenes
-   `bot-orchestrator`/`bot-runner` del mismo commit y generar
-   `BOT_IMAGE_PULL_CONFIG_JSON_BASE64` exclusivamente con
-   `npm run set-bot-image-pull-config`, pasando `GHCR_TOKEN` por entrada oculta
-   o entorno protegido y sin mostrarlo.
+   Para bots aislados, fijar por digest Reticulum, `bot-orchestrator` y
+   `bot-runner` desde el mismo commit/recibo atestado. Conservar y verificar los
+   cinco ficheros de esa procedencia: recibo JSON, bundle del recibo y bundles
+   OCI de las tres imágenes. El commit se deriva del gitlink Cloud integrado en
+   un root `main=origin/main` limpio; no se escribe un digest a mano. En una
+   instancia nueva el pull config se genera con el helper trackeado y entrada
+   oculta; durante la campaña AUD-065 se usa exclusivamente el preparador
+   respaldado por Llavero, que crea y elimina un `DOCKER_CONFIG` efímero
+   (`0700`, `config.json` `0600`) sin pasar `GHCR_TOKEN` por argv/entorno ni
+   mostrarlo.
 6. Ejecutar el preflight antes de crear recursos:
 
    ```bash
@@ -125,10 +130,23 @@ Para una feature:
 8. verificador;
 9. merge.
 
-Mientras `AUD-065` permanezca abierto, el checkpoint DB+storage y la rotación
-coordinada preceden incluso al build del siguiente candidato. El primer rollout
-de runners aislados usa tres manifiestos completos de 58 recursos, regenerados
-y aplicados con el wrapper guardado en orden `bootstrap -> admission -> active`.
+Para cerrar la circularidad inicial de `AUD-065`, primero se fusionan el tooling
+de secuencia, `AUD-078`, el productor Cloud de procedencia/recibos y su
+consumidor raíz. Solo entonces se permite construir por Actions, sin desplegar,
+Reticulum, parent y runner en un único run desde el commit Cloud fijado por el
+gitlink raíz. Se verifican el recibo y los cuatro bundles con el Docker config
+privado efímero; después se crea el primer checkpoint DB+storage. El completador
+deriva de esa evidencia el runner, completa OLD y permite materializar NEW; a
+continuación se ejecuta la rotación coordinada sobre el baseline live. Después
+de la rotación se crea y valida el segundo checkpoint, y solo entonces se crea
+la candidata bootstrap derivando sus tres digests de los mismos cinco ficheros.
+Ningún build sustituye esos checkpoints ni autoriza un rollout.
+
+El primer rollout de runners aislados usa tres manifiestos completos de 58
+recursos, regenerados y aplicados con el wrapper guardado en orden
+`bootstrap -> admission -> active`. Cada transición local debe consumir el
+recibo autenticado de la fase live anterior y la promoción de la fuente
+canónica debe consumir la aceptación final 0/0 ligada al mismo candidato.
 `bootstrap` introduce Reticulum compatible manteniendo inerte la autoridad;
 `admission` prueba policy/RBAC con el parent todavía parado; solo `active` puede
 levantar parent y runners. El rollback restaura primero el parent legacy contra

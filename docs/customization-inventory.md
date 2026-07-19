@@ -11,8 +11,8 @@ Comparado con las releases estables aceptadas:
 - Hubs: 172 archivos, 14.681 inserciones y 2.611 eliminaciones.
 - Hubs CE: 155 archivos, 28.154 inserciones y 12.876 eliminaciones.
 
-Las cifras anteriores corresponden al corte base medido. El candidato actual
-queda identificado por Hubs `674ece411691` y Hubs Cloud final
+Las cifras anteriores corresponden al corte base medido. El corte fuente de
+`AUD-075` queda identificado por Hubs `674ece411691` y Hubs Cloud
 `5392495b077249edcedfb3092551201645f648f1`. `AUD-075` llegó a `development`
 por el PR `#11` (`ebe960794735d378149966b78090e22acc60cc26`) y a `master` por el
 PR `#12` (`5392495b077249edcedfb3092551201645f648f1`), con CI Cloud verde. Pasan
@@ -24,9 +24,11 @@ fail-closed, Dialog 2/2, Photomnemonic 7/7 y Spoke 68/68 y build. No hay build
 de imágenes, digests, checkpoint, staging, despliegue, aceptación live ni
 capacidad física atribuibles a esta integración Git/fuente.
 
-Ambos commits pertenecen ya a las ramas base de sus subrepositorios. El root
-los fija únicamente en el worktree candidato `codex/aud075-integration`; el PR
-y CI que actualizan el puntero de Cloud en root `main` siguen pendientes.
+Ambos commits pertenecen ya a las ramas base de sus subrepositorios y root
+`main` los fijó mediante el PR raíz `#5`. No llamar «final» a ese commit Cloud
+para el rollout vigente: el commit final será el que integre después `AUD-078`,
+el productor de procedencia/recibos y su gitlink/consumidor raíz, antes del build
+conjunto.
 
 ## Cliente Hubs
 
@@ -115,9 +117,16 @@ Cambiar estos contratos exige compatibilidad hacia atras o migracion:
 - La probe Kubernetes del parent usa `/transport-ready` tras limpiar huérfanos;
   `/ready` sigue siendo la aceptación autoritativa y `/health` solo
   liveness/diagnóstico.
-- Parent y runner se construyen desde el mismo commit en dos imágenes y se
-  fijan por digests separados. `BOT_IMAGE_PULL_CONFIG_JSON_BASE64` se actualiza
-  solo con el helper y `GHCR_TOKEN` oculto/en entorno; el Secret nunca se monta.
+- Reticulum, parent y runner se construyen desde el mismo commit Cloud en tres
+  imágenes dentro de un único run, con procedencia atestada y digests separados.
+  El contrato conserva cinco ficheros distintos: recibo JSON, bundle del recibo
+  y bundles OCI de las tres imágenes. Se verifican contra el commit derivado del
+  gitlink Cloud de un root `main=origin/main` limpio, sin overrides, usando un
+  `DOCKER_CONFIG` efímero owner-only `0700` con `config.json` `0600` que se borra
+  al terminar. En la campaña `AUD-065`,
+  `BOT_IMAGE_PULL_CONFIG_JSON_BASE64` se materializa solo desde la credencial
+  NEW del Llavero mediante el gestor privado trackeado; el token no entra por
+  argv o entorno y el Secret nunca se monta.
 - El rollout bot usa Reticulum compatible primero y parent/runner/control-plane
   después mediante tres manifiestos completos de 58 recursos, regenerados como
   `bootstrap`, `admission` y `active`, cada uno aplicado exclusivamente con el
@@ -131,12 +140,15 @@ Cambiar estos contratos exige compatibilidad hacia atras o migracion:
 
 ## Bloqueos antes de producción
 
-- `AUD-065`: checkpoint fresco DB+storage y rotación coordinada de secretos
-  potencialmente expuestos antes de cualquier mutación.
-- El aislamiento por Pod y el fencing DB están integrados en Cloud `master`,
-  pero falta integrar el gitlink raíz. Después de `AUD-065` debe implementarse
-  y fusionarse `AUD-078`; solo entonces se construyen los dos builds/digests y
-  se ejecutan el despliegue Reticulum-first y la atestación.
+- `AUD-065`: las credenciales externas NEW existen, pero OLD/NEW, checkpoints y
+  rotación siguen pendientes; ninguna mutación live está autorizada todavía.
+- El aislamiento por Pod, el fencing DB y su gitlink raíz están integrados.
+  Antes del rollout faltan, en orden: fusionar el tooling de secuencia;
+  implementar/fusionar `AUD-078`; integrar el productor Cloud de
+  procedencia/recibos y su consumidor raíz; construir Reticulum, parent y runner
+  en un único run atestado; verificar recibo+cuatro bundles; crear checkpoint1;
+  completar OLD/NEW y rotar; crear checkpoint2; y ejecutar
+  `bootstrap -> admission -> active`, aceptación live/cold y promoción.
 - `process-local` sigue siendo el último baseline live aceptado y puede servir
   de rollback. Tras volver a él, mantener bots públicos deshabilitados y no
   reabrirlo ni declararlo aceptado de nuevo hasta pasar preflight, verificador
