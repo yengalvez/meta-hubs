@@ -386,7 +386,8 @@ no se había creado credencial/NEW/checkpoint, leído Keychain real ni accedido 
 clúster. El PR raíz `#9` quedó fusionado como
 `main=50b504a15a4ada8658cf4ce1a3b827d4fab8fc31`; después se completó la captura
 privada de credenciales descrita en Fase 2B. La primera casilla pendiente actual
-es fusionar el tooling de secuencia sin ejecutarlo contra valores reales.
+es crear desde Cloud `master` la rama aislada de `AUD-078`; el tooling de
+secuencia ya quedó fusionado sin ejecutarse contra valores reales.
 
 ### Fase 3 — implementar `AUD-078` de forma aislada
 
