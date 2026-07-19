@@ -19,6 +19,7 @@ import {
   loadProcessLocalRotationProfile,
   projectProcessLocalRotationReplacement,
   redactProcessLocalRotationBundle,
+  validateProcessLocalValuesSnapshot,
   verifyProcessLocalRotationBundle
 } from "../../deployment/process-local-rotation.mjs";
 
@@ -358,6 +359,13 @@ function expectCode(fn, code) {
   assert.equal(captured.code, code);
 }
 
+function validatedSnapshot() {
+  return {
+    ...values(newSnapshotSecrets, newPullConfig),
+    PGRST_JWT_SECRET: permsMaterial(newPermsKey).jwt
+  };
+}
+
 function findResource(resources, kind, name) {
   return resources.find(resource =>
     resource.kind === kind && resource.metadata.name === name
@@ -490,6 +498,61 @@ test("pins the exact historical 22-key process-local Secret contract", () => {
       image_pull_secrets: [{ name: "ghcr-pull" }]
     }
   });
+});
+
+test("validates a complete private values snapshot without mutating its inputs", () => {
+  const snapshot = validatedSnapshot();
+  const suppliedProfile = structuredClone(profile);
+  const snapshotBefore = structuredClone(snapshot);
+  const profileBefore = structuredClone(suppliedProfile);
+
+  assert.equal(
+    validateProcessLocalValuesSnapshot(snapshot, { profile: suppliedProfile }),
+    true
+  );
+  assert.deepEqual(snapshot, snapshotBefore);
+  assert.deepEqual(suppliedProfile, profileBefore);
+});
+
+test("rejects invalid snapshot URI, derived JWT, PERMS PEM and keysets", () => {
+  const invalidUri = validatedSnapshot();
+  invalidUri.PGRST_DB_URI = invalidUri.PGRST_DB_URI.replace("@pgbouncer:", "@pgsql:");
+  expectCode(
+    () => validateProcessLocalValuesSnapshot(invalidUri, { profile }),
+    "snapshot_pgrst_db_uri_invalid"
+  );
+
+  const invalidJwt = validatedSnapshot();
+  invalidJwt.PGRST_JWT_SECRET = "stale-derived-jwt";
+  expectCode(
+    () => validateProcessLocalValuesSnapshot(invalidJwt, { profile }),
+    "snapshot_derived_secret_mismatch"
+  );
+
+  const invalidPem = validatedSnapshot();
+  invalidPem.PERMS_KEY = "not-a-private-key";
+  expectCode(
+    () => validateProcessLocalValuesSnapshot(invalidPem, { profile }),
+    "snapshot_perms_key_invalid"
+  );
+
+  const weakPem = validatedSnapshot();
+  weakPem.PERMS_KEY = generateKeyPairSync("rsa", {
+    modulusLength: 1024,
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" }
+  }).privateKey.replace(/\n/gu, "\\n");
+  expectCode(
+    () => validateProcessLocalValuesSnapshot(weakPem, { profile }),
+    "snapshot_perms_key_too_small"
+  );
+
+  const extraKey = validatedSnapshot();
+  extraKey.UNRELATED_VALUE = "not-allowed";
+  expectCode(
+    () => validateProcessLocalValuesSnapshot(extraKey, { profile }),
+    "snapshot_values_keyset_invalid"
+  );
 });
 
 test("matches all 42 identities in the independently parsed historical Cloud template", () => {

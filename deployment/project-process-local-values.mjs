@@ -171,7 +171,10 @@ function projectionKeys(profile) {
   };
 }
 
-function projectValues(values, profile) {
+export function projectProcessLocalValuesMap(
+  values,
+  profile = loadProcessLocalRotationProfile()
+) {
   const { required, optional } = projectionKeys(profile);
   if (required.some(name => !values.has(name))) fail("required_value_missing");
   const projected = {};
@@ -192,8 +195,7 @@ export function projectProcessLocalValues({ sourcePath, outputPath }) {
     } catch {
       fail("local_values_invalid");
     }
-    const profile = loadProcessLocalRotationProfile();
-    const projected = projectValues(values, profile);
+    const projected = projectProcessLocalValuesMap(values);
     publishPrivateArtifact({
       outputPath,
       bytes: Buffer.from(`${canonicalJson(projected)}\n`, "utf8"),

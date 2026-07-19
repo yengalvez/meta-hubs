@@ -541,7 +541,10 @@ is projected by CAS only into the legacy `Secret/ghcr-pull`; the distinct
 tool validates both DB URIs against the DB fields, derives the JWT field,
 verifies the Reticulum/Dialog `PERMS_KEY` relationship using cryptographic
 material without printing it, and rejects rendered credentials inside
-`ConfigMap/ret-config`.
+`ConfigMap/ret-config`. `PGRST_JWT_SECRET` may be absent from both complete
+values sources because it is derived from `PERMS_KEY`; if the OLD source
+contains that line, the preparer preserves its presence and writes the exact
+new derivation.
 
 All four bot-domain values must be distinct and contain at least 32 characters;
 the live `BOT_ACCESS_KEY` must meet that same minimum. The new `DB_PASS` must be
@@ -582,6 +585,85 @@ values sources and checkpoint are private inputs, not diagnostic files:
 - never print, diff, edit or copy any operation artifact into a task, terminal
   transcript or PR.
 
+Prepare the complete NEW source only through the tracked Keychain bridge. First
+create new provider credentials while every OLD credential remains valid. Store
+each newly displayed value in a new, revision-specific item in the default
+Keychain search list used by `/usr/bin/security` (normally the login Keychain),
+from an independent Terminal window. `-w` must be the final option so
+`/usr/bin/security` prompts without placing the value in argv. Do not use `-U`,
+`-A`, `-g`, a shell variable, clipboard history, chat or a Codex-controlled
+terminal for the secret value:
+
+- create an OpenAI project/service-account key, not a broader organization
+  admin key solely for this rotation;
+- use Mailtrap **Add Token** with only the sending/domain access required by
+  this deployment; do not use provider-wide reset while OLD must remain valid;
+- create a GitHub classic PAT with expiry, `read:packages` and
+  `write:packages`, without `repo`; this same NEW credential must later replace
+  the two `REGISTRY_PASSWORD` repository secrets through stdin;
+- create Sketchfab/Tenor replacements only when the OLD source has those
+  optional integrations configured.
+
+```bash
+export AUD065_KEYCHAIN_ACCOUNT='info@virtualmente.com'
+export AUD065_KEYCHAIN_PREFIX='YenHubs-AUD065-NEW-20260719-01'
+
+aud065_store_new_secret() {
+  /usr/bin/security add-generic-password \
+    -a "$AUD065_KEYCHAIN_ACCOUNT" \
+    -s "${AUD065_KEYCHAIN_PREFIX}-$1" \
+    -T "" \
+    -w
+}
+
+aud065_store_new_secret OPENAI_API_KEY
+aud065_store_new_secret SMTP_PASS
+aud065_store_new_secret GHCR_TOKEN
+```
+
+Add `SKETCHFAB_API_KEY` and `TENOR_API_KEY` through the same function only when
+the OLD source has each provider configured. The preparer detects that presence
+internally and does not query an unconfigured optional item. A repeated
+`add-generic-password` failure means the label already exists: choose a new
+revision prefix; never overwrite it with `-U`. Keep these NEW items separate
+from every OLD Keychain item through terminal audit and provider revocation.
+
+Create a dedicated owner-private directory, point OLD at the existing regular
+`0600` source without printing it, and require NEW not to exist:
+
+```bash
+export AUD065_PRIVATE_PARENT='/absolute/private/aud065-preparation'
+export AUD065_OLD_VALUES='/absolute/private/or/canonical/input-values.local.yaml'
+export AUD065_NEW_VALUES="$AUD065_PRIVATE_PARENT/new-values.yaml"
+
+install -d -m 0700 "$AUD065_PRIVATE_PARENT"
+test -f "$AUD065_OLD_VALUES"
+test ! -e "$AUD065_NEW_VALUES"
+
+node ./deployment/prepare-process-local-new-values-from-keychain.mjs \
+  --old-values-source "$AUD065_OLD_VALUES" \
+  --new-values-source "$AUD065_NEW_VALUES" \
+  --keychain-account "$AUD065_KEYCHAIN_ACCOUNT" \
+  --keychain-prefix "$AUD065_KEYCHAIN_PREFIX"
+
+node ./deployment/prepare-process-local-new-values.mjs verify \
+  --old-values-source "$AUD065_OLD_VALUES" \
+  --new-values-source "$AUD065_NEW_VALUES"
+```
+
+The only successful outputs are respectively
+`aud065_new_values_prepared_from_keychain` and
+`aud065_new_values_verified`. The bridge reads Keychain values into the V1
+frame in memory, sends it only through inherited FD 3 and wipes mutable buffers
+best-effort. The preparer generates the internal domains, database password and
+RSA key itself; it preserves every non-authorized source line byte-for-byte,
+validates OLD -> NEW strongly and publishes NEW once with mode `0600`. A
+failure before publication is generic and leaves NEW absent. If a generic
+failure ever returns with NEW present, quarantine that path without opening,
+deleting or reusing it and diagnose through the value-free tests. Do not
+construct the V1 frame by hand or use the low-level FD interface outside a
+separately audited supervisor.
+
 Run from a clean root `main` that contains the merged AUD-065 tooling commit.
 Record the exact root commit as non-secret evidence and do not change checkout
 or executable files between `plan`, any recovery command and terminal
@@ -610,8 +692,9 @@ or other same-user process may write anywhere in this operation's local
 contract: the old/new values sources and their parents, the checkpoint, the
 operation directory and its parent, the canonical values source and its parent,
 or any private staging/output directory used by AUD-065. This exclusion begins
-before `plan` and remains absolute through `execute`, any `resume`/`rollback`,
-the terminal `audit`, external revocation checks and the closure record.
+before the first NEW preparation command and remains absolute through `plan`,
+`execute`, any `resume`/`rollback`, the terminal `audit`, external revocation
+checks and the closure record.
 Directory-FD anchoring prevents pathname substitution from redirecting a
 mutation, but it does not turn POSIX filesystems into a linearizable CAS against
 an actively hostile writer with the same UID.
@@ -739,6 +822,36 @@ Fase 6, after `AUD-075` and `AUD-078` are deployed. At this baseline stage run
 only the narrow functional smokes for credential rotation. Record only rotated
 key names, operation state and safe verdicts; never record the operation ID,
 HMACs, private baselines or credential material.
+
+After that exact audit token, but before revoking the OLD GHCR PAT, update both
+GitHub Actions `REGISTRY_PASSWORD` secrets from the same NEW Keychain item. Run
+this only in the independent Terminal that owns the private rotation session;
+the credential travels through stdin and is never placed in argv, an environment
+variable, a workflow input or task output. Run exactly one supervisor instance
+with the same immutable revision prefix; never start concurrent invocations or
+switch Keychain items during a retry:
+
+```bash
+node ./deployment/update-aud065-actions-secrets-from-keychain.mjs \
+  --keychain-account "$AUD065_KEYCHAIN_ACCOUNT" \
+  --keychain-prefix "$AUD065_KEYCHAIN_PREFIX"
+```
+
+Its only successful output is `aud065_actions_secrets_updated`. The supervisor
+holds one global per-user `/usr/bin/lockf` writer window, finishes and validates
+the Keychain read before any GitHub mutation, preflights both repositories,
+supplies the same mutable in-memory buffer only through each `gh secret set`
+stdin, and requires a strictly newer non-secret `updatedAt` after each write. A
+failure cannot reuse the pre-existing secret name as false evidence;
+because OLD remains valid, a partial first-repository update is safe to retry.
+The two repository writes are not atomic and cannot be rolled back by reading a
+GitHub secret, so never revoke OLD after a partial/error result: re-run this
+supervisor with the same unchanged Keychain item until its fixed success token.
+Before revoking OLD, require the documented NEW digest pulls and non-publishing
+upload authorization to succeed. Then revoke OLD, require its rejection to be
+an explicit authentication failure, and repeat the same NEW checks. Record only
+repository names, run IDs/timestamps and safe verdicts. A network error or
+provider `5xx` is never revocation evidence.
 
 Do not treat runtime convergence as provider revocation. Only after the
 read-only audit has returned exactly `aud065_rotation_verified`, keep the
