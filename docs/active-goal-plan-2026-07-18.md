@@ -10,7 +10,7 @@ Rama inicial: `codex/aud075-integration`
 
 Worktree activo: `/Users/Shared/Gits/YenHubs`
 
-Rama activa de desbloqueo: `codex/aud065-sequencing-unblock`
+Última rama de desbloqueo fusionada: `codex/aud065-sequencing-unblock`
 
 Este documento es la fuente de verdad de la meta activa. El historial de sesión
 y las cuentas completas de pruebas se conservan exclusivamente en
