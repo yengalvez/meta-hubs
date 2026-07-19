@@ -2,7 +2,7 @@
 
 Última actualización: 19 de julio de 2026
 
-Estado actual: **EN EJECUCIÓN; Fase 2B, compatibilidad OLD revalidada localmente tras cerrar un P2; PR/CI/merge previos a credenciales**
+Estado actual: **EN EJECUCIÓN; Fase 2B, compatibilidad OLD integrada; siguiente casilla: credenciales externas por canal privado**
 
 Worktree inicial: `/Users/Shared/Gits/YenHubs-aud075-root`
 
@@ -10,7 +10,7 @@ Rama inicial: `codex/aud075-integration`
 
 Worktree activo: `/Users/Shared/Gits/YenHubs`
 
-Rama activa: `codex/aud065-credential-preparation`
+Rama de reanudación tras integrar este handoff: `main`
 
 Este documento es la fuente de verdad de la meta activa. El historial de sesión
 y las cuentas completas de pruebas se conservan exclusivamente en
@@ -221,9 +221,12 @@ el preparador privado NEW antes de crear ninguna credencial.
   Ambos gates terminaron con código 0 sobre
   `main=83732fe6a4372ef0a5bb6cd9a1ab2eb451def7a1`, Hubs `674ece411691` y Cloud
   `5392495b0772`.
-- [ ] Integrar en `main`, mediante commit, PR y CI verdes, la compatibilidad
+- [x] Integrar en `main`, mediante commit, PR y CI verdes, la compatibilidad
   fail-closed de la fuente OLD (`---` inicial exacto y el único bloque legado
-  `PERMS_KEY: |`) ya validada localmente; no crear credenciales, NEW ni
+  `PERMS_KEY: |`) ya validada localmente. El PR raíz `#9`, head final
+  `5ee444fd2357`, pasó los seis checks de los runs push/PR
+  `29681808358`/`29681809883` y se fusionó como
+  `main=50b504a15a4ada8658cf4ce1a3b827d4fab8fc31`; no se creó credencial, NEW ni
   checkpoint antes del merge.
 - [ ] Crear por canales privados las credenciales externas nuevas necesarias y
   preparar las internas nuevas, manteniendo válidas las anteriores hasta que el
@@ -260,9 +263,9 @@ producción. Esta evidencia solo autoriza PR/CI/merge del tooling; las tres
 casillas privadas anteriores permanecen pendientes. El commit `a6ed7b3fe3f9`
 pasó los seis checks de los runs push/PR `29675286715`/`29675308171`; el PR raíz
 `#8` se fusionó como `main=623d70c607f23ff8bf45387cf1af3ea6ab57eb61`.
-La compatibilidad OLD descrita a continuación pasó a ser la primera casilla
-activa de Fase 2B; las tres casillas privadas permanecen bloqueadas hasta su
-merge.
+La compatibilidad OLD descrita a continuación pasó entonces a ser la primera
+casilla activa de Fase 2B; las tres casillas privadas quedaron bloqueadas hasta
+el merge posterior del PR `#9`.
 
 La primera lectura estrictamente redactada de presencia opcional se detuvo antes
 de crear credenciales: la fuente canónica OLD comienza con el marcador YAML
@@ -295,8 +298,9 @@ ambos `static-security` encontraron otras dos cabeceras PEM literales dentro de
 aserciones del test, no material de clave. Las aserciones construyen ahora la
 misma cabecera desde fragmentos y mantienen idéntica comprobación; el foco
 vuelve a pasar 23/23, `git diff --check` y Gitleaks del worktree raíz terminan
-con código 0, sin allowlist. El CI de ese nuevo commit debe quedar verde antes
-del merge.
+con código 0, sin allowlist. Los runs finales push/PR
+`29681808358`/`29681809883` pasaron los seis checks, incluidos ambos
+`static-security`, antes del merge.
 
 Una revisión tardía posterior a esos primeros verdes detectó un P2: el parser
 debía admitir el bloque legado para leer OLD, pero la transición podía sellar o
@@ -310,8 +314,9 @@ gates sobre los bytes finales: transición 24/24, preparador 23/23, seguridad
 `./scripts/verify-project.sh --full` terminaron con código 0; el full cerró con
 Reticulum 430 pruebas, 5 propiedades y 0 fallos. No se creó
 credencial/NEW/checkpoint, no se leyó Keychain real y no hubo acceso al clúster
-ni mutación de producción. Faltan commit, PR/CI y merge de esta compatibilidad
-antes de la captura privada de credenciales.
+ni mutación de producción. El PR raíz `#9` quedó fusionado como
+`main=50b504a15a4ada8658cf4ce1a3b827d4fab8fc31`; la primera casilla pendiente es
+ahora la captura privada de credenciales externas.
 
 #### Fase 2C — checkpoint y rotación inmediata
 
