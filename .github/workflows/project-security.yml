@@ -153,3 +153,45 @@ jobs:
         run: |
           bash tests/scripts/security-gates.test.sh
           bash tests/recovery/test-recovery-safety.sh
+          bash scripts/test-aud065.sh
+
+  aud065-postgres:
+    name: AUD-065 PostgreSQL ${{ matrix.postgres }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres:
+          - "12.19"
+          - "14.23"
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: SetupFixturePassword_CCCCCCCCCCCC
+          POSTGRES_HOST_AUTH_METHOD: md5
+          POSTGRES_INITDB_ARGS: --auth-host=md5 --auth-local=trust
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432/tcp
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Exercise credential transition against PostgreSQL
+        env:
+          PLDB_PGHOST: 127.0.0.1
+          PLDB_PGPORT: ${{ job.services.postgres.ports['5432'] }}
+          PLDB_SETUP_PASSWORD: SetupFixturePassword_CCCCCCCCCCCC
+          PLDB_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: bash tests/recovery/test-process-local-db-rotation-postgres.sh

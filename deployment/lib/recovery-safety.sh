@@ -24,6 +24,12 @@ RECOVERY_CHECKPOINT_PVC_UID=""
 RECOVERY_FENCE_PRE_EPOCH="${RECOVERY_FENCE_PRE_EPOCH:-}"
 RECOVERY_FENCE_TARGET_EPOCH="${RECOVERY_FENCE_TARGET_EPOCH:-}"
 RECOVERY_OPERATION_STATE="${RECOVERY_OPERATION_STATE:-}"
+RECOVERY_OPERATION_BINDING_SHA256="${RECOVERY_OPERATION_BINDING_SHA256:-}"
+# A caller may enable this process-local capability only after sourcing the
+# library and after durably persisting the AUD-065 token/operation ID. Never
+# honor an inherited environment marker.
+RECOVERY_OPERATION_IDENTITY_PREBOUND=0
+RECOVERY_OPERATION_LOCK_GLOBAL_NAME="yenhubs-recovery-operation-lock"
 RECOVERY_SERIALIZATION_LEASE_NAME="yenhubs-operation-serialization"
 # Lease ownership and heartbeat paths/PIDs are process-local capabilities.
 # Never honor inherited values: an environment value must not let cleanup
@@ -128,7 +134,9 @@ recovery_kubectl_stream_supervised() {
     }
     trap 'supervised_stream_cleanup; exit 130' INT TERM
     recovery_process_identity_is_live "$caller_pid" "$caller_start_identity" || return 1
-    [[ "$require_lease" == 0 ]] || recovery_require_operation_serialization
+    if [[ "$require_lease" == 1 ]]; then
+      recovery_require_operation_serialization || return 1
+    fi
     # Python creates a new session and then execs kubectl. The resulting PID is
     # also the process-group leader, so a parent-death or Lease-loss watchdog
     # can terminate kubectl and every local descendant as one unit.
@@ -159,7 +167,9 @@ os.execvp(sys.argv[1], sys.argv[1:])
     if wait "$stream_pid"; then stream_status=0; else stream_status=$?; fi
     stream_pid=""
     recovery_process_identity_is_live "$caller_pid" "$caller_start_identity" || return 1
-    [[ "$require_lease" == 0 ]] || recovery_require_operation_serialization
+    if [[ "$require_lease" == 1 ]]; then
+      recovery_require_operation_serialization || return 1
+    fi
     return "$stream_status"
   )
 }
@@ -615,8 +625,13 @@ recovery_deployment_inventory_is_acceptable() {
     def expected_pairs:
       ["bot-orchestrator/bot-orchestrator", "coturn/coturn", "dialog/dialog",
        "haproxy/haproxy", "hubs/hubs", "nearspark/nearspark", "pgbouncer/pgbouncer",
-       "pgbouncer-t/pgbouncer-t", "photomnemonic/photomnemonic", "pgsql/pgsql",
-       "reticulum/postgrest", "reticulum/reticulum", "spoke/spoke"];
+       "pgbouncer-t/pgbouncer-t", "photomnemonic/photomnemonic"] +
+      (if .bot_runner_runtime.mode == "process-local"
+       then ["pgsql/postgresql"]
+       elif .bot_runner_runtime.mode == "kubernetes-pod"
+       then ["pgsql/pgsql"]
+       else [] end) +
+      ["reticulum/postgrest", "reticulum/reticulum", "spoke/spoke"];
     def trusted_repository($pair; $image):
       ($image | split("@sha256:")[0]) as $repository |
       if $pair == "bot-orchestrator/bot-orchestrator" then $repository == "ghcr.io/yengalvez/bot-orchestrator"
@@ -636,7 +651,7 @@ recovery_deployment_inventory_is_acceptable() {
          $repository == "docker.io/edoburu/pgbouncer" or
          $repository == "edoburu/pgbouncer")
       elif $pair == "photomnemonic/photomnemonic" then $repository == "ghcr.io/yengalvez/photomnemonic"
-      elif $pair == "pgsql/pgsql" then
+      elif ($pair == "pgsql/pgsql" or $pair == "pgsql/postgresql") then
         ($repository == "ghcr.io/yengalvez/postgres" or
          $repository == "docker.io/library/postgres" or $repository == "postgres")
       elif $pair == "reticulum/postgrest" then
@@ -976,6 +991,7 @@ recovery_runner_isolation_residual_state() {
   done <<EOF
 namespace	hcce-bot-runners	cluster
 serviceaccount	bot-orchestrator	$NAMESPACE
+secret	bot-images-pull	$NAMESPACE
 role	bot-orchestrator-runner-pods	$NAMESPACE
 rolebinding	bot-orchestrator-runner-pods	$NAMESPACE
 validatingadmissionpolicy	bot-runner-pods.yenhubs.org	cluster
@@ -989,7 +1005,8 @@ EOF
 }
 
 recovery_require_live_process_local_runner_exact() {
-  local values_path="$1" expected_image parent_json reticulum_json residual_state
+  local values_path="$1" expected_image parent_json reticulum_json pgsql_json
+  local ret_config_json configs_json residual_state
   local parser_path="$RECOVERY_SAFETY_DIR/../parse-local-values.mjs"
 
   recovery_private_values_file_is_acceptable "$values_path" || {
@@ -1008,6 +1025,15 @@ recovery_require_live_process_local_runner_exact() {
   reticulum_json="$(
     recovery_kubectl get deployment reticulum -n "$NAMESPACE" -o json
   )" || return 1
+  pgsql_json="$(
+    recovery_kubectl get deployment pgsql -n "$NAMESPACE" -o json
+  )" || return 1
+  ret_config_json="$(
+    recovery_kubectl get configmap ret-config -n "$NAMESPACE" -o json
+  )" || return 1
+  configs_json="$(
+    recovery_kubectl get secret configs -n "$NAMESPACE" -o json
+  )" || return 1
 
   jq -e --arg namespace "$NAMESPACE" --arg image "$expected_image" '
     def one_env($name):
@@ -1017,7 +1043,10 @@ recovery_require_live_process_local_runner_exact() {
       (one_env($name)[0] == {name:$name,value:$value});
     def forbidden_runner_binding:
       [(.spec.template.spec.containers[0].env // [])[] | .name] |
-      any(. == "BOT_RUNNER_IMAGE" or . == "BOT_RUNNER_RECOVERY_EPOCH" or
+      any(. == "BOT_RUNNER_ACCESS_KEY" or
+          . == "BOT_ORCHESTRATOR_ACCESS_KEY" or
+          . == "DASHBOARD_ACCESS_KEY" or
+          . == "BOT_RUNNER_IMAGE" or . == "BOT_RUNNER_RECOVERY_EPOCH" or
           . == "POD_NAMESPACE" or . == "ORCHESTRATOR_POD_NAME" or
           . == "ORCHESTRATOR_POD_UID" or . == "RUNNER_NAMESPACE" or
           . == "RUNNER_POD_NAMESPACE" or . == "RUNNER_CONTROL_URL");
@@ -1027,7 +1056,8 @@ recovery_require_live_process_local_runner_exact() {
       flatten |
       any(. == "yenhubs.org/bot-runner-recovery-epoch" or
           . == "yenhubs.org/bot-runner-recovery-phase" or
-          . == "yenhubs.org/runner-activation-phase");
+          . == "yenhubs.org/runner-activation-phase" or
+          . == "yenhubs.org/bot-orchestrator-access-key-checksum");
     .apiVersion == "apps/v1" and .kind == "Deployment" and
     .metadata.name == "bot-orchestrator" and .metadata.namespace == $namespace and
     (.metadata.uid | type == "string" and length > 0) and
@@ -1037,6 +1067,7 @@ recovery_require_live_process_local_runner_exact() {
     .spec.template.metadata.labels.app == "bot-orchestrator" and
     .spec.template.spec.automountServiceAccountToken == false and
     ((.spec.template.spec.serviceAccountName // "default") == "default") and
+    ((.spec.template.spec.imagePullSecrets // []) == []) and
     ((.spec.template.spec.initContainers // []) == []) and
     ((.spec.template.spec.ephemeralContainers // []) == []) and
     ((.spec.template.spec.hostNetwork // false) == false) and
@@ -1063,11 +1094,11 @@ recovery_require_live_process_local_runner_exact() {
     .spec.template.spec.volumes[0] == {
       name:"bot-orchestrator-tmp",emptyDir:{sizeLimit:"256Mi"}
     } and
-    (one_env("BOT_RUNNER_ACCESS_KEY") | length == 1) and
-    (one_env("BOT_RUNNER_ACCESS_KEY")[0].name == "BOT_RUNNER_ACCESS_KEY") and
-    (one_env("BOT_RUNNER_ACCESS_KEY")[0].valueFrom.secretKeyRef.name == "configs") and
-    (one_env("BOT_RUNNER_ACCESS_KEY")[0].valueFrom.secretKeyRef.key == "BOT_RUNNER_ACCESS_KEY") and
-    ((one_env("BOT_RUNNER_ACCESS_KEY")[0].valueFrom.secretKeyRef.optional // false) == false) and
+    (one_env("BOT_ACCESS_KEY") | length == 1) and
+    (one_env("BOT_ACCESS_KEY")[0].name == "BOT_ACCESS_KEY") and
+    (one_env("BOT_ACCESS_KEY")[0].valueFrom.secretKeyRef.name == "configs") and
+    (one_env("BOT_ACCESS_KEY")[0].valueFrom.secretKeyRef.key == "BOT_ACCESS_KEY") and
+    ((one_env("BOT_ACCESS_KEY")[0].valueFrom.secretKeyRef.optional // false) == false) and
     literal_env("RUNNER_AUTOSTART"; "true") and
     literal_env("RUNNER_BACKEND"; "ghost") and
     literal_env("GHOST_RUNNER_SCRIPT"; "/app/run-ghost-runner.js") and
@@ -1077,16 +1108,64 @@ recovery_require_live_process_local_runner_exact() {
     return 1
   }
   jq -e --arg namespace "$NAMESPACE" '
+    def candidate_env:
+      [.spec.template.spec.containers[] |
+        select(.name == "reticulum") | (.env // [])[] | .name] |
+      any(. == "turkeyCfg_BOT_RUNNER_ACCESS_KEY" or
+          . == "turkeyCfg_BOT_ORCHESTRATOR_ACCESS_KEY" or
+          . == "turkeyCfg_DASHBOARD_ACCESS_KEY" or
+          . == "turkeyCfg_BOT_RUNNER_RECOVERY_EPOCH");
     .apiVersion == "apps/v1" and .kind == "Deployment" and
     .metadata.name == "reticulum" and .metadata.namespace == $namespace and
+    (.spec.template.spec.containers | type == "array") and
+    ([.spec.template.spec.containers[] | select(.name == "reticulum")] | length == 1) and
+    (candidate_env | not) and
     ([((.metadata.annotations // {}) | keys),
       ((.spec.template.metadata.annotations // {}) | keys)] |
       flatten |
       any(. == "yenhubs.org/bot-runner-recovery-epoch" or
           . == "yenhubs.org/bot-runner-recovery-phase" or
-          . == "yenhubs.org/runner-activation-phase") | not)
+          . == "yenhubs.org/runner-activation-phase" or
+          . == "yenhubs.org/bot-runner-access-key-checksum" or
+          . == "yenhubs.org/bot-orchestrator-access-key-checksum" or
+          . == "yenhubs.org/dashboard-access-key-checksum") | not)
   ' >/dev/null <<<"$reticulum_json" || {
     printf 'Reticulum has partial isolated-runner recovery bindings.\n' >&2
+    return 1
+  }
+  jq -e --arg namespace "$NAMESPACE" '
+    .apiVersion == "apps/v1" and .kind == "Deployment" and
+    .metadata.name == "pgsql" and .metadata.namespace == $namespace and
+    (.metadata.uid | type == "string" and length > 0) and
+    (.metadata.resourceVersion | type == "string" and length > 0) and
+    ((.spec.template.spec.initContainers // []) == []) and
+    (.spec.template.spec.containers | type == "array" and length == 1) and
+    .spec.template.spec.containers[0].name == "postgresql"
+  ' >/dev/null <<<"$pgsql_json" || {
+    printf 'The live process-local PostgreSQL container does not match the historical AUD-065 contract.\n' >&2
+    return 1
+  }
+  jq -e --arg namespace "$NAMESPACE" '
+    .apiVersion == "v1" and .kind == "Secret" and
+    .metadata.name == "configs" and .metadata.namespace == $namespace and
+    .metadata.deletionTimestamp == null and
+    (([(.data // {}), (.stringData // {})] | map(keys) | add) as $keys |
+      (["BOT_RUNNER_ACCESS_KEY", "BOT_ORCHESTRATOR_ACCESS_KEY",
+        "DASHBOARD_ACCESS_KEY"] | all(. as $name | ($keys | index($name)) == null)))
+  ' >/dev/null <<<"$configs_json" || {
+    printf 'The live configs Secret contains isolated-runner credentials; refusing process-local fallback.\n' >&2
+    return 1
+  }
+  jq -e --arg namespace "$NAMESPACE" '
+    .apiVersion == "v1" and .kind == "ConfigMap" and
+    .metadata.name == "ret-config" and .metadata.namespace == $namespace and
+    .metadata.deletionTimestamp == null and
+    ([((.data // {})[] | select(type == "string"))] | join("\n")) as $text |
+    (["<BOT_RUNNER_ACCESS_KEY>", "<BOT_ORCHESTRATOR_ACCESS_KEY>",
+      "<DASHBOARD_ACCESS_KEY>", "<BOT_RUNNER_RECOVERY_EPOCH>",
+      "Ret.BotOrchestrator"] | all(. as $marker | ($text | contains($marker) | not)))
+  ' >/dev/null <<<"$ret_config_json" || {
+    printf 'The live Reticulum config contains isolated-runner markers; refusing process-local fallback.\n' >&2
     return 1
   }
   residual_state="$(recovery_runner_isolation_residual_state)" || return 1
@@ -1118,7 +1197,10 @@ recovery_checkpoint_runner_mode_candidate() {
       flatten |
       any(. == "yenhubs.org/bot-runner-recovery-epoch" or
           . == "yenhubs.org/bot-runner-recovery-phase" or
-          . == "yenhubs.org/runner-activation-phase");
+          . == "yenhubs.org/runner-activation-phase" or
+          . == "yenhubs.org/bot-runner-access-key-checksum" or
+          . == "yenhubs.org/bot-orchestrator-access-key-checksum" or
+          . == "yenhubs.org/dashboard-access-key-checksum");
     if (valid_deployment($parent; "bot-orchestrator") | not) or
        (valid_deployment($reticulum; "reticulum") | not) or
        ($parent.spec.template.spec.containers | type) != "array" or
@@ -1129,14 +1211,25 @@ recovery_checkpoint_runner_mode_candidate() {
       ($parent.spec.template.spec.containers[] |
         select(.name == "bot-orchestrator")) as $container |
       ([($container.env // [])[].name] |
-        any(. == "BOT_RUNNER_IMAGE" or . == "BOT_RUNNER_RECOVERY_EPOCH" or
+        any(. == "BOT_RUNNER_ACCESS_KEY" or
+            . == "BOT_ORCHESTRATOR_ACCESS_KEY" or
+            . == "DASHBOARD_ACCESS_KEY" or
+            . == "BOT_RUNNER_IMAGE" or . == "BOT_RUNNER_RECOVERY_EPOCH" or
             . == "POD_NAMESPACE" or . == "ORCHESTRATOR_POD_NAME" or
             . == "ORCHESTRATOR_POD_UID" or . == "RUNNER_NAMESPACE" or
             . == "RUNNER_POD_NAMESPACE" or . == "RUNNER_CONTROL_URL")) as $binding |
+      ([($reticulum.spec.template.spec.containers // [])[] |
+        select(.name == "reticulum") | (.env // [])[].name] |
+        any(. == "turkeyCfg_BOT_RUNNER_ACCESS_KEY" or
+            . == "turkeyCfg_BOT_ORCHESTRATOR_ACCESS_KEY" or
+            . == "turkeyCfg_DASHBOARD_ACCESS_KEY" or
+            . == "turkeyCfg_BOT_RUNNER_RECOVERY_EPOCH")) as $ret_binding |
       if $residual_state == "present" or
          (($parent.spec.template.spec.serviceAccountName // "default") != "default") or
          $parent.spec.template.spec.automountServiceAccountToken != false or
-         $binding or runner_annotations($parent) or runner_annotations($reticulum)
+         (($parent.spec.template.spec.imagePullSecrets // []) | length > 0) or
+         $binding or $ret_binding or runner_annotations($parent) or
+         runner_annotations($reticulum)
       then "kubernetes-pod" else "process-local" end
     end
   '
@@ -2421,7 +2514,7 @@ recovery_release_operation_serialization() {
 
 recovery_operation_lock_json_is_exact() {
   local lock_json="$1"
-  [[ "${RECOVERY_OPERATION_LOCK_NAME:-}" =~ ^[A-Za-z0-9._-]+$ &&
+  [[ "${RECOVERY_OPERATION_LOCK_NAME:-}" == "$RECOVERY_OPERATION_LOCK_GLOBAL_NAME" &&
      -n "${RECOVERY_OPERATION_LOCK_UID:-}" &&
      -n "${RECOVERY_OPERATION_LOCK_RESOURCE_VERSION:-}" &&
      "${RECOVERY_OPERATION_TOKEN:-}" =~ ^[a-f0-9]{32}$ &&
@@ -2431,6 +2524,12 @@ recovery_operation_lock_json_is_exact() {
      "${RECOVERY_CHECKPOINT_STAMP:-}" =~ ^[0-9]{8}-[0-9]{6}$ &&
      "${RECOVERY_DUMP_SHA256:-}" =~ ^[a-fA-F0-9]{64}$ &&
      "${RECOVERY_STORAGE_SHA256:-}" =~ ^[a-fA-F0-9]{64}$ ]] || return 1
+  if [[ "$RECOVERY_OPERATION_OWNER" == aud065-rotation ]]; then
+    [[ "$RECOVERY_OPERATION_BINDING_SHA256" =~ ^[a-f0-9]{64}$ &&
+       "$RECOVERY_OPERATION_STATE" =~ ^(preflight|quiesced|db-rotated|bundle-applied|verified|cleanup-authorized)$ ]] || return 1
+  else
+    [[ -z "$RECOVERY_OPERATION_BINDING_SHA256" ]] || return 1
+  fi
   jq -e \
     --arg name "$RECOVERY_OPERATION_LOCK_NAME" \
     --arg namespace "$NAMESPACE" \
@@ -2447,7 +2546,8 @@ recovery_operation_lock_json_is_exact() {
     --arg inventory_sha "${RECOVERY_DEPLOYMENT_INVENTORY_SHA256:-}" \
     --arg pre_epoch "${RECOVERY_FENCE_PRE_EPOCH:-}" \
     --arg target_epoch "${RECOVERY_FENCE_TARGET_EPOCH:-}" \
-    --arg operation_state "${RECOVERY_OPERATION_STATE:-}" '
+    --arg operation_state "${RECOVERY_OPERATION_STATE:-}" \
+    --arg operation_binding_sha256 "${RECOVERY_OPERATION_BINDING_SHA256:-}" '
     .apiVersion == "v1" and
     .kind == "ConfigMap" and
     .metadata.name == $name and
@@ -2469,6 +2569,8 @@ recovery_operation_lock_json_is_exact() {
       "yenhubs.org/deployment-inventory-sha256":$inventory_sha
     } end + if $operation_state == "" then {} else {
       "yenhubs.org/recovery-state":$operation_state
+    } end + if $operation_binding_sha256 == "" then {} else {
+      "yenhubs.org/operation-binding-sha256":$operation_binding_sha256
     } end) and
     .immutable == true and
     (.data // {}) == {} and
@@ -2501,9 +2603,10 @@ recovery_require_operation_lock() {
 
 recovery_acquire_operation_lock() {
   local owner="$1"
-  local lock_name="${2:-yenhubs-recovery-operation-lock}"
-  local lock_json fence_annotations="" state_annotation=""
-  [[ "$owner" =~ ^[A-Za-z0-9._-]+$ && "$lock_name" =~ ^[A-Za-z0-9._-]+$ &&
+  local lock_name="${2:-$RECOVERY_OPERATION_LOCK_GLOBAL_NAME}"
+  local lock_json fence_annotations="" state_annotation="" binding_annotation=""
+  [[ "$owner" =~ ^(checkpoint-backup|checkpoint-restore|aud065-rotation)$ &&
+     "$lock_name" == "$RECOVERY_OPERATION_LOCK_GLOBAL_NAME" &&
      -n "${RECOVERY_NAMESPACE_UID:-}" && -n "${RECOVERY_PVC_UID:-}" &&
      "${RECOVERY_CHECKPOINT_STAMP:-}" =~ ^[0-9]{8}-[0-9]{6}$ &&
      "${RECOVERY_DUMP_SHA256:-}" =~ ^[a-fA-F0-9]{64}$ &&
@@ -2527,17 +2630,40 @@ recovery_acquire_operation_lock() {
       "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256")"
   fi
   if [[ -n "${RECOVERY_OPERATION_STATE:-}" ]]; then
-    [[ "$owner" == checkpoint-restore &&
+    [[ ( "$owner" == checkpoint-restore || "$owner" == aud065-rotation ) &&
        "$RECOVERY_OPERATION_STATE" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || return 2
+    if [[ "$owner" == aud065-rotation &&
+          "$RECOVERY_OPERATION_STATE" != preflight ]]; then
+      return 2
+    fi
     state_annotation="$(printf '    yenhubs.org/recovery-state: "%s"' \
       "$RECOVERY_OPERATION_STATE")"
   fi
-  if ! RECOVERY_OPERATION_TOKEN="$(od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]')" ||
-     [[ ! "$RECOVERY_OPERATION_TOKEN" =~ ^[a-f0-9]{32}$ ]] ||
-     ! RECOVERY_OPERATION_ID="$(od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]')" ||
-     [[ ! "$RECOVERY_OPERATION_ID" =~ ^[a-f0-9]{32}$ ]]; then
-    printf 'Could not create private recovery-operation identifiers.\n' >&2
-    return 1
+  if [[ -n "${RECOVERY_OPERATION_BINDING_SHA256:-}" ]]; then
+    [[ "$owner" == aud065-rotation &&
+       "$RECOVERY_OPERATION_BINDING_SHA256" =~ ^[a-f0-9]{64}$ &&
+       "$RECOVERY_OPERATION_STATE" == preflight ]] || return 2
+    binding_annotation="$(printf '    yenhubs.org/operation-binding-sha256: "%s"' \
+      "$RECOVERY_OPERATION_BINDING_SHA256")"
+  elif [[ "$owner" == aud065-rotation ]]; then
+    printf 'AUD-065 rotation locks require an exact private-operation binding.\n' >&2
+    return 2
+  fi
+  if [[ "$owner" == aud065-rotation ]]; then
+    [[ "$RECOVERY_OPERATION_IDENTITY_PREBOUND" == 1 &&
+       "${RECOVERY_OPERATION_TOKEN:-}" =~ ^[a-f0-9]{32}$ &&
+       "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ ]] || {
+      printf 'AUD-065 identifiers must be durably prebound before lock creation.\n' >&2
+      return 2
+    }
+  else
+    if ! RECOVERY_OPERATION_TOKEN="$(od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]')" ||
+       [[ ! "$RECOVERY_OPERATION_TOKEN" =~ ^[a-f0-9]{32}$ ]] ||
+       ! RECOVERY_OPERATION_ID="$(od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]')" ||
+       [[ ! "$RECOVERY_OPERATION_ID" =~ ^[a-f0-9]{32}$ ]]; then
+      printf 'Could not create private recovery-operation identifiers.\n' >&2
+      return 1
+    fi
   fi
   if ! cat <<EOF | recovery_kubectl_mutate create -f - >/dev/null
 apiVersion: v1
@@ -2557,6 +2683,7 @@ metadata:
     yenhubs.org/storage-sha256: "$RECOVERY_STORAGE_SHA256"
 $fence_annotations
 $state_annotation
+$binding_annotation
 immutable: true
 EOF
   then
@@ -2575,14 +2702,177 @@ EOF
     <<<"$lock_json")" || return 1
   export RECOVERY_OPERATION_OWNER RECOVERY_OPERATION_LOCK_NAME \
     RECOVERY_OPERATION_LOCK_UID RECOVERY_OPERATION_LOCK_RESOURCE_VERSION \
-    RECOVERY_OPERATION_TOKEN RECOVERY_OPERATION_ID RECOVERY_OPERATION_STATE
+    RECOVERY_OPERATION_TOKEN RECOVERY_OPERATION_ID RECOVERY_OPERATION_STATE \
+    RECOVERY_OPERATION_BINDING_SHA256
   if ! recovery_operation_lock_json_is_exact "$lock_json"; then
     printf 'Created recovery lock does not match its exact operation contract.\n' >&2
     return 1
   fi
 }
 
+# Recover the exact AUD-065 lock after a crash in the remote-create to local
+# UID/resourceVersion persistence window. The token and operation ID already
+# live in the private operation state; no name-only lock may ever be adopted.
+recovery_discover_aud065_operation_lock() {
+  local lock_json live_uid live_resource_version live_state
+  local previous_uid previous_resource_version previous_state
+  [[ "${RECOVERY_OPERATION_OWNER:-}" == aud065-rotation &&
+     "${RECOVERY_OPERATION_LOCK_NAME:-}" == "$RECOVERY_OPERATION_LOCK_GLOBAL_NAME" &&
+     "${RECOVERY_OPERATION_TOKEN:-}" =~ ^[a-f0-9]{32}$ &&
+     "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ &&
+     "${RECOVERY_OPERATION_BINDING_SHA256:-}" =~ ^[a-f0-9]{64}$ ]] || return 2
+  recovery_require_operation_serialization || {
+    printf 'The deployment/recovery serialization Lease is required before discovering an AUD-065 lock.\n' >&2
+    return 1
+  }
+  recovery_require_cluster_identity || return 1
+  recovery_require_pvc_identity ret-pvc || return 1
+  lock_json="$(
+    recovery_kubectl get configmap "$RECOVERY_OPERATION_LOCK_NAME" \
+      -n "$NAMESPACE" -o json
+  )" || {
+    printf 'The persisted AUD-065 lock is missing or unreadable.\n' >&2
+    return 1
+  }
+  live_uid="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' \
+    <<<"$lock_json")" || return 1
+  live_resource_version="$(jq -er '
+    .metadata.resourceVersion | select(type == "string" and length > 0)
+  ' <<<"$lock_json")" || return 1
+  live_state="$(jq -er '
+    .metadata.annotations["yenhubs.org/recovery-state"] |
+    select(type == "string" and
+      test("^(preflight|quiesced|db-rotated|bundle-applied|verified|cleanup-authorized)$"))
+  ' <<<"$lock_json")" || return 1
+  previous_uid="${RECOVERY_OPERATION_LOCK_UID:-}"
+  previous_resource_version="${RECOVERY_OPERATION_LOCK_RESOURCE_VERSION:-}"
+  previous_state="${RECOVERY_OPERATION_STATE:-}"
+  RECOVERY_OPERATION_LOCK_UID="$live_uid"
+  RECOVERY_OPERATION_LOCK_RESOURCE_VERSION="$live_resource_version"
+  RECOVERY_OPERATION_STATE="$live_state"
+  if ! recovery_operation_lock_json_is_exact "$lock_json"; then
+    RECOVERY_OPERATION_LOCK_UID="$previous_uid"
+    RECOVERY_OPERATION_LOCK_RESOURCE_VERSION="$previous_resource_version"
+    RECOVERY_OPERATION_STATE="$previous_state"
+    printf 'The persisted AUD-065 lock does not match the durable private identity.\n' >&2
+    return 1
+  fi
+  export RECOVERY_OPERATION_LOCK_UID RECOVERY_OPERATION_LOCK_RESOURCE_VERSION \
+    RECOVERY_OPERATION_STATE
+}
+
+recovery_adopt_aud065_operation_lock() {
+  local lock_json live_state live_resource_version previous_state
+  local previous_resource_version
+  [[ "${RECOVERY_OPERATION_OWNER:-}" == aud065-rotation &&
+     "${RECOVERY_OPERATION_LOCK_NAME:-}" == "$RECOVERY_OPERATION_LOCK_GLOBAL_NAME" &&
+     -n "${RECOVERY_OPERATION_LOCK_UID:-}" &&
+     "${RECOVERY_OPERATION_TOKEN:-}" =~ ^[a-f0-9]{32}$ &&
+     "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ &&
+     "${RECOVERY_OPERATION_BINDING_SHA256:-}" =~ ^[a-f0-9]{64}$ ]] || return 2
+  recovery_require_operation_serialization || {
+    printf 'The deployment/recovery serialization Lease is required before adopting an AUD-065 lock.\n' >&2
+    return 1
+  }
+  recovery_require_cluster_identity || return 1
+  recovery_require_pvc_identity ret-pvc || return 1
+  lock_json="$(
+    recovery_kubectl get configmap "$RECOVERY_OPERATION_LOCK_NAME" \
+      -n "$NAMESPACE" -o json
+  )" || {
+    printf 'The persisted AUD-065 lock is missing or unreadable.\n' >&2
+    return 1
+  }
+  live_state="$(jq -er '
+    .metadata.annotations["yenhubs.org/recovery-state"] |
+    select(type == "string" and
+      test("^(preflight|quiesced|db-rotated|bundle-applied|verified|cleanup-authorized)$"))
+  ' <<<"$lock_json")" || return 1
+  live_resource_version="$(jq -er '
+    .metadata.resourceVersion | select(type == "string" and length > 0)
+  ' <<<"$lock_json")" || return 1
+  previous_state="${RECOVERY_OPERATION_STATE:-}"
+  previous_resource_version="${RECOVERY_OPERATION_LOCK_RESOURCE_VERSION:-}"
+  RECOVERY_OPERATION_STATE="$live_state"
+  RECOVERY_OPERATION_LOCK_RESOURCE_VERSION="$live_resource_version"
+  if ! recovery_operation_lock_json_is_exact "$lock_json"; then
+    RECOVERY_OPERATION_STATE="$previous_state"
+    RECOVERY_OPERATION_LOCK_RESOURCE_VERSION="$previous_resource_version"
+    printf 'The persisted AUD-065 lock does not match the private operation identity.\n' >&2
+    return 1
+  fi
+  export RECOVERY_OPERATION_STATE RECOVERY_OPERATION_LOCK_RESOURCE_VERSION
+}
+
+recovery_transition_aud065_operation_lock() {
+  local next_state="${1:-}" lock_json replacement replaced_json
+  local previous_state previous_resource_version next_resource_version live_uid
+  [[ "${RECOVERY_OPERATION_OWNER:-}" == aud065-rotation &&
+     "${RECOVERY_OPERATION_BINDING_SHA256:-}" =~ ^[a-f0-9]{64}$ ]] || return 2
+  previous_state="${RECOVERY_OPERATION_STATE:-}"
+  case "$previous_state:$next_state" in
+    preflight:quiesced|quiesced:db-rotated|db-rotated:bundle-applied|bundle-applied:verified|verified:cleanup-authorized) ;;
+    *)
+      printf 'AUD-065 lock transitions must advance exactly one state.\n' >&2
+      return 2
+      ;;
+  esac
+  recovery_require_operation_serialization || {
+    printf 'The deployment/recovery serialization Lease is required before changing an AUD-065 lock.\n' >&2
+    return 1
+  }
+  recovery_require_cluster_identity || return 1
+  recovery_require_pvc_identity ret-pvc || return 1
+  lock_json="$(
+    recovery_kubectl get configmap "$RECOVERY_OPERATION_LOCK_NAME" \
+      -n "$NAMESPACE" -o json
+  )" || return 1
+  recovery_operation_lock_json_is_exact "$lock_json" || {
+    printf 'The AUD-065 lock changed before its state transition.\n' >&2
+    return 1
+  }
+  previous_resource_version="$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION"
+  replacement="$(jq -c --arg next_state "$next_state" '
+    .metadata.annotations["yenhubs.org/recovery-state"] = $next_state |
+    del(.metadata.managedFields)
+  ' <<<"$lock_json")" || return 1
+  replaced_json="$(printf '%s\n' "$replacement" |
+    recovery_kubectl_mutate replace -f - -o json)" || {
+    printf 'The AUD-065 lock state transition failed its resourceVersion precondition.\n' >&2
+    return 1
+  }
+  live_uid="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' \
+    <<<"$replaced_json")" || return 1
+  next_resource_version="$(jq -er '
+    .metadata.resourceVersion | select(type == "string" and length > 0)
+  ' <<<"$replaced_json")" || return 1
+  [[ "$live_uid" == "$RECOVERY_OPERATION_LOCK_UID" &&
+     "$next_resource_version" != "$previous_resource_version" ]] || return 1
+  RECOVERY_OPERATION_STATE="$next_state"
+  RECOVERY_OPERATION_LOCK_RESOURCE_VERSION="$next_resource_version"
+  export RECOVERY_OPERATION_STATE RECOVERY_OPERATION_LOCK_RESOURCE_VERSION
+  recovery_operation_lock_json_is_exact "$replaced_json" || {
+    printf 'The transitioned AUD-065 lock does not match its exact contract.\n' >&2
+    return 1
+  }
+}
+
 recovery_release_operation_lock() {
+  if [[ "${RECOVERY_OPERATION_OWNER:-}" == aud065-rotation ]]; then
+    [[ "${RECOVERY_OPERATION_STATE:-}" == cleanup-authorized ]] || {
+      printf 'AUD-065 operation locks remain durable until cleanup is durably authorized.\n' >&2
+      return 2
+    }
+    recovery_require_operation_serialization || return 1
+    if ! declare -F aud065_require_pgsql_barrier_released >/dev/null 2>&1; then
+      printf 'AUD-065 lock release requires the PostgreSQL barrier cleanup contract.\n' >&2
+      return 1
+    fi
+    aud065_require_pgsql_barrier_released || {
+      printf 'AUD-065 lock release requires a clean PostgreSQL ingress barrier and no probe.\n' >&2
+      return 1
+    }
+  fi
   recovery_require_operation_lock || return 1
   recovery_delete_namespaced_with_uid configmap "$RECOVERY_OPERATION_LOCK_NAME" \
     "$RECOVERY_OPERATION_LOCK_UID" 60

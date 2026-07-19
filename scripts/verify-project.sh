@@ -49,6 +49,7 @@ shellcheck "$ROOT_DIR/hubs-cloud/community-edition/services/coturn/"*.sh
 )
 "$ROOT_DIR/tests/scripts/security-gates.test.sh"
 "$ROOT_DIR/tests/recovery/test-recovery-safety.sh"
+"$ROOT_DIR/scripts/test-aud065.sh"
 "$ROOT_DIR/scripts/scan-gitleaks-worktree.sh" "$ROOT_DIR"
 "$ROOT_DIR/scripts/scan-gitleaks-worktree.sh" "$ROOT_DIR/hubs"
 "$ROOT_DIR/scripts/scan-gitleaks-worktree.sh" "$ROOT_DIR/hubs-cloud" ".gitleaks.toml"

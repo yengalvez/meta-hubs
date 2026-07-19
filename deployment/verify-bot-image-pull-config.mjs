@@ -7,15 +7,127 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { createRequire } from "node:module";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const require = createRequire(import.meta.url);
-const ROOT_DIR = fileURLToPath(new URL("../", import.meta.url));
 const VALUES_PARSER = fileURLToPath(new URL("./parse-local-values.mjs", import.meta.url));
-const { verifyDockerConfigCredentials } = require(
-  `${ROOT_DIR}/hubs-cloud/community-edition/generate_script/verify-manifest-contracts.js`
-);
+const PRIVATE_SNAPSHOT_MAX_BYTES = 8 * 1024 * 1024;
+const PRIVATE_FILE_MODE = 0o600;
+const DEFAULT_REGISTRY_TIMEOUT_MS = 15_000;
+const MAX_REGISTRY_TIMEOUT_MS = 15_000;
+
+// This is deliberately an exact, code-owned allowlist rather than data supplied
+// by the private snapshot. Keep its parity test aligned with the accepted
+// process-local profile. Docker Hub alternatives are valid pinned deployment
+// inputs, but only ghcr.io/yengalvez references need this credential gate.
+export const PROCESS_LOCAL_IMAGE_PULL_CONTRACTS = Object.freeze([
+  Object.freeze({
+    valueKey: "OVERRIDE_BOT_ORCHESTRATOR_IMAGE",
+    repositories: Object.freeze(["ghcr.io/yengalvez/bot-orchestrator"])
+  }),
+  Object.freeze({
+    valueKey: "OVERRIDE_BOT_RUNNER_IMAGE",
+    repositories: Object.freeze(["ghcr.io/yengalvez/bot-runner"])
+  }),
+  Object.freeze({
+    valueKey: "OVERRIDE_COTURN_IMAGE",
+    repositories: Object.freeze(["ghcr.io/yengalvez/coturn"])
+  }),
+  Object.freeze({
+    valueKey: "OVERRIDE_DIALOG_IMAGE",
+    repositories: Object.freeze(["ghcr.io/yengalvez/dialog"])
+  }),
+  Object.freeze({
+    valueKey: "OVERRIDE_HAPROXY_IMAGE",
+    repositories: Object.freeze([
+      "ghcr.io/yengalvez/haproxy",
+      "docker.io/haproxytech/kubernetes-ingress",
+      "haproxytech/kubernetes-ingress"
+    ])
+  }),
+  Object.freeze({
+    valueKey: "OVERRIDE_HUBS_IMAGE",
+    repositories: Object.freeze(["ghcr.io/yengalvez/hubs"])
+  }),
+  Object.freeze({
+    valueKey: "OVERRIDE_NEARSPARK_IMAGE",
+    repositories: Object.freeze([
+      "ghcr.io/yengalvez/nearspark",
+      "docker.io/mozillareality/nearspark",
+      "mozillareality/nearspark"
+    ])
+  }),
+  Object.freeze({
+    valueKey: "OVERRIDE_PGBOUNCER_IMAGE",
+    repositories: Object.freeze([
+      "ghcr.io/yengalvez/pgbouncer",
+      "docker.io/edoburu/pgbouncer",
+      "edoburu/pgbouncer"
+    ])
+  }),
+  Object.freeze({
+    valueKey: "OVERRIDE_PHOTOMNEMONIC_IMAGE",
+    repositories: Object.freeze(["ghcr.io/yengalvez/photomnemonic"])
+  }),
+  Object.freeze({
+    valueKey: "OVERRIDE_POSTGREST_IMAGE",
+    repositories: Object.freeze([
+      "ghcr.io/yengalvez/postgrest",
+      "docker.io/postgrest/postgrest",
+      "postgrest/postgrest"
+    ])
+  }),
+  Object.freeze({
+    valueKey: "OVERRIDE_POSTGRES_IMAGE",
+    repositories: Object.freeze([
+      "ghcr.io/yengalvez/postgres",
+      "docker.io/library/postgres",
+      "postgres"
+    ])
+  }),
+  Object.freeze({
+    valueKey: "OVERRIDE_RETICULUM_IMAGE",
+    repositories: Object.freeze(["ghcr.io/yengalvez/reticulum"])
+  }),
+  Object.freeze({
+    valueKey: "OVERRIDE_SPOKE_IMAGE",
+    repositories: Object.freeze(["ghcr.io/yengalvez/spoke"])
+  })
+]);
+
+const PROCESS_LOCAL_SNAPSHOT_REQUIRED_KEYS = Object.freeze([
+  "ADM_EMAIL",
+  "BOT_ACCESS_KEY",
+  "BOT_IMAGE_PULL_CONFIG_JSON_BASE64",
+  "DB_HOST",
+  "DB_HOST_T",
+  "DB_NAME",
+  "DB_PASS",
+  "DB_USER",
+  "GUARDIAN_KEY",
+  "HUB_DOMAIN",
+  "NODE_COOKIE",
+  "Namespace",
+  "OPENAI_API_KEY",
+  ...PROCESS_LOCAL_IMAGE_PULL_CONTRACTS.map(contract => contract.valueKey),
+  "PERMS_KEY",
+  "PGRST_DB_URI",
+  "PHX_KEY",
+  "PSQL",
+  "SKETCHFAB_API_KEY",
+  "SMTP_PASS",
+  "SMTP_PORT",
+  "SMTP_SERVER",
+  "SMTP_USER",
+  "TENOR_API_KEY"
+]);
+const PROCESS_LOCAL_SNAPSHOT_OPTIONAL_KEYS = Object.freeze(["PGRST_JWT_SECRET"]);
+const PROCESS_LOCAL_SNAPSHOT_ALLOWED_KEYS = new Set([
+  ...PROCESS_LOCAL_SNAPSHOT_REQUIRED_KEYS,
+  ...PROCESS_LOCAL_SNAPSHOT_OPTIONAL_KEYS
+]);
+const PINNED_IMAGE = /^(.+)@(sha256:[a-f0-9]{64})$/u;
+const GHCR_YENHUBS_IMAGE = /^ghcr\.io\/yengalvez\/([a-z0-9]+(?:[-a-z0-9]*[a-z0-9])?)@(sha256:[a-f0-9]{64})$/u;
 
 class PullConfigError extends Error {
   constructor(code) {
@@ -30,6 +142,164 @@ function reject(code) {
 
 function object(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!object(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value).sort().map(key => [key, canonicalize(value[key])])
+  );
+}
+
+function canonicalJson(value) {
+  return JSON.stringify(canonicalize(value));
+}
+
+function currentUidMatches(stat) {
+  return typeof process.getuid !== "function" || stat.uid === BigInt(process.getuid());
+}
+
+function privatePathComponents(targetPath) {
+  const absolute = path.resolve(targetPath);
+  const parsed = path.parse(absolute);
+  const names = absolute.slice(parsed.root.length).split(path.sep).filter(Boolean);
+  let current = parsed.root;
+  return names.map((name, index) => {
+    current = path.join(current, name);
+    let stat;
+    try {
+      stat = fs.lstatSync(current, { bigint: true });
+    } catch {
+      reject("private_snapshot_invalid");
+    }
+    if (stat.isSymbolicLink() || (index < names.length - 1 && !stat.isDirectory())) {
+      reject("private_snapshot_invalid");
+    }
+    return {
+      path: current,
+      dev: stat.dev,
+      ino: stat.ino,
+      uid: stat.uid,
+      mode: stat.mode,
+      nlink: stat.nlink,
+      size: stat.size,
+      mtimeNs: stat.mtimeNs,
+      ctimeNs: stat.ctimeNs,
+      file: stat.isFile(),
+      directory: stat.isDirectory()
+    };
+  });
+}
+
+function samePrivatePathComponents(before, after) {
+  return before.length === after.length && before.every((entry, index) => {
+    const current = after[index];
+    const leaf = index === before.length - 1;
+    return entry.path === current.path && entry.dev === current.dev &&
+      entry.ino === current.ino && entry.uid === current.uid &&
+      entry.mode === current.mode && entry.file === current.file &&
+      entry.directory === current.directory &&
+      (!leaf || (entry.nlink === current.nlink && entry.size === current.size &&
+        entry.mtimeNs === current.mtimeNs && entry.ctimeNs === current.ctimeNs));
+  });
+}
+
+function samePrivateFileStat(left, right) {
+  const leftIsFile = typeof left.isFile === "function" ? left.isFile() : left.file;
+  const rightIsFile = typeof right.isFile === "function" ? right.isFile() : right.file;
+  return left.dev === right.dev && left.ino === right.ino &&
+    left.uid === right.uid && left.mode === right.mode &&
+    left.nlink === right.nlink && left.size === right.size &&
+    left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs &&
+    leftIsFile === rightIsFile;
+}
+
+function readExactPrivateBytes(descriptor, size) {
+  const bytes = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < size) {
+    const count = fs.readSync(descriptor, bytes, offset, size - offset, offset);
+    if (count === 0) reject("private_snapshot_changed");
+    offset += count;
+  }
+  const extra = Buffer.alloc(1);
+  if (fs.readSync(descriptor, extra, 0, 1, size) !== 0) {
+    reject("private_snapshot_changed");
+  }
+  return bytes;
+}
+
+function parseCanonicalProcessLocalSnapshot(bytes) {
+  let text;
+  let snapshot;
+  try {
+    text = bytes.toString("utf8");
+    if (!Buffer.from(text, "utf8").equals(bytes)) reject("private_snapshot_invalid");
+    snapshot = JSON.parse(text);
+  } catch (error) {
+    if (error instanceof PullConfigError) throw error;
+    reject("private_snapshot_invalid");
+  }
+  if (!object(snapshot) || text !== `${canonicalJson(snapshot)}\n`) {
+    reject("private_snapshot_noncanonical");
+  }
+  const keys = Object.keys(snapshot);
+  if (keys.length < PROCESS_LOCAL_SNAPSHOT_REQUIRED_KEYS.length ||
+      keys.length > PROCESS_LOCAL_SNAPSHOT_ALLOWED_KEYS.size ||
+      PROCESS_LOCAL_SNAPSHOT_REQUIRED_KEYS.some(key => !Object.hasOwn(snapshot, key)) ||
+      keys.some(key => !PROCESS_LOCAL_SNAPSHOT_ALLOWED_KEYS.has(key)) ||
+      keys.some(key => typeof snapshot[key] !== "string")) {
+    reject("private_snapshot_keyset");
+  }
+  return snapshot;
+}
+
+// Acquire exactly one private snapshot file descriptor, read it twice through
+// that descriptor to prove stability, and only then parse its canonical JSON.
+// Neither bytes nor reusable fingerprints leave this function.
+function readPrivateProcessLocalSnapshot(snapshotPath) {
+  if (typeof snapshotPath !== "string" || !path.isAbsolute(snapshotPath) ||
+      typeof fs.constants.O_NOFOLLOW !== "number") {
+    reject("private_snapshot_invalid");
+  }
+  const absolute = path.resolve(snapshotPath);
+  let descriptor;
+  let first;
+  let second;
+  try {
+    const beforeComponents = privatePathComponents(absolute);
+    const before = beforeComponents.at(-1);
+    if (!before?.file || before.nlink !== 1n ||
+        Number(before.mode & 0o7777n) !== PRIVATE_FILE_MODE ||
+        !currentUidMatches(before) || before.size < 1n ||
+        before.size > BigInt(PRIVATE_SNAPSHOT_MAX_BYTES)) {
+      reject("private_snapshot_invalid");
+    }
+    descriptor = fs.openSync(absolute, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const opened = fs.fstatSync(descriptor, { bigint: true });
+    if (!samePrivateFileStat(before, opened)) reject("private_snapshot_invalid");
+    first = readExactPrivateBytes(descriptor, Number(opened.size));
+    const middle = fs.fstatSync(descriptor, { bigint: true });
+    second = readExactPrivateBytes(descriptor, Number(opened.size));
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const afterComponents = privatePathComponents(absolute);
+    if (!samePrivateFileStat(opened, middle) || !samePrivateFileStat(opened, after) ||
+        !samePrivatePathComponents(beforeComponents, afterComponents) ||
+        first.length !== second.length || !crypto.timingSafeEqual(first, second)) {
+      reject("private_snapshot_changed");
+    }
+    return parseCanonicalProcessLocalSnapshot(first);
+  } catch (error) {
+    if (error instanceof PullConfigError) throw error;
+    reject("private_snapshot_invalid");
+  } finally {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch { /* Preserve the value-free primary error. */ }
+    }
+    first?.fill(0);
+    second?.fill(0);
+  }
 }
 
 function readValue(valuesPath, key) {
@@ -80,7 +350,7 @@ export function verifyBotPullConfig({
     reject("image_contract");
   }
   try {
-    verifyDockerConfigCredentials(encoded, [botImage, runnerImage]);
+    canonicalGhcrCredential(encoded);
   } catch {
     reject("credential_contract");
   }
@@ -100,12 +370,75 @@ export function verifyBotPullConfig({
   return true;
 }
 
+// Validate a credential transition without returning either credential or a
+// reusable digest. Re-encoding or reformatting the same Docker config must not
+// count as a rotation: the GHCR token itself has to change.
+export function verifyBotPullConfigRotation({
+  oldEncoded,
+  newEncoded,
+  botImage,
+  runnerImage
+}) {
+  verifyBotPullConfig({ encoded: oldEncoded, botImage, runnerImage });
+  verifyBotPullConfig({ encoded: newEncoded, botImage, runnerImage });
+  const oldCredential = canonicalGhcrCredential(oldEncoded);
+  const newCredential = canonicalGhcrCredential(newEncoded);
+  const oldToken = Buffer.from(oldCredential.token, "utf8");
+  const newToken = Buffer.from(newCredential.token, "utf8");
+  try {
+    if (oldToken.length === newToken.length &&
+        crypto.timingSafeEqual(oldToken, newToken)) {
+      reject("credential_not_rotated");
+    }
+  } finally {
+    oldToken.fill(0);
+    newToken.fill(0);
+  }
+  return true;
+}
+
+// Compare only the authenticated GHCR principal and token. The surrounding
+// Docker config JSON/base64 representation is intentionally ignored so a
+// historical live Secret can be matched to its private source semantically
+// without returning either credential or a reusable fingerprint.
+export function verifyBotPullConfigCredentialMatch({
+  expectedEncoded,
+  actualEncoded,
+  botImage,
+  runnerImage
+}) {
+  verifyBotPullConfig({ encoded: expectedEncoded, botImage, runnerImage });
+  verifyBotPullConfig({ encoded: actualEncoded, botImage, runnerImage });
+  const expected = canonicalGhcrCredential(expectedEncoded);
+  const actual = canonicalGhcrCredential(actualEncoded);
+  const expectedUsername = Buffer.from(expected.username, "utf8");
+  const actualUsername = Buffer.from(actual.username, "utf8");
+  const expectedToken = Buffer.from(expected.token, "utf8");
+  const actualToken = Buffer.from(actual.token, "utf8");
+  try {
+    if (expectedUsername.length !== actualUsername.length ||
+        !crypto.timingSafeEqual(expectedUsername, actualUsername) ||
+        expectedToken.length !== actualToken.length ||
+        !crypto.timingSafeEqual(expectedToken, actualToken)) {
+      reject("credential_mismatch");
+    }
+  } finally {
+    expectedUsername.fill(0);
+    actualUsername.fill(0);
+    expectedToken.fill(0);
+    actualToken.fill(0);
+  }
+  return true;
+}
+
 function canonicalGhcrCredential(encoded) {
   let parsed;
   try {
     const decoded = Buffer.from(encoded, "base64");
     if (decoded.toString("base64") !== encoded) reject("credential_contract");
-    parsed = JSON.parse(decoded.toString("utf8"));
+    const text = decoded.toString("utf8");
+    if (!Buffer.from(text, "utf8").equals(decoded)) reject("credential_contract");
+    parsed = JSON.parse(text);
   } catch (error) {
     if (error instanceof PullConfigError) throw error;
     reject("credential_contract");
@@ -123,6 +456,9 @@ function canonicalGhcrCredential(encoded) {
     const bytes = Buffer.from(credential.auth, "base64");
     if (bytes.toString("base64") !== credential.auth) reject("credential_contract");
     decodedCredential = bytes.toString("utf8");
+    if (!Buffer.from(decodedCredential, "utf8").equals(bytes)) {
+      reject("credential_contract");
+    }
   } catch (error) {
     if (error instanceof PullConfigError) throw error;
     reject("credential_contract");
@@ -131,20 +467,47 @@ function canonicalGhcrCredential(encoded) {
   const username = decodedCredential.slice(0, separator);
   const token = decodedCredential.slice(separator + 1);
   if (
-    separator <= 0 || !username.trim() || username.includes(":") ||
-    !token.trim() || /[\u0000-\u001f\u007f]/u.test(decodedCredential)
+    separator <= 0 || !username.trim() || username !== username.trim() ||
+    username.includes(":") || !token.trim() || token !== token.trim() ||
+    /[\u0000-\u001f\u007f]/u.test(decodedCredential)
   ) reject("credential_contract");
-  return { basic: credential.auth };
+  return { basic: credential.auth, username, token };
 }
 
-async function boundedResponseText(response, maximumBytes, code) {
-  const declaredLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && (declaredLength < 0 || declaredLength > maximumBytes)) {
+function abortable(promise, signal, code) {
+  if (signal.aborted) return Promise.reject(new PullConfigError(code));
+  return new Promise((resolve, rejectPromise) => {
+    let settled = false;
+    const finish = callback => value => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback(value);
+    };
+    const onAbort = finish(rejectPromise);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort(new PullConfigError(code));
+    Promise.resolve(promise).then(finish(resolve), finish(rejectPromise));
+  }).catch(error => {
+    if (signal.aborted || !(error instanceof PullConfigError)) reject(code);
+    throw error;
+  });
+}
+
+async function boundedResponseText(response, maximumBytes, code, signal) {
+  let declared;
+  try {
+    declared = response.headers.get("content-length");
+  } catch {
+    reject(code);
+  }
+  if (declared !== null && (!/^\d+$/u.test(declared) || Number(declared) > maximumBytes)) {
     reject(code);
   }
   if (!response.body || typeof response.body.getReader !== "function") {
-    const text = await response.text();
-    if (Buffer.byteLength(text, "utf8") > maximumBytes) reject(code);
+    if (typeof response.text !== "function") reject(code);
+    const text = await abortable(response.text(), signal, code);
+    if (typeof text !== "string" || Buffer.byteLength(text, "utf8") > maximumBytes) reject(code);
     return text;
   }
   const reader = response.body.getReader();
@@ -152,61 +515,97 @@ async function boundedResponseText(response, maximumBytes, code) {
   let received = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      received += value.byteLength;
+      const result = await abortable(reader.read(), signal, code);
+      if (!object(result) || typeof result.done !== "boolean") reject(code);
+      if (result.done) break;
+      if (!(result.value instanceof Uint8Array)) reject(code);
+      received += result.value.byteLength;
       if (received > maximumBytes) reject(code);
-      chunks.push(value);
+      chunks.push(Buffer.from(result.value));
     }
+  } catch (error) {
+    try {
+      Promise.resolve(reader.cancel()).catch(() => {});
+    } catch {
+      // Preserve the value-free primary error.
+    }
+    throw error;
   } finally {
-    reader.releaseLock();
+    try { reader.releaseLock(); } catch { /* Preserve the value-free primary error. */ }
   }
-  return Buffer.concat(chunks.map(chunk => Buffer.from(chunk))).toString("utf8");
+  return Buffer.concat(chunks).toString("utf8");
 }
 
-function ghcrImageParts(image) {
-  const match = image.match(
-    /^ghcr\.io\/(yengalvez)\/(bot-orchestrator|bot-runner)@(sha256:[a-fA-F0-9]{64})$/
-  );
-  if (!match) reject("image_contract");
-  return { owner: match[1], repository: match[2], digest: match[3].toLowerCase() };
+function ghcrImageParts(image, allowedRepositories) {
+  const match = typeof image === "string" ? image.match(GHCR_YENHUBS_IMAGE) : null;
+  const fullRepository = match ? `ghcr.io/yengalvez/${match[1]}` : "";
+  if (!match || !allowedRepositories.has(fullRepository)) reject("image_contract");
+  return {
+    owner: "yengalvez",
+    repository: match[1],
+    digest: match[2],
+    reference: image
+  };
 }
 
-async function registryFetch(fetchImpl, url, init, code) {
+async function registryFetch(fetchImpl, url, init, code, timeoutMs) {
+  const signal = AbortSignal.timeout(timeoutMs);
+  let response;
   try {
-    return await fetchImpl(url, {
+    response = await abortable(Promise.resolve().then(() => fetchImpl(url, {
       ...init,
       redirect: "error",
-      signal: AbortSignal.timeout(15_000)
-    });
+      signal
+    })), signal, code);
   } catch {
     reject(code);
   }
+  if (!object(response) || !Number.isInteger(response.status) ||
+      !object(response.headers) || typeof response.headers.get !== "function") {
+    reject(code);
+  }
+  return { response, signal };
 }
 
-export async function verifyGhcrPullAccess({ encoded, images, fetchImpl = globalThis.fetch }) {
-  if (!Array.isArray(images) || images.length !== 2 || typeof fetchImpl !== "function") {
+async function verifyGhcrImages({
+  encoded,
+  images,
+  allowedRepositories,
+  fetchImpl,
+  requestTimeoutMs
+}) {
+  if (!Array.isArray(images) || images.length < 1 || images.length > 32 ||
+      !(allowedRepositories instanceof Set) || allowedRepositories.size < 1 ||
+      typeof fetchImpl !== "function" || !Number.isInteger(requestTimeoutMs) ||
+      requestTimeoutMs < 1 || requestTimeoutMs > MAX_REGISTRY_TIMEOUT_MS) {
     reject("registry_input");
   }
   const credential = canonicalGhcrCredential(encoded);
-  const parsedImages = images.map(ghcrImageParts);
-  if (new Set(parsedImages.map(image => image.repository)).size !== 2) reject("registry_input");
+  const parsedImages = [...new Map(images.map(image => {
+    const parsed = ghcrImageParts(image, allowedRepositories);
+    return [parsed.reference, parsed];
+  })).values()];
 
-  for (const image of parsedImages) {
+  await Promise.all(parsedImages.map(async image => {
     const scope = `repository:${image.owner}/${image.repository}:pull`;
     const tokenUrl = new URL("https://ghcr.io/token");
     tokenUrl.searchParams.set("service", "ghcr.io");
     tokenUrl.searchParams.set("scope", scope);
-    const tokenResponse = await registryFetch(fetchImpl, tokenUrl, {
+    const tokenRequest = await registryFetch(fetchImpl, tokenUrl, {
       headers: {
         Accept: "application/json",
         Authorization: `Basic ${credential.basic}`
       }
-    }, "registry_token_request");
-    if (tokenResponse.status !== 200) reject("registry_token_denied");
+    }, "registry_token_request", requestTimeoutMs);
+    if (tokenRequest.response.status !== 200) reject("registry_token_denied");
     let tokenPayload;
     try {
-      tokenPayload = JSON.parse(await boundedResponseText(tokenResponse, 64 * 1024, "registry_token_response"));
+      tokenPayload = JSON.parse(await boundedResponseText(
+        tokenRequest.response,
+        64 * 1024,
+        "registry_token_response",
+        tokenRequest.signal
+      ));
     } catch (error) {
       if (error instanceof PullConfigError) throw error;
       reject("registry_token_response");
@@ -219,7 +618,7 @@ export async function verifyGhcrPullAccess({ encoded, images, fetchImpl = global
 
     const manifestUrl =
       `https://ghcr.io/v2/${image.owner}/${image.repository}/manifests/${image.digest}`;
-    const manifestResponse = await registryFetch(fetchImpl, manifestUrl, {
+    const manifestRequest = await registryFetch(fetchImpl, manifestUrl, {
       headers: {
         Accept: [
           "application/vnd.oci.image.index.v1+json",
@@ -229,15 +628,16 @@ export async function verifyGhcrPullAccess({ encoded, images, fetchImpl = global
         ].join(", "),
         Authorization: `Bearer ${bearer}`
       }
-    }, "registry_manifest_request");
-    if (manifestResponse.status !== 200) reject("registry_manifest_denied");
-    if ((manifestResponse.headers.get("docker-content-digest") || "").toLowerCase() !== image.digest) {
+    }, "registry_manifest_request", requestTimeoutMs);
+    if (manifestRequest.response.status !== 200) reject("registry_manifest_denied");
+    if ((manifestRequest.response.headers.get("docker-content-digest") || "") !== image.digest) {
       reject("registry_manifest_digest");
     }
     const manifestText = await boundedResponseText(
-      manifestResponse,
+      manifestRequest.response,
       2 * 1024 * 1024,
-      "registry_manifest_response"
+      "registry_manifest_response",
+      manifestRequest.signal
     );
     try {
       const manifest = JSON.parse(manifestText);
@@ -246,8 +646,82 @@ export async function verifyGhcrPullAccess({ encoded, images, fetchImpl = global
       if (error instanceof PullConfigError) throw error;
       reject("registry_manifest_response");
     }
-  }
+  }));
   return true;
+}
+
+export async function verifyGhcrPullAccess({
+  encoded,
+  images,
+  fetchImpl = globalThis.fetch,
+  requestTimeoutMs = DEFAULT_REGISTRY_TIMEOUT_MS
+}) {
+  if (!Array.isArray(images) || images.length !== 2) reject("registry_input");
+  const allowedRepositories = new Set([
+    "ghcr.io/yengalvez/bot-orchestrator",
+    "ghcr.io/yengalvez/bot-runner"
+  ]);
+  const normalizedImages = images.map(image => {
+    const match = typeof image === "string" ? image.match(
+      /^(ghcr\.io\/yengalvez\/(?:bot-orchestrator|bot-runner))@(sha256:[a-fA-F0-9]{64})$/u
+    ) : null;
+    if (!match) reject("image_contract");
+    return `${match[1]}@${match[2].toLowerCase()}`;
+  });
+  const parsedImages = normalizedImages.map(image => ghcrImageParts(image, allowedRepositories));
+  if (new Set(parsedImages.map(image => image.repository)).size !== 2) reject("registry_input");
+  return verifyGhcrImages({
+    encoded,
+    images: normalizedImages,
+    allowedRepositories,
+    fetchImpl,
+    requestTimeoutMs
+  });
+}
+
+function processLocalGhcrImages(snapshot) {
+  const ghcrImages = [];
+  for (const contract of PROCESS_LOCAL_IMAGE_PULL_CONTRACTS) {
+    const image = snapshot[contract.valueKey];
+    const match = typeof image === "string" ? image.match(PINNED_IMAGE) : null;
+    if (!match || !contract.repositories.includes(match[1])) {
+      reject("process_local_image_contract");
+    }
+    if (match[1].startsWith("ghcr.io/")) {
+      if (!GHCR_YENHUBS_IMAGE.test(image)) reject("process_local_image_contract");
+      ghcrImages.push(image);
+    }
+  }
+  if (ghcrImages.length < 1) reject("process_local_image_contract");
+  return [...new Set(ghcrImages)];
+}
+
+// Private pre-mutation AUD065 gate. The only input is the already projected,
+// owner-private process-local snapshot; values are never accepted on argv or
+// emitted. Every applicable GHCR digest (including the independent runner) is
+// authenticated and fetched before this function can return success.
+export async function verifyProcessLocalSnapshotGhcrAccess({
+  snapshotPath,
+  fetchImpl = globalThis.fetch,
+  requestTimeoutMs = DEFAULT_REGISTRY_TIMEOUT_MS
+}) {
+  const snapshot = readPrivateProcessLocalSnapshot(snapshotPath);
+  try {
+    const images = processLocalGhcrImages(snapshot);
+    const allowedRepositories = new Set(
+      PROCESS_LOCAL_IMAGE_PULL_CONTRACTS.flatMap(contract =>
+        contract.repositories.filter(repository => repository.startsWith("ghcr.io/")))
+    );
+    return await verifyGhcrImages({
+      encoded: snapshot.BOT_IMAGE_PULL_CONFIG_JSON_BASE64,
+      images,
+      allowedRepositories,
+      fetchImpl,
+      requestTimeoutMs
+    });
+  } finally {
+    for (const key of Object.keys(snapshot)) snapshot[key] = "";
+  }
 }
 
 function checksum(value) {
@@ -328,6 +802,10 @@ export function verifyBotDeploymentChecksums({
 }
 
 function parseArguments(argv) {
+  if (argv.length === 2 && argv[0] === "--verify-process-local-snapshot" && argv[1]) {
+    return new Map([[argv[0], argv[1]]]);
+  }
+  if (argv.includes("--verify-process-local-snapshot")) reject("arguments");
   const result = new Map();
   for (let index = 0; index < argv.length;) {
     const key = argv[index];
@@ -357,6 +835,12 @@ function parseArguments(argv) {
 
 async function main() {
   const args = parseArguments(process.argv.slice(2));
+  if (args.has("--verify-process-local-snapshot")) {
+    await verifyProcessLocalSnapshotGhcrAccess({
+      snapshotPath: args.get("--verify-process-local-snapshot")
+    });
+    return;
+  }
   const valuesPath = args.get("--values");
   const encoded = readValue(valuesPath, "BOT_IMAGE_PULL_CONFIG_JSON_BASE64");
   const botImage = readValue(valuesPath, "OVERRIDE_BOT_ORCHESTRATOR_IMAGE");
@@ -391,7 +875,7 @@ async function main() {
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1])) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   try {
     await main();
   } catch (error) {

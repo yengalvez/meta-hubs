@@ -5,11 +5,20 @@
 // block scalars or nested structures, and diagnostics never include values.
 
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+export class LocalValuesParseError extends Error {
+  constructor(lineNumber, reason) {
+    super("invalid_local_values_yaml");
+    this.name = "LocalValuesParseError";
+    this.lineNumber = lineNumber;
+    this.reason = reason;
+  }
+}
 
 function fail(lineNumber, reason) {
-  const location = lineNumber ? ` at line ${lineNumber}` : "";
-  process.stderr.write(`Invalid local values YAML${location}: ${reason}.\n`);
-  process.exit(2);
+  throw new LocalValuesParseError(lineNumber, reason);
 }
 
 function parseQuoted(raw, quote, lineNumber) {
@@ -68,13 +77,8 @@ function parsePlain(raw, lineNumber) {
   return value;
 }
 
-function parseFile(path) {
-  let source;
-  try {
-    source = fs.readFileSync(path, "utf8");
-  } catch {
-    fail(0, "file is unreadable");
-  }
+export function parseLocalValuesSource(source) {
+  if (typeof source !== "string") fail(0, "file is unreadable");
   const values = new Map();
   const lines = source.split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
@@ -99,23 +103,54 @@ function parseFile(path) {
   return values;
 }
 
-const [path, operation = "--validate", argument] = process.argv.slice(2);
-if (!path || !["--validate", "--get", "--keys"].includes(operation)) {
-  process.stderr.write("Usage: parse-local-values.mjs FILE [--validate | --get KEY | --keys]\n");
-  process.exit(64);
-}
-if (operation === "--get" && !argument) {
-  process.stderr.write("Usage: parse-local-values.mjs FILE --get KEY\n");
-  process.exit(64);
+export function parseLocalValuesFile(filePath) {
+  let source;
+  try {
+    source = fs.readFileSync(filePath, "utf8");
+  } catch {
+    fail(0, "file is unreadable");
+  }
+  return parseLocalValuesSource(source);
 }
 
-const values = parseFile(path);
-if (operation === "--get") {
-  process.stdout.write(values.get(argument) ?? "");
-} else if (operation === "--keys") {
-  const result = [...values.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `${key}=${value === "" ? "missing" : "configured"}`)
-    .join("\n");
-  if (result !== "") process.stdout.write(`${result}\n`);
+function printParseError(error) {
+  const lineNumber = error instanceof LocalValuesParseError ? error.lineNumber : 0;
+  const reason = error instanceof LocalValuesParseError ? error.reason : "file is unreadable";
+  const location = lineNumber ? ` at line ${lineNumber}` : "";
+  process.stderr.write(`Invalid local values YAML${location}: ${reason}.\n`);
+}
+
+function main() {
+  const [filePath, operation = "--validate", argument] = process.argv.slice(2);
+  if (!filePath || !["--validate", "--get", "--keys"].includes(operation)) {
+    process.stderr.write("Usage: parse-local-values.mjs FILE [--validate | --get KEY | --keys]\n");
+    process.exitCode = 64;
+    return;
+  }
+  if (operation === "--get" && !argument) {
+    process.stderr.write("Usage: parse-local-values.mjs FILE --get KEY\n");
+    process.exitCode = 64;
+    return;
+  }
+  let values;
+  try {
+    values = parseLocalValuesFile(filePath);
+  } catch (error) {
+    printParseError(error);
+    process.exitCode = 2;
+    return;
+  }
+  if (operation === "--get") {
+    process.stdout.write(values.get(argument) ?? "");
+  } else if (operation === "--keys") {
+    const result = [...values.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => `${key}=${value === "" ? "missing" : "configured"}`)
+      .join("\n");
+    if (result !== "") process.stdout.write(`${result}\n`);
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
 }

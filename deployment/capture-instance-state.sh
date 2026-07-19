@@ -84,6 +84,19 @@ if ! reactivation_image_override_is_exact hubs "$HUBS_IMAGE" ||
   printf 'Deployed core image overrides do not have the exact trusted repositories and digests.\n' >&2
   exit 1
 fi
+deployments_json="$(recovery_kubectl get deployment -n "$NAMESPACE" -o json)"
+checkpoint_runner_mode="$(recovery_checkpoint_runner_mode_candidate)" || {
+  printf 'Could not classify the live checkpoint runner boundary.\n' >&2
+  exit 1
+}
+case "$checkpoint_runner_mode" in
+  process-local) postgres_pair='pgsql/postgresql' ;;
+  kubernetes-pod) postgres_pair='pgsql/pgsql' ;;
+  *)
+    printf 'The live checkpoint runner boundary has an invalid mode.\n' >&2
+    exit 1
+    ;;
+esac
 EXPECTED_IMAGES_JSON="$(jq -cn \
   --arg bot "$BOT_IMAGE" \
   --arg coturn "$(yaml_value OVERRIDE_COTURN_IMAGE)" \
@@ -96,7 +109,8 @@ EXPECTED_IMAGES_JSON="$(jq -cn \
   --arg postgres "$(yaml_value OVERRIDE_POSTGRES_IMAGE)" \
   --arg postgrest "$(yaml_value OVERRIDE_POSTGREST_IMAGE)" \
   --arg reticulum "$RETICULUM_IMAGE" \
-  --arg spoke "$(yaml_value OVERRIDE_SPOKE_IMAGE)" '
+  --arg spoke "$(yaml_value OVERRIDE_SPOKE_IMAGE)" \
+  --arg postgres_pair "$postgres_pair" '
   {
     "bot-orchestrator/bot-orchestrator": $bot,
     "coturn/coturn": $coturn,
@@ -107,13 +121,22 @@ EXPECTED_IMAGES_JSON="$(jq -cn \
     "pgbouncer/pgbouncer": $pgbouncer,
     "pgbouncer-t/pgbouncer-t": $pgbouncer,
     "photomnemonic/photomnemonic": $photomnemonic,
-    "pgsql/pgsql": $postgres,
     "reticulum/postgrest": $postgrest,
     "reticulum/reticulum": $reticulum,
     "spoke/spoke": $spoke
-  }
+  } + {($postgres_pair):$postgres}
 ')"
-if ! reactivation_image_map_is_trusted "$EXPECTED_IMAGES_JSON"; then
+# The deployment generator uses pgsql/pgsql after AUD-075. The accepted
+# historical process-local boundary used the same trusted PostgreSQL image
+# under pgsql/postgresql; normalize only this pair for repository validation.
+TRUSTED_EXPECTED_IMAGES_JSON="$EXPECTED_IMAGES_JSON"
+if [[ "$checkpoint_runner_mode" == process-local ]]; then
+  TRUSTED_EXPECTED_IMAGES_JSON="$(jq -c '
+    with_entries(if .key == "pgsql/postgresql"
+      then .key = "pgsql/pgsql" else . end)
+  ' <<<"$EXPECTED_IMAGES_JSON")"
+fi
+if ! reactivation_image_map_is_trusted "$TRUSTED_EXPECTED_IMAGES_JSON"; then
   printf 'Every configured image must use its allowlisted repository and exact digest.\n' >&2
   exit 1
 fi
@@ -143,7 +166,6 @@ done
   printf 'submodules=%q\n' "$(git -C "$ROOT_DIR" submodule status | tr '\n' ';')"
 } >"$OUTPUT_DIR/git-state.txt"
 
-deployments_json="$(recovery_kubectl get deployment -n "$NAMESPACE" -o json)"
 live_recovery_epochs="$(printf '%s' "$deployments_json" | jq -cer '
   def epoch($name):
     [.items[] | select(.metadata.name == $name) |
@@ -184,6 +206,10 @@ runtime_bot_runner_images="$(jq -c '
 }
 runtime_bot_runner_count="$(jq -r 'length' <<<"$runtime_bot_runner_images")"
 if [[ "$runtime_bot_runner_count" == "0" ]]; then
+  if [[ "$checkpoint_runner_mode" != process-local ]]; then
+    printf 'Process-local bot runtime has partial Kubernetes runner bindings.\n' >&2
+    exit 1
+  fi
   runtime_kubernetes_binding_count="$(jq -r '
     [.items[] | select(.metadata.name == "bot-orchestrator") |
       (.spec.template.spec.serviceAccountName == "bot-orchestrator"),
@@ -213,6 +239,10 @@ if [[ "$runtime_bot_runner_count" == "0" ]]; then
   bot_runner_runtime='{"mode":"process-local","image":null}'
   bot_runner_control_plane='{"state":"legacy-absent"}'
 elif [[ "$runtime_bot_runner_count" == "1" ]]; then
+  if [[ "$checkpoint_runner_mode" != kubernetes-pod ]]; then
+    printf 'The process-local runtime cannot carry a Kubernetes runner image binding.\n' >&2
+    exit 1
+  fi
   if ! jq -e '.state == "bound"' <<<"$bot_runner_recovery_epoch" >/dev/null; then
     printf 'The Kubernetes runner runtime requires a bound recovery epoch.\n' >&2
     exit 1
