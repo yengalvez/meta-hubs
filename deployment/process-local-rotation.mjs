@@ -10,9 +10,15 @@ import {
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import {
+  verifyBotPullConfig,
+  verifyBotPullConfigCredentialMatch,
+  verifyBotPullConfigRotation
+} from "./verify-bot-image-pull-config.mjs";
+
 const DEFAULT_PROFILE_URL = new URL("./process-local-rotation-profile.json", import.meta.url);
 export const PROCESS_LOCAL_ROTATION_PROFILE_SHA256 =
-  "1b922b6313c9b5e98b3dfd95c3d619da74c752f3f5ab85361e929c9348fe549b";
+  "8252ddb7a957950b022fdae482c6363fbc102a57a0c140022031408bc4f6ea1b";
 const LEGACY_LAST_APPLIED_ANNOTATION =
   "kubectl.kubernetes.io/last-applied-configuration";
 const SECRET_METADATA_KEYS = new Set([
@@ -142,9 +148,27 @@ function renderProfileResourceIdentity(identity, namespace) {
   ].join("\u0000");
 }
 
+function operationalResourceIdentityTemplates(profile) {
+  return [
+    ...profile.baseline_resource_identities,
+    {
+      apiVersion: profile.legacy_image_pull.secret.apiVersion,
+      kind: profile.legacy_image_pull.secret.kind,
+      namespace: "$Namespace",
+      name: profile.legacy_image_pull.secret.name
+    },
+    {
+      apiVersion: profile.legacy_image_pull.service_account.apiVersion,
+      kind: profile.legacy_image_pull.service_account.kind,
+      namespace: "$Namespace",
+      name: profile.legacy_image_pull.service_account.name
+    }
+  ];
+}
+
 function assertBaselineResourceInventory(resources, namespace, profile) {
   const actual = new Set(indexResources(resources).keys());
-  const expected = new Set(profile.baseline_resource_identities.map(identity =>
+  const expected = new Set(operationalResourceIdentityTemplates(profile).map(identity =>
     renderProfileResourceIdentity(identity, namespace)
   ));
   if (actual.size !== expected.size ||
@@ -171,6 +195,7 @@ function validateProfile(inputProfile) {
       profile.namespace_value_key !== "Namespace" ||
       !exactKeys(profile.projected_resources, ["secret"]) ||
       !exactKeys(profile.bound_resources, ["config_map"]) ||
+      !isRecord(profile.legacy_image_pull) ||
       !isRecord(profile.annotations) || !isRecord(profile.forbidden) ||
       !isRecord(profile.database_uri_contracts) ||
       !isRecord(profile.ret_config_placeholder_counts)) {
@@ -216,6 +241,28 @@ function validateProfile(inputProfile) {
       ])) {
     fail("rotation_profile_invalid");
   }
+  const legacyPull = profile.legacy_image_pull;
+  if (!exactKeys(legacyPull, [
+    "snapshot_value_key", "verified_image_value_keys", "secret", "service_account"
+  ]) || legacyPull.snapshot_value_key !== "BOT_IMAGE_PULL_CONFIG_JSON_BASE64" ||
+      !sameStringSet(legacyPull.verified_image_value_keys, [
+        "OVERRIDE_BOT_ORCHESTRATOR_IMAGE", "OVERRIDE_BOT_RUNNER_IMAGE"
+      ]) || legacyPull.verified_image_value_keys.length !== 2 ||
+      !exactKeys(legacyPull.secret, [
+        "apiVersion", "kind", "name", "type", "data_key"
+      ]) || legacyPull.secret.apiVersion !== "v1" || legacyPull.secret.kind !== "Secret" ||
+      legacyPull.secret.name !== "ghcr-pull" ||
+      legacyPull.secret.type !== "kubernetes.io/dockerconfigjson" ||
+      legacyPull.secret.data_key !== ".dockerconfigjson" ||
+      !exactKeys(legacyPull.service_account, [
+        "apiVersion", "kind", "name", "image_pull_secrets"
+      ]) || legacyPull.service_account.apiVersion !== "v1" ||
+      legacyPull.service_account.kind !== "ServiceAccount" ||
+      legacyPull.service_account.name !== "default" ||
+      canonicalJson(legacyPull.service_account.image_pull_secrets) !==
+        canonicalJson([{ name: "ghcr-pull" }])) {
+    fail("rotation_profile_invalid");
+  }
   const baselineIdentities = new Set();
   for (const identity of profile.baseline_resource_identities) {
     if (!exactKeys(identity, ["apiVersion", "kind", "namespace", "name"]) ||
@@ -230,6 +277,12 @@ function validateProfile(inputProfile) {
     baselineIdentities.add(canonicalJson(identity));
   }
   if (baselineIdentities.size !== 42) fail("rotation_profile_invalid");
+  const operationalIdentities = operationalResourceIdentityTemplates(profile)
+    .map(identity => canonicalJson(identity));
+  if (operationalIdentities.length !== 44 ||
+      new Set(operationalIdentities).size !== 44) {
+    fail("rotation_profile_invalid");
+  }
   const secretKeys = new Set(profile.secret_keys);
   for (const name of [
     ...profile.derived_secret_keys,
@@ -409,6 +462,135 @@ function sanitizeProjectedSecretMetadata(resource) {
   return projected;
 }
 
+function readLegacyPullSecret(
+  resource,
+  namespace,
+  profile,
+  { final = false, allowManagedFields = false } = {}
+) {
+  const contract = profile.legacy_image_pull.secret;
+  const allowedMetadata = new Set([
+    "annotations", "creationTimestamp", "managedFields", "name", "namespace",
+    "resourceVersion", "uid"
+  ]);
+  if (!isRecord(resource) || resource.apiVersion !== contract.apiVersion ||
+      resource.kind !== contract.kind || resource.type !== contract.type ||
+      !Object.keys(resource).every(key => [
+        "apiVersion", "kind", "metadata", "type", "immutable", "data"
+      ].includes(key)) || (hasOwn(resource, "immutable") && resource.immutable !== false) ||
+      !isRecord(resource.metadata) ||
+      Object.keys(resource.metadata).some(key => !allowedMetadata.has(key)) ||
+      resource.metadata.name !== contract.name || resource.metadata.namespace !== namespace ||
+      !isRecord(resource.data) || !exactKeys(resource.data, [contract.data_key]) ||
+      typeof resource.data[contract.data_key] !== "string" ||
+      (hasOwn(resource.metadata, "managedFields") &&
+        !Array.isArray(resource.metadata.managedFields))) {
+    fail(final ? "rotation_reentry_pull_secret_final_invalid" :
+      "baseline_pull_secret_invalid");
+  }
+  const annotations = resource.metadata.annotations;
+  if (annotations !== undefined && (!isRecord(annotations) ||
+      Object.keys(annotations).some(key => key !== LEGACY_LAST_APPLIED_ANNOTATION))) {
+    fail(final ? "rotation_reentry_pull_secret_final_invalid" :
+      "baseline_pull_secret_invalid");
+  }
+  if (final && ((!allowManagedFields && hasOwn(resource.metadata, "managedFields")) ||
+      hasOwn(annotations || {}, LEGACY_LAST_APPLIED_ANNOTATION))) {
+    fail("rotation_reentry_pull_secret_final_invalid");
+  }
+  const legacyValue = annotations?.[LEGACY_LAST_APPLIED_ANNOTATION];
+  if (legacyValue !== undefined) {
+    let parsed;
+    try {
+      parsed = JSON.parse(legacyValue);
+    } catch (_error) {
+      fail("baseline_pull_secret_last_applied_invalid");
+    }
+    const parsedMetadataHasOnlyHistoricalShape =
+      exactKeys(parsed?.metadata, ["name", "namespace"]) ||
+      (exactKeys(parsed?.metadata, ["annotations", "name", "namespace"]) &&
+        exactKeys(parsed.metadata.annotations, []));
+    if (!exactKeys(parsed, ["apiVersion", "kind", "metadata", "type", "data"]) ||
+        parsed.apiVersion !== contract.apiVersion ||
+        parsed.kind !== contract.kind || parsed.type !== contract.type ||
+        !parsedMetadataHasOnlyHistoricalShape ||
+        parsed.metadata.name !== contract.name ||
+        parsed.metadata.namespace !== namespace || !isRecord(parsed.data) ||
+        !exactKeys(parsed.data, [contract.data_key]) ||
+        !safeEqual(parsed.data[contract.data_key], resource.data[contract.data_key])) {
+      fail("baseline_pull_secret_last_applied_invalid");
+    }
+  }
+  return resource.data[contract.data_key];
+}
+
+function validateLegacyPullServiceAccount(resource, namespace, profile) {
+  const contract = profile.legacy_image_pull.service_account;
+  if (!isRecord(resource) || resource.apiVersion !== contract.apiVersion ||
+      resource.kind !== contract.kind || !isRecord(resource.metadata) ||
+      resource.metadata.name !== contract.name || resource.metadata.namespace !== namespace ||
+      resource.metadata.deletionTimestamp != null ||
+      canonicalJson(resource.imagePullSecrets) !==
+        canonicalJson(contract.image_pull_secrets)) {
+    fail("baseline_pull_service_account_invalid");
+  }
+  requireLiveMetadata(resource, "baseline_resource_binding_invalid");
+}
+
+function validateLegacyPullSnapshots({
+  baselineSecret,
+  oldValues,
+  newValues,
+  namespace,
+  profile
+}) {
+  const contract = profile.legacy_image_pull;
+  const oldEncoded = requireString(
+    oldValues[contract.snapshot_value_key], "old_pull_config_invalid"
+  );
+  const newEncoded = requireString(
+    newValues[contract.snapshot_value_key], "new_pull_config_invalid"
+  );
+  const [botImageKey, runnerImageKey] = contract.verified_image_value_keys;
+  const oldBotImage = requireString(oldValues[botImageKey], "old_pull_image_invalid");
+  const oldRunnerImage = requireString(oldValues[runnerImageKey], "old_pull_image_invalid");
+  const newBotImage = requireString(newValues[botImageKey], "new_pull_image_invalid");
+  const newRunnerImage = requireString(newValues[runnerImageKey], "new_pull_image_invalid");
+  if (!safeEqual(oldBotImage, newBotImage) || !safeEqual(oldRunnerImage, newRunnerImage)) {
+    fail("pull_image_override_changed");
+  }
+  const liveEncoded = readLegacyPullSecret(baselineSecret, namespace, profile);
+  try {
+    verifyBotPullConfig({
+      encoded: oldEncoded,
+      botImage: oldBotImage,
+      runnerImage: oldRunnerImage
+    });
+    verifyBotPullConfig({
+      encoded: newEncoded,
+      botImage: newBotImage,
+      runnerImage: newRunnerImage
+    });
+    verifyBotPullConfigCredentialMatch({
+      expectedEncoded: oldEncoded,
+      actualEncoded: liveEncoded,
+      botImage: oldBotImage,
+      runnerImage: oldRunnerImage
+    });
+    verifyBotPullConfigRotation({
+      oldEncoded,
+      newEncoded,
+      botImage: newBotImage,
+      runnerImage: newRunnerImage
+    });
+  } catch (_error) {
+    fail("legacy_pull_credential_contract_invalid");
+  }
+  const projected = sanitizeProjectedSecretMetadata(clone(baselineSecret));
+  projected.data = { [contract.secret.data_key]: newEncoded };
+  return { projected };
+}
+
 function normalizePrivateKey(value) {
   return value
     .replace(/\\+r\\+n/gu, "\n")
@@ -514,7 +696,9 @@ function assertSnapshotKeyset(snapshot, profile, codePrefix) {
   const required = new Set([
     profile.namespace_value_key,
     ...profile.secret_keys.filter(key => !profile.derived_secret_keys.includes(key)),
-    ...new Set(profile.image_pairs.map(pair => pair.value_key))
+    ...new Set(profile.image_pairs.map(pair => pair.value_key)),
+    profile.legacy_image_pull.snapshot_value_key,
+    ...profile.legacy_image_pull.verified_image_value_keys
   ]);
   const allowed = new Set([...required, ...profile.derived_secret_keys]);
   const actual = Object.keys(snapshot);
@@ -876,12 +1060,27 @@ function buildDesiredDeploymentAnnotations(targetValues, perms, rotationRevision
 
 function projectedIdentitySet(namespace, profile) {
   return new Set([
-    `v1\u0000Secret\u0000${namespace}\u0000${profile.projected_resources.secret}`
+    `v1\u0000Secret\u0000${namespace}\u0000${profile.projected_resources.secret}`,
+    `${profile.legacy_image_pull.secret.apiVersion}\u0000${profile.legacy_image_pull.secret.kind}` +
+      `\u0000${namespace}\u0000${profile.legacy_image_pull.secret.name}`
   ]);
 }
 
-function buildLiveResourceBindings(secret, configMap, resources, namespace, profile) {
-  const bindings = [resourceBinding(secret), resourceBinding(configMap)];
+function buildLiveResourceBindings(
+  secret,
+  pullSecret,
+  configMap,
+  pullServiceAccount,
+  resources,
+  namespace,
+  profile
+) {
+  const bindings = [
+    resourceBinding(secret),
+    resourceBinding(pullSecret),
+    resourceBinding(configMap),
+    resourceBinding(pullServiceAccount)
+  ];
   for (const name of profile.required_deployments) {
     bindings.push(resourceBinding(findExactResource(
       resources, "apps/v1", "Deployment", namespace, name,
@@ -925,8 +1124,28 @@ function buildBundle({ baselineResources, oldValues, newValues, rotationRevision
     baselineResources, "v1", "ConfigMap", namespace,
     checkedProfile.bound_resources.config_map, "baseline_ret_config_missing"
   );
+  const baselinePullSecret = findExactResource(
+    baselineResources,
+    checkedProfile.legacy_image_pull.secret.apiVersion,
+    checkedProfile.legacy_image_pull.secret.kind,
+    namespace,
+    checkedProfile.legacy_image_pull.secret.name,
+    "baseline_pull_secret_missing"
+  );
+  const baselinePullServiceAccount = findExactResource(
+    baselineResources,
+    checkedProfile.legacy_image_pull.service_account.apiVersion,
+    checkedProfile.legacy_image_pull.service_account.kind,
+    namespace,
+    checkedProfile.legacy_image_pull.service_account.name,
+    "baseline_pull_service_account_missing"
+  );
   requireLiveMetadata(baselineSecret, "baseline_resource_binding_invalid");
   requireLiveMetadata(baselineConfigMap, "baseline_resource_binding_invalid");
+  requireLiveMetadata(baselinePullSecret, "baseline_resource_binding_invalid");
+  validateLegacyPullServiceAccount(
+    baselinePullServiceAccount, namespace, checkedProfile
+  );
   const liveSecret = readSecret(baselineSecret, checkedProfile);
   const oldSnapshot = materializeSnapshotValues(oldValues, checkedProfile, "old");
   assertLiveSecretMatchesSnapshot(liveSecret.values, oldSnapshot.values, checkedProfile);
@@ -935,6 +1154,13 @@ function buildBundle({ baselineResources, oldValues, newValues, rotationRevision
   );
   const newSnapshot = materializeSnapshotValues(newValues, checkedProfile, "new");
   assertRotation(oldSnapshot.values, newSnapshot.values, checkedProfile);
+  const legacyPull = validateLegacyPullSnapshots({
+    baselineSecret: baselinePullSecret,
+    oldValues,
+    newValues,
+    namespace,
+    profile: checkedProfile
+  });
   const retConfig = validateRetConfig(
     baselineConfigMap, oldSnapshot.values, newSnapshot.values, checkedProfile
   );
@@ -945,7 +1171,7 @@ function buildBundle({ baselineResources, oldValues, newValues, rotationRevision
   const secret = sanitizeProjectedSecretMetadata(encodeProjectedSecret(
     baselineSecret, newSnapshot.values, liveSecret.encoding
   ));
-  const resources = [secret];
+  const resources = [secret, legacyPull.projected];
   const actualIdentities = new Set(resources.map(resourceIdentity));
   const expectedIdentities = projectedIdentitySet(namespace, checkedProfile);
   if (!sameStringSet([...actualIdentities], [...expectedIdentities])) {
@@ -965,7 +1191,13 @@ function buildBundle({ baselineResources, oldValues, newValues, rotationRevision
       namespace,
       resourceIdentities: resources.map(displayIdentity),
       liveResourceBindings: buildLiveResourceBindings(
-        baselineSecret, baselineConfigMap, baselineResources, namespace, checkedProfile
+        baselineSecret,
+        baselinePullSecret,
+        baselineConfigMap,
+        baselinePullServiceAccount,
+        baselineResources,
+        namespace,
+        checkedProfile
       ),
       deploymentInputNames: clone(checkedProfile.required_deployments),
       imagePairs: images,
@@ -983,6 +1215,27 @@ function buildBundle({ baselineResources, oldValues, newValues, rotationRevision
         dataKey: retConfig.dataKey,
         dataSha256: retConfig.dataSha256,
         placeholderCounts: retConfig.placeholderCounts
+      },
+      legacyImagePull: {
+        snapshotValueKey: checkedProfile.legacy_image_pull.snapshot_value_key,
+        verifiedImageValueKeys: clone(
+          checkedProfile.legacy_image_pull.verified_image_value_keys
+        ),
+        pullSecret: {
+          name: checkedProfile.legacy_image_pull.secret.name,
+          dataKey: checkedProfile.legacy_image_pull.secret.data_key,
+          action: "replace-existing",
+          candidateEncoding: "exact"
+        },
+        serviceAccount: {
+          name: checkedProfile.legacy_image_pull.service_account.name,
+          imagePullSecrets: clone(
+            checkedProfile.legacy_image_pull.service_account.image_pull_secrets
+          ),
+          action: "bind-existing-no-apply"
+        },
+        liveCredentialMatch: "semantic",
+        credentialRotation: "verified"
       },
       secretEnvBindings: clone(checkedProfile.secret_env_bindings),
       forbiddenAud075MarkersAbsent: true
@@ -1036,7 +1289,7 @@ function validateBundleShape(bundle, profile) {
   }
   const identities = new Set(bundle.resources.map(resourceIdentity));
   if (!sameStringSet([...identities], [...projectedIdentitySet(namespace, profile)]) ||
-      bundle.resources.length !== 1 ||
+      bundle.resources.length !== 2 ||
       !sameStringSet(bundle.contract.deploymentInputNames, profile.required_deployments) ||
       canonicalJson(bundle.contract.secretEnvBindings) !==
         canonicalJson(profile.secret_env_bindings) ||
@@ -1046,11 +1299,50 @@ function validateBundleShape(bundle, profile) {
       )) {
     fail("rotation_bundle_contract_mismatch");
   }
-  const projectedSecret = bundle.resources[0];
+  const projectedSecret = bundle.resources.find(resource =>
+    resource.apiVersion === "v1" && resource.kind === "Secret" &&
+    resource.metadata?.namespace === namespace &&
+    resource.metadata?.name === profile.projected_resources.secret
+  );
+  const projectedPullSecret = bundle.resources.find(resource =>
+    resource.apiVersion === profile.legacy_image_pull.secret.apiVersion &&
+    resource.kind === profile.legacy_image_pull.secret.kind &&
+    resource.metadata?.namespace === namespace &&
+    resource.metadata?.name === profile.legacy_image_pull.secret.name
+  );
+  if (!projectedSecret || !projectedPullSecret) {
+    fail("rotation_bundle_contract_mismatch");
+  }
   if (hasOwn(projectedSecret.metadata, "managedFields") ||
       hasOwn(
         projectedSecret.metadata.annotations || {}, LEGACY_LAST_APPLIED_ANNOTATION
       )) {
+    fail("rotation_bundle_contract_mismatch");
+  }
+  try {
+    readLegacyPullSecret(projectedPullSecret, namespace, profile, { final: true });
+  } catch (_error) {
+    fail("rotation_bundle_contract_mismatch");
+  }
+  const expectedLegacyImagePull = {
+    snapshotValueKey: profile.legacy_image_pull.snapshot_value_key,
+    verifiedImageValueKeys: clone(profile.legacy_image_pull.verified_image_value_keys),
+    pullSecret: {
+      name: profile.legacy_image_pull.secret.name,
+      dataKey: profile.legacy_image_pull.secret.data_key,
+      action: "replace-existing",
+      candidateEncoding: "exact"
+    },
+    serviceAccount: {
+      name: profile.legacy_image_pull.service_account.name,
+      imagePullSecrets: clone(profile.legacy_image_pull.service_account.image_pull_secrets),
+      action: "bind-existing-no-apply"
+    },
+    liveCredentialMatch: "semantic",
+    credentialRotation: "verified"
+  };
+  if (canonicalJson(bundle.contract.legacyImagePull) !==
+      canonicalJson(expectedLegacyImagePull)) {
     fail("rotation_bundle_contract_mismatch");
   }
   const desired = bundle.contract.desiredDeploymentAnnotations;
@@ -1079,7 +1371,7 @@ function validateBundleShape(bundle, profile) {
     }
   }
   const bindings = bundle.contract.liveResourceBindings;
-  if (!Array.isArray(bindings) || bindings.length !== 14) {
+  if (!Array.isArray(bindings) || bindings.length !== 16) {
     fail("rotation_bundle_contract_mismatch");
   }
   const bindingIdentities = new Set();
@@ -1097,6 +1389,11 @@ function validateBundleShape(bundle, profile) {
   const expectedBindings = new Set([
     `v1\u0000Secret\u0000${namespace}\u0000${profile.projected_resources.secret}`,
     `v1\u0000ConfigMap\u0000${namespace}\u0000${profile.bound_resources.config_map}`,
+    `${profile.legacy_image_pull.secret.apiVersion}\u0000${profile.legacy_image_pull.secret.kind}` +
+      `\u0000${namespace}\u0000${profile.legacy_image_pull.secret.name}`,
+    `${profile.legacy_image_pull.service_account.apiVersion}` +
+      `\u0000${profile.legacy_image_pull.service_account.kind}` +
+      `\u0000${namespace}\u0000${profile.legacy_image_pull.service_account.name}`,
     ...profile.required_deployments.map(name =>
       `apps/v1\u0000Deployment\u0000${namespace}\u0000${name}`)
   ]);
@@ -1247,7 +1544,7 @@ export function projectProcessLocalRotationReplacement({
     );
     if (candidates.length !== 1) fail("rotation_reentry_candidate_inventory_invalid");
     replacement = clone(candidates[0]);
-    assertFinalReentrySecret(replacement, namespace, checkedProfile);
+    assertFinalReentrySecret(replacement, namespace, checkedProfile, target.name);
   } else {
     replacement = applyProcessLocalRotationAnnotations({
       deployment: baseline,
@@ -1280,6 +1577,12 @@ function reentryTargetIdentities(namespace, profile) {
       kind: "Secret",
       namespace,
       name: profile.projected_resources.secret
+    },
+    {
+      apiVersion: profile.legacy_image_pull.secret.apiVersion,
+      kind: profile.legacy_image_pull.secret.kind,
+      namespace,
+      name: profile.legacy_image_pull.secret.name
     },
     ...profile.rotation_revision_deployments.map(name => ({
       apiVersion: "apps/v1",
@@ -1319,18 +1622,6 @@ function indexExactReentryResources(resources, targets, code) {
   return indexed;
 }
 
-function findReentryBaseline(resources, target) {
-  const matches = resources.filter(resource => {
-    try {
-      return resourceIdentity(resource) === reentryIdentity(target);
-    } catch (_error) {
-      return false;
-    }
-  });
-  if (matches.length !== 1) fail("rotation_reentry_baseline_inventory_invalid");
-  return matches[0];
-}
-
 function reentryBinding(bundle, target) {
   const matches = bundle.contract.liveResourceBindings.filter(binding =>
     reentryIdentity(binding) === reentryIdentity(target)
@@ -1346,7 +1637,30 @@ function assertReentryMetadata(resource, binding) {
   }
 }
 
-function assertFinalReentrySecret(secret, namespace, profile, { live = false } = {}) {
+function assertFinalReentrySecret(
+  secret,
+  namespace,
+  profile,
+  name,
+  { live = false } = {}
+) {
+  if (name === profile.legacy_image_pull.secret.name) {
+    try {
+      readLegacyPullSecret(secret, namespace, profile, {
+        final: true,
+        allowManagedFields: live
+      });
+    } catch (_error) {
+      fail("rotation_reentry_pull_secret_final_invalid");
+    }
+    if (!live && hasOwn(secret.metadata, "managedFields")) {
+      fail("rotation_reentry_pull_secret_final_invalid");
+    }
+    return;
+  }
+  if (name !== profile.projected_resources.secret) {
+    fail("rotation_reentry_secret_final_invalid");
+  }
   const allowedMetadata = new Set([
     "creationTimestamp", "name", "namespace", "resourceVersion", "uid"
   ]);
@@ -1391,7 +1705,7 @@ function secretValuesMatch(left, right, profile) {
   return profile.secret_keys.every(key => safeEqual(leftValues[key], rightValues[key]));
 }
 
-function secretSemanticallyMatches(live, expected, profile) {
+function configSecretSemanticallyMatches(live, expected, profile) {
   return live?.apiVersion === "v1" && live?.kind === "Secret" &&
     expected?.apiVersion === "v1" && expected?.kind === "Secret" &&
     (live.type ?? "Opaque") === (expected.type ?? "Opaque") &&
@@ -1401,10 +1715,44 @@ function secretSemanticallyMatches(live, expected, profile) {
     secretValuesMatch(live, expected, profile);
 }
 
+function pullSecretSemanticallyMatches(live, expected, profile, { final = false } = {}) {
+  const name = profile.legacy_image_pull.secret.name;
+  try {
+    const liveEncoded = readLegacyPullSecret(
+      live, live?.metadata?.namespace, profile, { final, allowManagedFields: final }
+    );
+    const expectedEncoded = readLegacyPullSecret(
+      expected, expected?.metadata?.namespace, profile, { final }
+    );
+    return live?.metadata?.name === name && expected?.metadata?.name === name &&
+      canonicalJson(metadataWithoutReentryServerFields(live)) ===
+        canonicalJson(metadataWithoutReentryServerFields(expected)) &&
+      safeEqual(liveEncoded, expectedEncoded);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function reentrySecretSemanticallyMatches(
+  live,
+  expected,
+  profile,
+  targetName,
+  options
+) {
+  return targetName === profile.legacy_image_pull.secret.name
+    ? pullSecretSemanticallyMatches(live, expected, profile, options)
+    : configSecretSemanticallyMatches(live, expected, profile);
+}
+
 function assertReentrySecretEnvelope(secret, namespace, profile, code) {
   try {
-    const values = readSecret(secret, profile).values;
-    validateSecretMetadata(secret, values, namespace, profile);
+    if (secret?.metadata?.name === profile.legacy_image_pull.secret.name) {
+      readLegacyPullSecret(secret, namespace, profile);
+    } else {
+      const values = readSecret(secret, profile).values;
+      validateSecretMetadata(secret, values, namespace, profile);
+    }
   } catch (_error) {
     fail(code);
   }
@@ -1429,6 +1777,85 @@ function deploymentSemanticallyMatches(live, expected) {
       canonicalJson(metadataWithoutReentryServerFields(expected));
 }
 
+function invariantResourceBody(resource) {
+  const result = clone(resource);
+  delete result.status;
+  if (isRecord(result.metadata)) {
+    delete result.metadata.resourceVersion;
+    delete result.metadata.managedFields;
+    delete result.metadata.generation;
+  }
+  return result;
+}
+
+function assertNonTargetReentryInvariants({
+  baselineIndex,
+  liveIndex,
+  targets,
+  bundle,
+  namespace,
+  profile
+}) {
+  const targetIdentities = new Set(targets.map(reentryIdentity));
+  const configMapIdentity = reentryIdentity({
+    apiVersion: "v1",
+    kind: "ConfigMap",
+    namespace,
+    name: profile.bound_resources.config_map
+  });
+  const serviceAccountIdentity = reentryIdentity({
+    apiVersion: profile.legacy_image_pull.service_account.apiVersion,
+    kind: profile.legacy_image_pull.service_account.kind,
+    namespace,
+    name: profile.legacy_image_pull.service_account.name
+  });
+  for (const [identity, baseline] of baselineIndex) {
+    if (targetIdentities.has(identity)) continue;
+    const live = liveIndex.get(identity);
+    if (!live || typeof baseline.metadata?.uid !== "string" || !baseline.metadata.uid ||
+        typeof live.metadata?.uid !== "string" ||
+        !safeEqual(baseline.metadata.uid, live.metadata.uid)) {
+      fail("rotation_reentry_invariant_uid_mismatch");
+    }
+    const bindingMatches = bundle.contract.liveResourceBindings.filter(binding =>
+      reentryIdentity(binding) === identity
+    );
+    if (bindingMatches.length > 1 || (bindingMatches.length === 1 &&
+        (!safeEqual(bindingMatches[0].uid, baseline.metadata.uid) ||
+         !safeEqual(bindingMatches[0].resourceVersion,
+           baseline.metadata.resourceVersion)))) {
+      fail("rotation_reentry_baseline_binding_invalid");
+    }
+    if (identity === serviceAccountIdentity) {
+      validateLegacyPullServiceAccount(baseline, namespace, profile);
+      validateLegacyPullServiceAccount(live, namespace, profile);
+    }
+    if (identity === configMapIdentity || identity === serviceAccountIdentity) {
+      const binding = bindingMatches[0];
+      if (!binding) fail("rotation_reentry_binding_invalid");
+      if (!safeEqual(baseline.metadata.resourceVersion, binding.resourceVersion) ||
+          !safeEqual(live.metadata.resourceVersion, binding.resourceVersion)) {
+        fail("rotation_reentry_bind_only_resource_drift");
+      }
+    }
+    if (identity === configMapIdentity) {
+      const data = baseline.data;
+      if (!isRecord(data) || !exactKeys(data, [profile.ret_config_data_key]) ||
+          typeof data[profile.ret_config_data_key] !== "string" ||
+          !safeEqual(
+            sha256(Buffer.from(data[profile.ret_config_data_key], "utf8")),
+            bundle.contract.retConfigBinding.dataSha256
+          )) {
+        fail("rotation_reentry_bind_only_resource_drift");
+      }
+    }
+    if (canonicalJson(invariantResourceBody(live)) !==
+        canonicalJson(invariantResourceBody(baseline))) {
+      fail("rotation_reentry_non_target_resource_drift");
+    }
+  }
+}
+
 function reentryCandidateFor({ target, baseline, bundle, profile }) {
   if (target.kind === "Deployment" && baseline.spec?.replicas !== 0) {
     fail("rotation_reentry_deployment_not_quiesced");
@@ -1439,7 +1866,7 @@ function reentryCandidateFor({ target, baseline, bundle, profile }) {
     profile
   });
   if (target.kind === "Secret") {
-    assertFinalReentrySecret(projected, target.namespace, profile);
+    assertFinalReentrySecret(projected, target.namespace, profile, target.name);
   } else if (projected.spec?.replicas !== 0) {
     fail("rotation_reentry_deployment_not_quiesced");
   }
@@ -1447,7 +1874,7 @@ function reentryCandidateFor({ target, baseline, bundle, profile }) {
 }
 
 /**
- * Classify the exact seven resource replacements used by the process-local
+ * Classify the exact eight resource replacements used by the process-local
  * AUD-065 rotation. This function is deliberately pure: callers supply a
  * checkpoint-bound baseline, the immutable rotation bundle and one fresh API
  * inventory; no Kubernetes or filesystem access occurs here.
@@ -1474,16 +1901,35 @@ export function classifyProcessLocalRotationReentry({
 
   const namespace = bundleSnapshot.contract.namespace;
   const targets = reentryTargetIdentities(namespace, checkedProfile);
-  if (targets.length !== 7) fail("rotation_reentry_inventory_invalid");
+  if (targets.length !== 8) fail("rotation_reentry_inventory_invalid");
+  const operationalTargets = operationalResourceIdentityTemplates(checkedProfile).map(identity => ({
+    apiVersion: identity.apiVersion,
+    kind: identity.kind,
+    namespace: identity.namespace === "$Namespace" ? namespace : null,
+    name: identity.name === "$Namespace" ? namespace : identity.name
+  }));
+  const baselineIndex = indexExactReentryResources(
+    baselineSnapshot,
+    operationalTargets,
+    "rotation_reentry_baseline_inventory_invalid"
+  );
   const liveIndex = indexExactReentryResources(
     liveSnapshot,
-    targets,
+    operationalTargets,
     "rotation_reentry_inventory_invalid"
   );
+  assertNonTargetReentryInvariants({
+    baselineIndex,
+    liveIndex,
+    targets,
+    bundle: bundleSnapshot,
+    namespace,
+    profile: checkedProfile
+  });
   const inventory = [];
   for (const target of targets) {
     const identity = reentryIdentity(target);
-    const baseline = findReentryBaseline(baselineSnapshot, target);
+    const baseline = baselineIndex.get(identity);
     const live = liveIndex.get(identity);
     const binding = reentryBinding(bundleSnapshot, target);
     assertReentryMetadata(baseline, binding);
@@ -1519,14 +1965,20 @@ export function classifyProcessLocalRotationReentry({
       fail("rotation_reentry_candidate_binding_invalid");
     }
     const pendingBodyMatches = target.kind === "Secret"
-      ? secretSemanticallyMatches(live, baseline, checkedProfile)
+      ? reentrySecretSemanticallyMatches(
+        live, baseline, checkedProfile, target.name, { final: false }
+      )
       : live.metadata.generation === baseline.metadata.generation &&
         deploymentSemanticallyMatches(live, baseline);
     let appliedBodyMatches = false;
     if (target.kind === "Secret") {
       try {
-        assertFinalReentrySecret(live, namespace, checkedProfile, { live: true });
-        appliedBodyMatches = secretSemanticallyMatches(live, candidate, checkedProfile);
+        assertFinalReentrySecret(
+          live, namespace, checkedProfile, target.name, { live: true }
+        );
+        appliedBodyMatches = reentrySecretSemanticallyMatches(
+          live, candidate, checkedProfile, target.name, { final: true }
+        );
       } catch (error) {
         if (!(error instanceof ProcessLocalRotationError)) throw error;
       }
@@ -1649,6 +2101,24 @@ export function redactProcessLocalRotationBundle({
       byteInvariant: true,
       dataKeys: configMapKeys,
       placeholderCounts: clone(bundle.contract.retConfigBinding.placeholderCounts)
+    },
+    legacyImagePull: {
+      pullSecret: {
+        name: checkedProfile.legacy_image_pull.secret.name,
+        dataKey: checkedProfile.legacy_image_pull.secret.data_key,
+        action: "replace-existing",
+        credentialRotated: true,
+        candidateEncoding: "exact"
+      },
+      serviceAccount: {
+        name: checkedProfile.legacy_image_pull.service_account.name,
+        imagePullSecrets: clone(
+          checkedProfile.legacy_image_pull.service_account.image_pull_secrets
+        ),
+        action: "bind-existing-no-apply",
+        byteInvariant: true
+      },
+      liveCredentialMatch: "semantic"
     },
     validatedDeploymentInputs: clone(bundle.contract.deploymentInputNames),
     desiredDeploymentAnnotationKeys: Object.fromEntries(

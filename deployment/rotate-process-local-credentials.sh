@@ -28,10 +28,11 @@ readonly AUD065_MATERIALIZE_TOOL="$AUD065_DRIVER_DIR/materialize-process-local-r
 readonly AUD065_REDACTED_TOOL="$AUD065_DRIVER_DIR/verify-redacted-rollout.mjs"
 readonly AUD065_PUBLICATION_TOOL="$AUD065_DRIVER_DIR/private-artifact-publication.mjs"
 readonly AUD065_ROTATION_TOOL="$AUD065_DRIVER_DIR/process-local-rotation.mjs"
+readonly AUD065_PULL_TOOL="$AUD065_DRIVER_DIR/verify-bot-image-pull-config.mjs"
 readonly AUD065_ATTESTATION_TOOL="$AUD065_DRIVER_DIR/write-process-local-operational-attestation.mjs"
 readonly AUD065_DIRFD_HELPER="$AUD065_DRIVER_DIR/private-dirfd-ops.py"
 readonly AUD065_PROFILE_ID="yenhubs-process-local-credential-rotation-v1"
-readonly AUD065_PROFILE_SHA256="1b922b6313c9b5e98b3dfd95c3d619da74c752f3f5ab85361e929c9348fe549b"
+readonly AUD065_PROFILE_SHA256="8252ddb7a957950b022fdae482c6363fbc102a57a0c140022031408bc4f6ea1b"
 readonly AUD065_CANONICAL_VALUES="$AUD065_DRIVER_DIR/input-values.local.yaml"
 readonly AUD065_LOCK_NAME="yenhubs-recovery-operation-lock"
 readonly AUD065_ROTATION_DEPLOYMENTS=(
@@ -356,6 +357,8 @@ aud065_plan() {
     --expected-operation-id "$RECOVERY_OPERATION_ID" \
     --expected-operation-binding-sha256 "$RECOVERY_OPERATION_BINDING_SHA256" || return 1
   aud065_verify_source_state old || return 1
+  AUD065_FAILURE_STAGE="plan-ghcr-access"
+  aud065_verify_pre_mutation_ghcr_access || return 1
   AUD065_FAILURE_STAGE="plan-offline-contract"
   command node "$AUD065_PREPARE_TOOL" verify-plan \
     --operation-directory "$AUD065_OPERATION_DIRECTORY" \
@@ -463,6 +466,17 @@ aud065_promote_source() {
     --expected-operation-binding-sha256 "$RECOVERY_OPERATION_BINDING_SHA256" \
     --canonical-values "$AUD065_CANONICAL_VALUES" || return 1
   aud065_verify_source_state new || return 1
+}
+
+aud065_verify_ghcr_snapshot_access() {
+  local snapshot="$1"
+  aud065_require_private_file "$snapshot" || return 1
+  command node "$AUD065_PULL_TOOL" --verify-process-local-snapshot "$snapshot"
+}
+
+aud065_verify_pre_mutation_ghcr_access() {
+  aud065_verify_ghcr_snapshot_access "$AUD065_OLD_SNAPSHOT" || return 1
+  aud065_verify_ghcr_snapshot_access "$AUD065_NEW_SNAPSHOT"
 }
 
 aud065_lock_json() {
@@ -1169,7 +1183,7 @@ try {
       const value = JSON.parse(text);
       if (text !== `${rotationModule.canonicalJson(value)}\n` ||
           value?.apiVersion !== "v1" || value?.kind !== "List" ||
-          !Array.isArray(value.items) || value.items.length !== 42) throw new Error();
+          !Array.isArray(value.items) || value.items.length !== 44) throw new Error();
       return value.items;
     };
     const original = parse(originalBytes);
@@ -1177,7 +1191,7 @@ try {
     const key = item => [item?.apiVersion, item?.kind,
       item?.metadata?.namespace ?? "", item?.metadata?.name].join("\u0000");
     const liveByKey = new Map(live.map(item => [key(item), item]));
-    if (liveByKey.size !== 42 || new Set(original.map(key)).size !== 42) throw new Error();
+    if (liveByKey.size !== 44 || new Set(original.map(key)).size !== 44) throw new Error();
     const allowedReentryRvDrift = new Set([
       "bot-orchestrator", "reticulum", "coturn", "dialog", "pgbouncer", "pgbouncer-t"
     ].map(name => ["apps/v1", "Deployment", namespace, name].join("\u0000")));
@@ -1545,12 +1559,13 @@ aud065_materialize_replacements() {
 aud065_replacement_names() {
   printf '%s\n' \
     00-secret-configs.json \
-    01-deployment-bot-orchestrator.json \
-    02-deployment-coturn.json \
-    03-deployment-dialog.json \
-    04-deployment-pgbouncer.json \
-    05-deployment-pgbouncer-t.json \
-    06-deployment-reticulum.json
+    01-secret-ghcr-pull.json \
+    02-deployment-bot-orchestrator.json \
+    03-deployment-coturn.json \
+    04-deployment-dialog.json \
+    05-deployment-pgbouncer.json \
+    06-deployment-pgbouncer-t.json \
+    07-deployment-reticulum.json
 }
 
 aud065_classify_bundle_iteration_in_scratch() {
@@ -1567,8 +1582,8 @@ aud065_classify_bundle_iteration_in_scratch() {
     --live-baseline "$live")" || return 1
   pending="$(jq -er '.pendingCount' <<<"$plan")" || return 1
   already="$(jq -er '.alreadyAppliedCount' <<<"$plan")" || return 1
-  [[ "$pending" =~ ^[0-7]$ && "$already" =~ ^[0-7]$ &&
-     $((pending + already)) == 7 && "$pending" -lt "$previous_pending" ]] || return 1
+  [[ "$pending" =~ ^[0-8]$ && "$already" =~ ^[0-8]$ &&
+     $((pending + already)) == 8 && "$pending" -lt "$previous_pending" ]] || return 1
   # Reentry is accepted only for an applied prefix; a partial out-of-order
   # cut is not attributed to this coordinator.
   jq -e '
@@ -1604,8 +1619,8 @@ aud065_apply_bundle_exact() {
   esac
   aud065_materialize_replacements || return 1
   index=0
-  previous_pending=8
-  while ((index < 8)); do
+  previous_pending=9
+  while ((index < 9)); do
     AUD065_BUNDLE_ITERATION_PENDING=""
     AUD065_BUNDLE_ITERATION_ALREADY=""
     aud065_with_scratch_directory aud065_classify_bundle_iteration_in_scratch \
@@ -1627,7 +1642,8 @@ aud065_apply_bundle_exact() {
       --quiesced-baseline "$AUD065_QUIESCED_BASELINE" --bundle "$AUD065_BUNDLE" \
       --binding "$AUD065_BUNDLE_BINDING" \
       --operation-key "$AUD065_OPERATION_DIRECTORY/operation.key" \
-      --output-directory "$AUD065_REPLACEMENTS_DIRECTORY" --name "$candidate" |
+      --output-directory "$AUD065_REPLACEMENTS_DIRECTORY" --name "$candidate" \
+      --stream-purpose coordinator-cas-stream |
       recovery_kubectl_mutate replace -f - -o json >/dev/null || return 1
     recovery_require_operation_lock || return 1
     recovery_require_operation_serialization || return 1
@@ -1829,6 +1845,7 @@ aud065_verify_local_tcp_cleanup_gate() {
 aud065_cb_start_pools() {
   local state
   aud065_reload_guard || return 1
+  aud065_verify_ghcr_snapshot_access "$AUD065_NEW_SNAPSHOT" || return 1
   case "$RECOVERY_OPERATION_STATE" in
     bundle-applied)
       aud065_pgsql_probe_bind_image "$(aud065_probe_image)" || return 1
@@ -2063,6 +2080,7 @@ aud065_verify_fresh_cleanup_gate() {
   aud065_probe_fresh_auth new pgbouncer-t accept || return 1
   aud065_probe_fresh_auth old pgbouncer-t reject || return 1
   aud065_probe_fresh_auth new pgbouncer-t accept || return 1
+  recovery_require_live_process_local_runner_exact "$AUD065_CANONICAL_VALUES" || return 1
   aud065_with_scratch_directory aud065_verify_fresh_cleanup_in_scratch
 }
 
@@ -2072,6 +2090,8 @@ aud065_cb_verify_runtime() {
     bundle-applied)
       [[ "$(aud065_pgsql_barrier_read_state)" == open-verified ]] || return 1
       aud065_verify_started_deployments || return 1
+      recovery_require_live_process_local_runner_exact \
+        "$AUD065_CANONICAL_VALUES" || return 1
       aud065_capture_or_reconcile_baseline "$AUD065_FINAL_BASELINE" || return 1
       aud065_capture_public_material || return 1
       aud065_write_operational_attestation || return 1
@@ -2082,6 +2102,8 @@ aud065_cb_verify_runtime() {
       ;;
     verified|cleanup-authorized)
       aud065_verify_started_deployments || return 1
+      recovery_require_live_process_local_runner_exact \
+        "$AUD065_CANONICAL_VALUES" || return 1
       aud065_verify_or_create_report || return 1
       ;;
     *) return 1 ;;
@@ -2291,8 +2313,8 @@ aud065_rb_validate_bundle_in_scratch() {
     --operation-key "$AUD065_OPERATION_DIRECTORY/operation.key" \
     --live-baseline "$live")" || return 1
   jq -e '
-    .resourceCount == 7 and .pendingCount == 0 and
-    .alreadyAppliedCount == 7 and .complete == true and
+    .resourceCount == 8 and .pendingCount == 0 and
+    .alreadyAppliedCount == 8 and .complete == true and
     ([.resources[].state] | all(. == "already-applied"))
   ' <<<"$plan" >/dev/null || return 1
   command node "$AUD065_MATERIALIZE_TOOL" extract-applied \
@@ -2372,6 +2394,8 @@ aud065_audit() {
   done
   recovery_require_live_images_match_checkpoint \
     "$AUD065_CHECKPOINT_DIRECTORY/deployment-images.json" || return 1
+  recovery_require_live_process_local_runner_exact "$AUD065_CANONICAL_VALUES" || return 1
+  aud065_verify_ghcr_snapshot_access "$AUD065_NEW_SNAPSHOT" || return 1
   aud065_verify_source_state new || return 1
   aud065_verify_terminal_record_read_only || return 1
   aud065_require_lock_absent_read_only || return 1
@@ -2535,6 +2559,11 @@ aud065_execute_or_resume() {
   aud065_acquire_lease || return 1
   AUD065_FAILURE_STAGE="process-local-boundary"
   if ! recovery_require_live_process_local_runner_exact "$AUD065_CANONICAL_VALUES"; then
+    aud065_release_lease_if_owned || return 1
+    return 1
+  fi
+  AUD065_FAILURE_STAGE="ghcr-access"
+  if ! aud065_verify_pre_mutation_ghcr_access; then
     aud065_release_lease_if_owned || return 1
     return 1
   fi

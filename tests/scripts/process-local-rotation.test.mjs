@@ -61,10 +61,16 @@ const oldPermsKey = encodedPrivateKey();
 const newPermsKey = encodedPrivateKey();
 const oldPerms = permsMaterial(oldPermsKey);
 
-const uniqueValueKeys = [...new Set(profile.image_pairs.map(pair => pair.value_key))];
+const uniqueValueKeys = [...new Set([
+  ...profile.image_pairs.map(pair => pair.value_key),
+  ...profile.legacy_image_pull.verified_image_value_keys
+])];
 const imageByValueKey = Object.fromEntries(uniqueValueKeys.map((valueKey, index) => [
   valueKey,
-  `${profile.image_pairs.find(pair => pair.value_key === valueKey).repositories[0]}@sha256:${(index + 1).toString(16).repeat(64)}`
+  `${valueKey === "OVERRIDE_BOT_RUNNER_IMAGE"
+    ? "ghcr.io/yengalvez/bot-runner"
+    : profile.image_pairs.find(pair => pair.value_key === valueKey).repositories[0]}` +
+    `@sha256:${(index + 1).toString(16).repeat(64)}`
 ]));
 const imageByPair = Object.fromEntries(profile.image_pairs.map(pair => [
   `${pair.deployment}/${pair.container}`,
@@ -105,6 +111,22 @@ const oldLiveSecrets = {
   PERMS_KEY: runtimePrivateKey(oldSnapshotSecrets.PERMS_KEY),
   PGRST_JWT_SECRET: oldPerms.jwt
 };
+
+function encodedPullConfig(username, token, spacing = 0) {
+  return Buffer.from(JSON.stringify({
+    auths: {
+      "ghcr.io": {
+        auth: Buffer.from(`${username}:${token}`, "utf8").toString("base64")
+      }
+    }
+  }, null, spacing), "utf8").toString("base64");
+}
+
+const oldPullConfig = encodedPullConfig("fixture-user", "old-pull-token-value");
+const oldLivePullConfig = encodedPullConfig(
+  "fixture-user", "old-pull-token-value", 2
+);
+const newPullConfig = encodedPullConfig("fixture-user", "new-pull-token-value");
 
 function databaseChecksum(values) {
   return sha256(JSON.stringify({
@@ -215,6 +237,11 @@ function completeHistoricalInventory(resources) {
     };
     if (!existing.has(key(resource))) resources.push(resource);
   }
+  for (const resource of resources) {
+    resource.metadata.uid ??=
+      `fixture-uid-${resource.kind.toLowerCase()}-${resource.metadata.name}`;
+    resource.metadata.resourceVersion ??= String(++resourceVersion);
+  }
   return resources;
 }
 
@@ -251,7 +278,7 @@ function baselineResources() {
     ]),
     deployment("spoke", [{ name: "spoke", image: imageByPair["spoke/spoke"] }])
   ];
-  return completeHistoricalInventory([
+  const resources = completeHistoricalInventory([
     {
       apiVersion: "v1",
       kind: "Namespace",
@@ -272,21 +299,42 @@ function baselineResources() {
     },
     ...deployments
   ]);
+  resources.push(
+    {
+      apiVersion: profile.legacy_image_pull.secret.apiVersion,
+      kind: profile.legacy_image_pull.secret.kind,
+      metadata: metadata(profile.legacy_image_pull.secret.name),
+      type: profile.legacy_image_pull.secret.type,
+      data: {
+        [profile.legacy_image_pull.secret.data_key]: oldLivePullConfig
+      }
+    },
+    {
+      apiVersion: profile.legacy_image_pull.service_account.apiVersion,
+      kind: profile.legacy_image_pull.service_account.kind,
+      metadata: metadata(profile.legacy_image_pull.service_account.name),
+      imagePullSecrets: structuredClone(
+        profile.legacy_image_pull.service_account.image_pull_secrets
+      )
+    }
+  );
+  return resources;
 }
 
-function values(snapshot) {
+function values(snapshot, pullConfig) {
   return {
     Namespace: namespace,
     ...structuredClone(snapshot),
-    ...structuredClone(imageByValueKey)
+    ...structuredClone(imageByValueKey),
+    [profile.legacy_image_pull.snapshot_value_key]: pullConfig
   };
 }
 
 function fixture() {
   return {
     baselineResources: baselineResources(),
-    oldValues: values(oldSnapshotSecrets),
-    newValues: values(newSnapshotSecrets),
+    oldValues: values(oldSnapshotSecrets, oldPullConfig),
+    newValues: values(newSnapshotSecrets, newPullConfig),
     rotationRevision: revision,
     profile
   };
@@ -333,6 +381,11 @@ function reentryFixture() {
   const bundle = createProcessLocalRotationBundle(input);
   const targets = [
     structuredClone(findResource(input.baselineResources, "Secret", "configs")),
+    structuredClone(findResource(
+      input.baselineResources,
+      "Secret",
+      profile.legacy_image_pull.secret.name
+    )),
     ...profile.rotation_revision_deployments.map(name =>
       structuredClone(findResource(input.baselineResources, "Deployment", name)))
   ];
@@ -345,6 +398,21 @@ function reentryFixture() {
       }))
   ];
   return { input, bundle, targets, candidates };
+}
+
+function identity(resource) {
+  return [
+    resource.apiVersion,
+    resource.kind,
+    resource.metadata.namespace || "",
+    resource.metadata.name
+  ].join("\0");
+}
+
+function expandTargetLiveResources(state, targetResources) {
+  const replacements = new Map(targetResources.map(resource => [identity(resource), resource]));
+  return state.input.baselineResources.map(resource =>
+    structuredClone(replacements.get(identity(resource)) || resource));
 }
 
 function appliedCandidate(candidate, baseline, index) {
@@ -372,9 +440,12 @@ function appliedCandidate(candidate, baseline, index) {
 }
 
 function classifyReentry(state) {
+  const liveResources = state.liveResources.length === state.targets.length
+    ? expandTargetLiveResources(state, state.liveResources)
+    : state.liveResources;
   return classifyProcessLocalRotationReentry({
     baselineResources: state.input.baselineResources,
-    liveResources: state.liveResources,
+    liveResources,
     bundle: state.bundle,
     profile
   });
@@ -399,6 +470,26 @@ test("pins the exact historical 22-key process-local Secret contract", () => {
   ]);
   assert.equal(profile.required_deployments.length, 12);
   assert.equal(profile.image_pairs.length, 13);
+  assert.deepEqual(profile.legacy_image_pull, {
+    snapshot_value_key: "BOT_IMAGE_PULL_CONFIG_JSON_BASE64",
+    verified_image_value_keys: [
+      "OVERRIDE_BOT_ORCHESTRATOR_IMAGE",
+      "OVERRIDE_BOT_RUNNER_IMAGE"
+    ],
+    secret: {
+      apiVersion: "v1",
+      kind: "Secret",
+      name: "ghcr-pull",
+      type: "kubernetes.io/dockerconfigjson",
+      data_key: ".dockerconfigjson"
+    },
+    service_account: {
+      apiVersion: "v1",
+      kind: "ServiceAccount",
+      name: "default",
+      image_pull_secrets: [{ name: "ghcr-pull" }]
+    }
+  });
 });
 
 test("matches all 42 identities in the independently parsed historical Cloud template", () => {
@@ -468,6 +559,12 @@ test("rejects every relaxed or substituted historical profile contract", () => {
     },
     candidate => {
       candidate.forbidden.bot_orchestrator_env_names = [];
+    },
+    candidate => {
+      candidate.legacy_image_pull.secret.name = "relaxed-pull";
+    },
+    candidate => {
+      candidate.legacy_image_pull.service_account.image_pull_secrets = [];
     }
   ];
   for (const mutate of mutations) {
@@ -509,16 +606,16 @@ test("snapshots accessor-backed profiles before validating their canonical contr
   assert.equal(reads, 1);
 });
 
-test("projects only Secret/configs and binds ret-config plus 12 Deployments for CAS", () => {
+test("projects two Secrets and binds both, ret-config, default and 12 Deployments for CAS", () => {
   const input = fixture();
   const bundle = createProcessLocalRotationBundle(input);
   assert.equal(bundle.schemaVersion, 1);
   assert.equal(bundle.runnerMode, "process-local");
   assert.deepEqual(
     bundle.resources.map(resource => `${resource.kind}/${resource.metadata.name}`).sort(),
-    ["Secret/configs"]
+    ["Secret/configs", "Secret/ghcr-pull"]
   );
-  assert.equal(bundle.contract.liveResourceBindings.length, 14);
+  assert.equal(bundle.contract.liveResourceBindings.length, 16);
   assert.equal(bundle.contract.liveResourceBindings.every(binding =>
     binding.uid && binding.resourceVersion
   ), true);
@@ -527,6 +624,11 @@ test("projects only Secret/configs and binds ret-config plus 12 Deployments for 
   assert.equal(bundle.contract.configMapInvariant, true);
   assert.equal(bundle.contract.legacyLastAppliedRemoved, false);
   assert.equal(bundle.contract.retConfigBinding.name, "ret-config");
+  assert.deepEqual(bundle.contract.legacyImagePull.serviceAccount, {
+    name: "default",
+    imagePullSecrets: [{ name: "ghcr-pull" }],
+    action: "bind-existing-no-apply"
+  });
   assert.deepEqual(
     bundle.contract.retConfigBinding.placeholderCounts,
     profile.ret_config_placeholder_counts
@@ -547,6 +649,14 @@ test("requires an explicit old snapshot matching every live Secret value", () =>
   const drift = fixture();
   drift.oldValues.BOT_ACCESS_KEY = "different-old-snapshot-secret";
   expectCode(() => createProcessLocalRotationBundle(drift), "baseline_secret_snapshot_mismatch");
+
+  const pullDrift = fixture();
+  findResource(pullDrift.baselineResources, "Secret", "ghcr-pull")
+    .data[".dockerconfigjson"] = encodedPullConfig("fixture-user", "wrong-live-token");
+  expectCode(
+    () => createProcessLocalRotationBundle(pullDrift),
+    "legacy_pull_credential_contract_invalid"
+  );
 
   const derivedDrift = fixture();
   derivedDrift.oldValues.PGRST_JWT_SECRET = "stale-derived-value";
@@ -578,7 +688,7 @@ test("requires exact private snapshot projections with no AUD-075 or unrelated k
   const optionalDerived = fixture();
   optionalDerived.oldValues.PGRST_JWT_SECRET = oldLiveSecrets.PGRST_JWT_SECRET;
   optionalDerived.newValues.PGRST_JWT_SECRET = permsMaterial(newPermsKey).jwt;
-  assert.equal(createProcessLocalRotationBundle(optionalDerived).resources.length, 1);
+  assert.equal(createProcessLocalRotationBundle(optionalDerived).resources.length, 2);
 });
 
 test("rotates the exact Secret while keeping placeholder ret-config non-applicable", () => {
@@ -589,6 +699,8 @@ test("rotates the exact Secret while keeping placeholder ret-config non-applicab
   assert.equal(secret.stringData.DB_PASS, newSnapshotSecrets.DB_PASS);
   assert.equal(secret.stringData.PERMS_KEY, runtimePrivateKey(newSnapshotSecrets.PERMS_KEY));
   assert.equal(JSON.parse(secret.stringData.PGRST_JWT_SECRET).kty, "RSA");
+  const pullSecret = findResource(bundle.resources, "Secret", "ghcr-pull");
+  assert.equal(pullSecret.data[".dockerconfigjson"], newPullConfig);
   assert.equal(findResource(bundle.resources, "ConfigMap", "ret-config"), undefined);
   const config = findResource(input.baselineResources, "ConfigMap", "ret-config");
   assert.equal(config.data["config.toml.template"], retConfigText());
@@ -607,11 +719,29 @@ test("validates and removes the exact historical last-applied Secret payload", (
     manager: "kubectl-client-side-apply",
     operation: "Update"
   }];
+  const baselinePullSecret = findResource(input.baselineResources, "Secret", "ghcr-pull");
+  baselinePullSecret.metadata.annotations = {
+    "kubectl.kubernetes.io/last-applied-configuration": JSON.stringify({
+      apiVersion: "v1",
+      kind: "Secret",
+      metadata: { annotations: {}, name: "ghcr-pull", namespace },
+      type: "kubernetes.io/dockerconfigjson",
+      data: structuredClone(baselinePullSecret.data)
+    })
+  };
+  baselinePullSecret.metadata.managedFields = [{
+    manager: "kubectl-client-side-apply",
+    operation: "Update"
+  }];
   const bundle = createProcessLocalRotationBundle(input);
   const projected = findResource(bundle.resources, "Secret", "configs");
+  const projectedPull = findResource(bundle.resources, "Secret", "ghcr-pull");
   assert.equal(bundle.contract.legacyLastAppliedRemoved, true);
   assert.equal(projected.metadata.managedFields, undefined);
   assert.equal(projected.metadata.annotations, undefined);
+  assert.equal(projectedPull.metadata.managedFields, undefined);
+  assert.equal(projectedPull.metadata.annotations, undefined);
+  assert.equal(projectedPull.data[".dockerconfigjson"], newPullConfig);
   assert.equal(JSON.stringify(projected).includes(oldSnapshotSecrets.GUARDIAN_KEY), false);
 
   const redacted = redactProcessLocalRotationBundle({
@@ -634,6 +764,44 @@ test("rejects stale last-applied, unknown Secret annotations and immutable Secre
   expectCode(
     () => createProcessLocalRotationBundle(stale),
     "baseline_secret_last_applied_invalid"
+  );
+
+  const stalePull = fixture();
+  const stalePullSecret = findResource(stalePull.baselineResources, "Secret", "ghcr-pull");
+  stalePullSecret.metadata.annotations = {
+    "kubectl.kubernetes.io/last-applied-configuration": JSON.stringify({
+      apiVersion: "v1",
+      kind: "Secret",
+      metadata: { name: "ghcr-pull", namespace },
+      type: "kubernetes.io/dockerconfigjson",
+      data: { ".dockerconfigjson": newPullConfig }
+    })
+  };
+  expectCode(
+    () => createProcessLocalRotationBundle(stalePull),
+    "baseline_pull_secret_last_applied_invalid"
+  );
+
+  const annotatedLastAppliedPull = fixture();
+  const annotatedLastAppliedPullSecret = findResource(
+    annotatedLastAppliedPull.baselineResources, "Secret", "ghcr-pull"
+  );
+  annotatedLastAppliedPullSecret.metadata.annotations = {
+    "kubectl.kubernetes.io/last-applied-configuration": JSON.stringify({
+      apiVersion: "v1",
+      kind: "Secret",
+      metadata: {
+        annotations: { "example.invalid/unknown": "value" },
+        name: "ghcr-pull",
+        namespace
+      },
+      type: "kubernetes.io/dockerconfigjson",
+      data: structuredClone(annotatedLastAppliedPullSecret.data)
+    })
+  };
+  expectCode(
+    () => createProcessLocalRotationBundle(annotatedLastAppliedPull),
+    "baseline_pull_secret_last_applied_invalid"
   );
 
   const annotated = fixture();
@@ -728,8 +896,8 @@ test("annotation projection fails closed on stale binding, image drift or non-qu
   );
 });
 
-test("classifies the exact seven-resource inventory after a crash at every replacement", () => {
-  for (let appliedCount = 0; appliedCount <= 7; appliedCount += 1) {
+test("classifies the exact eight-resource inventory after a crash at every replacement", () => {
+  for (let appliedCount = 0; appliedCount <= 8; appliedCount += 1) {
     const state = reentryFixture();
     state.liveResources = state.targets.map((baseline, index) =>
       index < appliedCount
@@ -748,14 +916,15 @@ test("classifies the exact seven-resource inventory after a crash at every repla
       bundle: state.bundle
     }), unchangedInputs, "classification must not mutate its inputs");
     assert.equal(result.schemaVersion, 1);
-    assert.equal(result.resourceCount, 7);
-    assert.equal(result.pendingCount, 7 - appliedCount);
+    assert.equal(result.resourceCount, 8);
+    assert.equal(result.pendingCount, 8 - appliedCount);
     assert.equal(result.alreadyAppliedCount, appliedCount);
-    assert.equal(result.complete, appliedCount === 7);
+    assert.equal(result.complete, appliedCount === 8);
     assert.deepEqual(
       result.resources.map(resource => `${resource.kind}/${resource.name}`),
       [
         "Secret/configs",
+        "Secret/ghcr-pull",
         ...profile.rotation_revision_deployments.map(name => `Deployment/${name}`)
       ]
     );
@@ -763,7 +932,7 @@ test("classifies the exact seven-resource inventory after a crash at every repla
       result.resources.map(resource => resource.state),
       [
         ...Array.from({ length: appliedCount }, () => "already-applied"),
-        ...Array.from({ length: 7 - appliedCount }, () => "pending")
+        ...Array.from({ length: 8 - appliedCount }, () => "pending")
       ]
     );
     assert.equal(
@@ -774,7 +943,7 @@ test("classifies the exact seven-resource inventory after a crash at every repla
   }
 });
 
-test("re-entry requires exactly Secret/configs plus the six quiesced Deployments", () => {
+test("re-entry requires the complete 44-resource inventory", () => {
   const mutations = [
     live => live.slice(1),
     live => [...live, {
@@ -794,13 +963,71 @@ test("re-entry requires exactly Secret/configs plus the six quiesced Deployments
   ];
   for (const mutate of mutations) {
     const state = reentryFixture();
-    state.liveResources = mutate(state.targets.map(resource => structuredClone(resource)));
+    state.liveResources = mutate(expandTargetLiveResources(
+      state,
+      state.targets.map(resource => structuredClone(resource))
+    ));
     expectCode(() => classifyReentry(state), "rotation_reentry_inventory_invalid");
   }
 });
 
-test("re-entry rejects UID replacement for every one of the seven resources", () => {
-  for (let index = 0; index < 7; index += 1) {
+test("re-entry binds default and ret-config while tolerating only server state elsewhere", () => {
+  const serviceAccountDrift = reentryFixture();
+  serviceAccountDrift.liveResources = expandTargetLiveResources(
+    serviceAccountDrift,
+    serviceAccountDrift.targets
+  );
+  findResource(serviceAccountDrift.liveResources, "ServiceAccount", "default")
+    .imagePullSecrets = [];
+  expectCode(
+    () => classifyReentry(serviceAccountDrift),
+    "baseline_pull_service_account_invalid"
+  );
+
+  const serviceAccountRvDrift = reentryFixture();
+  serviceAccountRvDrift.liveResources = expandTargetLiveResources(
+    serviceAccountRvDrift,
+    serviceAccountRvDrift.targets
+  );
+  findResource(serviceAccountRvDrift.liveResources, "ServiceAccount", "default")
+    .metadata.resourceVersion = "advanced-default";
+  expectCode(
+    () => classifyReentry(serviceAccountRvDrift),
+    "rotation_reentry_bind_only_resource_drift"
+  );
+
+  const retConfigDrift = reentryFixture();
+  retConfigDrift.liveResources = expandTargetLiveResources(
+    retConfigDrift,
+    retConfigDrift.targets
+  );
+  findResource(retConfigDrift.liveResources, "ConfigMap", "ret-config")
+    .data["config.toml.template"] += "\ndrift";
+  expectCode(
+    () => classifyReentry(retConfigDrift),
+    "rotation_reentry_non_target_resource_drift"
+  );
+
+  const uidDrift = reentryFixture();
+  uidDrift.liveResources = expandTargetLiveResources(uidDrift, uidDrift.targets);
+  findResource(uidDrift.liveResources, "Deployment", "hubs").metadata.uid = "replacement";
+  expectCode(
+    () => classifyReentry(uidDrift),
+    "rotation_reentry_invariant_uid_mismatch"
+  );
+
+  const serverState = reentryFixture();
+  serverState.liveResources = expandTargetLiveResources(serverState, serverState.targets);
+  const hubs = findResource(serverState.liveResources, "Deployment", "hubs");
+  hubs.metadata.resourceVersion = "status-advanced";
+  hubs.status = { observedGeneration: hubs.metadata.generation, availableReplicas: 1 };
+  const result = classifyReentry(serverState);
+  assert.equal(result.resourceCount, 8);
+  assert.equal(result.pendingCount, 8);
+});
+
+test("re-entry rejects UID replacement for every one of the eight targets", () => {
+  for (let index = 0; index < 8; index += 1) {
     const state = reentryFixture();
     state.liveResources = state.targets.map(resource => structuredClone(resource));
     state.liveResources[index].metadata.uid = `replacement-uid-${index}`;
@@ -865,6 +1092,20 @@ test("re-entry rejects Secret, annotation, image and replica content drift", () 
   }
   expectCode(() => classifyReentry(secretDrift), "rotation_reentry_resource_drift");
 
+  const pullSecretDrift = reentryFixture();
+  pullSecretDrift.liveResources = pullSecretDrift.targets.map(resource =>
+    structuredClone(resource));
+  pullSecretDrift.liveResources[1] = appliedCandidate(
+    pullSecretDrift.candidates[1], pullSecretDrift.targets[1], 1
+  );
+  pullSecretDrift.liveResources[1].data[".dockerconfigjson"] = encodedPullConfig(
+    "fixture-user", "new-pull-token-value", 2
+  );
+  expectCode(
+    () => classifyReentry(pullSecretDrift),
+    "rotation_reentry_resource_drift"
+  );
+
   const annotationDrift = reentryFixture();
   annotationDrift.liveResources = annotationDrift.targets.map(resource => structuredClone(resource));
   annotationDrift.liveResources[2] = appliedCandidate(
@@ -898,7 +1139,7 @@ test("re-entry rejects Secret, annotation, image and replica content drift", () 
 
   const replicaDrift = reentryFixture();
   replicaDrift.liveResources = replicaDrift.targets.map(resource => structuredClone(resource));
-  replicaDrift.liveResources[1].spec.replicas = 1;
+  replicaDrift.liveResources[2].spec.replicas = 1;
   expectCode(
     () => classifyReentry(replicaDrift),
     "rotation_reentry_deployment_not_quiesced"
@@ -913,8 +1154,8 @@ test("re-entry permits only real server defaults and exact generation advancemen
     manager: "kube-controller-manager",
     operation: "Update"
   });
-  accepted.liveResources[1].status = {
-    observedGeneration: accepted.targets[1].metadata.generation + 1,
+  accepted.liveResources[2].status = {
+    observedGeneration: accepted.targets[2].metadata.generation + 1,
     conditions: [{ type: "Available", status: "False" }]
   };
   const result = classifyReentry(accepted);
@@ -924,18 +1165,18 @@ test("re-entry permits only real server defaults and exact generation advancemen
   for (const generation of [7, 9]) {
     const drift = reentryFixture();
     drift.liveResources = drift.targets.map(resource => structuredClone(resource));
-    drift.liveResources[1] = appliedCandidate(drift.candidates[1], drift.targets[1], 1);
-    drift.liveResources[1].metadata.generation = generation;
+    drift.liveResources[2] = appliedCandidate(drift.candidates[2], drift.targets[2], 2);
+    drift.liveResources[2].metadata.generation = generation;
     expectCode(() => classifyReentry(drift), "rotation_reentry_resource_drift");
   }
 
   const malformedManagedFields = reentryFixture();
   malformedManagedFields.liveResources = malformedManagedFields.targets
     .map(resource => structuredClone(resource));
-  malformedManagedFields.liveResources[1] = appliedCandidate(
-    malformedManagedFields.candidates[1], malformedManagedFields.targets[1], 1
+  malformedManagedFields.liveResources[2] = appliedCandidate(
+    malformedManagedFields.candidates[2], malformedManagedFields.targets[2], 2
   );
-  malformedManagedFields.liveResources[1].metadata.managedFields = "not-an-array";
+  malformedManagedFields.liveResources[2].metadata.managedFields = "not-an-array";
   expectCode(
     () => classifyReentry(malformedManagedFields),
     "rotation_reentry_live_deployment_invalid"
@@ -991,7 +1232,7 @@ test("replacement projection strips status and server-managed write metadata", (
       replacement.metadata.resourceVersion,
       baselineResource.metadata.resourceVersion
     );
-    if (index > 0) assert.equal(replacement.spec.replicas, 0);
+    if (replacement.kind === "Deployment") assert.equal(replacement.spec.replicas, 0);
   }
   assert.equal(canonicalJson(state.targets), unchanged, "projection must remain pure");
 });
@@ -1033,7 +1274,7 @@ test("re-entry accepts only a sanitized, mutable Opaque final Secret", () => {
   assert.equal(projected.immutable, undefined);
 });
 
-test("verifies an exact Secret-only bundle and rejects post-projection mutation", () => {
+test("verifies an exact two-Secret bundle and rejects post-projection mutation", () => {
   const input = fixture();
   const bundle = createProcessLocalRotationBundle(input);
   assert.equal(verifyProcessLocalRotationBundle({ ...input, bundle }), true);
@@ -1042,6 +1283,14 @@ test("verifies an exact Secret-only bundle and rejects post-projection mutation"
   findResource(changed.resources, "Secret", "configs").stringData.DB_PASS += "tampered";
   expectCode(
     () => verifyProcessLocalRotationBundle({ ...input, bundle: changed }),
+    "rotation_bundle_contract_mismatch"
+  );
+
+  const changedPull = structuredClone(bundle);
+  findResource(changedPull.resources, "Secret", "ghcr-pull")
+    .data[".dockerconfigjson"] = oldPullConfig;
+  expectCode(
+    () => verifyProcessLocalRotationBundle({ ...input, bundle: changedPull }),
     "rotation_bundle_contract_mismatch"
   );
 
@@ -1067,6 +1316,21 @@ test("requires both snapshots and all 13 live images to remain exact trusted dig
   changedOld.oldValues.OVERRIDE_RETICULUM_IMAGE =
     `ghcr.io/yengalvez/reticulum@sha256:${"f".repeat(64)}`;
   expectCode(() => createProcessLocalRotationBundle(changedOld), "old_image_override_changed");
+
+  const changedRunner = fixture();
+  changedRunner.newValues.OVERRIDE_BOT_RUNNER_IMAGE =
+    `ghcr.io/yengalvez/bot-runner@sha256:${"f".repeat(64)}`;
+  expectCode(
+    () => createProcessLocalRotationBundle(changedRunner),
+    "pull_image_override_changed"
+  );
+
+  const unchangedPullCredential = fixture();
+  unchangedPullCredential.newValues.BOT_IMAGE_PULL_CONFIG_JSON_BASE64 = oldPullConfig;
+  expectCode(
+    () => createProcessLocalRotationBundle(unchangedPullCredential),
+    "legacy_pull_credential_contract_invalid"
+  );
 
   const untrusted = fixture();
   const reticulum = findResource(untrusted.baselineResources, "Deployment", "reticulum");
@@ -1257,6 +1521,10 @@ test("redacts Secret and sensitive ConfigMap bodies with operation-local HMACs",
     );
   }
   assert.equal(serialized.includes(oldSnapshotSecrets.GUARDIAN_KEY), false);
+  assert.equal(serialized.includes(oldPullConfig), false);
+  assert.equal(serialized.includes(newPullConfig), false);
+  assert.equal(serialized.includes("old-pull-token-value"), false);
+  assert.equal(serialized.includes("new-pull-token-value"), false);
   assert.equal(redacted.secret.keys.length, 22);
   assert.equal(redacted.placeholderConfigMap.dataKeys.length, 1);
   assert.match(redacted.secret.keys[0].fingerprint, /^[a-f0-9]{64}$/u);
@@ -1265,6 +1533,8 @@ test("redacts Secret and sensitive ConfigMap bodies with operation-local HMACs",
   assert.equal(redacted.specInvariant, true);
   assert.equal(redacted.configMapInvariant, true);
   assert.equal(redacted.placeholderConfigMap.action, "bind-existing-no-apply");
+  assert.equal(redacted.legacyImagePull.pullSecret.credentialRotated, true);
+  assert.equal(redacted.legacyImagePull.serviceAccount.action, "bind-existing-no-apply");
   assert.equal(hasOwn(redacted, "sensitiveConfigMap"), false);
   assert.equal(hasOwn(redacted, "deployments"), false);
   assert.equal(hasOwn(redacted, "desiredDeploymentAnnotations"), false);

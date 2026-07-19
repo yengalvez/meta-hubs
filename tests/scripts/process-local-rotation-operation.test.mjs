@@ -109,6 +109,25 @@ function operationBaseline() {
     },
     spec: { podSelector: { matchLabels: { app: "pgsql" } }, policyTypes: ["Ingress"] }
   };
+  const pullResources = [{
+    apiVersion: "v1",
+    kind: "Secret",
+    metadata: {
+      name: "ghcr-pull",
+      namespace: "hcce",
+      resourceVersion: "7501",
+      uid: "secret-uid-ghcr-pull"
+    }
+  }, {
+    apiVersion: "v1",
+    kind: "ServiceAccount",
+    metadata: {
+      name: "default",
+      namespace: "hcce",
+      resourceVersion: "7502",
+      uid: "serviceaccount-uid-default"
+    }
+  }];
   const fillers = Array.from({ length: 34 }, (_, index) => ({
     apiVersion: "v1",
     kind: "ConfigMap",
@@ -117,7 +136,11 @@ function operationBaseline() {
       namespace: "hcce"
     }
   }));
-  return { apiVersion: "v1", kind: "List", items: [...deployments, policy, ...fillers] };
+  return {
+    apiVersion: "v1",
+    kind: "List",
+    items: [...deployments, policy, ...fillers, ...pullResources]
+  };
 }
 
 function fixture({ seal = true, bind = false } = {}) {
@@ -186,11 +209,11 @@ function terminalReport(overrides = {}) {
     schema_version: 2,
     verdict: "pass",
     inventories: {
-      original_baseline_resources: 42,
-      baseline_resources: 42,
-      intermediate_cas_resources: 7,
-      final_resources: 42,
-      final_secrets: 1,
+      original_baseline_resources: 44,
+      baseline_resources: 44,
+      intermediate_cas_resources: 8,
+      final_resources: 44,
+      final_secrets: 2,
       final_deployments: 12,
       exact: true
     },

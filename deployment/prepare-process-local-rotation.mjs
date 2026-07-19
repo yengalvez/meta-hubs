@@ -354,6 +354,25 @@ function comparableDesiredResource(resource) {
   return comparable;
 }
 
+function matchesProfileResource(resource, expected, namespace) {
+  return resource?.apiVersion === expected.apiVersion &&
+    resource?.kind === expected.kind &&
+    resource?.metadata?.namespace === namespace &&
+    resource?.metadata?.name === expected.name;
+}
+
+function assertUnchangedLegacyImagePullResource(before, after, expected, namespace) {
+  requireLiveResourceMetadata(before);
+  requireLiveResourceMetadata(after);
+  if (!matchesProfileResource(before, expected, namespace) ||
+      !matchesProfileResource(after, expected, namespace) ||
+      before.metadata.uid !== after.metadata.uid ||
+      before.metadata.resourceVersion !== after.metadata.resourceVersion ||
+      canonicalJson(before) !== canonicalJson(after)) {
+    fail("baseline_legacy_image_pull_drift");
+  }
+}
+
 function pgsqlUserMetadata(resource) {
   const metadata = metadataWithoutServerFields(resource);
   const annotations = structuredClone(metadata.annotations || {});
@@ -470,6 +489,17 @@ function assertOriginalAndQuiescedBaselines(
   for (const [identity, before] of original.entries()) {
     const after = quiesced.get(identity);
     if (before.kind !== "Deployment") {
+      if (matchesProfileResource(
+        before, profile.legacy_image_pull.secret, namespace
+      ) || matchesProfileResource(
+        before, profile.legacy_image_pull.service_account, namespace
+      )) {
+        const expected = before.kind === profile.legacy_image_pull.secret.kind
+          ? profile.legacy_image_pull.secret
+          : profile.legacy_image_pull.service_account;
+        assertUnchangedLegacyImagePullResource(before, after, expected, namespace);
+        continue;
+      }
       if (before.apiVersion === "networking.k8s.io/v1" &&
           before.kind === "NetworkPolicy" &&
           before.metadata?.name === AUD065_PGSQL_POLICY_NAME &&
@@ -538,8 +568,46 @@ function assertOriginalAndQuiescedBaselines(
 function buildApplyAttestation(quiescedResources, bundle, profile) {
   const index = indexResources(quiescedResources);
   const namespace = bundle.contract.namespace;
+  const bindingFor = resource => {
+    const matches = bundle.contract.liveResourceBindings.filter(binding =>
+      binding.apiVersion === resource.apiVersion && binding.kind === resource.kind &&
+      binding.namespace === resource.metadata.namespace &&
+      binding.name === resource.metadata.name
+    );
+    if (matches.length !== 1 ||
+        matches[0].uid !== resource.metadata.uid ||
+        matches[0].resourceVersion !== resource.metadata.resourceVersion) {
+      fail("apply_projection_binding_invalid");
+    }
+    return matches[0];
+  };
+  const secretNames = [
+    profile.projected_resources.secret,
+    profile.legacy_image_pull.secret.name
+  ];
+  const secrets = secretNames.map(name => {
+    const baseline = findResource(index, "v1", "Secret", namespace, name);
+    const projected = bundle.resources.filter(resource =>
+      resource.apiVersion === "v1" && resource.kind === "Secret" &&
+      resource.metadata?.namespace === namespace && resource.metadata?.name === name
+    );
+    requireLiveResourceMetadata(baseline);
+    bindingFor(baseline);
+    if (projected.length !== 1 ||
+        projected[0].metadata?.uid !== baseline.metadata.uid ||
+        projected[0].metadata?.resourceVersion !== baseline.metadata.resourceVersion) {
+      fail("apply_projection_binding_invalid");
+    }
+    return {
+      name,
+      uidBound: true,
+      resourceVersionBound: true,
+      mutated: true
+    };
+  });
   const deployments = profile.rotation_revision_deployments.map(name => {
     const baseline = findResource(index, "apps/v1", "Deployment", namespace, name);
+    bindingFor(baseline);
     const projected = applyProcessLocalRotationAnnotations({ deployment: baseline, bundle, profile });
     if (projected.spec?.replicas !== 0) fail("apply_projection_not_quiesced");
     return {
@@ -550,9 +618,31 @@ function buildApplyAttestation(quiescedResources, bundle, profile) {
       annotationKeys: Object.keys(bundle.contract.desiredDeploymentAnnotations[name]).sort()
     };
   });
+  const serviceAccountProfile = profile.legacy_image_pull.service_account;
+  const serviceAccount = findResource(
+    index,
+    serviceAccountProfile.apiVersion,
+    serviceAccountProfile.kind,
+    namespace,
+    serviceAccountProfile.name
+  );
+  requireLiveResourceMetadata(serviceAccount);
+  bindingFor(serviceAccount);
+  if (canonicalJson(serviceAccount.imagePullSecrets) !==
+      canonicalJson(serviceAccountProfile.image_pull_secrets)) {
+    fail("apply_projection_service_account_invalid");
+  }
   return {
     allConsumersQuiesced: deployments.every(item => item.replicas === 0),
     bundleRestoresReplicas: false,
+    secrets,
+    serviceAccount: {
+      name: serviceAccountProfile.name,
+      uidBound: true,
+      resourceVersionBound: true,
+      imagePullSecretsExact: true,
+      mutated: false
+    },
     deployments
   };
 }
@@ -996,7 +1086,7 @@ export function verifyOfflineProcessLocalRotationPlan({
     }
     const namespace = operationIntent.namespaceName;
     const originalIndex = indexResources(parsed.originalResources);
-    if (originalIndex.size !== 42 || profile.baseline_resource_identities.length !== 42) {
+    if (originalIndex.size !== 44 || profile.baseline_resource_identities.length !== 42) {
       fail("plan_baseline_inventory_invalid");
     }
     const policy = findResource(

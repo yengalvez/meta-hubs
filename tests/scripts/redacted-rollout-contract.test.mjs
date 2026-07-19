@@ -105,11 +105,30 @@ function runtimePrivateKey(snapshotPrivate) {
 const oldKey = keyMaterial();
 const newKey = keyMaterial();
 
-const imageValueKeys = [...new Set(profile.image_pairs.map(pair => pair.value_key))];
+const imageValueKeys = [...new Set([
+  ...profile.image_pairs.map(pair => pair.value_key),
+  ...profile.legacy_image_pull.verified_image_value_keys
+])];
 const imageByValueKey = Object.fromEntries(imageValueKeys.map(valueKey => {
   const pair = profile.image_pairs.find(candidate => candidate.value_key === valueKey);
-  return [valueKey, `${pair.repositories[0]}@sha256:${sha256(valueKey)}`];
+  const repository = pair?.repositories[0] || "ghcr.io/yengalvez/bot-runner";
+  return [valueKey, `${repository}@sha256:${sha256(valueKey)}`];
 }));
+
+function pullConfig(username, token) {
+  return Buffer.from(JSON.stringify({
+    auths: {
+      "ghcr.io": {
+        auth: Buffer.from(`${username}:${token}`, "utf8").toString("base64")
+      }
+    }
+  }), "utf8").toString("base64");
+}
+
+const oldPullToken = "ghp_fixture_before_pull_token_0000000000000001";
+const newPullToken = "ghp_fixture_after_pull_token_00000000000000002";
+const oldPullConfig = pullConfig("fixture-user", oldPullToken);
+const newPullConfig = pullConfig("fixture-user", newPullToken);
 
 function snapshotSecrets(prefix, key) {
   const password = `${prefix}-database-password-with-sufficient-entropy`;
@@ -141,11 +160,12 @@ function snapshotSecrets(prefix, key) {
 const oldSecrets = snapshotSecrets("before", oldKey);
 const newSecrets = snapshotSecrets("after", newKey);
 
-function values(secrets) {
+function values(secrets, encodedPullConfig) {
   return {
     Namespace: namespace,
     ...structuredClone(secrets),
-    ...structuredClone(imageByValueKey)
+    ...structuredClone(imageByValueKey),
+    [profile.legacy_image_pull.snapshot_value_key]: encodedPullConfig
   };
 }
 
@@ -302,6 +322,25 @@ function originalBaselineResources() {
       stringData: liveOldSecretValues()
     },
     {
+      apiVersion: profile.legacy_image_pull.secret.apiVersion,
+      kind: profile.legacy_image_pull.secret.kind,
+      metadata: metadata("secret", profile.legacy_image_pull.secret.name),
+      type: profile.legacy_image_pull.secret.type,
+      data: {
+        [profile.legacy_image_pull.secret.data_key]: oldPullConfig
+      }
+    },
+    {
+      apiVersion: profile.legacy_image_pull.service_account.apiVersion,
+      kind: profile.legacy_image_pull.service_account.kind,
+      metadata: metadata(
+        "serviceaccount", profile.legacy_image_pull.service_account.name
+      ),
+      imagePullSecrets: structuredClone(
+        profile.legacy_image_pull.service_account.image_pull_secrets
+      )
+    },
+    {
       apiVersion: "v1",
       kind: "ConfigMap",
       metadata: metadata("configmap", "ret-config"),
@@ -359,7 +398,7 @@ function apiSecret(resource, resourceVersionValue) {
     apiVersion: "v1",
     kind: "Secret",
     metadata: { ...structuredClone(resource.metadata), resourceVersion: resourceVersionValue },
-    type: "Opaque",
+    type: resource.type,
     data: Object.fromEntries(Object.entries(secretValues).map(([name, value]) => [
       name,
       Buffer.from(value, "utf8").toString("base64")
@@ -429,6 +468,22 @@ function applyAttestation(baseline, bundle) {
   return {
     allConsumersQuiesced: true,
     bundleRestoresReplicas: false,
+    secrets: [
+      profile.projected_resources.secret,
+      profile.legacy_image_pull.secret.name
+    ].map(name => ({
+      name,
+      uidBound: true,
+      resourceVersionBound: true,
+      mutated: true
+    })),
+    serviceAccount: {
+      name: profile.legacy_image_pull.service_account.name,
+      uidBound: true,
+      resourceVersionBound: true,
+      imagePullSecretsExact: true,
+      mutated: false
+    },
     deployments: profile.rotation_revision_deployments.map(name => {
       const projected = applyProcessLocalRotationAnnotations({
         deployment: find(baseline, "Deployment", name),
@@ -518,10 +573,12 @@ function buildBundleBinding({
 
 function finalResources(baseline, casResponses, bundle, operationIntent) {
   const final = structuredClone(baseline);
-  const secretIndex = final.findIndex(resource =>
-    resource.kind === "Secret" && resource.metadata.name === "configs"
-  );
-  final[secretIndex] = apiSecret(find(bundle.resources, "Secret", "configs"), "9001");
+  ["configs", profile.legacy_image_pull.secret.name].forEach(name => {
+    const secretIndex = final.findIndex(resource =>
+      resource.kind === "Secret" && resource.metadata.name === name
+    );
+    final[secretIndex] = structuredClone(find(casResponses, "Secret", name));
+  });
   profile.rotation_revision_deployments.forEach((name, index) => {
     const replacement = structuredClone(find(casResponses, "Deployment", name));
     replacement.spec.replicas = 1;
@@ -660,8 +717,8 @@ function operationalAttestation(bundleBinding, operationIntent) {
 
 function buildFixture({ serverMetadataChurn = false } = {}) {
   const original = originalBaselineResources();
-  const oldValues = values(oldSecrets);
-  const newValues = values(newSecrets);
+  const oldValues = values(oldSecrets, oldPullConfig);
+  const newValues = values(newSecrets, newPullConfig);
   const operationIntent = buildOperationIntent({ original, oldValues, newValues });
   const baseline = quiescedBaselineResources(original, operationIntent);
   if (serverMetadataChurn) {
@@ -682,7 +739,14 @@ function buildFixture({ serverMetadataChurn = false } = {}) {
     rotationRevision: revision,
     profile
   });
-  const casResponses = [apiSecret(find(bundle.resources, "Secret", "configs"), "9001")];
+  const casResponses = [
+    apiSecret(find(bundle.resources, "Secret", "configs"), "9001"),
+    apiSecret(find(
+      bundle.resources,
+      "Secret",
+      profile.legacy_image_pull.secret.name
+    ), "9002")
+  ];
   profile.rotation_revision_deployments.forEach((name, index) => {
     const projected = applyProcessLocalRotationAnnotations({
       deployment: find(baseline, "Deployment", name),
@@ -739,22 +803,35 @@ function expectCode(input, code) {
   );
 }
 
-test("42 final resources, one Secret, twelve Deployments and seven CAS responses pass", () => {
+test("44 operational resources, two Secrets, twelve Deployments and eight CAS responses pass", () => {
   const report = verifyRedactedRollout(buildFixture());
   assert.equal(report.verdict, "pass");
   assert.deepEqual(report.inventories, {
-    original_baseline_resources: 42,
-    baseline_resources: 42,
-    intermediate_cas_resources: 7,
-    final_resources: 42,
-    final_secrets: 1,
+    historical_generated_resources: 42,
+    original_baseline_resources: 44,
+    baseline_resources: 44,
+    live_resource_bindings: 16,
+    intermediate_cas_resources: 8,
+    final_resources: 44,
+    final_secrets: 2,
     final_deployments: 12,
     exact: true
   });
+  assert.equal(report.canonical_bundle.applicable_resource_is_secret_only, true);
+  assert.equal(report.canonical_bundle.applicable_secret_count, 2);
   assert.equal(report.secret.keys.length, 22);
   assert.equal(report.secret.opaque, true);
   assert.equal(report.secret.mutable, true);
   assert.equal(report.intermediate_cas_deployments.length, 6);
+  assert.equal(report.legacy_image_pull.name, "ghcr-pull");
+  assert.equal(report.legacy_image_pull.final_resource_version_equals_cas, true);
+  assert.equal(report.legacy_image_pull.distinct_from_candidate_pull_secret, true);
+  assert.deepEqual(report.forbidden_aud075, {
+    snapshot_secret_domain_absent: true,
+    contracted_inventory_exact: true
+  });
+  assert.equal(report.default_service_account.name, "default");
+  assert.equal(report.default_service_account.bind_only, true);
   assert.equal(report.deployments.length, 12);
   assert.equal(report.deployments.every(item => item.replicas_restored), true);
   assert.equal(report.placeholder_config_map.bytes_invariant, true);
@@ -778,6 +855,16 @@ test("report is redacted and contains only operation-local HMACs", () => {
     ...Object.values(oldSecrets),
     ...Object.values(newSecrets),
     ...Object.values(imageByValueKey),
+    oldPullConfig,
+    newPullConfig,
+    oldPullToken,
+    newPullToken,
+    Buffer.from(oldPullToken, "utf8").toString("base64"),
+    Buffer.from(newPullToken, "utf8").toString("base64"),
+    Buffer.from(`fixture-user:${oldPullToken}`, "utf8").toString("base64"),
+    Buffer.from(`fixture-user:${newPullToken}`, "utf8").toString("base64"),
+    sha256(oldPullConfig),
+    sha256(newPullConfig),
     oldKey.publicPem,
     newKey.publicPem,
     oldKey.jwk.n,
@@ -803,6 +890,8 @@ test("report is redacted and contains only operation-local HMACs", () => {
     report.placeholder_config_map.hmac,
     report.perms_key.hmac,
     report.operational_attestation.hmac,
+    report.legacy_image_pull.hmac,
+    report.default_service_account.hmac,
     ...report.secret.keys.map(item => item.hmac)
   ];
   assert.equal(hmacs.every(value => HEX_SHA256.test(value)), true);
@@ -810,7 +899,7 @@ test("report is redacted and contains only operation-local HMACs", () => {
 
 const HEX_SHA256 = /^[a-f0-9]{64}$/u;
 
-test("baseline and final inventories are exact, duplicate-free 42-resource sets", () => {
+test("baseline and final inventories are exact, duplicate-free 44-resource sets", () => {
   const missingBaseline = buildFixture();
   missingBaseline.baselineResources.pop();
   expectCode(missingBaseline, "canonical_baseline_resource_inventory_invalid");
@@ -824,7 +913,7 @@ test("baseline and final inventories are exact, duplicate-free 42-resource sets"
   expectCode(duplicateFinal, "final_inventory_invalid_duplicate");
 });
 
-test("intermediate CAS inventory remains exactly Secret plus six quiesced Deployments", () => {
+test("intermediate CAS inventory remains exactly two Secrets plus six quiesced Deployments", () => {
   const missing = buildFixture();
   missing.casResponseResources = missing.casResponseResources.filter(resource =>
     resource.metadata.name !== "dialog"
@@ -881,6 +970,98 @@ test("final Secret is exact Opaque, mutable, data-only and metadata-clean", () =
   expectCode(replacedAfterCas, "final_secret_resource_version_mismatch");
 });
 
+test("ghcr-pull is an exact second Secret CAS bound to the private rotated source", () => {
+  const pullName = profile.legacy_image_pull.secret.name;
+  const dataKey = profile.legacy_image_pull.secret.data_key;
+
+  const staleCas = buildFixture();
+  const staleCasSecret = find(staleCas.casResponseResources, "Secret", pullName);
+  staleCasSecret.metadata.resourceVersion = staleCas.bundle.contract.liveResourceBindings
+    .find(binding => binding.kind === "Secret" && binding.name === pullName)
+    .resourceVersion;
+  expectCode(staleCas, "cas_resource_version_not_advanced");
+
+  const wrongCasValue = buildFixture();
+  find(wrongCasValue.casResponseResources, "Secret", pullName).data[dataKey] =
+    oldPullConfig;
+  expectCode(wrongCasValue, "pull_secret_exact_value_mismatch");
+
+  const wrongFinalValue = buildFixture();
+  find(wrongFinalValue.finalResources, "Secret", pullName).data[dataKey] = oldPullConfig;
+  expectCode(wrongFinalValue, "pull_secret_exact_value_mismatch");
+
+  const replacedAfterCas = buildFixture();
+  find(replacedAfterCas.finalResources, "Secret", pullName)
+    .metadata.resourceVersion = "9999";
+  expectCode(replacedAfterCas, "final_pull_secret_resource_version_mismatch");
+
+  const wrongType = buildFixture();
+  find(wrongType.finalResources, "Secret", pullName).type = "Opaque";
+  expectCode(wrongType, "final_pull_secret_contract_invalid");
+
+  const staleMetadata = buildFixture();
+  find(staleMetadata.finalResources, "Secret", pullName).metadata.managedFields = [];
+  expectCode(staleMetadata, "final_pull_secret_metadata_invalid");
+});
+
+test("default ServiceAccount remains exact and bind-only through final and release", () => {
+  const serviceAccountName = profile.legacy_image_pull.service_account.name;
+
+  const finalResourceVersionDrift = buildFixture();
+  find(
+    finalResourceVersionDrift.finalResources,
+    "ServiceAccount",
+    serviceAccountName
+  ).metadata.resourceVersion = "second-write-forbidden";
+  expectCode(finalResourceVersionDrift, "default_service_account_bind_only_drift");
+
+  const finalBindingDrift = buildFixture();
+  find(
+    finalBindingDrift.finalResources,
+    "ServiceAccount",
+    serviceAccountName
+  ).imagePullSecrets = [{ name: "bot-images-pull" }];
+  expectCode(finalBindingDrift, "final_default_service_account_invalid");
+
+  const releasedResourceVersionDrift = releasedBaselineFrom(buildFixture());
+  find(
+    releasedResourceVersionDrift.releasedResources,
+    "ServiceAccount",
+    serviceAccountName
+  ).metadata.resourceVersion = "release-write-forbidden";
+  assert.throws(
+    () => verifyReleasedProcessLocalBaseline(releasedResourceVersionDrift),
+    error => error.code === "released_default_service_account_drift"
+  );
+
+  const releasedBindingDrift = releasedBaselineFrom(buildFixture());
+  find(
+    releasedBindingDrift.releasedResources,
+    "ServiceAccount",
+    serviceAccountName
+  ).imagePullSecrets = [{ name: "bot-images-pull" }];
+  assert.throws(
+    () => verifyReleasedProcessLocalBaseline(releasedBindingDrift),
+    error => error.code === "released_default_service_account_invalid"
+  );
+});
+
+test("historical count stays 42 while bot-images-pull is forbidden operationally", () => {
+  assert.equal(profile.baseline_provenance.historical_generated_resource_count, 42);
+  assert.equal(profile.baseline_resource_identities.length, 42);
+  assert.equal(profile.forbidden.resource_names.includes("bot-images-pull"), true);
+
+  const extra = buildFixture();
+  extra.finalResources.push({
+    apiVersion: "v1",
+    kind: "Secret",
+    metadata: metadata("secret", "bot-images-pull"),
+    type: "kubernetes.io/dockerconfigjson",
+    data: { ".dockerconfigjson": newPullConfig }
+  });
+  expectCode(extra, "final_inventory_invalid_mismatch");
+});
+
 test("all twelve final Deployments restore exact replicas, specs, images and annotations", () => {
   const stillQuiesced = buildFixture();
   find(stillQuiesced.finalResources, "Deployment", "dialog").spec.replicas = 0;
@@ -901,6 +1082,39 @@ test("all twelve final Deployments restore exact replicas, specs, images and ann
   find(metadataDrift.finalResources, "Deployment", "reticulum")
     .metadata.labels["fixture.invalid/drift"] = "true";
   expectCode(metadataDrift, "final_deployment_metadata_mismatch");
+
+  const originalResourceVersionAba = buildFixture();
+  const originalDialog = find(
+    originalResourceVersionAba.originalBaselineResources, "Deployment", "dialog"
+  );
+  find(originalResourceVersionAba.finalResources, "Deployment", "dialog")
+    .metadata.resourceVersion = originalDialog.metadata.resourceVersion;
+  expectCode(
+    originalResourceVersionAba,
+    "final_deployment_resource_version_reused"
+  );
+
+  const quiescedResourceVersionAba = buildFixture();
+  const quiescedDialog = find(
+    quiescedResourceVersionAba.baselineResources, "Deployment", "dialog"
+  );
+  find(quiescedResourceVersionAba.finalResources, "Deployment", "dialog")
+    .metadata.resourceVersion = quiescedDialog.metadata.resourceVersion;
+  expectCode(
+    quiescedResourceVersionAba,
+    "final_deployment_resource_version_reused"
+  );
+
+  const intermediateResourceVersionAba = buildFixture();
+  const intermediateDialog = find(
+    intermediateResourceVersionAba.casResponseResources, "Deployment", "dialog"
+  );
+  find(intermediateResourceVersionAba.finalResources, "Deployment", "dialog")
+    .metadata.resourceVersion = intermediateDialog.metadata.resourceVersion;
+  expectCode(
+    intermediateResourceVersionAba,
+    "final_deployment_resource_version_reused"
+  );
 });
 
 test("restart artifact binds the six exact UIDs, replicas and resourceVersions", () => {
@@ -1316,7 +1530,7 @@ test("release CLI double-reads private baselines and emits only a safe verdict",
   }
 });
 
-test("live release CLI keeps all 42 resources in memory and emits one safe token", () => {
+test("live release CLI keeps all 44 resources in memory and emits one safe token", () => {
   const directory = fs.mkdtempSync(path.join(
     fs.realpathSync(os.tmpdir()),
     "yenhubs-live-release-"
@@ -1361,11 +1575,16 @@ test("live release CLI keeps all 42 resources in memory and emits one safe token
     const additions = fs.readdirSync(directory).filter(name => !before.has(name));
     assert.deepEqual(additions, ["kubectl.log"]);
     const log = fs.readFileSync(kubectl.logPath, "utf8");
-    assert.equal(log.trim().split("\n").length, 42);
+    assert.equal(log.trim().split("\n").length, 44);
     assert.doesNotMatch(log, /\b(?:apply|create|delete|exec|patch|replace|scale)\b/u);
     const secretSentinels = [
       newSecrets.OPENAI_API_KEY,
-      Buffer.from(newSecrets.OPENAI_API_KEY, "utf8").toString("base64")
+      Buffer.from(newSecrets.OPENAI_API_KEY, "utf8").toString("base64"),
+      newPullConfig,
+      newPullToken,
+      Buffer.from(newPullToken, "utf8").toString("base64"),
+      Buffer.from(`fixture-user:${newPullToken}`, "utf8").toString("base64"),
+      sha256(newPullConfig)
     ];
     for (const sentinel of secretSentinels) {
       assert.equal(`${result.stdout}${result.stderr}${log}`.includes(sentinel), false);

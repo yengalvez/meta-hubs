@@ -133,11 +133,11 @@ const TERMINAL_KEYS = Object.freeze([
 ]);
 
 const TERMINAL_REPORT_INVENTORY = Object.freeze({
-  original_baseline_resources: 42,
-  baseline_resources: 42,
-  intermediate_cas_resources: 7,
-  final_resources: 42,
-  final_secrets: 1,
+  original_baseline_resources: 44,
+  baseline_resources: 44,
+  intermediate_cas_resources: 8,
+  final_resources: 44,
+  final_secrets: 2,
   final_deployments: 12,
   exact: true
 });
@@ -1470,11 +1470,11 @@ function validateTerminalBaseline(snapshot, code) {
   const value = parseCanonicalJson(snapshot.bytes, code);
   if (!exactKeys(value, ["apiVersion", "kind", "items"]) ||
       value.apiVersion !== "v1" || value.kind !== "List" ||
-      !Array.isArray(value.items) || value.items.length !== 42) {
+      !Array.isArray(value.items) || value.items.length !== 44) {
     reject(code);
   }
   const identities = new Set(value.items.map(item => artifactIdentity(item, code)));
-  if (identities.size !== 42) reject(code);
+  if (identities.size !== 44) reject(code);
   return identities;
 }
 
@@ -1778,7 +1778,7 @@ function verifiedOriginalBaseline(verified, hooks) {
     const value = parseCanonicalJson(bytes, "original_baseline_invalid");
     if (!exactKeys(value, ["apiVersion", "kind", "items"]) ||
         value.apiVersion !== "v1" || value.kind !== "List" ||
-        !Array.isArray(value.items) || value.items.length !== 42) {
+        !Array.isArray(value.items) || value.items.length !== 44) {
       reject("original_baseline_invalid");
     }
     const identities = new Set();
@@ -1791,7 +1791,7 @@ function verifiedOriginalBaseline(verified, hooks) {
       }
       identities.add(identity.join("\u0000"));
     }
-    if (identities.size !== 42) reject("original_baseline_invalid");
+    if (identities.size !== 44) reject("original_baseline_invalid");
     return value.items;
   } finally {
     if (bytes) bytes.fill(0);

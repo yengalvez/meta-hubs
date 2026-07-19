@@ -121,11 +121,27 @@ const newPermsKey = encodedPrivateKey();
 const oldSecrets = snapshotSecretValues("before", oldPermsKey);
 const newSecrets = snapshotSecretValues("after", newPermsKey);
 const oldPerms = permsMaterial(oldPermsKey);
+const oldImagePullConfig = Buffer.from(JSON.stringify({
+  auths: {
+    "ghcr.io": {
+      auth: Buffer.from("fixture-user:fixture-token-before", "utf8").toString("base64")
+    }
+  }
+}), "utf8").toString("base64");
+const newImagePullConfig = Buffer.from(JSON.stringify({
+  auths: {
+    "ghcr.io": {
+      auth: Buffer.from("fixture-user:fixture-token-after", "utf8").toString("base64")
+    }
+  }
+}), "utf8").toString("base64");
 const uniqueImageKeys = [...new Set(profile.image_pairs.map(pair => pair.value_key))];
 const imageByValueKey = Object.fromEntries(uniqueImageKeys.map((valueKey, index) => [
   valueKey,
   `${profile.image_pairs.find(pair => pair.value_key === valueKey).repositories[0]}@sha256:${(index + 1).toString(16).repeat(64)}`
 ]));
+imageByValueKey.OVERRIDE_BOT_RUNNER_IMAGE =
+  `ghcr.io/yengalvez/bot-runner@sha256:${"e".repeat(64)}`;
 const imageByPair = Object.fromEntries(profile.image_pairs.map(pair => [
   `${pair.deployment}/${pair.container}`,
   imageByValueKey[pair.value_key]
@@ -275,6 +291,12 @@ function originalBaseline() {
   };
   const secretMetadata = metadata("configs", next());
   delete secretMetadata.generation;
+  const imagePullSecretMetadata = metadata(profile.legacy_image_pull.secret.name, next());
+  delete imagePullSecretMetadata.generation;
+  const serviceAccountMetadata = metadata(
+    profile.legacy_image_pull.service_account.name, next()
+  );
+  delete serviceAccountMetadata.generation;
   const resources = completeHistoricalInventory([
     {
       apiVersion: "v1",
@@ -291,6 +313,23 @@ function originalBaseline() {
         PERMS_KEY: runtimePrivateKey(oldSecrets.PERMS_KEY),
         PGRST_JWT_SECRET: oldPerms.jwt
       }
+    },
+    {
+      apiVersion: profile.legacy_image_pull.secret.apiVersion,
+      kind: profile.legacy_image_pull.secret.kind,
+      metadata: imagePullSecretMetadata,
+      type: profile.legacy_image_pull.secret.type,
+      data: {
+        [profile.legacy_image_pull.secret.data_key]: oldImagePullConfig
+      }
+    },
+    {
+      apiVersion: profile.legacy_image_pull.service_account.apiVersion,
+      kind: profile.legacy_image_pull.service_account.kind,
+      metadata: serviceAccountMetadata,
+      imagePullSecrets: structuredClone(
+        profile.legacy_image_pull.service_account.image_pull_secrets
+      )
     },
     {
       apiVersion: "v1",
@@ -372,10 +411,11 @@ function quiescedBaseline(original, operationIntent, barrierBinding) {
   return quiesced;
 }
 
-function snapshotValues(values) {
+function snapshotValues(values, imagePullConfig) {
   return {
     Namespace: namespace,
     ...structuredClone(values),
+    [profile.legacy_image_pull.snapshot_value_key]: imagePullConfig,
     ...structuredClone(imageByValueKey)
   };
 }
@@ -434,8 +474,8 @@ function fixture(t, suffix = "fixture", {
     operationKeyPath: path.join(operationDirectory, "operation.key"),
     bundleDirectory: path.join(operationDirectory, "bundle")
   };
-  const oldValues = snapshotValues(oldSecrets);
-  const newValues = snapshotValues(newSecrets);
+  const oldValues = snapshotValues(oldSecrets, oldImagePullConfig);
+  const newValues = snapshotValues(newSecrets, newImagePullConfig);
   if (mutateOldValues) mutateOldValues(oldValues);
   if (mutateNewValues) mutateNewValues(newValues);
   writePrivateJson(paths.originalBaselinePath, listValue(original));
@@ -501,8 +541,10 @@ function planCliArguments(paths) {
   ];
 }
 
-test("prepares a private Secret-only bundle with separate restart and redacted records", t => {
-  const { paths } = fixture(t, "prepare");
+test("prepares a private two-Secret bundle with separate restart and redacted records", t => {
+  const { paths, original, quiesced } = fixture(t, "prepare");
+  assert.equal(original.length, 44);
+  assert.equal(quiesced.length, 44);
   assert.equal(prepareOfflineProcessLocalRotation(paths), true);
   assert.equal(fs.statSync(paths.bundleDirectory).mode & 0o777, 0o700);
   assert.deepEqual(fs.readdirSync(paths.bundleDirectory).sort(), artifactNames);
@@ -515,7 +557,7 @@ test("prepares a private Secret-only bundle with separate restart and redacted r
   ));
   assert.deepEqual(
     bundle.resources.map(resource => `${resource.kind}/${resource.metadata.name}`),
-    ["Secret/configs"]
+    ["Secret/configs", "Secret/ghcr-pull"]
   );
   assert.equal(bundle.contract.configMapInvariant, true);
 
@@ -532,6 +574,22 @@ test("prepares a private Secret-only bundle with separate restart and redacted r
   ));
   assert.equal(redacted.applyAttestation.allConsumersQuiesced, true);
   assert.equal(redacted.applyAttestation.bundleRestoresReplicas, false);
+  assert.deepEqual(redacted.applyAttestation.secrets, [
+    { name: "configs", uidBound: true, resourceVersionBound: true, mutated: true },
+    { name: "ghcr-pull", uidBound: true, resourceVersionBound: true, mutated: true }
+  ]);
+  assert.deepEqual(redacted.applyAttestation.serviceAccount, {
+    name: "default",
+    uidBound: true,
+    resourceVersionBound: true,
+    imagePullSecretsExact: true,
+    mutated: false
+  });
+  assert.equal(
+    redacted.applyAttestation.secrets.length +
+      redacted.applyAttestation.deployments.length,
+    8
+  );
   assert.equal(redacted.applyAttestation.deployments.every(item => item.replicas === 0), true);
   assert.equal(redacted.applyAttestation.deployments.every(item =>
     item.uidBound === true && item.resourceVersionBound === true &&
@@ -543,6 +601,8 @@ test("prepares a private Secret-only bundle with separate restart and redacted r
   assert.equal(Object.hasOwn(redacted, "imagePairs"), false);
   assert.equal(Object.hasOwn(redacted, "databaseCredentialChecksum"), false);
   assert.equal(JSON.stringify(redacted).includes("@sha256:"), false);
+  assert.equal(JSON.stringify(redacted).includes(oldImagePullConfig), false);
+  assert.equal(JSON.stringify(redacted).includes(newImagePullConfig), false);
 
   const binding = JSON.parse(fs.readFileSync(
     path.join(paths.bundleDirectory, "binding.json"), "utf8"
@@ -551,6 +611,12 @@ test("prepares a private Secret-only bundle with separate restart and redacted r
     path.join(paths.operationDirectory, "intent.json"), "utf8"
   ));
   assert.equal(binding.operationBindingSha256, intent.operationBindingSha256);
+  assert.equal(binding.liveResourceBindingsSha256, sha256(Buffer.from(
+    canonicalJson(bundle.contract.liveResourceBindings), "utf8"
+  )));
+  assert.equal(binding.applyAttestationSha256, sha256(Buffer.from(
+    canonicalJson(redacted.applyAttestation), "utf8"
+  )));
 
   assert.equal(verifyOfflineProcessLocalRotation(paths), true);
 });
@@ -881,6 +947,53 @@ test("prepare rejects image, spec and contractual metadata drift between capture
     rewritePrivateJson(fixtureState.paths.quiescedBaselinePath, listValue(changed));
     expectOfflineFailure(() => prepareOfflineProcessLocalRotation(fixtureState.paths));
     assert.equal(fs.existsSync(fixtureState.paths.bundleDirectory), false);
+  }
+});
+
+test("prepare rejects ghcr-pull and default ServiceAccount drift between captures", t => {
+  const mutations = new Map([
+    ["ghcr-uid", resources => {
+      resources.find(resource =>
+        resource.kind === "Secret" && resource.metadata.name === "ghcr-pull"
+      ).metadata.uid = "foreign-ghcr-pull-uid";
+    }],
+    ["ghcr-resource-version", resources => {
+      resources.find(resource =>
+        resource.kind === "Secret" && resource.metadata.name === "ghcr-pull"
+      ).metadata.resourceVersion = "foreign-ghcr-pull-rv";
+    }],
+    ["ghcr-body", resources => {
+      resources.find(resource =>
+        resource.kind === "Secret" && resource.metadata.name === "ghcr-pull"
+      ).data[profile.legacy_image_pull.secret.data_key] = newImagePullConfig;
+    }],
+    ["default-uid", resources => {
+      resources.find(resource =>
+        resource.kind === "ServiceAccount" && resource.metadata.name === "default"
+      ).metadata.uid = "foreign-default-uid";
+    }],
+    ["default-resource-version", resources => {
+      resources.find(resource =>
+        resource.kind === "ServiceAccount" && resource.metadata.name === "default"
+      ).metadata.resourceVersion = "foreign-default-rv";
+    }],
+    ["default-body", resources => {
+      resources.find(resource =>
+        resource.kind === "ServiceAccount" && resource.metadata.name === "default"
+      ).imagePullSecrets = [];
+    }]
+  ]);
+  for (const [name, mutate] of mutations) {
+    const state = fixture(t, `legacy-image-pull-${name}`);
+    const changed = structuredClone(state.quiesced);
+    mutate(changed);
+    rewritePrivateJson(state.paths.quiescedBaselinePath, listValue(changed));
+    assert.throws(() => prepareOfflineProcessLocalRotation(state.paths), error =>
+      error instanceof OfflineProcessLocalRotationError &&
+      error.code === "offline_prepare_failed" &&
+      error.causeCode === "baseline_legacy_image_pull_drift"
+    );
+    assert.equal(fs.existsSync(state.paths.bundleDirectory), false);
   }
 });
 

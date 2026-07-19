@@ -514,26 +514,49 @@ AUD-065 before rollout.
 
 `deployment/rotate-process-local-credentials.sh` is the only approved mutation
 path for closing AUD-065. It operates on the exact historical 42-resource
-`process-local` inventory and keeps all 13 live image digests unchanged. It does
-not generate or apply the AUD-075 manifest and must not be combined with an
-upstream update, image change or dependency upgrade.
+`process-local` inventory, plus the two existing legacy pull bindings
+`Secret/ghcr-pull` and `ServiceAccount/default`, and keeps all 13 live image
+digests unchanged. These two auxiliary objects are not added to the historical
+generated inventory. The coordinator does not generate or apply the AUD-075
+manifest and must not be combined with an upstream update, image change or
+dependency upgrade.
 
 The private new-values copy must retain every invariant field and rotate all of
 `BOT_ACCESS_KEY`, `BOT_RUNNER_ACCESS_KEY`, `BOT_ORCHESTRATOR_ACCESS_KEY`,
 `DASHBOARD_ACCESS_KEY`, `BOT_IMAGE_PULL_CONFIG_JSON_BASE64`, `DB_PASS`,
 `GUARDIAN_KEY`, `NODE_COOKIE`, `OPENAI_API_KEY`, `PERMS_KEY`, `PHX_KEY` and
 `SMTP_PASS`. Rotate `SKETCHFAB_API_KEY` and `TENOR_API_KEY` too when they are
-configured. The three candidate-only bot domains and pull credential are bound
-and promoted in the private values source but are deliberately not projected
-into the live `process-local` bundle. The tool validates both DB URIs against
-the DB fields, derives the JWT field, verifies the Reticulum/Dialog `PERMS_KEY`
-relationship using cryptographic material without printing it, and rejects
-rendered credentials inside `ConfigMap/ret-config`.
+configured. The three candidate-only bot domains are bound and promoted in the
+private values source but are deliberately not projected into the live
+`process-local` bundle. The pull config is different: the same private source
+is projected by CAS only into the legacy `Secret/ghcr-pull`; the distinct
+`bot-images-pull` objects remain exclusive to the later AUD-075 generator. The
+tool validates both DB URIs against the DB fields, derives the JWT field,
+verifies the Reticulum/Dialog `PERMS_KEY` relationship using cryptographic
+material without printing it, and rejects rendered credentials inside
+`ConfigMap/ret-config`.
 
 All four bot-domain values must be distinct and contain at least 32 characters;
 the live `BOT_ACCESS_KEY` must meet that same minimum. The new `DB_PASS` must be
 32 to 128 characters using only ASCII letters, digits, `_` and `-`. `plan`
 rejects any other contract before reporting readiness.
+
+The sealed old and new snapshots must both pass a live GHCR acceptance gate
+for every digest-pinned `ghcr.io/yengalvez/*` image in the process-local
+contract plus the bot runner. The gate runs during `plan` and again after the
+global Lease but before the operation lock, quiescence or any resource CAS.
+Registry timeout, DNS failure, provider 5xx, denied token scope, missing
+manifest or digest mismatch all fail closed; none proves acceptance. The new
+snapshot is revalidated immediately before the first pool restart and again in
+the final read-only audit, after the second exact process-local boundary and
+before accepting the final source, terminal record or absent lock. Keep the old
+PAT valid through terminal audit; revoke it only in the subsequent provider
+revocation sequence.
+
+Replacement Secret bytes are an internal coordinator stream, not diagnostic
+output. The materializer emits them only with the explicit
+`coordinator-cas-stream` purpose and rejects an interactive terminal target;
+the approved caller pipes that stream directly into the guarded CAS replace.
 
 Do not start this procedure until the AUD-065 tooling is merged, its local and
 CI gates are green, and a fresh joint DB+storage checkpoint has passed the
@@ -640,7 +663,7 @@ The durable state sequence is:
 | `preflight` | global Lease and HMAC-bound operation lock acquired |
 | `quiesced` | six consumers at zero, PostgreSQL policy closed by CAS, probe blocked three times, no client sessions |
 | `db-rotated` | persistent PostgreSQL role classifies as the new verifier |
-| `bundle-applied` | exact Secret plus six zero-replica Deployment replacements completed by UID/resourceVersion CAS |
+| `bundle-applied` | exact `Secret/configs`, `Secret/ghcr-pull` and six zero-replica Deployment replacements completed by UID/resourceVersion CAS; `ServiceAccount/default` remains byte- and resourceVersion-invariant |
 | `verified` | pools and consumers use the new runtime values, old `DB_PASS` is rejected specifically for authentication, images/config/runtime and redacted report are exact |
 | `cleanup-authorized` | cleanup permission is durable before policy-marker or probe removal; final and released evidence can be terminally bound |
 
@@ -692,7 +715,8 @@ Its only successful output is `aud065_rotation_verified`. The audit creates no
 Lease, takes no lock, executes no callback and performs no Kubernetes mutation.
 It reauthenticates the terminal operation and source promotion, requires the
 exact 42-resource `process-local` inventory, all 12 baseline Deployments ready,
-the six rotated consumers exact, checkpoint image continuity, released-normal
+the two legacy pull bindings exact, the six rotated consumers exact, checkpoint
+image continuity, released-normal
 PostgreSQL policy, absent probe and absent operation lock.
 
 Do not use `./deployment/verify-live-reactivation.sh` as the `AUD-065` gate: it
@@ -711,9 +735,11 @@ then the new credential accepted again. A timeout, DNS failure, rate limit or
 provider `5xx` is inconclusive and never proves revocation. Apply the sequence
 to OpenAI, SMTP, GHCR package pulls and configured Sketchfab/Tenor credentials;
 also perform the documented functional chat, magic-link and asset-provider
-smokes. The previous candidate-only bot keys and pull token are superseded by
-the sealed, promoted values source; their replacements are deliberately not
-applied to the legacy runtime.
+smokes. The three candidate-only bot keys are superseded by the sealed,
+promoted values source but their replacements are deliberately not applied to
+the legacy runtime. The pull credential is different: the coordinator applies
+it by CAS to the legacy `Secret/ghcr-pull`; the separate `bot-images-pull`
+objects remain exclusive to the later AUD-075 rollout.
 
 Only after terminal re-entry, the process-local live gate, provider rejection
 and functional acceptance may the old-values source and operation directory be
@@ -1216,40 +1242,22 @@ and `Secret/ghcr-pull`. Pull by digest succeeds for Hubs, Reticulum and
 bot-orchestrator, and the credential can initiate a GHCR upload. The complete
 preflight reports 0 failures and 0 warnings.
 
-For the next rotation:
+For the next rotation, create the replacement PAT through a private provider
+channel and keep the previous PAT valid. Update the macOS Keychain and the
+masked `REGISTRY_USERNAME`/`REGISTRY_PASSWORD` secrets in both GitHub
+repositories without placing the credential in argv, workflow inputs or task
+output. Put the same new credential into the private new-values source only via
+the tracked hidden-input updater. The AUD-065 coordinator then replaces
+`Secret/ghcr-pull` by UID/resourceVersion CAS and verifies
+`ServiceAccount/default` as a read-only invariant. Never use the former
+`kubectl apply` plus `kubectl patch serviceaccount` sequence: it bypasses the
+operation binding and is no longer an approved path.
 
-```bash
-# Read through /dev/tty without placing the token in shell history, argv or
-# Git. A `security find-generic-password ... -w` Keychain lookup captured into
-# this variable is also acceptable on macOS.
-GITHUBTOKEN="$(bash -c '
-  IFS= read -r -s -p "New GHCR token (read:packages): " token </dev/tty
-  printf "\n" >/dev/tty
-  printf "%s" "$token"
-')"
-
-# Let Docker consume the token through stdin and create a private temporary
-# dockerconfig. kubectl receives only the file path, never the credential.
-GHCR_CONFIG="$(mktemp -d)"
-chmod 700 "$GHCR_CONFIG"
-trap 'rm -rf "$GHCR_CONFIG"' EXIT
-printf '%s' "$GITHUBTOKEN" | \
-  docker --config "$GHCR_CONFIG" login ghcr.io \
-    --username yengalvez --password-stdin
-unset GITHUBTOKEN
-
-kubectl --context "$EXPECTED_KUBE_CONTEXT" create secret generic ghcr-pull \
-  -n "$NAMESPACE" --type=kubernetes.io/dockerconfigjson \
-  --from-file=.dockerconfigjson="$GHCR_CONFIG/config.json" \
-  --dry-run=client -o yaml | \
-  kubectl --context "$EXPECTED_KUBE_CONTEXT" apply -f -
-
-kubectl --context "$EXPECTED_KUBE_CONTEXT" patch serviceaccount default \
-  -n "$NAMESPACE" --type=merge \
-  -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
-
-./deployment/preflight-reactivation.sh
-```
+After the coordinator and its audit succeed, verify pulls of every applicable
+live GHCR digest and a non-publishing upload authorization, revoke the previous
+PAT, prove its authentication rejection, and repeat the new pull/upload checks.
+Do not treat a timeout, DNS error, rate limit or provider 5xx as revocation
+evidence.
 
 Do not restart nodes or deployments after a future rotation until the preflight
 proves that all private digests can be pulled.

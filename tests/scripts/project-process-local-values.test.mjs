@@ -21,7 +21,9 @@ function fixture() {
   const required = new Set([
     profile.namespace_value_key,
     ...profile.secret_keys.filter(name => !profile.derived_secret_keys.includes(name)),
-    ...profile.image_pairs.map(pair => pair.value_key)
+    ...profile.image_pairs.map(pair => pair.value_key),
+    profile.legacy_image_pull.snapshot_value_key,
+    ...profile.legacy_image_pull.verified_image_value_keys
   ]);
   const values = Object.fromEntries([...required].sort().map(name => [
     name,

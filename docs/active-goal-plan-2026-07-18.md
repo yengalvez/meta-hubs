@@ -1,8 +1,8 @@
 # Meta activa de YenHubs: cierre seguro y runtime endurecido
 
-Última actualización: 18 de julio de 2026
+Última actualización: 19 de julio de 2026
 
-Estado actual: **EN EJECUCIÓN; Fase 2A, tooling de rotación `AUD-065`**
+Estado actual: **EN EJECUCIÓN; Fase 2A, cierre GHCR del tooling `AUD-065`**
 
 Worktree inicial: `/Users/Shared/Gits/YenHubs-aud075-root`
 
@@ -161,6 +161,18 @@ de `AUD-075` quedan integrados, todavía sin cambiar el runtime live.
   `ConfigMap/ret-config` pertenece al baseline ordinario, contiene marcadores
   como `<DB_PASS>` y `<PERMS_KEY>` —no credenciales renderizadas— y debe quedar
   byte-invariante; encontrar allí un valor renderizado bloquea la operación.
+- [x] Ampliar la misma operación para rotar por UID/resourceVersion CAS el
+  `Secret/ghcr-pull` histórico desde el nuevo pull config privado, y ligar como
+  invariante `ServiceAccount/default` con exactamente ese `imagePullSecret`.
+  Los 42 recursos generados, los 13 digests y el modo `process-local` permanecen
+  intactos; `bot-images-pull` continúa siendo exclusivo del candidato
+  `AUD-075`. El auditor no puede declarar éxito si sobrevive el pull Secret
+  antiguo o si `ServiceAccount/default` deja de conservar exactamente la
+  referencia a `ghcr-pull`. Antes de adquirir el lock o hacer cualquier CAS,
+  `plan` y cada entrada de ejecución/recuperación deben demostrar
+  por red que las credenciales GHCR antigua y nueva pueden leer todos los
+  digests GHCR fijados del baseline más el runner; un timeout, 5xx o permiso
+  denegado no cuenta como aceptación.
 - [ ] Cubrir coordinador, fallo parcial, rollback y redacción con fixtures; pasar
   los gates proporcionales, revisión independiente, PR/CI y merge antes de crear
   el checkpoint live.
@@ -172,19 +184,36 @@ clúster: el agregador de 14 suites terminó con `exit 0` (lock 27/27, barrera
 publicación privada 13/13, proyección 6/6, captura 6/6 y verificador redactado
 28/28). Pasaron además seguridad 47/47, recuperación 243/243, Bash,
 ShellCheck, sintaxis Node/Python, Actionlint, `git diff --check` y Gitleaks sobre
-6,75 MB sin filtraciones. Las revisiones independientes finales no dejan P1/P2
-abiertos; detectaron y cerraron antes de esta evidencia el TTL del checkpoint,
-el preflight Python, la reentrada de materialización y dos falsos TOCTOU por
-`nlink` de directorios.
+6,75 MB sin filtraciones. Esa evidencia cerró los hallazgos conocidos entonces,
+incluidos el TTL del checkpoint, el preflight Python, la reentrada de
+materialización y dos falsos TOCTOU por `nlink` de directorios. Una revisión
+posterior al CI descubrió el P1 GHCR descrito en la casilla anterior; por tanto
+la evidencia no autoriza todavía merge ni checkpoint.
 
-Resultado intermedio: existe una ruta reproducible para rotar el runtime que ya
-funciona sin adelantar el candidato ni revelar secretos.
+Evidencia local nueva del 2026-07-19, todavía sin nuevo CI/merge, checkpoint ni
+mutación live: el agregador final de 15 suites terminó con `exit 0` (lock 27/27,
+barrera 56/56, transición DB 54/54 más PostgreSQL real, coordinador 163/163,
+perfil 31/31, operación 34/34, source 20/20, prepare 21/21, materialización
+18/18, publicación privada 13/13, proyección 6/6, GHCR 44/44, captura 9/9 y
+verificador redactado 31/31). Dos revisiones independientes confirmaron el orden
+OLD -> NEW antes del lock/CAS, la denegación fail-closed, NEW antes del primer
+restart y en auditoría, el dispatcher real y la rama normal `bundle-applied`,
+sin falsos verdes P1/P2. `verify-project.sh` y `verify-project.sh --full`
+terminaron después con código 0; el nuevo CI/merge sigue pendiente.
+
+Resultado intermedio: la ruta local ya liga y rota `Secret/ghcr-pull`, conserva
+`ServiceAccount/default` como invariante bind-only y verifica por red las
+credenciales GHCR. Faltan el nuevo CI y el merge antes de crear
+credenciales/checkpoint o mutar producción.
 
 #### Fase 2B — preparar credenciales sin invalidar todavía el baseline
 
 - [ ] Crear por canales privados las credenciales externas nuevas necesarias y
   preparar las internas nuevas, manteniendo válidas las anteriores hasta que el
   rollout coordinado haya sido aceptado.
+- [ ] Probar, desde los snapshots privados y sin imprimir credenciales, que los
+  PAT GHCR anterior y nuevo autentican cada digest aplicable; no revocar el
+  anterior ni permitir el primer CAS si cualquiera de las dos pruebas falla.
 - [ ] Hacer disponible el fichero privado en el worktree final mediante una ruta
   absoluta o una copia regular `0600`, nunca mediante Git, symlink, chat o
   salida de terminal; no abrirlo ni usarlo como evidencia.
@@ -205,8 +234,9 @@ funciona sin adelantar el candidato ni revelar secretos.
   preventivo de `AUD-065`, sin copiarlas a Git, tarea, chat o salida de terminal.
 - [ ] Separar credenciales externas de las internas del runtime y aplicar estas
   últimas coordinadamente mediante el bundle `AUD-065` generado por código
-  trackeado: materializar y aplicar exactamente `Secret/configs` y seis
-  Deployments mediante CAS de UID/resourceVersion de Kubernetes. El manifiesto
+  trackeado: materializar y aplicar exactamente `Secret/configs`,
+  `Secret/ghcr-pull` y seis Deployments mediante CAS de UID/resourceVersion de
+  Kubernetes, verificando `ServiceAccount/default` sin mutarlo. El manifiesto
   Hubs CE completo queda intacto porque el generador actual representa el
   candidato `AUD-075`, no el baseline live `process-local`; nunca usar
   `kubectl patch`, edición manual de Secrets, un apply parcial ad hoc ni
@@ -378,6 +408,10 @@ secretos ni reemplazar la evidencia original.
 | 2026-07-18 17:51 CEST | Fase 2A: bindings durables y reentrada por recurso | El lock global ampliado pasa 25/25; la barrera `pgsql-ingress` con probe, UID/RV y rechazo ABA pasa 43/43; la transición DB conserva 54/54 y PostgreSQL real; el perfil histórico se contrasta de forma independiente contra las 42 identidades del template Cloud. El intent privado prequiescence, su barrier-binding y el terminal recuperable pasan 20/20, y el materializador/clasificador de `Secret/configs` más seis Deployments pasa 10/10. Una revisión detectó la circularidad entre lock y bundle antes de tocar live: se separó un operation binding previo del bundle binding posterior, encadenados por la misma clave HMAC. | Terminar el encadenado en preparer/verificador y el coordinador `plan/execute/resume`; no se adquirió Lease, no se consultó el clúster y producción sigue intacta |
 | 2026-07-18 18:13 CEST | Fase 2A: cierre criptográfico y cortes de recuperación | Preparer 14/14, verificador redactado 21/21 y perfil/reentrada 30/30 encadenan intent, bundle, baseline original/quiesced, `PERMS_KEY` y la policy `open-verified`. El registro terminal exige barrier HMAC, hash del binding y valores finales esperados; su publicación atómica/reconciliable pasa 22/22. La barrera pasa 44/44 y ya rechaza confundir el `normal` inicial con un cleanup reanudado. La revisión independiente detectó antes del PR dos TOCTOU restantes en materialización/aplicación; se están eliminando junto al coordinador, cuya primera mitad pasa 15/15. | Autenticar y emitir cada candidato sin reabrir paths, completar todos los estados/cortes del coordinador y repetir gates; producción continúa intacta, sin Lease ni consultas live |
 | 2026-07-18 20:33 CEST | Fase 2A: revisión final de operabilidad previa al PR | Tres revisiones independientes detectaron antes de fusionar: orden inválido de la fixture PostgreSQL externa, ausencia de validación temprana de `DB_PASS`, rotación incompleta de values candidatos, falta de promoción canónica y contratos de checkpoint/live que confundían `process-local` con `AUD-075`. El orden y `DB_PASS` ya están corregidos; pasan 20/20 tests del preparer y PostgreSQL 14.23 real por TCP+MD5 con inspección de logs. Se están ligando/promoviendo los values completos y separando de forma fail-closed los contratos `pgsql/postgresql`+`BOT_ACCESS_KEY` del baseline y `pgsql/pgsql` del candidato. | Cerrar estos dos contratos y su gate live específico antes de declarar Fase 2A completa; siguen ausentes PR/CI/merge, checkpoint y toda mutación de producción |
+| 2026-07-19 00:46 CEST | Fase 2A: bloqueo GHCR previo al merge | Los runs `29663204419`/`29663205680` llegaron a seguridad 47/47 y recuperación 243/243 y revelaron/cerraron una aserción GNU/BSD del fixture. Antes de fusionar, una auditoría independiente trazó el PAT compartido: el bundle y el auditor podían terminar verdes manteniendo `Secret/ghcr-pull` antiguo y `ServiceAccount/default` fuera de sus bindings. Revocar después el PAT rompería pulls tras un reinicio aunque los Pods cacheados siguieran Ready; la ruta histórica `apply`/`patch` está prohibida. | Añadir los dos recursos auxiliares a la captura privada, reemplazar solo `ghcr-pull` por CAS bajo el mismo Lease, verificar `default` como invariante, cubrir reentrada/rollback/redacción y repetir gates/CI. PR `#6` permanece abierto y producción intacta. |
+| 2026-07-19 01:29 CEST | Fase 2A: revisión adversarial del cierre GHCR | La captura/preparación exigen ahora 44 recursos operativos; el bundle aplica por prefijo 2 Secrets más 6 Deployments y liga 16 recursos, con `ServiceAccount/default` bind-only. La estructura live de `ghcr-pull` se inspeccionó de forma redactada y reveló la forma histórica `metadata.annotations:{}` del last-applied, ya cubierta. Materialización 18/18, coordinador 154/154 y auditoría 31/31 están verdes. Dos revisiones cerraron un falso exit 0 del harness, una afirmación de ausencia no demostrable, ABA de RV final y riesgo de stream interactivo. Detectaron además que faltaba demostrar permisos reales del PAT nuevo antes del primer CAS. | Integrar el gate de red old+new para todos los digests GHCR fijados más runner antes de lock/mutación y revalidarlo antes del restart; después repetir el agregado, seguridad, recuperación, revisión, CI y merge. Producción no fue mutada. |
+| 2026-07-19 02:03 CEST | Fase 2A: gate GHCR online y agregado local final | El gate lee snapshots privados estables, autentica por pull cada digest GHCR aplicable más runner y exige el digest exacto. `plan` y execute/resume/rollback prueban OLD -> NEW; cualquier fallo libera el Lease antes del operation lock/callbacks. NEW se revalida antes del primer pool y en audit. El coordinador final pasa 163/163 y el agregador de 15 suites termina con `exit 0`, incluidos GHCR 44/44, materialización 18/18 y auditoría 31/31. Dos revisiones independientes no encuentran falsos verdes P1/P2. | Ejecutar seguridad, recuperación y gates raíz/estáticos; publicar el nuevo SHA, exigir CI verde y fusionar PR `#6`. Producción permanece intacta. |
+| 2026-07-19 02:44 CEST | Fase 2A: gates raíz finales | `verify-project.sh` y `verify-project.sh --full` terminan con código 0 sobre el árbol final. Pasan seguridad 47/47, recuperación 243/243, el agregado AUD-065, Actionlint, ShellCheck, tres escaneos Gitleaks y auditoría upstream; además Hubs 97/97 y build, Admin, navegador 11/11, capacidad 115/115 fail-closed, servicios CE, Spoke 68/68 y build, y Reticulum 430 tests + 5 properties. | Revisar/stagear el diff exacto, crear y publicar el commit, exigir el nuevo CI verde y fusionar PR `#6`; no crear aún checkpoint ni mutar producción. |
 
 La copia autoritativa está ahora en `/Users/Shared/Gits/YenHubs` con la misma
 ruta relativa. El worktree anterior se conserva solo como evidencia hasta que

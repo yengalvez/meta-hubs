@@ -57,6 +57,28 @@
   "bound_resources": {
     "config_map": "ret-config"
   },
+  "legacy_image_pull": {
+    "snapshot_value_key": "BOT_IMAGE_PULL_CONFIG_JSON_BASE64",
+    "verified_image_value_keys": [
+      "OVERRIDE_BOT_ORCHESTRATOR_IMAGE",
+      "OVERRIDE_BOT_RUNNER_IMAGE"
+    ],
+    "secret": {
+      "apiVersion": "v1",
+      "kind": "Secret",
+      "name": "ghcr-pull",
+      "type": "kubernetes.io/dockerconfigjson",
+      "data_key": ".dockerconfigjson"
+    },
+    "service_account": {
+      "apiVersion": "v1",
+      "kind": "ServiceAccount",
+      "name": "default",
+      "image_pull_secrets": [
+        { "name": "ghcr-pull" }
+      ]
+    }
+  },
   "required_deployments": [
     "bot-orchestrator",
     "coturn",

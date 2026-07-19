@@ -48,8 +48,9 @@ const attestationCliPath = path.resolve(
 );
 const replacementNames = [
   "00-secret-configs.json",
+  `01-secret-${profile.legacy_image_pull.secret.name}.json`,
   ...profile.rotation_revision_deployments.map((name, index) =>
-    `${String(index + 1).padStart(2, "0")}-deployment-${name}.json`)
+    `${String(index + 2).padStart(2, "0")}-deployment-${name}.json`)
 ];
 const pgsqlBarrierMarkers = Object.freeze({
   lockUid: "yenhubs.org/aud065-pgsql-lock-uid",
@@ -118,15 +119,45 @@ const newPermsKey = encodedPrivateKey();
 const oldSecrets = snapshotSecretValues("materialize-before", oldPermsKey);
 const newSecrets = snapshotSecretValues("materialize-after", newPermsKey);
 const oldPerms = permsMaterial(oldPermsKey);
-const imageValueKeys = [...new Set(profile.image_pairs.map(pair => pair.value_key))];
+const imageValueKeys = [...new Set([
+  ...profile.image_pairs.map(pair => pair.value_key),
+  ...profile.legacy_image_pull.verified_image_value_keys
+])];
 const imageByValueKey = Object.fromEntries(imageValueKeys.map((valueKey, index) => [
   valueKey,
-  `${profile.image_pairs.find(pair => pair.value_key === valueKey).repositories[0]}@sha256:${(index + 1).toString(16).repeat(64)}`
+  `${valueKey === "OVERRIDE_BOT_RUNNER_IMAGE"
+    ? "ghcr.io/yengalvez/bot-runner"
+    : profile.image_pairs.find(pair => pair.value_key === valueKey).repositories[0]}` +
+    `@sha256:${(index + 1).toString(16).repeat(64)}`
 ]));
 const imageByPair = Object.fromEntries(profile.image_pairs.map(pair => [
   `${pair.deployment}/${pair.container}`,
   imageByValueKey[pair.value_key]
 ]));
+
+function encodedPullConfig(username, token, spacing = 0) {
+  return Buffer.from(JSON.stringify({
+    auths: {
+      "ghcr.io": {
+        auth: Buffer.from(`${username}:${token}`, "utf8").toString("base64")
+      }
+    }
+  }, null, spacing), "utf8").toString("base64");
+}
+
+const oldPullConfig = encodedPullConfig(
+  "materialize-fixture-user",
+  "materialize-old-pull-token"
+);
+const oldLivePullConfig = encodedPullConfig(
+  "materialize-fixture-user",
+  "materialize-old-pull-token",
+  2
+);
+const newPullConfig = encodedPullConfig(
+  "materialize-fixture-user",
+  "materialize-new-pull-token"
+);
 
 function databaseChecksum(values) {
   return sha256(JSON.stringify({
@@ -281,10 +312,35 @@ function completeHistoricalInventory(resources) {
   return resources;
 }
 
+function completeOperationalInventory(resources) {
+  const completed = completeHistoricalInventory(resources);
+  completed.push(
+    {
+      apiVersion: profile.legacy_image_pull.secret.apiVersion,
+      kind: profile.legacy_image_pull.secret.kind,
+      metadata: liveMetadata(profile.legacy_image_pull.secret.name),
+      type: profile.legacy_image_pull.secret.type,
+      data: {
+        [profile.legacy_image_pull.secret.data_key]: oldLivePullConfig
+      }
+    },
+    {
+      apiVersion: profile.legacy_image_pull.service_account.apiVersion,
+      kind: profile.legacy_image_pull.service_account.kind,
+      metadata: liveMetadata(profile.legacy_image_pull.service_account.name),
+      imagePullSecrets: structuredClone(
+        profile.legacy_image_pull.service_account.image_pull_secrets
+      )
+    }
+  );
+  assert.equal(completed.length, 44);
+  return completed;
+}
+
 function quiescedBaseline() {
   resourceVersion = 100;
   const secretMetadata = liveMetadata("configs");
-  return completeHistoricalInventory([
+  return completeOperationalInventory([
     {
       apiVersion: "v1",
       kind: "Namespace",
@@ -342,11 +398,12 @@ function quiescedBaseline() {
   ]);
 }
 
-function snapshotValues(snapshot) {
+function snapshotValues(snapshot, pullConfig) {
   return {
     Namespace: namespace,
     ...structuredClone(snapshot),
-    ...structuredClone(imageByValueKey)
+    ...structuredClone(imageByValueKey),
+    [profile.legacy_image_pull.snapshot_value_key]: pullConfig
   };
 }
 
@@ -359,6 +416,7 @@ function findResource(resources, kind, name) {
 function targetResources(resources) {
   return [
     findResource(resources, "Secret", "configs"),
+    findResource(resources, "Secret", profile.legacy_image_pull.secret.name),
     ...profile.rotation_revision_deployments.map(name =>
       findResource(resources, "Deployment", name))
   ];
@@ -456,8 +514,8 @@ function fixture(t, suffix = "fixture") {
     kind: "List",
     items: original
   });
-  writePrivateJson(paths.oldSnapshotPath, snapshotValues(oldSecrets));
-  writePrivateJson(paths.newSnapshotPath, snapshotValues(newSecrets));
+  writePrivateJson(paths.oldSnapshotPath, snapshotValues(oldSecrets, oldPullConfig));
+  writePrivateJson(paths.newSnapshotPath, snapshotValues(newSecrets, newPullConfig));
   writePrivateJson(paths.oldValuesSourcePath, { fixture: "old-source" });
   writePrivateJson(paths.newValuesSourcePath, { fixture: "new-source" });
   sealProcessLocalRotationOperation({
@@ -596,7 +654,7 @@ function commonCliArguments(command, state) {
   ];
 }
 
-test("materializes and verifies the seven canonical CAS replacements in profile order", t => {
+test("materializes and verifies the eight canonical CAS replacements in profile order", t => {
   const state = fixture(t, "happy");
   assert.equal(materializeProcessLocalRotationReplacements(materializeOptions(state)), true);
   const directoryStat = fs.lstatSync(state.paths.outputDirectory);
@@ -621,6 +679,7 @@ test("materializes and verifies the seven canonical CAS replacements in profile 
   });
   assert.deepEqual(actual, [
     "Secret/configs",
+    `Secret/${profile.legacy_image_pull.secret.name}`,
     ...profile.rotation_revision_deployments.map(name => `Deployment/${name}`)
   ]);
   const secret = JSON.parse(fs.readFileSync(
@@ -630,6 +689,19 @@ test("materializes and verifies the seven canonical CAS replacements in profile 
   assert.equal(secret.type, "Opaque");
   assert.notEqual(secret.immutable, true);
   assert.equal(secret.metadata.annotations, undefined);
+  const pullSecret = JSON.parse(fs.readFileSync(
+    path.join(state.paths.outputDirectory, replacementNames[1]),
+    "utf8"
+  ));
+  assert.equal(pullSecret.type, profile.legacy_image_pull.secret.type);
+  assert.deepEqual(pullSecret.data, {
+    [profile.legacy_image_pull.secret.data_key]: newPullConfig
+  });
+  assert.equal(pullSecret.metadata.annotations, undefined);
+  assert.equal(
+    state.quiesced.some(resource => resource.metadata.name === "bot-images-pull"),
+    false
+  );
   assert.equal(verifyProcessLocalRotationReplacements(materializeOptions(state)), true);
 });
 
@@ -804,26 +876,29 @@ test("classifies pending and every partial or fully applied cut without leaking 
   const forbidden = [
     ...secretValueKeys.map(key => newSecrets[key]),
     permsMaterial(newPermsKey).jwt,
+    oldPullConfig,
+    oldLivePullConfig,
+    newPullConfig,
     state.bundle.contract.databaseCredentialChecksum,
     state.bundle.contract.botAccessKeyChecksum,
     state.bundle.contract.permsPublicKeySha256,
     ...Object.values(profile.annotations)
   ].filter(value => typeof value === "string" && value.length > 0);
-  for (let appliedCount = 0; appliedCount <= 7; appliedCount += 1) {
+  for (let appliedCount = 0; appliedCount <= 8; appliedCount += 1) {
     rewritePrivateJson(
       state.paths.liveBaselinePath,
       { apiVersion: "v1", kind: "List", items: liveAfterAppliedCount(state, appliedCount) }
     );
     const plan = classifyProcessLocalRotationFiles(classifyOptions(state));
-    assert.equal(plan.resourceCount, 7);
-    assert.equal(plan.pendingCount, 7 - appliedCount);
+    assert.equal(plan.resourceCount, 8);
+    assert.equal(plan.pendingCount, 8 - appliedCount);
     assert.equal(plan.alreadyAppliedCount, appliedCount);
-    assert.equal(plan.complete, appliedCount === 7);
+    assert.equal(plan.complete, appliedCount === 8);
     assert.deepEqual(
       plan.resources.map(resource => resource.state),
       [
         ...Array.from({ length: appliedCount }, () => "already-applied"),
-        ...Array.from({ length: 7 - appliedCount }, () => "pending")
+        ...Array.from({ length: 8 - appliedCount }, () => "pending")
       ]
     );
     for (const resource of plan.resources) {
@@ -847,7 +922,7 @@ test("classifies pending and every partial or fully applied cut without leaking 
   }
 });
 
-test("classification fails closed on UID, resourceVersion, metadata and Secret drift", t => {
+test("classification fails closed on target and bind-only GHCR drift or ABA", t => {
   const mutations = [
     live => {
       findResource(live, "Deployment", "dialog").metadata.uid = "replacement-uid";
@@ -860,6 +935,52 @@ test("classification fails closed on UID, resourceVersion, metadata and Secret d
     },
     live => {
       findResource(live, "Secret", "configs").stringData.DB_PASS += "-tampered";
+    },
+    live => {
+      findResource(
+        live,
+        "Secret",
+        profile.legacy_image_pull.secret.name
+      ).metadata.uid = "replacement-pull-secret-uid";
+    },
+    live => {
+      const pullSecret = findResource(
+        live,
+        "Secret",
+        profile.legacy_image_pull.secret.name
+      );
+      pullSecret.data[profile.legacy_image_pull.secret.data_key] = encodedPullConfig(
+        "materialize-fixture-user",
+        "materialize-foreign-pull-token"
+      );
+    },
+    live => {
+      findResource(
+        live,
+        "Secret",
+        profile.legacy_image_pull.secret.name
+      ).metadata.resourceVersion = "advanced-pull-secret-aba";
+    },
+    live => {
+      findResource(
+        live,
+        "ServiceAccount",
+        profile.legacy_image_pull.service_account.name
+      ).metadata.uid = "replacement-service-account-uid";
+    },
+    live => {
+      findResource(
+        live,
+        "ServiceAccount",
+        profile.legacy_image_pull.service_account.name
+      ).metadata.resourceVersion = "advanced-service-account-rv";
+    },
+    live => {
+      findResource(
+        live,
+        "ServiceAccount",
+        profile.legacy_image_pull.service_account.name
+      ).imagePullSecrets = [{ name: "foreign-pull" }];
     }
   ];
   for (const [index, mutate] of mutations.entries()) {
@@ -872,6 +993,8 @@ test("classification fails closed on UID, resourceVersion, metadata and Secret d
       "process_local_rotation_classify_failed"
     );
     assert.equal(JSON.stringify(error).includes(newSecrets.DB_PASS), false);
+    assert.equal(JSON.stringify(error).includes(oldPullConfig), false);
+    assert.equal(JSON.stringify(error).includes(newPullConfig), false);
   }
 });
 
@@ -1051,7 +1174,7 @@ test("partial failure preserves unknown entries without deleting completed outpu
   }
 });
 
-test("extract-applied writes an exclusive canonical seven-resource List only when complete", t => {
+test("extract-applied writes an exclusive canonical eight-resource List only when complete", t => {
   const pending = fixture(t, "extract-pending");
   expectFailure(
     () => extractAppliedProcessLocalRotationResources({
@@ -1063,7 +1186,7 @@ test("extract-applied writes an exclusive canonical seven-resource List only whe
   assert.equal(fs.existsSync(pending.paths.outputPath), false);
 
   const complete = fixture(t, "extract-complete");
-  const live = liveAfterAppliedCount(complete, 7);
+  const live = liveAfterAppliedCount(complete, 8);
   rewritePrivateJson(complete.paths.liveBaselinePath, {
     apiVersion: "v1",
     kind: "List",
@@ -1085,6 +1208,7 @@ test("extract-applied writes an exclusive canonical seven-resource List only whe
     evidence.items.map(resource => `${resource.kind}/${resource.metadata.name}`),
     [
       "Secret/configs",
+      `Secret/${profile.legacy_image_pull.secret.name}`,
       ...profile.rotation_revision_deployments.map(name => `Deployment/${name}`)
     ]
   );
@@ -1107,7 +1231,7 @@ test("extract-applied resumes every private-file publication cut", t => {
     rewritePrivateJson(state.paths.liveBaselinePath, {
       apiVersion: "v1",
       kind: "List",
-      items: liveAfterAppliedCount(state, 7)
+      items: liveAfterAppliedCount(state, 8)
     });
     let injected = false;
     expectFailure(
@@ -1240,7 +1364,8 @@ test("CLI materialize/verify/extract are silent, classify is safe and emit write
   const emitted = spawnSync(process.execPath, [
     ...commonCliArguments("emit-verified", state),
     "--output-directory", state.paths.outputDirectory,
-    "--name", emittedName
+    "--name", emittedName,
+    "--stream-purpose", "coordinator-cas-stream"
   ]);
   assert.equal(emitted.status, 0);
   assert.equal(emitted.stderr.length, 0);
@@ -1249,6 +1374,18 @@ test("CLI materialize/verify/extract are silent, classify is safe and emit write
       path.join(state.paths.outputDirectory, emittedName)
     )),
     true
+  );
+
+  const unacknowledgedSecretStream = spawnSync(process.execPath, [
+    ...commonCliArguments("emit-verified", state),
+    "--output-directory", state.paths.outputDirectory,
+    "--name", replacementNames[1]
+  ]);
+  assert.equal(unacknowledgedSecretStream.status, 1);
+  assert.equal(unacknowledgedSecretStream.stdout.length, 0);
+  assert.equal(
+    unacknowledgedSecretStream.stderr.toString("utf8"),
+    "process-local rotation replacement operation failed closed\n"
   );
 
   const classify = spawnSync(process.execPath, [
@@ -1324,7 +1461,7 @@ test("CLI materialize/verify/extract are silent, classify is safe and emit write
   assert.equal(emittedDeploymentContract.stderr, "");
   assert.equal(emittedDeploymentContract.stdout, deploymentContract);
 
-  rewritePrivateJson(state.paths.liveBaselinePath, liveAfterAppliedCount(state, 7));
+  rewritePrivateJson(state.paths.liveBaselinePath, liveAfterAppliedCount(state, 8));
   const extract = spawnSync(process.execPath, [
     ...commonCliArguments("extract-applied", state),
     "--live-baseline", state.paths.liveBaselinePath,
@@ -1349,7 +1486,8 @@ test("CLI materialize/verify/extract are silent, classify is safe and emit write
   const invalidEmit = spawnSync(process.execPath, [
     ...commonCliArguments("emit-verified", state),
     "--output-directory", state.paths.outputDirectory,
-    "--name", "not-allowlisted.json"
+    "--name", "not-allowlisted.json",
+    "--stream-purpose", "coordinator-cas-stream"
   ], { encoding: "utf8" });
   assert.equal(invalidEmit.status, 1);
   assert.equal(invalidEmit.stdout, "");
@@ -1365,7 +1503,8 @@ test("CLI materialize/verify/extract are silent, classify is safe and emit write
   const foreignIdentity = spawnSync(process.execPath, [
     ...foreignIdentityArgs,
     "--output-directory", state.paths.outputDirectory,
-    "--name", emittedName
+    "--name", emittedName,
+    "--stream-purpose", "coordinator-cas-stream"
   ]);
   assert.equal(foreignIdentity.status, 1);
   assert.equal(foreignIdentity.stdout.length, 0);

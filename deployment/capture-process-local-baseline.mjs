@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
-// Capture only the 42 identities in the accepted historical process-local
-// profile. The Secret body is written directly to a new owner-private file;
-// it is never emitted as terminal output or routed through the AUD-075
-// generator/manifest.
+// Capture the exact operational AUD-065 baseline: the 42 identities in the
+// accepted historical process-local profile followed by its legacy
+// Secret/ghcr-pull and ServiceAccount/default image-pull bindings. The Secret
+// bodies are written directly to a new owner-private file; they are never
+// emitted as terminal output or routed through the AUD-075 generator/manifest.
 
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -83,6 +84,41 @@ function renderedIdentity(identity, namespace) {
   };
 }
 
+function operationalProfileIdentities(profile) {
+  const imagePull = profile.legacy_image_pull;
+  if (!Array.isArray(profile.baseline_resource_identities) ||
+      profile.baseline_resource_identities.length !== 42 || !imagePull ||
+      typeof imagePull !== "object" || Array.isArray(imagePull) ||
+      !imagePull.secret || typeof imagePull.secret !== "object" ||
+      Array.isArray(imagePull.secret) || !imagePull.service_account ||
+      typeof imagePull.service_account !== "object" ||
+      Array.isArray(imagePull.service_account)) {
+    fail("capture_input_invalid");
+  }
+  const auxiliary = [
+    {
+      apiVersion: imagePull.secret.apiVersion,
+      kind: imagePull.secret.kind,
+      namespace: "$Namespace",
+      name: imagePull.secret.name
+    },
+    {
+      apiVersion: imagePull.service_account.apiVersion,
+      kind: imagePull.service_account.kind,
+      namespace: "$Namespace",
+      name: imagePull.service_account.name
+    }
+  ];
+  if (auxiliary[0].apiVersion !== "v1" || auxiliary[0].kind !== "Secret" ||
+      auxiliary[0].name !== "ghcr-pull" ||
+      auxiliary[1].apiVersion !== "v1" ||
+      auxiliary[1].kind !== "ServiceAccount" ||
+      auxiliary[1].name !== "default") {
+    fail("profile_resource_inventory_invalid");
+  }
+  return [...profile.baseline_resource_identities, ...auxiliary];
+}
+
 function resourceType(identity) {
   const type = KUBECTL_RESOURCES[`${identity.apiVersion}\u0000${identity.kind}`];
   if (!type) fail("profile_resource_type_invalid");
@@ -108,17 +144,18 @@ export function collectProcessLocalResources({
   fetchResource
 }) {
   const profile = loadProcessLocalRotationProfile();
-  if (!DNS_LABEL.test(namespace || "") || typeof fetchResource !== "function" ||
-      !Array.isArray(profile.baseline_resource_identities) ||
-      profile.baseline_resource_identities.length !== 42) {
+  if (!DNS_LABEL.test(namespace || "") || typeof fetchResource !== "function") {
     fail("capture_input_invalid");
   }
+  const profileIdentities = operationalProfileIdentities(profile);
   const resources = [];
   const identities = new Set();
-  for (const profileIdentity of profile.baseline_resource_identities) {
+  for (const profileIdentity of profileIdentities) {
     const expected = renderedIdentity(profileIdentity, namespace);
     const key = canonicalJson(expected);
-    if (identities.has(key)) fail("profile_resource_inventory_invalid");
+    if (identities.has(key) || expected.name === "bot-images-pull") {
+      fail("profile_resource_inventory_invalid");
+    }
     identities.add(key);
     let resource;
     try {
@@ -129,7 +166,7 @@ export function collectProcessLocalResources({
     validateCapturedResource(resource, expected);
     resources.push(structuredClone(resource));
   }
-  if (resources.length !== 42 || identities.size !== 42) {
+  if (resources.length !== 44 || identities.size !== 44) {
     fail("captured_resource_inventory_invalid");
   }
   assertResourceListSize(resources);
@@ -203,6 +240,7 @@ function main() {
       outputPath: args.get("--output"),
       fetchResource: request => kubectlFetch(args.get("--context"), request)
     });
+    // Success is intentionally silent: the captured List contains credentials.
   } catch {
     process.stderr.write("process-local baseline capture failed closed\n");
     process.exitCode = 1;

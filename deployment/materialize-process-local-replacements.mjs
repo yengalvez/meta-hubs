@@ -34,6 +34,7 @@ const PRIVATE_DIRECTORY_MODE = 0o700;
 const DNS_LABEL = /^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/u;
 const SAFE_CAUSE_CODE = /^[a-z0-9_]+$/u;
 const HEX_SHA256 = /^[a-f0-9]{64}$/u;
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 const BUNDLE_DIRECTORY_NAME = "bundle";
 const BUNDLE_NAME = "bundle.json";
 const BINDING_NAME = "binding.json";
@@ -295,12 +296,36 @@ function targetIdentities(namespace, profile) {
       namespace,
       name: profile.projected_resources.secret
     },
+    {
+      apiVersion: profile.legacy_image_pull.secret.apiVersion,
+      kind: profile.legacy_image_pull.secret.kind,
+      namespace,
+      name: profile.legacy_image_pull.secret.name
+    },
     ...profile.rotation_revision_deployments.map(name => ({
       apiVersion: "apps/v1",
       kind: "Deployment",
       namespace,
       name
     }))
+  ];
+}
+
+function operationalIdentityTemplates(profile) {
+  return [
+    ...profile.baseline_resource_identities,
+    {
+      apiVersion: profile.legacy_image_pull.secret.apiVersion,
+      kind: profile.legacy_image_pull.secret.kind,
+      namespace: "$Namespace",
+      name: profile.legacy_image_pull.secret.name
+    },
+    {
+      apiVersion: profile.legacy_image_pull.service_account.apiVersion,
+      kind: profile.legacy_image_pull.service_account.kind,
+      namespace: "$Namespace",
+      name: profile.legacy_image_pull.service_account.name
+    }
   ];
 }
 
@@ -314,11 +339,12 @@ function identityKey(identity) {
 }
 
 function indexFullInventory(resources, namespace, profile, code) {
-  if (!Array.isArray(resources) || resources.length !==
-      profile.baseline_resource_identities.length || resources.length !== 42) {
+  const templates = operationalIdentityTemplates(profile);
+  if (!Array.isArray(resources) || resources.length !== templates.length ||
+      resources.length !== 44 || profile.baseline_resource_identities.length !== 42) {
     fail(code);
   }
-  const expected = new Set(profile.baseline_resource_identities.map(identity =>
+  const expected = new Set(templates.map(identity =>
     renderedProfileIdentity(identity, namespace)
   ));
   const indexed = new Map();
@@ -336,7 +362,7 @@ function indexFullInventory(resources, namespace, profile, code) {
 function exactTargetResources(resources, namespace, profile, code) {
   const indexed = indexFullInventory(resources, namespace, profile, code);
   const targets = targetIdentities(namespace, profile);
-  if (targets.length !== 7) fail(code);
+  if (targets.length !== 8) fail(code);
   return targets.map(target => {
     const resource = indexed.get(identityKey(target));
     if (!resource) fail(code);
@@ -442,7 +468,7 @@ function bindingIdentity(binding, code) {
 
 function assertBundleBoundToBaseline(bundle, baselineIndex, profile) {
   const bindings = bundle?.contract?.liveResourceBindings;
-  if (!Array.isArray(bindings) || bindings.length !== 14) {
+  if (!Array.isArray(bindings) || bindings.length !== 16) {
     fail("rotation_bundle_binding_invalid");
   }
   const seen = new Set();
@@ -458,6 +484,18 @@ function assertBundleBoundToBaseline(bundle, baselineIndex, profile) {
   }
 
   const namespace = bundleNamespace(bundle);
+  const pullServiceAccount = baselineIndex.get(identityKey({
+    apiVersion: profile.legacy_image_pull.service_account.apiVersion,
+    kind: profile.legacy_image_pull.service_account.kind,
+    namespace,
+    name: profile.legacy_image_pull.service_account.name
+  }));
+  if (!isRecord(pullServiceAccount) ||
+      pullServiceAccount.metadata?.deletionTimestamp != null ||
+      JSON.stringify(pullServiceAccount.imagePullSecrets) !==
+        JSON.stringify(profile.legacy_image_pull.service_account.image_pull_secrets)) {
+    fail("rotation_bundle_pull_service_account_drift");
+  }
   const configIdentity = identityKey({
     apiVersion: "v1",
     kind: "ConfigMap",
@@ -512,6 +550,23 @@ function assertCandidate(candidate, baseline, target, bundle, profile) {
     }
     return;
   }
+  if (target.name === profile.legacy_image_pull.secret.name) {
+    const pull = profile.legacy_image_pull.secret;
+    const allowedMetadata = new Set([
+      "creationTimestamp", "name", "namespace", "resourceVersion", "uid"
+    ]);
+    if (!Object.keys(candidate).every(key => [
+      "apiVersion", "kind", "metadata", "type", "immutable", "data"
+    ].includes(key)) || candidate.type !== pull.type ||
+        (hasOwn(candidate, "immutable") && candidate.immutable !== false) ||
+        Object.keys(candidate.metadata).some(key => !allowedMetadata.has(key)) ||
+        !isRecord(candidate.data) || !exactKeys(candidate.data, [pull.data_key]) ||
+        typeof candidate.data[pull.data_key] !== "string" ||
+        !BASE64.test(candidate.data[pull.data_key])) {
+      fail("rotation_replacement_pull_secret_invalid");
+    }
+    return;
+  }
   const allowedMetadata = new Set([
     "creationTimestamp", "name", "namespace", "resourceVersion", "uid"
   ]);
@@ -533,10 +588,11 @@ function assertCandidate(candidate, baseline, target, bundle, profile) {
 function replacementFileNames(profile) {
   const names = [
     "00-secret-configs.json",
+    `01-secret-${profile.legacy_image_pull.secret.name}.json`,
     ...profile.rotation_revision_deployments.map((name, index) =>
-      `${String(index + 1).padStart(2, "0")}-deployment-${name}.json`)
+      `${String(index + 2).padStart(2, "0")}-deployment-${name}.json`)
   ];
-  if (names.length !== 7 || new Set(names).size !== 7 || names.some(name =>
+  if (names.length !== 8 || new Set(names).size !== 8 || names.some(name =>
     !/^[0-9]{2}-(?:secret|deployment)-[a-z0-9](?:[-a-z0-9]*[a-z0-9])?\.json$/u
       .test(name))) {
     fail("rotation_replacement_filename_invalid");
@@ -1469,11 +1525,11 @@ export function emitVerifiedProcessLocalRotationReplacement(options) {
 }
 
 function safeClassificationPlan(plan) {
-  if (!isRecord(plan) || plan.schemaVersion !== 1 || plan.resourceCount !== 7 ||
+  if (!isRecord(plan) || plan.schemaVersion !== 1 || plan.resourceCount !== 8 ||
       !Number.isInteger(plan.pendingCount) ||
       !Number.isInteger(plan.alreadyAppliedCount) ||
       typeof plan.complete !== "boolean" || !Array.isArray(plan.resources) ||
-      plan.resources.length !== 7) {
+      plan.resources.length !== 8) {
     fail("rotation_classification_plan_invalid");
   }
   const resources = plan.resources.map(resource => {
@@ -1497,7 +1553,7 @@ function safeClassificationPlan(plan) {
   });
   return {
     schemaVersion: 1,
-    resourceCount: 7,
+    resourceCount: 8,
     pendingCount: plan.pendingCount,
     alreadyAppliedCount: plan.alreadyAppliedCount,
     complete: plan.complete,
@@ -1522,7 +1578,7 @@ function loadClassificationState(options) {
   );
   const classified = classifyProcessLocalRotationReentry({
     baselineResources: materialization.baselineResources,
-    liveResources: liveTargets,
+    liveResources,
     bundle: materialization.bundle,
     profile: materialization.profile
   });
@@ -1785,7 +1841,7 @@ export function extractAppliedProcessLocalRotationResources(options) {
   try {
     const state = loadClassificationState(options);
     if (!state.plan.complete || state.plan.pendingCount !== 0 ||
-        state.plan.alreadyAppliedCount !== 7) {
+        state.plan.alreadyAppliedCount !== 8) {
       fail("rotation_applied_inventory_incomplete");
     }
     const list = {
@@ -1841,14 +1897,17 @@ function parseCliArguments(argv) {
     const values = parseFlags(argv.slice(1), new Set([
       ...common,
       "--output-directory",
-      ...(command === "emit-verified" ? ["--name"] : [])
+      ...(command === "emit-verified" ? ["--name", "--stream-purpose"] : [])
     ]));
     return {
       command,
       options: {
         ...commonOptions(values),
         outputDirectory: values.get("--output-directory"),
-        ...(command === "emit-verified" ? { name: values.get("--name") } : {})
+        ...(command === "emit-verified" ? {
+          name: values.get("--name"),
+          streamPurpose: values.get("--stream-purpose")
+        } : {})
       }
     };
   }
@@ -1909,6 +1968,9 @@ function main() {
         classifyProcessLocalRotationFiles(parsed.options)
       )}\n`);
     } else if (parsed.command === "emit-verified") {
+      if (parsed.options.streamPurpose !== "coordinator-cas-stream" || process.stdout.isTTY) {
+        fail("unsafe_replacement_stream_target");
+      }
       process.stdout.write(emitVerifiedProcessLocalRotationReplacement(parsed.options));
     } else if (parsed.command === "emit-attestation-inputs") {
       process.stdout.write(`${canonicalJson(

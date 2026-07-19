@@ -6,7 +6,17 @@ umask 077
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 DRIVER="$ROOT_DIR/deployment/rotate-process-local-credentials.sh"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/aud065-driver-test.XXXXXX")"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TEST_COMPLETED=0
+cleanup() {
+  local status=$?
+  trap - EXIT
+  rm -rf "$TMP_ROOT"
+  if [[ "$status" == 0 && "$TEST_COMPLETED" != 1 ]]; then
+    status=1
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -49,6 +59,7 @@ driver_plan_body="$(declare -f aud065_plan)"
 driver_execute_body="$(declare -f aud065_execute_or_resume)"
 driver_missing_terminal_body="$(declare -f aud065_verify_missing_lock_terminal)"
 driver_audit_body="$(declare -f aud065_audit)"
+saved_verify_pre_mutation_ghcr_function="$(declare -f aud065_verify_pre_mutation_ghcr_access)"
 
 entrypoint_status=0
 if AUD065_DRIVER_SOURCE_ONLY=1 "$DRIVER" audit >/dev/null 2>&1; then
@@ -465,6 +476,10 @@ run_audit_fixture() {
         ! [[ "$STATE" == source-drift-final && "$count" == 2 ]]
     }
     recovery_require_live_process_local_runner_exact() { audit_log process-local-exact; }
+    aud065_verify_ghcr_snapshot_access() {
+      audit_log "ghcr:${1##*/}"
+      [[ "$1" == "$AUD065_NEW_SNAPSHOT" && "$STATE" != ghcr-denied ]]
+    }
     aud065_verify_terminal_record_read_only() {
       audit_log terminal-read-only
       AUD065_PGSQL_INITIAL_RESOURCE_VERSION=rv-initial
@@ -514,7 +529,7 @@ run_audit_fixture() {
 
 AUDIT_LOG="$TMP_ROOT/audit.log"
 run_audit_fixture success "$AUDIT_LOG"
-expected_audit_order=$'lock-read\noperation-checkpoint\nsource:new\nprocess-local-exact\nterminal-read-only\npolicy-inventory\npolicy-get\npolicy-exact:normal\nprobe-inventory\nlive-release\nstarted:bot-orchestrator\nstarted:reticulum\nstarted:coturn\nstarted:dialog\nstarted:pgbouncer\nstarted:pgbouncer-t\nimages-checkpoint\nsource:new\nterminal-read-only\nlock-read'
+expected_audit_order=$'lock-read\noperation-checkpoint\nsource:new\nprocess-local-exact\nterminal-read-only\npolicy-inventory\npolicy-get\npolicy-exact:normal\nprobe-inventory\nlive-release\nstarted:bot-orchestrator\nstarted:reticulum\nstarted:coturn\nstarted:dialog\nstarted:pgbouncer\nstarted:pgbouncer-t\nimages-checkpoint\nprocess-local-exact\nghcr:new-snapshot.json\nsource:new\nterminal-read-only\nlock-read'
 if [[ "$AUDIT_FIXTURE_STATUS" == 0 &&
       "$AUDIT_FIXTURE_OUTPUT" == aud065_rotation_verified &&
       "$(cat "$AUDIT_LOG")" == "$expected_audit_order" ]] &&
@@ -525,7 +540,7 @@ else
 fi
 
 for audit_drift in lock-start lock-final source-drift source-drift-final \
-  terminal-drift-final second-policy readiness-drift; do
+  terminal-drift-final second-policy readiness-drift ghcr-denied; do
   drift_log="$TMP_ROOT/audit-$audit_drift.log"
   run_audit_fixture "$audit_drift" "$drift_log"
   if [[ "$AUDIT_FIXTURE_STATUS" != 0 &&
@@ -726,7 +741,7 @@ if [[ "$tool" == --input-type=module && "${1:-}" == - && "$#" == 3 ]]; then
     bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
     cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
     yenhubs-process-local-credential-rotation-v1 \
-    1b922b6313c9b5e98b3dfd95c3d619da74c752f3f5ab85361e929c9348fe549b
+    8252ddb7a957950b022fdae482c6363fbc102a57a0c140022031408bc4f6ea1b
   exit 0
 fi
 if [[ "$tool" == --input-type=module && "${1:-}" == - && "$#" == 6 ]]; then
@@ -737,7 +752,11 @@ if [[ "$tool" == --input-type=module && "${1:-}" == - && "$#" == 6 ]]; then
     lock-fixture-uid
   exit 0
 fi
-printf 'node:%s:%s\n' "$tool" "${1:-}" >>"$PLAN_LOG"
+if [[ "$tool" == verify-bot-image-pull-config.mjs ]]; then
+  printf 'node:%s:%s:%s\n' "$tool" "${1:-}" "${2##*/}" >>"$PLAN_LOG"
+else
+  printf 'node:%s:%s\n' "$tool" "${1:-}" >>"$PLAN_LOG"
+fi
 if [[ "$tool" == prepare-process-local-rotation.mjs &&
       "${1:-}" == verify-plan && -n "${PLAN_VERIFY_FAILURE:-}" ]]; then
   exit 71
@@ -832,9 +851,9 @@ fi
 plan_order="$(sed -n '1,4p' "$PLAN_LOG")"
 expect_equal "$plan_order" $'read:checkpoint\nread:live-boundary\nnode:process-local-rotation-operation.mjs:init\nnode:capture-process-local-baseline.mjs:--context' \
   'plan validates checkpoint and live boundary before durable capture'
-expect_equal "$(tail -n 5 "$PLAN_LOG")" \
-  $'node:process-local-rotation-operation.mjs:seal\nnode:process-local-rotation-operation.mjs:load-intent\nnode:process-local-rotation-operation.mjs:verify\nnode:process-local-source-transition.mjs:verify\nnode:prepare-process-local-rotation.mjs:verify-plan' \
-  'plan verifies offline workload, policy and config invariants after sealing and before ready'
+expect_equal "$(tail -n 7 "$PLAN_LOG")" \
+  $'node:process-local-rotation-operation.mjs:seal\nnode:process-local-rotation-operation.mjs:load-intent\nnode:process-local-rotation-operation.mjs:verify\nnode:process-local-source-transition.mjs:verify\nnode:verify-bot-image-pull-config.mjs:--verify-process-local-snapshot:old-snapshot.json\nnode:verify-bot-image-pull-config.mjs:--verify-process-local-snapshot:new-snapshot.json\nnode:prepare-process-local-rotation.mjs:verify-plan' \
+  'plan proves OLD then NEW registry access before the final offline contract'
 
 PATH="$FIXTURE_BIN:$old_path"
 for invalid_plan_contract in replicas policy config; do
@@ -1088,6 +1107,7 @@ if [[ "$(grep -oF -- "--operation-directory \"\$AUD065_OPERATION_DIRECTORY\"" \
    [[ "$(grep -oF -- "--operation-directory \"\$AUD065_OPERATION_DIRECTORY\"" \
        <<<"$apply_body" | wc -l | tr -d ' ')" == 3 ]] &&
    grep -qF 'emit-verified' <<<"$apply_body" &&
+   grep -qF -- '--stream-purpose coordinator-cas-stream' <<<"$apply_body" &&
    ! grep -qF "< \"\$AUD065_REPLACEMENTS_DIRECTORY" <<<"$apply_body"; then
   pass 'all replacement operations authenticate inputs and CAS only verified emitted bytes'
 else
@@ -1115,12 +1135,13 @@ done
 printf '%s\n' "$action" >>"$MATERIALIZE_LOG"
 names=(
   00-secret-configs.json
-  01-deployment-bot-orchestrator.json
-  02-deployment-coturn.json
-  03-deployment-dialog.json
-  04-deployment-pgbouncer.json
-  05-deployment-pgbouncer-t.json
-  06-deployment-reticulum.json
+  01-secret-ghcr-pull.json
+  02-deployment-bot-orchestrator.json
+  03-deployment-coturn.json
+  04-deployment-dialog.json
+  05-deployment-pgbouncer.json
+  06-deployment-pgbouncer-t.json
+  07-deployment-reticulum.json
 )
 case "$action" in
   materialize)
@@ -1137,7 +1158,7 @@ case "$action" in
   verify)
     [[ ! -e "$output/foreign.json" && ! -L "$output/foreign.json" ]] || exit 72
     for name in "${names[@]}"; do [[ -f "$output/$name" ]]; done
-    [[ "$(find "$output" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" == 7 ]]
+    [[ "$(find "$output" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" == 8 ]]
     ;;
   *) exit 92 ;;
 esac
@@ -1190,7 +1211,7 @@ run_materialize_reentry_fixture() {
       *) exit 76 ;;
     esac
     [[ "$(find "$AUD065_REPLACEMENTS_DIRECTORY" -mindepth 1 -maxdepth 1 \
-      -type f ! -name foreign.json | wc -l | tr -d " ")" == 7 || "$MODE" == foreign ]]
+      -type f ! -name foreign.json | wc -l | tr -d " ")" == 8 || "$MODE" == foreign ]]
   ' bash "$DRIVER" "$mode" "$fixture"
 }
 
@@ -1424,6 +1445,7 @@ recovery_require_live_process_local_runner_exact() {
   prelock_log 'reject-residual:Secret/hcce/bot-images-pull'
   return 1
 }
+aud065_verify_pre_mutation_ghcr_access() { prelock_log FORBIDDEN-ghcr-access; }
 aud065_create_or_adopt_lock() { prelock_log FORBIDDEN-lock-create; }
 aud065_release_lease_if_owned() {
   prelock_log release-lease
@@ -1449,6 +1471,19 @@ elif [[ "$(cat "$PRELOCK_LOG")" == $'set-paths\nverify-operation\ncheckpoint-fre
 else
   fail 'post-Lease process-local boundary blocks a partial AUD-075 resource before lock or callbacks'
 fi
+: >"$PRELOCK_LOG"
+recovery_require_live_process_local_runner_exact() { prelock_log process-local-exact; }
+aud065_verify_pre_mutation_ghcr_access() {
+  prelock_log ghcr-old-new
+  return 1
+}
+if aud065_execute_or_resume execute >/dev/null 2>&1; then
+  fail 'post-Lease GHCR denial blocks before lock or callbacks'
+elif [[ "$(cat "$PRELOCK_LOG")" == $'set-paths\nverify-operation\ncheckpoint-freshness\nverify-source:old\nacquire-lease\nprocess-local-exact\nghcr-old-new\nrelease-lease' ]]; then
+  pass 'post-Lease GHCR denial blocks before lock or callbacks'
+else
+  fail 'post-Lease GHCR denial blocks before lock or callbacks'
+fi
 
 run_execute_sequence_guard_fixture() {
   local mode="$1" failure_stage="$2" fast_path="${3:-0}"
@@ -1465,6 +1500,7 @@ run_execute_sequence_guard_fixture() {
     aud065_verify_source_state() { :; }
     aud065_acquire_lease() { AUD065_LEASE_ACQUIRED=1; }
     recovery_require_live_process_local_runner_exact() { :; }
+    aud065_verify_pre_mutation_ghcr_access() { :; }
     aud065_create_or_adopt_lock() {
       [[ "$FAST_PATH" == 1 ]] && return 3
       return 0
@@ -1500,19 +1536,107 @@ for resume_fast_failure in fast-terminal fast-release; do
     run_execute_sequence_guard_fixture resume "$resume_fast_failure" 1
 done
 
-aud065_set_paths() { :; }
+run_mode_gate_order_fixture() {
+  local mode="$1" log_path="$2" deny_snapshot="${3:-none}"
+  : >"$log_path"
+  bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    MODE="$2"
+    LOG_PATH="$3"
+    DENY_SNAPSHOT="$4"
+    gate_log() { printf "%s\n" "$1" >>"$LOG_PATH"; }
+    aud065_set_paths() {
+      gate_log set-paths
+      AUD065_OLD_SNAPSHOT=/private/old-snapshot.json
+      AUD065_NEW_SNAPSHOT=/private/new-snapshot.json
+    }
+    aud065_verify_operation_checkpoint() { gate_log verify-operation; }
+    aud065_require_checkpoint_freshness() { gate_log checkpoint-freshness; }
+    aud065_verify_source_state() { gate_log "verify-source:$1"; }
+    aud065_acquire_lease() { gate_log acquire-lease; AUD065_LEASE_ACQUIRED=1; }
+    recovery_require_live_process_local_runner_exact() { gate_log process-local-exact; }
+    aud065_verify_ghcr_snapshot_access() {
+      gate_log "ghcr:${1##*/}"
+      [[ "${1##*/}" != "$DENY_SNAPSHOT" ]]
+    }
+    aud065_create_or_adopt_lock() { gate_log lock-create-adopt; }
+    aud065_run_rotation_callbacks() { gate_log rotation-callbacks; }
+    aud065_run_rollback_callbacks() { gate_log rollback-callbacks; }
+    aud065_verify_missing_lock_terminal() { gate_log verify-terminal; }
+    aud065_release_lease_if_owned() { gate_log release-lease; AUD065_LEASE_ACQUIRED=0; }
+    aud065_execute_or_resume "$MODE" >/dev/null
+  ' bash "$DRIVER" "$mode" "$log_path" "$deny_snapshot"
+}
+
+for gate_mode in execute rollback; do
+  GATE_ORDER_LOG="$TMP_ROOT/gate-order-$gate_mode.log"
+  if run_mode_gate_order_fixture "$gate_mode" "$GATE_ORDER_LOG"; then
+    if [[ "$gate_mode" == execute ]]; then
+      expected_gate_order=$'set-paths\nverify-operation\ncheckpoint-freshness\nverify-source:old\nacquire-lease\nprocess-local-exact\nghcr:old-snapshot.json\nghcr:new-snapshot.json\nlock-create-adopt\nrotation-callbacks\nverify-terminal\nrelease-lease'
+    else
+      expected_gate_order=$'set-paths\nverify-operation\nverify-source:either\nacquire-lease\nprocess-local-exact\nghcr:old-snapshot.json\nghcr:new-snapshot.json\nlock-create-adopt\nrollback-callbacks\nverify-terminal\nrelease-lease'
+    fi
+    expect_equal "$(cat "$GATE_ORDER_LOG")" "$expected_gate_order" \
+      "$gate_mode proves OLD then NEW GHCR access before lock and callbacks"
+  else
+    fail "$gate_mode proves OLD then NEW GHCR access before lock and callbacks"
+  fi
+done
+
+for denied_snapshot in old-snapshot.json new-snapshot.json; do
+  DENIED_GATE_LOG="$TMP_ROOT/gate-denied-$denied_snapshot.log"
+  if run_mode_gate_order_fixture execute "$DENIED_GATE_LOG" "$denied_snapshot"; then
+    fail "$denied_snapshot GHCR denial fails before operation lock and callbacks"
+  else
+    if [[ "$denied_snapshot" == old-snapshot.json ]]; then
+      expected_denied_order=$'set-paths\nverify-operation\ncheckpoint-freshness\nverify-source:old\nacquire-lease\nprocess-local-exact\nghcr:old-snapshot.json\nrelease-lease'
+    else
+      expected_denied_order=$'set-paths\nverify-operation\ncheckpoint-freshness\nverify-source:old\nacquire-lease\nprocess-local-exact\nghcr:old-snapshot.json\nghcr:new-snapshot.json\nrelease-lease'
+    fi
+    expect_equal "$(cat "$DENIED_GATE_LOG")" "$expected_denied_order" \
+      "$denied_snapshot GHCR denial fails before operation lock and callbacks"
+  fi
+done
+
+FORWARD_DISPATCH_LOG="$TMP_ROOT/forward-dispatch.log"
+if bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  LOG_PATH="$2"
+  aud065_runtime_identifiers() { printf "ret0\tret_dev\n"; }
+  aud065_emit_runtime_password() { printf "old\nnew\n"; }
+  pldb_run_rotation() {
+    while IFS= read -r _credential; do :; done
+    printf "%s\n" "$PLDB_START_POOLS_CALLBACK" >>"$LOG_PATH"
+    [[ "$PLDB_START_POOLS_CALLBACK" == aud065_cb_start_pools ]]
+  }
+  aud065_run_rotation_callbacks
+' bash "$DRIVER" "$FORWARD_DISPATCH_LOG"; then
+  expect_equal "$(cat "$FORWARD_DISPATCH_LOG")" aud065_cb_start_pools \
+    'forward dispatcher retains the real GHCR-gated pool restart callback'
+else
+  fail 'forward dispatcher retains the real GHCR-gated pool restart callback'
+fi
+
+eval "$saved_verify_pre_mutation_ghcr_function"
+aud065_set_paths() {
+  AUD065_OLD_SNAPSHOT=/private/old-snapshot.json
+  AUD065_NEW_SNAPSHOT=/private/new-snapshot.json
+}
 aud065_verify_operation_checkpoint() { printf 'verify-operation\n' >>"$RESUME_LOG"; }
 aud065_verify_source_state() { printf 'verify-source:%s\n' "$1" >>"$RESUME_LOG"; }
 aud065_acquire_lease() { printf 'acquire-lease\n' >>"$RESUME_LOG"; AUD065_LEASE_ACQUIRED=1; }
 recovery_require_live_process_local_runner_exact() { printf 'process-local-exact\n' >>"$RESUME_LOG"; }
+aud065_verify_ghcr_snapshot_access() { printf 'ghcr:%s\n' "${1##*/}" >>"$RESUME_LOG"; }
 aud065_create_or_adopt_lock() { printf 'lock-absent\n' >>"$RESUME_LOG"; return 3; }
 aud065_verify_missing_lock_terminal() { printf 'verify-terminal\n' >>"$RESUME_LOG"; }
 aud065_release_lease_if_owned() { printf 'release-lease\n' >>"$RESUME_LOG"; AUD065_LEASE_ACQUIRED=0; }
 resume_output="$(aud065_execute_or_resume resume)"
 expect_equal "$resume_output" aud065_rotation_complete \
   'resume accepts an absent lock only through terminal verification'
-expect_equal "$(cat "$RESUME_LOG")" $'verify-operation\nverify-source:either\nacquire-lease\nprocess-local-exact\nlock-absent\nverify-terminal\nrelease-lease' \
-  'absent-lock resume does not recreate or mutate the global lock'
+expect_equal "$(cat "$RESUME_LOG")" $'verify-operation\nverify-source:either\nacquire-lease\nprocess-local-exact\nghcr:old-snapshot.json\nghcr:new-snapshot.json\nlock-absent\nverify-terminal\nrelease-lease' \
+  'absent-lock resume proves OLD then NEW GHCR access without recreating the global lock'
 
 if bash -c '
   set -Eeuo pipefail
@@ -1792,6 +1916,51 @@ for released_failure in capture live-verify publish cleanup; do
     run_released_capture_guard_fixture "$released_failure" new
 done
 
+run_bundle_applied_start_pools_fixture() {
+  local gate_state="$1" log_path="$2"
+  : >"$log_path"
+  bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    GATE_STATE="$2"
+    LOG_PATH="$3"
+    RECOVERY_OPERATION_STATE=bundle-applied
+    AUD065_NEW_SNAPSHOT=/private/new-snapshot.json
+    bundle_log() { printf "%s\n" "$1" >>"$LOG_PATH"; }
+    aud065_reload_guard() { :; }
+    aud065_verify_ghcr_snapshot_access() {
+      [[ "$1" == "$AUD065_NEW_SNAPSHOT" ]] || return 1
+      bundle_log ghcr-new-access
+      [[ "$GATE_STATE" != denied ]]
+    }
+    aud065_probe_image() { printf "postgres@sha256:%064d\n" 0; }
+    aud065_pgsql_probe_bind_image() { bundle_log probe-bind; }
+    aud065_pgsql_probe_create() { bundle_log probe-create; }
+    aud065_require_pgsql_probe_nonready_and_unroutable() { bundle_log probe-nonready; }
+    aud065_pgsql_barrier_open() { bundle_log barrier-open; }
+    aud065_crash_point() { bundle_log "crash:$1"; }
+    aud065_scale_one_to_original() { bundle_log "scale:$1"; }
+    aud065_cb_start_pools
+  ' bash "$DRIVER" "$gate_state" "$log_path"
+}
+
+BUNDLE_POOLS_LOG="$TMP_ROOT/bundle-applied-start-pools.log"
+if run_bundle_applied_start_pools_fixture allowed "$BUNDLE_POOLS_LOG"; then
+  expect_equal "$(cat "$BUNDLE_POOLS_LOG")" \
+    $'ghcr-new-access\nprobe-bind\nprobe-create\nprobe-nonready\nbarrier-open\ncrash:after-barrier-open\nscale:pgbouncer\nscale:pgbouncer-t' \
+    'bundle-applied revalidates exact NEW GHCR access before barrier and first restart'
+else
+  fail 'bundle-applied revalidates exact NEW GHCR access before barrier and first restart'
+fi
+BUNDLE_POOLS_DENIED_LOG="$TMP_ROOT/bundle-applied-start-pools-denied.log"
+if run_bundle_applied_start_pools_fixture denied "$BUNDLE_POOLS_DENIED_LOG"; then
+  fail 'bundle-applied GHCR denial performs zero probe, barrier or restart mutation'
+elif [[ "$(cat "$BUNDLE_POOLS_DENIED_LOG")" == ghcr-new-access ]]; then
+  pass 'bundle-applied GHCR denial performs zero probe, barrier or restart mutation'
+else
+  fail 'bundle-applied GHCR denial performs zero probe, barrier or restart mutation'
+fi
+
 for closed_resume_state in verified cleanup-authorized; do
   CLOSED_RESUME_LOG="$TMP_ROOT/closed-resume-$closed_resume_state.log"
   closed_resume_status=0
@@ -1804,6 +1973,7 @@ for closed_resume_state in verified cleanup-authorized; do
     LOG_PATH="$3"
     RECOVERY_OPERATION_STATE="$STATE"
     RECOVERY_OPERATION_LOCK_UID=lock-closed-resume
+    AUD065_NEW_SNAPSHOT=/private/new-snapshot.json
     log() { printf "%s\n" "$1" >>"$LOG_PATH"; }
     aud065_reload_guard() {
       RECOVERY_OPERATION_STATE="$STATE"
@@ -1821,6 +1991,11 @@ for closed_resume_state in verified cleanup-authorized; do
     aud065_scale_one_to_original() { log "scale:$1"; }
     aud065_probe_fresh_auth() { log "pool-auth:$1:$2:$3"; }
     recovery_require_live_images_match_checkpoint() { :; }
+    recovery_require_live_process_local_runner_exact() { log process-local-exact; }
+    aud065_verify_ghcr_snapshot_access() {
+      [[ "$1" == "$AUD065_NEW_SNAPSHOT" ]] || return 1
+      log ghcr-new-access
+    }
     aud065_verify_or_create_report() { log report-verified; }
     aud065_verify_fresh_cleanup_gate() { log fresh-open-gate; }
     recovery_require_operation_lock() { :; }
@@ -1855,11 +2030,15 @@ for closed_resume_state in verified cleanup-authorized; do
     closed_resume_status=$?
   fi
   cleanup_line="$(grep -nE '^cleanup-cas$' "$CLOSED_RESUME_LOG" | cut -d: -f1)"
+  ghcr_line="$(grep -nE '^ghcr-new-access$' "$CLOSED_RESUME_LOG" | cut -d: -f1)"
+  barrier_line="$(grep -nE '^barrier-open$' "$CLOSED_RESUME_LOG" | cut -d: -f1)"
+  first_pool_scale_line="$(grep -nE '^scale:pgbouncer$' "$CLOSED_RESUME_LOG" | head -1 | cut -d: -f1)"
   terminal_line="$(grep -nE '^terminal$' "$CLOSED_RESUME_LOG" | cut -d: -f1)"
   release_line="$(grep -nE '^release-lock$' "$CLOSED_RESUME_LOG" | cut -d: -f1)"
   if [[ "$closed_resume_status" == 0 ]] &&
      [[ "$(sed -n '1,3p' "$CLOSED_RESUME_LOG")" == $'consumers-absent\nsessions-zero\nsocket-unix' ]] &&
      grep -qE '^barrier-open$' "$CLOSED_RESUME_LOG" &&
+     [[ "$ghcr_line" -lt "$barrier_line" && "$barrier_line" -lt "$first_pool_scale_line" ]] &&
      [[ "$cleanup_line" -lt "$terminal_line" && "$terminal_line" -lt "$release_line" ]]; then
     pass "$closed_resume_state closed fail-close state reopens, restarts and completes"
   else
@@ -1931,7 +2110,7 @@ for signal_case in INT:130 TERM:143; do
   fi
 done
 
-# Seven durable CAS cuts exist in bundle order (Secret plus six Deployments).
+# Eight durable CAS cuts exist in bundle order (two Secrets plus six Deployments).
 # For every prefix, run the real driver rollback dispatcher and pldb rollback
 # state machine. The real rb_quiesce/fail_close_one path must accept candidate
 # Deployment specs directly from the authenticated bundle without relying on
@@ -1950,9 +2129,9 @@ case "$command_name" in
   verify|materialize) exit 0 ;;
   classify)
     prefix="$(<"$ROLLBACK_STATE")"
-    jq -cn --argjson already "$prefix" --argjson pending "$((7 - prefix))" '
+    jq -cn --argjson already "$prefix" --argjson pending "$((8 - prefix))" '
       {alreadyAppliedCount:$already,pendingCount:$pending,
-       resources:[range(0;7) | {state:(if . < $already then "already-applied" else "pending" end)}]}
+       resources:[range(0;8) | {state:(if . < $already then "already-applied" else "pending" end)}]}
     '
     ;;
   emit-verified) printf '{}\n' ;;
@@ -1972,12 +2151,13 @@ ROLLBACK_NODE
 chmod 700 "$ROLLBACK_BIN/node"
 rollback_cut_names=(
   after-replace-00-secret-configs
-  after-replace-01-deployment-bot-orchestrator
-  after-replace-02-deployment-coturn
-  after-replace-03-deployment-dialog
-  after-replace-04-deployment-pgbouncer
-  after-replace-05-deployment-pgbouncer-t
-  after-replace-06-deployment-reticulum
+  after-replace-01-secret-ghcr-pull
+  after-replace-02-deployment-bot-orchestrator
+  after-replace-03-deployment-coturn
+  after-replace-04-deployment-dialog
+  after-replace-05-deployment-pgbouncer
+  after-replace-06-deployment-pgbouncer-t
+  after-replace-07-deployment-reticulum
 )
 for rollback_cut in "${!rollback_cut_names[@]}"; do
   rollback_prefix=$((rollback_cut + 1))
@@ -2035,12 +2215,12 @@ for rollback_cut in "${!rollback_cut_names[@]}"; do
     }
     candidate_index() {
       case "$1" in
-        bot-orchestrator) printf "2\n" ;;
-        coturn) printf "3\n" ;;
-        dialog) printf "4\n" ;;
-        pgbouncer) printf "5\n" ;;
-        pgbouncer-t) printf "6\n" ;;
-        reticulum) printf "7\n" ;;
+        bot-orchestrator) printf "3\n" ;;
+        coturn) printf "4\n" ;;
+        dialog) printf "5\n" ;;
+        pgbouncer) printf "6\n" ;;
+        pgbouncer-t) printf "7\n" ;;
+        reticulum) printf "8\n" ;;
         *) return 1 ;;
       esac
     }
@@ -2088,8 +2268,8 @@ for rollback_cut in "${!rollback_cut_names[@]}"; do
   replacement_count="${replacement_count:-0}"
   if [[ "$rollback_prefix_status" == 0 ]] &&
      [[ "$(grep -cE '^accepted:' "$ROLLBACK_PREFIX_LOG")" == 6 ]] &&
-     [[ "$replacement_count" == "$((7 - rollback_prefix))" ]] &&
-     [[ "$(<"$ROLLBACK_PREFIX_OP/prefix.state")" == 7 ]] &&
+     [[ "$replacement_count" == "$((8 - rollback_prefix))" ]] &&
+     [[ "$(<"$ROLLBACK_PREFIX_OP/prefix.state")" == 8 ]] &&
      grep -qE '^transition:db-rotated->bundle-applied$' "$ROLLBACK_PREFIX_LOG" &&
      grep -qE '^complete$' "$ROLLBACK_PREFIX_LOG" &&
      ! grep -qF 'NNNNNNNN' "$ROLLBACK_PREFIX_LOG"; then
@@ -2139,4 +2319,5 @@ else
 fi
 
 printf '1..%d\n' "$((PASS_COUNT + FAIL_COUNT))"
+TEST_COMPLETED=1
 if [[ "$FAIL_COUNT" -ne 0 ]]; then exit 1; fi

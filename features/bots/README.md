@@ -157,6 +157,13 @@ monta ni se entrega a Node. Su origen
 se actualiza con `npm run set-bot-image-pull-config`, pasando `GHCR_TOKEN` por
 entrada oculta/entorno y sin imprimirlo.
 
+Ese origen privado también alimenta durante AUD-065 el Secret histórico
+`ghcr-pull` del namespace principal, pero las identidades y ciclos de vida no
+se mezclan: `ghcr-pull` se reemplaza por CAS para el baseline `process-local` y
+`ServiceAccount/default` solo se verifica; `bot-images-pull` continúa siendo un
+recurso distinto, generado exclusivamente para los ServiceAccounts parent y
+runner de AUD-075.
+
 El flujo autoritativo es:
 
 1. Ghost solicita el join Phoenix con `context.bot_runner=true` y su token de

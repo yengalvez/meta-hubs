@@ -161,7 +161,9 @@ function projectionKeys(profile) {
   const required = [
     profile.namespace_value_key,
     ...profile.secret_keys.filter(name => !profile.derived_secret_keys.includes(name)),
-    ...new Set(profile.image_pairs.map(pair => pair.value_key))
+    ...new Set(profile.image_pairs.map(pair => pair.value_key)),
+    profile.legacy_image_pull.snapshot_value_key,
+    ...profile.legacy_image_pull.verified_image_value_keys
   ];
   return {
     required: [...new Set(required)].sort(),

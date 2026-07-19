@@ -2,8 +2,8 @@
 
 // Strict offline attestation for an AUD-065 process-local credential rotation.
 // This module never builds an independently applicable manifest: it verifies
-// the canonical bundle, its private binding, seven intermediate CAS responses,
-// the exact 42-resource final inventory and the operation attestation, then
+// the canonical bundle, its private binding, eight intermediate CAS responses,
+// the exact 44-resource operational inventory and the operation attestation, then
 // emits only names, booleans and operation-local HMACs.
 
 import {
@@ -25,6 +25,11 @@ import {
   verifyProcessLocalRotationBundle
 } from "./process-local-rotation.mjs";
 import { canonicalOperationJson } from "./process-local-rotation-operation.mjs";
+import {
+  verifyBotPullConfig,
+  verifyBotPullConfigCredentialMatch,
+  verifyBotPullConfigRotation
+} from "./verify-bot-image-pull-config.mjs";
 
 const requireFromCommunityEdition = createRequire(new URL(
   "../hubs-cloud/community-edition/package.json",
@@ -35,7 +40,9 @@ const YAML = requireFromCommunityEdition("yaml");
 const EXPECTED_PROFILE_ID = "yenhubs-process-local-credential-rotation-v1";
 // This is deliberately pinned independently from profile_id. Update it only
 // with a reviewed, coherent change to the canonical process-local profile.
-const EXPECTED_PROFILE_SHA256 = "1b922b6313c9b5e98b3dfd95c3d619da74c752f3f5ab85361e929c9348fe549b";
+const EXPECTED_PROFILE_SHA256 = "8252ddb7a957950b022fdae482c6363fbc102a57a0c140022031408bc4f6ea1b";
+const HISTORICAL_RESOURCE_COUNT = 42;
+const OPERATIONAL_RESOURCE_COUNT = 44;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 const BASE64URL = /^[A-Za-z0-9_-]+$/u;
 const DNS_LABEL = /^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/u;
@@ -269,7 +276,27 @@ function resourceIndex(resources, code) {
 }
 
 function expectedInventoryKeys(namespace, profile) {
-  return profile.baseline_resource_identities.map(item => identityKey([
+  const identities = [
+    ...profile.baseline_resource_identities,
+    {
+      apiVersion: profile.legacy_image_pull.secret.apiVersion,
+      kind: profile.legacy_image_pull.secret.kind,
+      namespace: "$Namespace",
+      name: profile.legacy_image_pull.secret.name
+    },
+    {
+      apiVersion: profile.legacy_image_pull.service_account.apiVersion,
+      kind: profile.legacy_image_pull.service_account.kind,
+      namespace: "$Namespace",
+      name: profile.legacy_image_pull.service_account.name
+    }
+  ];
+  if (profile.baseline_resource_identities.length !== HISTORICAL_RESOURCE_COUNT ||
+      profile.baseline_provenance?.historical_generated_resource_count !==
+        HISTORICAL_RESOURCE_COUNT || identities.length !== OPERATIONAL_RESOURCE_COUNT) {
+    reject("canonical_profile_inventory_invalid");
+  }
+  return identities.map(item => identityKey([
     item.apiVersion,
     item.kind,
     item.namespace === "$Namespace" ? namespace : (item.namespace || ""),
@@ -280,7 +307,8 @@ function expectedInventoryKeys(namespace, profile) {
 function verifyExactInventory(resources, namespace, profile, code) {
   const index = resourceIndex(resources, code);
   const expected = expectedInventoryKeys(namespace, profile);
-  if (index.size !== 42 || expected.length !== 42 ||
+  if (index.size !== OPERATIONAL_RESOURCE_COUNT ||
+      expected.length !== OPERATIONAL_RESOURCE_COUNT ||
       expected.some(key => !index.has(key))) {
     reject(`${code}_mismatch`);
   }
@@ -487,6 +515,100 @@ function decodeSecret(resource, expectedKeys, source, { live = false, clean = tr
     type: resource.type,
     immutable: resource.immutable ?? false
   };
+}
+
+function readPullSecret(resource, source, profile, { clean = true } = {}) {
+  const contract = profile.legacy_image_pull.secret;
+  if (resource?.apiVersion !== contract.apiVersion ||
+      resource?.kind !== contract.kind || resource?.type !== contract.type ||
+      !record(resource.metadata) || resource.metadata.deletionTimestamp != null ||
+      resource.metadata.name !== contract.name ||
+      (hasOwn(resource, "immutable") && resource.immutable !== false) ||
+      !Object.keys(resource).every(key => [
+        "apiVersion", "kind", "metadata", "type", "immutable", "data"
+      ].includes(key)) || !exactKeys(resource.data, [contract.data_key]) ||
+      typeof resource.data[contract.data_key] !== "string") {
+    reject(`${source}_pull_secret_contract_invalid`);
+  }
+  if (clean) {
+    assertCleanMetadata(resource, `${source}_pull_secret_metadata_invalid`, {
+      secret: true
+    });
+  }
+  return resource.data[contract.data_key];
+}
+
+function verifyPullSecretRotation({
+  candidate,
+  intermediate,
+  final,
+  old,
+  binding,
+  oldValues,
+  newValues,
+  profile
+}) {
+  verifyCasBinding(intermediate, binding);
+  requireUidAndResourceVersion(final, "final_pull_secret_binding_missing");
+  if (final.metadata.uid !== binding?.uid) reject("final_pull_secret_uid_mismatch");
+  if (final.metadata.resourceVersion !== intermediate.metadata.resourceVersion) {
+    reject("final_pull_secret_resource_version_mismatch");
+  }
+  const oldLive = readPullSecret(old, "old", profile, { clean: false });
+  const candidateEncoded = readPullSecret(candidate, "candidate", profile);
+  const intermediateEncoded = readPullSecret(intermediate, "cas", profile);
+  const finalEncoded = readPullSecret(final, "final", profile);
+  if ((candidate.immutable ?? false) !== (intermediate.immutable ?? false) ||
+      (candidate.immutable ?? false) !== (final.immutable ?? false)) {
+    reject("pull_secret_exact_structure_mismatch");
+  }
+  const contract = profile.legacy_image_pull;
+  const oldSource = oldValues[contract.snapshot_value_key];
+  const newSource = newValues[contract.snapshot_value_key];
+  const [botImageKey, runnerImageKey] = contract.verified_image_value_keys;
+  const botImage = newValues[botImageKey];
+  const runnerImage = newValues[runnerImageKey];
+  if ([oldSource, newSource, botImage, runnerImage].some(value =>
+    typeof value !== "string" || value.length === 0)) {
+    reject("pull_secret_private_source_invalid");
+  }
+  try {
+    verifyBotPullConfig({ encoded: candidateEncoded, botImage, runnerImage });
+    verifyBotPullConfigCredentialMatch({
+      expectedEncoded: oldSource,
+      actualEncoded: oldLive,
+      botImage,
+      runnerImage
+    });
+    verifyBotPullConfigCredentialMatch({
+      expectedEncoded: newSource,
+      actualEncoded: candidateEncoded,
+      botImage,
+      runnerImage
+    });
+    verifyBotPullConfigRotation({
+      oldEncoded: oldSource,
+      newEncoded: newSource,
+      botImage,
+      runnerImage
+    });
+  } catch {
+    reject("pull_secret_credential_contract_invalid");
+  }
+  if (!sameText(candidateEncoded, newSource) ||
+      !sameText(intermediateEncoded, candidateEncoded) ||
+      !sameText(finalEncoded, candidateEncoded)) {
+    reject("pull_secret_exact_value_mismatch");
+  }
+  if (!isDeepStrictEqual(
+    metadataWithoutServerFields(intermediate),
+    metadataWithoutServerFields(candidate)
+  )) reject("cas_pull_secret_metadata_mismatch");
+  if (!isDeepStrictEqual(
+    metadataWithoutServerFields(final),
+    metadataWithoutServerFields(candidate)
+  )) reject("final_pull_secret_metadata_mismatch");
+  return candidateEncoded;
 }
 
 function metadataWithoutServerFields(resource) {
@@ -770,6 +892,12 @@ function verifyCasInventory(casResponses, namespace, profile) {
   const index = resourceIndex(casResponses, "cas_response_inventory_invalid");
   const expected = [
     identityKey(["v1", "Secret", namespace, profile.projected_resources.secret]),
+    identityKey([
+      profile.legacy_image_pull.secret.apiVersion,
+      profile.legacy_image_pull.secret.kind,
+      namespace,
+      profile.legacy_image_pull.secret.name
+    ]),
     ...profile.rotation_revision_deployments.map(name =>
       identityKey(["apps/v1", "Deployment", namespace, name]))
   ];
@@ -1017,6 +1145,29 @@ function verifyRestartContract(
 
 function buildApplyAttestation(baselineIndex, bundle, profile) {
   const namespace = bundle.contract.namespace;
+  const secrets = [
+    profile.projected_resources.secret,
+    profile.legacy_image_pull.secret.name
+  ].map(name => {
+    const baseline = baselineIndex.get(identityKey([
+      "v1", "Secret", namespace, name
+    ]));
+    requireUidAndResourceVersion(baseline, "canonical_apply_attestation_invalid");
+    return {
+      name,
+      uidBound: true,
+      resourceVersionBound: true,
+      mutated: true
+    };
+  });
+  const serviceAccountName = profile.legacy_image_pull.service_account.name;
+  const serviceAccountBaseline = baselineIndex.get(identityKey([
+    "v1", "ServiceAccount", namespace, serviceAccountName
+  ]));
+  requireUidAndResourceVersion(
+    serviceAccountBaseline,
+    "canonical_apply_attestation_invalid"
+  );
   const deployments = profile.rotation_revision_deployments.map(name => {
     const baseline = baselineIndex.get(identityKey([
       "apps/v1", "Deployment", namespace, name
@@ -1048,6 +1199,14 @@ function buildApplyAttestation(baselineIndex, bundle, profile) {
   return {
     allConsumersQuiesced: true,
     bundleRestoresReplicas: false,
+    secrets,
+    serviceAccount: {
+      name: serviceAccountName,
+      uidBound: true,
+      resourceVersionBound: true,
+      imagePullSecretsExact: true,
+      mutated: false
+    },
     deployments
   };
 }
@@ -1268,6 +1427,64 @@ function comparableDesiredResource(resource) {
   return comparable;
 }
 
+function bindOnlyComparable(resource) {
+  const comparable = structuredClone(resource);
+  delete comparable.status;
+  if (record(comparable.metadata)) {
+    delete comparable.metadata.resourceVersion;
+    delete comparable.metadata.managedFields;
+    delete comparable.metadata.generation;
+  }
+  return comparable;
+}
+
+function assertDefaultServiceAccount(resource, namespace, profile, code) {
+  const contract = profile.legacy_image_pull.service_account;
+  if (resource?.apiVersion !== contract.apiVersion ||
+      resource?.kind !== contract.kind || !record(resource.metadata) ||
+      resource.metadata.name !== contract.name ||
+      resource.metadata.namespace !== namespace ||
+      resource.metadata.deletionTimestamp != null ||
+      !isDeepStrictEqual(resource.imagePullSecrets, contract.image_pull_secrets)) {
+    reject(code);
+  }
+  requireUidAndResourceVersion(resource, code);
+}
+
+function verifyDefaultServiceAccountChain({
+  original,
+  baseline,
+  final,
+  binding,
+  namespace,
+  profile,
+  fingerprintKey
+}) {
+  assertDefaultServiceAccount(
+    original, namespace, profile, "original_default_service_account_invalid"
+  );
+  assertDefaultServiceAccount(
+    baseline, namespace, profile, "baseline_default_service_account_invalid"
+  );
+  assertDefaultServiceAccount(
+    final, namespace, profile, "final_default_service_account_invalid"
+  );
+  if (!binding || original.metadata.uid !== binding.uid ||
+      baseline.metadata.uid !== binding.uid || final.metadata.uid !== binding.uid ||
+      original.metadata.resourceVersion !== binding.resourceVersion ||
+      baseline.metadata.resourceVersion !== binding.resourceVersion ||
+      final.metadata.resourceVersion !== binding.resourceVersion ||
+      !isDeepStrictEqual(bindOnlyComparable(original), bindOnlyComparable(baseline)) ||
+      !isDeepStrictEqual(bindOnlyComparable(baseline), bindOnlyComparable(final))) {
+    reject("default_service_account_bind_only_drift");
+  }
+  return hmac(
+    fingerprintKey,
+    `ServiceAccount/${profile.legacy_image_pull.service_account.name}`,
+    Buffer.from(canonicalJson(bindOnlyComparable(final)), "utf8")
+  );
+}
+
 function verifyFinalPgsqlBarrier({
   original,
   baseline,
@@ -1367,6 +1584,12 @@ export function verifyReleasedProcessLocalBaseline(input) {
     input.namespace,
     AUD065_PGSQL_POLICY_NAME
   ]);
+  const serviceAccountKey = identityKey([
+    profile.legacy_image_pull.service_account.apiVersion,
+    profile.legacy_image_pull.service_account.kind,
+    input.namespace,
+    profile.legacy_image_pull.service_account.name
+  ]);
 
   for (const [key, verified] of verifiedIndex.entries()) {
     const released = releasedIndex.get(key);
@@ -1378,6 +1601,22 @@ export function verifyReleasedProcessLocalBaseline(input) {
       reject("released_resource_identity_drift");
     }
     if (key === policyKey) continue;
+    if (key === serviceAccountKey) {
+      assertDefaultServiceAccount(
+        verified, input.namespace, profile, "verified_default_service_account_invalid"
+      );
+      assertDefaultServiceAccount(
+        released, input.namespace, profile, "released_default_service_account_invalid"
+      );
+      if (verified.metadata.resourceVersion !== released.metadata.resourceVersion ||
+          !isDeepStrictEqual(
+            bindOnlyComparable(verified),
+            bindOnlyComparable(released)
+          )) {
+        reject("released_default_service_account_drift");
+      }
+      continue;
+    }
     if (!isDeepStrictEqual(
       comparableDesiredResource(verified),
       comparableDesiredResource(released)
@@ -1468,6 +1707,12 @@ function verifyFinalInvariantResources({
   const skipped = new Set([
     identityKey(["v1", "Secret", namespace, profile.projected_resources.secret]),
     identityKey([
+      profile.legacy_image_pull.secret.apiVersion,
+      profile.legacy_image_pull.secret.kind,
+      namespace,
+      profile.legacy_image_pull.secret.name
+    ]),
+    identityKey([
       "networking.k8s.io/v1", "NetworkPolicy", namespace, AUD065_PGSQL_POLICY_NAME
     ]),
     ...profile.required_deployments.map(name =>
@@ -1537,8 +1782,13 @@ function verifyFinalDeployment({
   if (final.spec.replicas !== expectedReplicas) {
     reject("final_deployment_replicas_invalid");
   }
-  if (rotationTarget && final.metadata.resourceVersion === intermediate.metadata.resourceVersion) {
-    reject("final_deployment_resource_version_not_advanced");
+  if (rotationTarget && new Set([
+    intermediate.metadata.resourceVersion,
+    binding?.resourceVersion,
+    restart.originalResourceVersion,
+    restart.quiescedResourceVersion
+  ]).has(final.metadata.resourceVersion)) {
+    reject("final_deployment_resource_version_reused");
   }
   if (!isDeepStrictEqual(final.spec, expected.spec)) {
     reject("final_deployment_spec_mismatch");
@@ -1663,6 +1913,52 @@ export function verifyRedactedRollout(input) {
     profile
   });
 
+  const pullSecretIdentity = [
+    profile.legacy_image_pull.secret.apiVersion,
+    profile.legacy_image_pull.secret.kind,
+    namespace,
+    profile.legacy_image_pull.secret.name
+  ];
+  const pullSecretKey = identityKey(pullSecretIdentity);
+  const candidatePullSecret = findResource(
+    input.bundle.resources,
+    ...pullSecretIdentity,
+    "candidate_pull_secret_missing"
+  );
+  const baselinePullSecret = baselineIndex.get(pullSecretKey);
+  const intermediatePullSecret = casIndex.get(pullSecretKey);
+  const finalPullSecret = finalIndex.get(pullSecretKey);
+  if (!baselinePullSecret || !intermediatePullSecret || !finalPullSecret) {
+    reject("pull_secret_inventory_missing");
+  }
+  const pullSecretEncoded = verifyPullSecretRotation({
+    candidate: candidatePullSecret,
+    intermediate: intermediatePullSecret,
+    final: finalPullSecret,
+    old: baselinePullSecret,
+    binding: bindings.get(pullSecretKey),
+    oldValues: input.oldValues,
+    newValues: input.newValues,
+    profile
+  });
+
+  const serviceAccountIdentity = [
+    profile.legacy_image_pull.service_account.apiVersion,
+    profile.legacy_image_pull.service_account.kind,
+    namespace,
+    profile.legacy_image_pull.service_account.name
+  ];
+  const serviceAccountKey = identityKey(serviceAccountIdentity);
+  const serviceAccountHmac = verifyDefaultServiceAccountChain({
+    original: originalIndex.get(serviceAccountKey),
+    baseline: baselineIndex.get(serviceAccountKey),
+    final: finalIndex.get(serviceAccountKey),
+    binding: bindings.get(serviceAccountKey),
+    namespace,
+    profile,
+    fingerprintKey: key
+  });
+
   const configIdentity = ["v1", "ConfigMap", namespace, profile.bound_resources.config_map];
   const configKey = identityKey(configIdentity);
   const baselineConfigMap = baselineIndex.get(configKey);
@@ -1774,6 +2070,7 @@ export function verifyRedactedRollout(input) {
       name: "process-local-credential-rotation",
       exact: true,
       applicable_resource_is_secret_only: true,
+      applicable_secret_count: 2,
       hmac: hmac(key, "canonical-bundle", Buffer.from(canonicalJson(input.bundle), "utf8"))
     },
     private_bundle_binding: {
@@ -1786,11 +2083,13 @@ export function verifyRedactedRollout(input) {
       artifacts_bound: true
     },
     inventories: {
-      original_baseline_resources: 42,
-      baseline_resources: 42,
-      intermediate_cas_resources: 7,
-      final_resources: 42,
-      final_secrets: 1,
+      historical_generated_resources: HISTORICAL_RESOURCE_COUNT,
+      original_baseline_resources: OPERATIONAL_RESOURCE_COUNT,
+      baseline_resources: OPERATIONAL_RESOURCE_COUNT,
+      live_resource_bindings: 16,
+      intermediate_cas_resources: 8,
+      final_resources: OPERATIONAL_RESOURCE_COUNT,
+      final_secrets: 2,
       final_deployments: 12,
       exact: true
     },
@@ -1804,6 +2103,35 @@ export function verifyRedactedRollout(input) {
       metadata_clean: true,
       exact_keyset: true,
       keys: secretKeys
+    },
+    legacy_image_pull: {
+      name: profile.legacy_image_pull.secret.name,
+      present: true,
+      candidate_private_source_exact: true,
+      original_private_source_semantic_match: true,
+      credential_rotated: true,
+      intermediate_cas_response_verified: true,
+      final_verified: true,
+      final_resource_version_equals_cas: true,
+      docker_config_secret_type_exact: true,
+      mutable: true,
+      metadata_clean: true,
+      distinct_from_candidate_pull_secret: true,
+      hmac: hmac(
+        key,
+        `Secret/${profile.legacy_image_pull.secret.name}`,
+        Buffer.from(pullSecretEncoded, "utf8")
+      )
+    },
+    default_service_account: {
+      name: profile.legacy_image_pull.service_account.name,
+      present: true,
+      original_quiesced_invariant: true,
+      final_invariant: true,
+      bind_only: true,
+      image_pull_secrets_exact: true,
+      resource_version_invariant: true,
+      hmac: serviceAccountHmac
     },
     placeholder_config_map: {
       name: profile.bound_resources.config_map,
@@ -1862,7 +2190,8 @@ export function verifyRedactedRollout(input) {
       hmac: hmac(key, "PERMS_KEY/public-spki", candidatePerms.spki)
     },
     forbidden_aud075: {
-      absent: true
+      snapshot_secret_domain_absent: true,
+      contracted_inventory_exact: true
     }
   };
 }
