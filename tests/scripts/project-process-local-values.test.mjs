@@ -35,10 +35,16 @@ function fixture() {
   ]));
   values.UNRELATED_AUD075_VALUE = "ignored-fixture";
   values.PGRST_JWT_SECRET = "";
+  const literalPermsLine = values.PERMS_KEY;
+  values.PERMS_KEY = `${literalPermsLine}\\n`;
   const source = path.join(root, "values.yaml");
+  const sourceLines = Object.entries(values).map(([key, value]) => {
+    if (key === "PERMS_KEY") return `PERMS_KEY: |\n  ${literalPermsLine}`;
+    return `${key}: "${value}"`;
+  });
   fs.writeFileSync(
     source,
-    `${Object.entries(values).map(([key, value]) => `${key}: "${value}"`).join("\n")}\n`,
+    `---\n${sourceLines.join("\n")}\n`,
     { mode: 0o600 }
   );
   fs.chmodSync(source, 0o600);

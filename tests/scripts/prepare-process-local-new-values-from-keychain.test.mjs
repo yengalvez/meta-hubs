@@ -122,11 +122,18 @@ function sourceValues({ optionalConfigured = true, includeJwt = false } = {}) {
   return values;
 }
 
-function sourceBytes(values) {
-  const lines = Object.entries(values)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, value]) => `${name}: ${JSON.stringify(value)}`);
-  return Buffer.from(`# keychain fixture\n${lines.join("\n")}\n`, "utf8");
+function sourceBytes(values, { permsLiteralBlock = false } = {}) {
+  const lines = [];
+  for (const [name, value] of Object.entries(values)
+    .sort(([left], [right]) => left.localeCompare(right))) {
+    if (name === "PERMS_KEY" && permsLiteralBlock) {
+      const pemLines = value.replace(/\\n/gu, "\n").trimEnd().split("\n");
+      lines.push("PERMS_KEY: |", ...pemLines.map(line => `  ${line}`));
+    } else {
+      lines.push(`${name}: ${JSON.stringify(value)}`);
+    }
+  }
+  return Buffer.from(`---\n# keychain fixture\n${lines.join("\n")}\n`, "utf8");
 }
 
 function fixture(options = {}) {
@@ -135,7 +142,10 @@ function fixture(options = {}) {
   const oldValuesSource = path.join(root, "old-values.yaml");
   const newValuesSource = path.join(root, "new-values.yaml");
   const values = sourceValues(options);
-  fs.writeFileSync(oldValuesSource, sourceBytes(values), { mode: 0o600, flag: "wx" });
+  fs.writeFileSync(oldValuesSource, sourceBytes(values, options), {
+    mode: 0o600,
+    flag: "wx"
+  });
   fs.chmodSync(oldValuesSource, 0o600);
   return { root, oldValuesSource, newValuesSource, values };
 }
@@ -390,7 +400,11 @@ test("unconfigured optional providers are not queried", async () => {
 });
 
 test("injected Keychain reads integrate with the real preparer through FD3", async () => {
-  const input = fixture({ optionalConfigured: true, includeJwt: true });
+  const input = fixture({
+    optionalConfigured: true,
+    includeJwt: true,
+    permsLiteralBlock: true
+  });
   const values = providerSecrets();
   const calls = [];
   try {
@@ -407,6 +421,10 @@ test("injected Keychain reads integrate with the real preparer through FD3", asy
     assert.equal(prepared.get("SMTP_PASS"), values.SMTP_PASS);
     assert.equal(prepared.get("SKETCHFAB_API_KEY"), values.SKETCHFAB_API_KEY);
     assert.equal(prepared.get("TENOR_API_KEY"), values.TENOR_API_KEY);
+    assert.doesNotMatch(
+      fs.readFileSync(input.newValuesSource, "utf8"),
+      /^PERMS_KEY: \|$/mu
+    );
     const dockerConfig = JSON.parse(Buffer.from(
       prepared.get("BOT_IMAGE_PULL_CONFIG_JSON_BASE64"),
       "base64"

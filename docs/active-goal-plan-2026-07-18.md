@@ -2,7 +2,7 @@
 
 Última actualización: 19 de julio de 2026
 
-Estado actual: **EN EJECUCIÓN; Fase 2B, preparador NEW validado; PR/CI/merge previo a credenciales**
+Estado actual: **EN EJECUCIÓN; Fase 2B, compatibilidad OLD revalidada localmente tras cerrar un P2; PR/CI/merge previos a credenciales**
 
 Worktree inicial: `/Users/Shared/Gits/YenHubs-aud075-root`
 
@@ -10,7 +10,7 @@ Rama inicial: `codex/aud075-integration`
 
 Worktree activo: `/Users/Shared/Gits/YenHubs`
 
-Rama activa: `codex/aud065-new-values-preparer`
+Rama activa: `codex/aud065-credential-preparation`
 
 Este documento es la fuente de verdad de la meta activa. El historial de sesión
 y las cuentas completas de pruebas se conservan exclusivamente en
@@ -221,6 +221,10 @@ el preparador privado NEW antes de crear ninguna credencial.
   Ambos gates terminaron con código 0 sobre
   `main=83732fe6a4372ef0a5bb6cd9a1ab2eb451def7a1`, Hubs `674ece411691` y Cloud
   `5392495b0772`.
+- [ ] Integrar en `main`, mediante commit, PR y CI verdes, la compatibilidad
+  fail-closed de la fuente OLD (`---` inicial exacto y el único bloque legado
+  `PERMS_KEY: |`) ya validada localmente; no crear credenciales, NEW ni
+  checkpoint antes del merge.
 - [ ] Crear por canales privados las credenciales externas nuevas necesarias y
   preparar las internas nuevas, manteniendo válidas las anteriores hasta que el
   rollout coordinado haya sido aceptado.
@@ -232,7 +236,7 @@ el preparador privado NEW antes de crear ninguna credencial.
   redactadas. No existe una tercera fuente de credenciales para `rollback` y no
   se crean todavía los snapshots sellados de la operación.
 
-El preparador candidato de esta fase construye NEW sin editar valores a mano:
+El preparador integrado de esta fase construye NEW sin editar valores a mano:
 lee proveedores desde etiquetas nuevas de macOS Keychain, entrega el frame solo
 por FD 3, genera los secretos internos y `PERMS_KEY`, deriva URI/JWT/GHCR,
 preserva byte a byte las líneas no autorizadas y publica una única salida
@@ -253,7 +257,61 @@ alcanzó el `hcce.yaml` ignorado de Cloud y mostró el JWT público derivado; el
 valor no se reutilizó y `PERMS_KEY`/JWT permanecen dentro de la rotación
 preventiva obligatoria. No se creó credencial/checkpoint ni se consultó o mutó
 producción. Esta evidencia solo autoriza PR/CI/merge del tooling; las tres
-casillas privadas anteriores permanecen pendientes.
+casillas privadas anteriores permanecen pendientes. El commit `a6ed7b3fe3f9`
+pasó los seis checks de los runs push/PR `29675286715`/`29675308171`; el PR raíz
+`#8` se fusionó como `main=623d70c607f23ff8bf45387cf1af3ea6ab57eb61`.
+La compatibilidad OLD descrita a continuación pasó a ser la primera casilla
+activa de Fase 2B; las tres casillas privadas permanecen bloqueadas hasta su
+merge.
+
+La primera lectura estrictamente redactada de presencia opcional se detuvo antes
+de crear credenciales: la fuente canónica OLD comienza con el marcador YAML
+estándar `---`, pero el parser escalar integrado lo rechazaba en la línea 1. La
+comprobación solo emitió el tipo de error y después confirmó de forma booleana
+que no había BOM y que la primera línea era un marcador; no mostró contenido.
+La corrección candidata acepta como máximo un `---` exacto en la primera línea,
+liga su presencia y terminación LF/CRLF entre OLD y NEW, lo preserva byte a byte
+y mantiene fail-closed todos los marcadores internos, duplicados o
+multidocumento. Credenciales, NEW, checkpoint y producción siguen intactos hasta
+integrar y revalidar esta compatibilidad.
+
+Tras admitir el marcador, la misma consulta redactada se detuvo en la única
+construcción restante fuera del subset: el legado exacto `PERMS_KEY: |`. Un
+inventario de solo metadatos confirmó una cabecera, 28 líneas no vacías con dos
+espacios y LF uniforme, seguida por otra clave top-level; una comprobación
+booleana confirmó RSA válido de al menos 2048 bits sin mostrar el PEM. La
+compatibilidad candidata comparte una sola gramática fail-closed entre parser y
+preparador, normaliza los saltos a `\n`, deja OLD byte-idéntico y sustituye todo
+el span por un único scalar quoted en NEW. La transición compara además la SPKI
+pública, por lo que reserializar la misma clave no cuenta como rotación. Pasan
+seguridad 50/50, proyección 8/8, preparador 23/23, Keychain 27/27, transición
+24/24 y el agregado AUD-065 completo con código 0. Tres revisiones iniciales no
+encontraron P1/P2. El parser real termina con código 0 y solo informa que
+Sketchfab y Tenor están sin configurar. Los dos falsos positivos del primer
+normal procedían únicamente de cabeceras PEM sintéticas del fixture; se
+sustituyeron por sentinels no-PEM sin cambiar la cobertura ni añadir una
+allowlist. En el primer CI del PR `#9`, los cuatro jobs PostgreSQL pasaron pero
+ambos `static-security` encontraron otras dos cabeceras PEM literales dentro de
+aserciones del test, no material de clave. Las aserciones construyen ahora la
+misma cabecera desde fragmentos y mantienen idéntica comprobación; el foco
+vuelve a pasar 23/23, `git diff --check` y Gitleaks del worktree raíz terminan
+con código 0, sin allowlist. El CI de ese nuevo commit debe quedar verde antes
+del merge.
+
+Una revisión tardía posterior a esos primeros verdes detectó un P2: el parser
+debía admitir el bloque legado para leer OLD, pero la transición podía sellar o
+promover un NEW que aún conservara `PERMS_KEY: |`. La corrección inspecciona las
+líneas físicas de `newBytes` y falla con
+`new_source_perms_key_not_canonical`; solo OLD literal -> NEW scalar permanece
+permitido. El caso focal versionado y la re-revisión cerraron el P2 sin otros
+P1/P2. Como el cambio material invalidó los verdes anteriores, se repitieron los
+gates sobre los bytes finales: transición 24/24, preparador 23/23, seguridad
+50/50, el agregado AUD-065, `./scripts/verify-project.sh` y
+`./scripts/verify-project.sh --full` terminaron con código 0; el full cerró con
+Reticulum 430 pruebas, 5 propiedades y 0 fallos. No se creó
+credencial/NEW/checkpoint, no se leyó Keychain real y no hubo acceso al clúster
+ni mutación de producción. Faltan commit, PR/CI y merge de esta compatibilidad
+antes de la captura privada de credenciales.
 
 #### Fase 2C — checkpoint y rotación inmediata
 
@@ -467,7 +525,6 @@ resumida, siempre sin secretos.
 | 2026-07-19 01:29 CEST | Fase 2A: revisión adversarial del cierre GHCR | La captura/preparación exigen ahora 44 recursos operativos; el bundle aplica por prefijo 2 Secrets más 6 Deployments y liga 16 recursos, con `ServiceAccount/default` bind-only. La estructura live de `ghcr-pull` se inspeccionó de forma redactada y reveló la forma histórica `metadata.annotations:{}` del last-applied, ya cubierta. Materialización 18/18, coordinador 154/154 y auditoría 31/31 están verdes. Dos revisiones cerraron un falso exit 0 del harness, una afirmación de ausencia no demostrable, ABA de RV final y riesgo de stream interactivo. Detectaron además que faltaba demostrar permisos reales del PAT nuevo antes del primer CAS. | Integrar el gate de red old+new para todos los digests GHCR fijados más runner antes de lock/mutación y revalidarlo antes del restart; después repetir el agregado, seguridad, recuperación, revisión, CI y merge. Producción no fue mutada. |
 | 2026-07-19 02:03 CEST | Fase 2A: gate GHCR online y agregado local final | El gate lee snapshots privados estables, autentica por pull cada digest GHCR aplicable más runner y exige el digest exacto. `plan` y execute/resume/rollback prueban OLD -> NEW; cualquier fallo libera el Lease antes del operation lock/callbacks. NEW se revalida antes del primer pool y en audit. El coordinador final pasa 163/163 y el agregador de 15 suites termina con `exit 0`, incluidos GHCR 44/44, materialización 18/18 y auditoría 31/31. Dos revisiones independientes no encuentran falsos verdes P1/P2. | Ejecutar seguridad, recuperación y gates raíz/estáticos; publicar el nuevo SHA, exigir CI verde y fusionar PR `#6`. Producción permanece intacta. |
 | 2026-07-19 02:44 CEST | Fase 2A: gates raíz finales | `verify-project.sh` y `verify-project.sh --full` terminan con código 0 sobre el árbol final. Pasan seguridad 47/47, recuperación 243/243, el agregado AUD-065, Actionlint, ShellCheck, tres escaneos Gitleaks y auditoría upstream; además Hubs 97/97 y build, Admin, navegador 11/11, capacidad 115/115 fail-closed, servicios CE, Spoke 68/68 y build, y Reticulum 430 tests + 5 properties. | Revisar/stagear el diff exacto, crear y publicar el commit, exigir el nuevo CI verde y fusionar PR `#6`; no crear aún checkpoint ni mutar producción. |
-
 La copia autoritativa está ahora en `/Users/Shared/Gits/YenHubs` con la misma
 ruta relativa. La Fase 2A ya quedó publicada y fusionada; cualquier worktree
 anterior es únicamente evidencia histórica y nunca se reanuda trabajo desde él.

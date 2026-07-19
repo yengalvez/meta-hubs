@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { createHash, createHmac } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  createPrivateKey,
+  generateKeyPairSync
+} from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -60,6 +65,20 @@ const requiredRotations = Object.freeze([
   "BOT_IMAGE_PULL_CONFIG_JSON_BASE64"
 ]);
 
+function encodedPrivateKey() {
+  const { privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" }
+  });
+  return privateKey.replace(/\r?\n/gu, "\\n");
+}
+
+const sourcePermsKeys = Object.freeze({
+  old: encodedPrivateKey(),
+  new: encodedPrivateKey()
+});
+
 function pullConfig(label) {
   const auth = Buffer.from(`fixture-user:${label}-token`, "utf8").toString("base64");
   return Buffer.from(JSON.stringify({ auths: { "ghcr.io": { auth } } }), "utf8")
@@ -80,7 +99,7 @@ function sourceValues(label) {
     GUARDIAN_KEY: `${label}-guardian-${marker.repeat(40)}`,
     NODE_COOKIE: `${label}-node-cookie-${marker.repeat(40)}`,
     OPENAI_API_KEY: `${label}-openai-${marker.repeat(40)}`,
-    PERMS_KEY: `${label}-perms-${marker.repeat(40)}`,
+    PERMS_KEY: sourcePermsKeys[label],
     PHX_KEY: `${label}-phx-${marker.repeat(40)}`,
     SMTP_PASS: `${label}-smtp-${marker.repeat(40)}`,
     SKETCHFAB_API_KEY: `${label}-sketchfab-${marker.repeat(32)}`,
@@ -99,11 +118,25 @@ function sourceValues(label) {
   };
 }
 
-function yamlBytes(values, comment = "") {
+function yamlBytes(values, comment = "", {
+  documentStart = true,
+  lineEnding = "\n",
+  permsLiteralBlock = false
+} = {}) {
   const entries = Object.entries(values).sort(([left], [right]) => left.localeCompare(right));
-  const lines = entries.map(([name, value]) => `${name}: ${JSON.stringify(value)}`);
+  const lines = [];
+  for (const [name, value] of entries) {
+    if (name === "PERMS_KEY" && permsLiteralBlock) {
+      const physicalLines = value.split("\\n");
+      if (physicalLines.at(-1) === "") physicalLines.pop();
+      lines.push("PERMS_KEY: |", ...physicalLines.map(line => `  ${line}`));
+    } else {
+      lines.push(`${name}: ${JSON.stringify(value)}`);
+    }
+  }
   if (comment) lines.unshift(`# ${comment}`);
-  return Buffer.from(`${lines.join("\n")}\n`, "utf8");
+  if (documentStart) lines.unshift("---");
+  return Buffer.from(`${lines.join(lineEnding)}${lineEnding}`, "utf8");
 }
 
 function writePrivate(filePath, bytes) {
@@ -284,6 +317,67 @@ test("every preventive and candidate-only source secret must rotate", () => {
       newBytes: yamlBytes(newValues)
     }), "required_source_secret_not_rotated");
   }
+});
+
+test("document start presence and line ending are immutable across the source transition", () => {
+  const oldValues = sourceValues("old");
+  const newValues = sourceValues("new");
+  assert.equal(validateProcessLocalValuesSourceTransition({
+    oldBytes: yamlBytes(oldValues),
+    newBytes: yamlBytes(newValues)
+  }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.transitionVerified);
+  assert.equal(validateProcessLocalValuesSourceTransition({
+    oldBytes: yamlBytes(oldValues, "", { documentStart: false }),
+    newBytes: yamlBytes(newValues, "", { documentStart: false })
+  }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.transitionVerified);
+  assert.equal(validateProcessLocalValuesSourceTransition({
+    oldBytes: yamlBytes(oldValues, "", { lineEnding: "\r\n" }),
+    newBytes: yamlBytes(newValues, "", { lineEnding: "\r\n" })
+  }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.transitionVerified);
+  expectCode(() => validateProcessLocalValuesSourceTransition({
+    oldBytes: yamlBytes(oldValues),
+    newBytes: yamlBytes(newValues, "", { documentStart: false })
+  }), "source_document_start_changed");
+  expectCode(() => validateProcessLocalValuesSourceTransition({
+    oldBytes: yamlBytes(oldValues),
+    newBytes: yamlBytes(newValues, "", { lineEnding: "\r\n" })
+  }), "source_document_start_changed");
+});
+
+test("source transition accepts OLD legacy PERMS_KEY only and requires canonical NEW", () => {
+  const oldValues = sourceValues("old");
+  const newValues = sourceValues("new");
+  assert.equal(validateProcessLocalValuesSourceTransition({
+    oldBytes: yamlBytes(oldValues, "", { permsLiteralBlock: true }),
+    newBytes: yamlBytes(newValues)
+  }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.transitionVerified);
+  assert.equal(validateProcessLocalValuesSourceTransition({
+    oldBytes: yamlBytes(oldValues, "", {
+      lineEnding: "\r\n",
+      permsLiteralBlock: true
+    }),
+    newBytes: yamlBytes(newValues, "", { lineEnding: "\r\n" })
+  }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.transitionVerified);
+  expectCode(() => validateProcessLocalValuesSourceTransition({
+    oldBytes: yamlBytes(oldValues),
+    newBytes: yamlBytes(newValues, "", { permsLiteralBlock: true })
+  }), "new_source_perms_key_not_canonical");
+  expectCode(() => validateProcessLocalValuesSourceTransition({
+    oldBytes: yamlBytes(oldValues, "", { permsLiteralBlock: true }),
+    newBytes: yamlBytes(newValues, "", { permsLiteralBlock: true })
+  }), "new_source_perms_key_not_canonical");
+});
+
+test("source transition rejects the same PERMS public key in another serialization", () => {
+  const oldValues = sourceValues("old");
+  const samePublicKey = sourceValues("new");
+  samePublicKey.PERMS_KEY = createPrivateKey(
+    oldValues.PERMS_KEY.replace(/\\n/gu, "\n")
+  ).export({ type: "pkcs1", format: "pem" }).replace(/\r?\n/gu, "\\n");
+  expectCode(() => validateProcessLocalValuesSourceTransition({
+    oldBytes: yamlBytes(oldValues, "", { permsLiteralBlock: true }),
+    newBytes: yamlBytes(samePublicKey)
+  }), "required_source_secret_not_rotated");
 });
 
 test("configured optional secrets rotate with stable presence", () => {

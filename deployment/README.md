@@ -487,9 +487,14 @@ as compromised and rotate it before rollout.
 
 The safe root parser accepts only top-level scalar values. Store `PERMS_KEY` on
 one quoted line with each PEM newline encoded as the literal two characters
-`\n`, as shown in `deployment/input-values.example.yaml`; YAML `|` block
-scalars are deliberately rejected. The Hubs CE generator restores the physical
-newlines before validating and deriving the public key.
+`\n`, as shown in `deployment/input-values.example.yaml`. The sole migration
+exception is an existing, exact `PERMS_KEY: |` legacy block with two-space,
+printable-ASCII content and one uniform LF or CRLF ending. The AUD-065 preparer
+reads that block without changing OLD, canonicalizes it to escaped newlines and
+replaces its complete span with one quoted line in NEW. Every other YAML block,
+indicator, indentation or mixed-ending variant fails closed; never introduce a
+new block-form key. The Hubs CE generator restores the physical newlines before
+validating and deriving the public key.
 
 ### Rotate the four internal credentials safely for the later AUD-075 rollout
 
@@ -630,6 +635,12 @@ from every OLD Keychain item through terminal audit and provider revocation.
 
 Create a dedicated owner-private directory, point OLD at the existing regular
 `0600` source without printing it, and require NEW not to exist:
+
+The strict scalar parser accepts at most one exact YAML document-start marker
+`---` on the first physical line, before every comment or `KEY: scalar` entry.
+It preserves that marker and its LF/CRLF ending byte-for-byte. A second/internal
+marker, `...`, directives and marker variants fail closed; do not strip or
+rewrite the canonical source by hand to work around validation.
 
 ```bash
 export AUD065_PRIVATE_PARENT='/absolute/private/aud065-preparation'
