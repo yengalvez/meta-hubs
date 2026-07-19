@@ -95,9 +95,16 @@ recovery 239, runner Pods 45, pull configuration 19, orchestrator Deployment
 18, Hubs 97, browser 11, capacity 115 fail-closed and Spoke 68. This is source
 and validation closure only: no new image build, digest, checkpoint, deployment,
 staging/live rollout or live attestation is claimed here.
-The subrepository heads and root gitlinks are integrated in root
-`main=9f4ada1` through PR `#5`. No candidate image, checkpoint, deployment or
-live acceptance is implied by that source integration.
+The subrepository heads and root gitlinks were integrated through root PR `#5`
+at `main=9f4ada1`. No candidate image, checkpoint, deployment or live acceptance
+is implied by that source integration.
+
+The isolated AUD-065 coordinator is now integrated through root PR `#6`:
+head `4ac252b875e8b53cadc4e231129d89ac2478729b`, merge
+`c87f5b3982f7b68547702b6fa5b6b6212705f679`, and green push/PR runs
+`29667729457` and `29667730561`. This advances the tracked root source and
+closes the tooling phase only. It did not change the accepted live images above,
+create credentials or a checkpoint, or mutate the cluster.
 
 Node ghost is the only production/authenticated runner. Chromium is retained
 only as a legacy/local browser diagnostic without `--runner`; its renderer is
@@ -558,10 +565,12 @@ output. The materializer emits them only with the explicit
 `coordinator-cas-stream` purpose and rejects an interactive terminal target;
 the approved caller pipes that stream directly into the guarded CAS replace.
 
-Do not start this procedure until the AUD-065 tooling is merged, its local and
-CI gates are green, and a fresh joint DB+storage checkpoint has passed the
-restore and checksum gates. The two values sources and checkpoint are private
-inputs, not diagnostic files:
+Do not start `plan` or any coordinator execution until the AUD-065 tooling is
+merged, its local and CI gates are green, and a fresh joint DB+storage checkpoint
+has passed the restore and checksum gates. Credential preparation may begin
+after the merged-tooling gates on a clean `main`, but every old credential must
+remain valid and that preparation authorizes no Kubernetes mutation. The two
+values sources and checkpoint are private inputs, not diagnostic files:
 
 - use absolute paths with no symlink component;
 - values sources must be regular, single-link, owner-owned mode `0600` files;
@@ -573,10 +582,11 @@ inputs, not diagnostic files:
 - never print, diff, edit or copy any operation artifact into a task, terminal
   transcript or PR.
 
-Run from a clean root `main` at the merged AUD-065 tooling commit. Record that
-commit as non-secret evidence and do not change checkout or executable files
-between `plan`, any recovery command and terminal verification. Before creating
-live credentials or checkpoint data, require both project gates:
+Run from a clean root `main` that contains the merged AUD-065 tooling commit.
+Record the exact root commit as non-secret evidence and do not change checkout
+or executable files between `plan`, any recovery command and terminal
+verification. Before creating live credentials or checkpoint data, require both
+project gates:
 
 ```bash
 test "$(git branch --show-current)" = main
@@ -626,8 +636,11 @@ install -d -m 0700 "$AUD065_OPERATION_PARENT"
 ./scripts/test-aud065.sh
 ```
 
-First create and seal a read-only plan. This performs exact Kubernetes reads
-and creates private local evidence, but it performs zero Kubernetes mutations:
+First create and seal a read-only plan. This is the step that projects the two
+private sources into the only credential snapshots, `old-snapshot.json` and
+`new-snapshot.json`, and validates GHCR OLD -> NEW. It performs exact Kubernetes
+reads and creates private local evidence, but it performs zero Kubernetes
+mutations:
 
 ```bash
 MAX_CHECKPOINT_AGE_SECONDS=86400 \
@@ -727,19 +740,20 @@ only the narrow functional smokes for credential rotation. Record only rotated
 key names, operation state and safe verdicts; never record the operation ID,
 HMACs, private baselines or credential material.
 
-Do not treat runtime convergence as provider revocation. Keep the operation and
-old-values source private until each applicable external trust domain has
-completed this sequence: new credential accepted, old credential revoked at
-the provider, old credential rejected specifically as authentication failure,
-then the new credential accepted again. A timeout, DNS failure, rate limit or
-provider `5xx` is inconclusive and never proves revocation. Apply the sequence
-to OpenAI, SMTP, GHCR package pulls and configured Sketchfab/Tenor credentials;
-also perform the documented functional chat, magic-link and asset-provider
-smokes. The three candidate-only bot keys are superseded by the sealed,
-promoted values source but their replacements are deliberately not applied to
-the legacy runtime. The pull credential is different: the coordinator applies
-it by CAS to the legacy `Secret/ghcr-pull`; the separate `bot-images-pull`
-objects remain exclusive to the later AUD-075 rollout.
+Do not treat runtime convergence as provider revocation. Only after the
+read-only audit has returned exactly `aud065_rotation_verified`, keep the
+operation and old-values source private until each applicable external trust
+domain has completed this sequence: new credential accepted, old credential
+revoked at the provider, old credential rejected specifically as authentication
+failure, then the new credential accepted again. A timeout, DNS failure, rate
+limit or provider `5xx` is inconclusive and never proves revocation. Apply the
+sequence to OpenAI, SMTP, GHCR package pulls and configured Sketchfab/Tenor
+credentials; also perform the documented functional chat, magic-link and
+asset-provider smokes. The three candidate-only bot keys are superseded by the
+sealed, promoted values source but their replacements are deliberately not
+applied to the legacy runtime. The pull credential is different: the
+coordinator applies it by CAS to the legacy `Secret/ghcr-pull`; the separate
+`bot-images-pull` objects remain exclusive to the later AUD-075 rollout.
 
 Only after terminal re-entry, the process-local live gate, provider rejection
 and functional acceptance may the old-values source and operation directory be
