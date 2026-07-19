@@ -17,7 +17,10 @@ import path from "node:path";
 import tty from "node:tty";
 import { fileURLToPath } from "node:url";
 
-import { parseLocalValuesSource } from "./parse-local-values.mjs";
+import {
+  parseLegacyPermsBlockLines,
+  parseLocalValuesSource
+} from "./parse-local-values.mjs";
 import {
   projectProcessLocalValuesMap,
   readPrivateProcessLocalValuesSource
@@ -71,6 +74,7 @@ const AUTHORIZED_SOURCE_KEYS = new Set([
   "PSQL",
   "BOT_IMAGE_PULL_CONFIG_JSON_BASE64"
 ]);
+const LEGACY_PERMS_BLOCK_HEADER = "PERMS_KEY: |";
 
 export class ProcessLocalNewValuesPreparationError extends Error {
   constructor(code) {
@@ -468,6 +472,13 @@ function quotedScalarEnd(value, quote) {
 }
 
 function authorizedLineParts(body) {
+  if (body === LEGACY_PERMS_BLOCK_HEADER) {
+    return {
+      name: "PERMS_KEY",
+      suffix: "",
+      legacyLiteralBlock: true
+    };
+  }
   const match = /^([A-Za-z_][A-Za-z0-9_]*):([ \t]*)(.*)$/u.exec(body);
   if (!match || !AUTHORIZED_SOURCE_KEYS.has(match[1])) return undefined;
   const [, name, spacing, remainder] = match;
@@ -487,24 +498,39 @@ function authorizedLineParts(body) {
   }
   return {
     name,
-    suffix
+    suffix,
+    legacyLiteralBlock: false
   };
+}
+
+function consumeLegacyPermsBlock(lines, headerIndex) {
+  try {
+    return parseLegacyPermsBlockLines(lines, headerIndex).lastIndex;
+  } catch {
+    fail("authorized_source_layout_invalid");
+  }
 }
 
 function replaceAuthorizedLines(oldBytes, replacements) {
   const source = oldBytes.toString("utf8");
   const found = new Set();
-  const output = splitSourceLines(source).map(line => {
+  const lines = splitSourceLines(source);
+  const output = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const parts = authorizedLineParts(line.body);
     if (parts && replacements.has(parts.name)) {
       if (found.has(parts.name)) fail("authorized_source_key_duplicate");
       found.add(parts.name);
-      return `${parts.name}: ${JSON.stringify(replacements.get(parts.name))}` +
-        `${parts.suffix}${line.ending}`;
+      output.push(`${parts.name}: ${JSON.stringify(replacements.get(parts.name))}` +
+        `${parts.suffix}${line.ending}`);
+      if (parts.legacyLiteralBlock) {
+        index = consumeLegacyPermsBlock(lines, index);
+      }
     } else {
-      return line.raw;
+      output.push(line.raw);
     }
-  });
+  }
   if (found.size !== replacements.size ||
       [...replacements.keys()].some(name => !found.has(name))) {
     fail("authorized_source_key_missing");

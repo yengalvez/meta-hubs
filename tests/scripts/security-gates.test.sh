@@ -426,6 +426,7 @@ fi
 
 parser_values="$temp_root/parser-values.yaml"
 printf '%s\n' \
+  '---' \
   '# comment' \
   '' \
   'PLAIN: value # comment' \
@@ -458,6 +459,113 @@ if node "$ROOT_DIR/deployment/parse-local-values.mjs" "$parser_values" --validat
   fail_test "safe values parser requires whitespace before quoted comments"
 fi
 pass_test "safe values parser rejects decoded controls and ambiguous quoted comments"
+printf '%s\n' 'KEY: value' '---' >"$parser_values"
+if node "$ROOT_DIR/deployment/parse-local-values.mjs" "$parser_values" --validate >/dev/null 2>&1; then
+  fail_test "safe values parser rejects an internal document start marker"
+fi
+printf '%s\n' '# leading comment' '---' 'KEY: value' >"$parser_values"
+if node "$ROOT_DIR/deployment/parse-local-values.mjs" "$parser_values" --validate >/dev/null 2>&1; then
+  fail_test "safe values parser rejects a document marker after a comment"
+fi
+printf '\n%s\n' '---' 'KEY: value' >"$parser_values"
+if node "$ROOT_DIR/deployment/parse-local-values.mjs" "$parser_values" --validate >/dev/null 2>&1; then
+  fail_test "safe values parser rejects a document marker after a blank line"
+fi
+printf '%s\n' '---' '---' 'KEY: value' >"$parser_values"
+if node "$ROOT_DIR/deployment/parse-local-values.mjs" "$parser_values" --validate >/dev/null 2>&1; then
+  fail_test "safe values parser rejects duplicate document start markers"
+fi
+printf '%s\n' '--- # comment' 'KEY: value' >"$parser_values"
+if node "$ROOT_DIR/deployment/parse-local-values.mjs" "$parser_values" --validate >/dev/null 2>&1; then
+  fail_test "safe values parser rejects non-exact document start markers"
+fi
+printf '%s\n' '...' 'KEY: value' >"$parser_values"
+if node "$ROOT_DIR/deployment/parse-local-values.mjs" "$parser_values" --validate >/dev/null 2>&1; then
+  fail_test "safe values parser rejects document end markers"
+fi
+printf '%s\r\n' '---' 'KEY: value' >"$parser_values"
+if ! node "$ROOT_DIR/deployment/parse-local-values.mjs" "$parser_values" --validate; then
+  fail_test "safe values parser accepts an exact CRLF document start"
+fi
+printf '%s' '---' >"$parser_values"
+if node "$ROOT_DIR/deployment/parse-local-values.mjs" "$parser_values" --validate >/dev/null 2>&1; then
+  fail_test "safe values parser rejects a marker without a line ending"
+fi
+pass_test "safe values parser accepts one exact first-line document start and rejects multi-document variants"
+
+printf '%s\n' \
+  'PERMS_KEY: |' \
+  '  legacy-line-one' \
+  '  Zml4dHVyZQ==' \
+  '  legacy-line-three' \
+  'NEXT_KEY: preserved' >"$parser_values"
+literal_perms_key="$(node "$ROOT_DIR/deployment/parse-local-values.mjs" \
+  "$parser_values" --get PERMS_KEY)"
+if node "$ROOT_DIR/deployment/parse-local-values.mjs" "$parser_values" --validate &&
+  [[ "$literal_perms_key" == 'legacy-line-one\nZml4dHVyZQ==\nlegacy-line-three\n' ]] &&
+  [[ "$(node "$ROOT_DIR/deployment/parse-local-values.mjs" \
+    "$parser_values" --get NEXT_KEY)" == preserved ]]; then
+  pass_test "safe values parser canonicalizes the exact legacy PERMS_KEY literal block"
+else
+  fail_test "exact legacy PERMS_KEY literal block compatibility"
+fi
+printf '%s\r\n' \
+  'PERMS_KEY: |' \
+  '  legacy-line-one' \
+  '  Zml4dHVyZQ==' \
+  '  legacy-line-three' \
+  'NEXT_KEY: preserved' >"$parser_values"
+if ! node "$ROOT_DIR/deployment/parse-local-values.mjs" "$parser_values" --validate; then
+  fail_test "safe values parser accepts a coherent CRLF legacy PERMS_KEY block"
+fi
+invalid_literal_blocks=(
+  $'OTHER_KEY: |\n  value\n'
+  $'PERMS_KEY: |-\n  value\n'
+  $'PERMS_KEY: |+\n  value\n'
+  $'PERMS_KEY: |2\n  value\n'
+  $'PERMS_KEY: >\n  value\n'
+  $'PERMS_KEY: | # comment\n  value\n'
+  $'PERMS_KEY: |\n'
+  $'PERMS_KEY: |\n value\n'
+  $'PERMS_KEY: |\n   value\n'
+  $'PERMS_KEY: |\n\tvalue\n'
+  $'PERMS_KEY: |\n  \n'
+  $'PERMS_KEY: |\n  value \n'
+  $'PERMS_KEY: |\n  value\x01\n'
+  $'PERMS_KEY: |\r\n  value\n'
+  $'PERMS_KEY: |\n  value\nPERMS_KEY: "duplicate"\n'
+)
+for invalid_literal_block in "${invalid_literal_blocks[@]}"; do
+  printf '%s' "$invalid_literal_block" >"$parser_values"
+  if node "$ROOT_DIR/deployment/parse-local-values.mjs" \
+      "$parser_values" --validate >/dev/null 2>&1; then
+    fail_test "safe values parser rejects a non-exact legacy literal block"
+  fi
+done
+printf -v literal_line_256 '%0256d' 0
+printf '%s\n' 'PERMS_KEY: |' "  $literal_line_256" >"$parser_values"
+if ! node "$ROOT_DIR/deployment/parse-local-values.mjs" \
+    "$parser_values" --validate; then
+  fail_test "safe values parser accepts the exact legacy literal line-size boundary"
+fi
+printf -v literal_line_257 '%0257d' 0
+printf '%s\n' 'PERMS_KEY: |' "  $literal_line_257" >"$parser_values"
+if node "$ROOT_DIR/deployment/parse-local-values.mjs" \
+    "$parser_values" --validate >/dev/null 2>&1; then
+  fail_test "safe values parser rejects a legacy literal line above its limit"
+fi
+{
+  printf '%s\n' 'PERMS_KEY: |'
+  for ((literal_line = 0; literal_line < 129; literal_line += 1)); do
+    printf '%s\n' '  bounded-fixture-line'
+  done
+} >"$parser_values"
+if node "$ROOT_DIR/deployment/parse-local-values.mjs" \
+    "$parser_values" --validate >/dev/null 2>&1; then
+  fail_test "safe values parser rejects an oversized legacy literal block"
+fi
+pass_test "safe values parser rejects every other block form, unsafe indentation and mixed endings"
+
 printf 'DUP: first-secret\nDUP: second-secret\n' >"$parser_values"
 set +e
 parser_error="$(node "$ROOT_DIR/deployment/parse-local-values.mjs" "$parser_values" --validate 2>&1)"

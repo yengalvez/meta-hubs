@@ -5,7 +5,13 @@
 // full-source artifacts retain and authenticate the candidate-only keys so a
 // later generated rollout starts from the same completed credential rotation.
 
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  createPrivateKey,
+  createPublicKey,
+  timingSafeEqual
+} from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -39,6 +45,9 @@ const GENERIC_CLI_ERROR = "process-local source transition failed closed\n";
 const PYTHON = "python3";
 const DIRFD_HELPER = fileURLToPath(new URL("./private-dirfd-ops.py", import.meta.url));
 const DIRFD_HELPER_MISSING = 44;
+const DOCUMENT_START_LF = Buffer.from("---\n", "ascii");
+const DOCUMENT_START_CRLF = Buffer.from("---\r\n", "ascii");
+const LEGACY_PERMS_BLOCK_HEADER = Buffer.from("PERMS_KEY: |", "ascii");
 const PENDING_ATTRIBUTION_DOMAIN = Buffer.from(
   "yenhubs-aud065-source-pending-v1\0",
   "utf8"
@@ -110,6 +119,43 @@ function safeHexEqual(left, right) {
   return timingSafeEqual(Buffer.from(left, "hex"), Buffer.from(right, "hex"));
 }
 
+function sourceDocumentStart(bytes) {
+  if (bytes.length >= DOCUMENT_START_CRLF.length &&
+      bytes.subarray(0, DOCUMENT_START_CRLF.length).equals(DOCUMENT_START_CRLF)) {
+    return bytes.subarray(0, DOCUMENT_START_CRLF.length);
+  }
+  if (bytes.length >= DOCUMENT_START_LF.length &&
+      bytes.subarray(0, DOCUMENT_START_LF.length).equals(DOCUMENT_START_LF)) {
+    return bytes.subarray(0, DOCUMENT_START_LF.length);
+  }
+  return undefined;
+}
+
+function requireSameDocumentStart(oldBytes, newBytes) {
+  const oldStart = sourceDocumentStart(oldBytes);
+  const newStart = sourceDocumentStart(newBytes);
+  if (Boolean(oldStart) !== Boolean(newStart) ||
+      (oldStart && !safeBytesEqual(oldStart, newStart))) {
+    fail("source_document_start_changed");
+  }
+}
+
+function sourceHasLegacyPermsBlock(bytes) {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const newline = bytes.indexOf(0x0a, offset);
+    let end = newline === -1 ? bytes.length : newline;
+    if (end > offset && bytes[end - 1] === 0x0d) end -= 1;
+    if (end - offset === LEGACY_PERMS_BLOCK_HEADER.length &&
+        bytes.subarray(offset, end).equals(LEGACY_PERMS_BLOCK_HEADER)) {
+      return true;
+    }
+    if (newline === -1) break;
+    offset = newline + 1;
+  }
+  return false;
+}
+
 function parseValues(bytes, code) {
   let values;
   try {
@@ -147,6 +193,43 @@ function requireChanged(oldValues, newValues, names, code) {
         safeStringEqual(oldValue, newValue)) {
       fail(code);
     }
+  }
+}
+
+function permsPublicSpki(value, code) {
+  try {
+    if (typeof value !== "string" || !value) fail(code);
+    const normalized = value
+      .replace(/\\+r\\+n/gu, "\n")
+      .replace(/\\+n/gu, "\n")
+      .replace(/\r\n/gu, "\n")
+      .trim();
+    const privateKey = createPrivateKey(normalized);
+    const publicKey = createPublicKey(privateKey);
+    if (privateKey.asymmetricKeyType !== "rsa" ||
+        publicKey.asymmetricKeyType !== "rsa" ||
+        Number(privateKey.asymmetricKeyDetails?.modulusLength || 0) < 2048) {
+      fail(code);
+    }
+    return Buffer.from(publicKey.export({ type: "spki", format: "der" }));
+  } catch (error) {
+    if (error instanceof ProcessLocalSourceTransitionError) throw error;
+    fail(code);
+  }
+}
+
+function requirePermsKeyRotated(oldValues, newValues) {
+  let oldSpki;
+  let newSpki;
+  try {
+    oldSpki = permsPublicSpki(oldValues.get("PERMS_KEY"), "old_source_perms_key_invalid");
+    newSpki = permsPublicSpki(newValues.get("PERMS_KEY"), "new_source_perms_key_invalid");
+    if (safeBytesEqual(oldSpki, newSpki)) {
+      fail("required_source_secret_not_rotated");
+    }
+  } finally {
+    if (oldSpki) oldSpki.fill(0);
+    if (newSpki) newSpki.fill(0);
   }
 }
 
@@ -232,6 +315,10 @@ export function validateProcessLocalValuesSourceTransition({ oldBytes, newBytes 
   }
   const oldValues = parseValues(oldBytes, "old_source_invalid");
   const newValues = parseValues(newBytes, "new_source_invalid");
+  if (sourceHasLegacyPermsBlock(newBytes)) {
+    fail("new_source_perms_key_not_canonical");
+  }
+  requireSameDocumentStart(oldBytes, newBytes);
   const profile = loadProcessLocalRotationProfile();
   const contract = sourceTransitionContract(profile);
   if (!sameKeyset(oldValues, newValues)) fail("source_keyset_changed");
@@ -243,6 +330,7 @@ export function validateProcessLocalValuesSourceTransition({ oldBytes, newBytes 
     contract.requiredRotations,
     "required_source_secret_not_rotated"
   );
+  requirePermsKeyRotated(oldValues, newValues);
   for (const name of contract.optionalRotations) {
     const oldValue = oldValues.get(name);
     const newValue = newValues.get(name);

@@ -73,6 +73,7 @@ function jwtForPrivateKey(encoded) {
 
 const OLD_PERMS_KEY = encodedPrivateKey();
 const OLD_JWT = jwtForPrivateKey(OLD_PERMS_KEY);
+const PRIVATE_KEY_HEADER = ["-----BEGIN", " PRIVATE KEY-----"].join("");
 
 function pullConfig(username, token) {
   return Buffer.from(JSON.stringify({
@@ -131,11 +132,14 @@ function oldSourceValues({ optionalConfigured = true, includeJwt = true } = {}) 
   return values;
 }
 
-function sourceBytes(values) {
+function sourceBytes(values, { permsLiteralBlock = false } = {}) {
   const entries = Object.entries(values).sort(([left], [right]) => left.localeCompare(right));
-  const lines = ["# exact header comment", ""];
+  const lines = ["---", "# exact header comment", ""];
   for (const [name, value] of entries) {
-    if (name === "SKETCHFAB_API_KEY" && value === "") {
+    if (name === "PERMS_KEY" && permsLiteralBlock) {
+      const pemLines = value.replace(/\\n/gu, "\n").trimEnd().split("\n");
+      lines.push("PERMS_KEY: |", ...pemLines.map(line => `  ${line}`));
+    } else if (name === "SKETCHFAB_API_KEY" && value === "") {
       lines.push("SKETCHFAB_API_KEY: # preserve-sketchfab_api_key");
     } else if (AUTHORIZED_KEYS.has(name)) {
       lines.push(`${name}:   ${JSON.stringify(value)}  # preserve-${name.toLowerCase()}`);
@@ -158,7 +162,7 @@ function fixture(options = {}) {
   const oldValuesSource = path.join(root, "old-values.yaml");
   const newValuesSource = path.join(root, "new-values.yaml");
   const values = oldSourceValues(options);
-  const bytes = sourceBytes(values);
+  const bytes = sourceBytes(values, options);
   writePrivate(oldValuesSource, bytes);
   return { root, oldValuesSource, newValuesSource, values, bytes };
 }
@@ -342,7 +346,7 @@ test("prepare creates a strongly valid NEW source while leaving OLD and invarian
     assert.equal(decodeURIComponent(psql.password), newPassword);
 
     const encodedPerms = newValues.get("PERMS_KEY");
-    assert.match(encodedPerms, /-----BEGIN PRIVATE KEY-----\\n/u);
+    assert.equal(encodedPerms.startsWith(`${PRIVATE_KEY_HEADER}\\n`), true);
     assert.equal(encodedPerms.includes("\n"), false);
     const privateKey = createPrivateKey(encodedPerms.replace(/\\n/gu, "\n"));
     assert.equal(privateKey.asymmetricKeyType, "rsa");
@@ -377,6 +381,74 @@ test("prepare creates a strongly valid NEW source while leaving OLD and invarian
       assert.equal(result.args.join("\0").includes(sentinel), false);
       assert.equal(Object.values(result.env).join("\0").includes(sentinel), false);
     }
+  } finally {
+    frame.fill(0);
+    cleanup(input.root);
+  }
+});
+
+test("prepare consumes the exact legacy PERMS_KEY literal block and preserves OLD", async () => {
+  const input = fixture({
+    optionalConfigured: true,
+    includeJwt: true,
+    permsLiteralBlock: true
+  });
+  const secrets = externalSecrets({ optionalConfigured: true });
+  const frame = secretFrame(secrets);
+  try {
+    const oldSource = input.bytes.toString("utf8");
+    assert.equal(oldSource.includes(
+      `\r\nPERMS_KEY: |\r\n  ${PRIVATE_KEY_HEADER}\r\n`
+    ), true);
+    assert.equal(parsedFile(input.oldValuesSource).get("PERMS_KEY"), OLD_PERMS_KEY);
+
+    const result = await runPrepare(input, frame);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "aud065_new_values_prepared\n");
+    assert.deepEqual(fs.readFileSync(input.oldValuesSource), input.bytes);
+    assert.equal(runVerify(input).status, 0);
+
+    const newSource = fs.readFileSync(input.newValuesSource, "utf8");
+    assert.doesNotMatch(newSource, /\r\nPERMS_KEY: \|\r\n/u);
+    assert.equal(newSource.includes(`\r\n  ${PRIVATE_KEY_HEADER}\r\n`), false);
+    const oldPemBodyLine = OLD_PERMS_KEY.split("\\n")[1];
+    assert.equal(newSource.includes(oldPemBodyLine), false);
+    assert.equal(
+      newSource.split("\r\n").filter(line => line.startsWith("PERMS_KEY:")).length,
+      1
+    );
+    assert.equal(newSource.replace(/\r\n/gu, "").includes("\n"), false);
+    const newValues = parsedFile(input.newValuesSource);
+    assert.notEqual(newValues.get("PERMS_KEY"), OLD_PERMS_KEY);
+    assert.equal(newValues.get("PERMS_KEY").startsWith(
+      `${PRIVATE_KEY_HEADER}\\n`
+    ), true);
+    assert.equal(newValues.get("PGRST_JWT_SECRET"), jwtForPrivateKey(
+      newValues.get("PERMS_KEY")
+    ));
+  } finally {
+    frame.fill(0);
+    cleanup(input.root);
+  }
+});
+
+test("an invalid legacy PERMS_KEY block fails before NEW publication", async () => {
+  const input = fixture({ permsLiteralBlock: true });
+  const secrets = externalSecrets();
+  const frame = secretFrame(secrets);
+  try {
+    const invalidBytes = Buffer.from(input.bytes.toString("utf8").replace(
+      `  ${PRIVATE_KEY_HEADER}\r\n`,
+      `  ${PRIVATE_KEY_HEADER} \r\n`
+    ), "utf8");
+    fs.writeFileSync(input.oldValuesSource, invalidBytes, { mode: 0o600 });
+    fs.chmodSync(input.oldValuesSource, 0o600);
+    const result = await runPrepare(input, frame);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "AUD-065 local values preparation failed closed\n");
+    assert.equal(fs.existsSync(input.newValuesSource), false);
+    assert.deepEqual(fs.readFileSync(input.oldValuesSource), invalidBytes);
   } finally {
     frame.fill(0);
     cleanup(input.root);
