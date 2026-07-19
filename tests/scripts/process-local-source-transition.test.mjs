@@ -23,7 +23,10 @@ import {
   PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS,
   ProcessLocalSourceTransitionError,
   promoteProcessLocalValuesSource,
+  reconcilePrivateProcessLocalValuesSourceExactUnlink,
+  replacePrivateProcessLocalValuesSource,
   snapshotProcessLocalValuesSources,
+  unlinkPrivateProcessLocalValuesSourceExact,
   validateProcessLocalValuesSourceTransition,
   verifyProcessLocalValuesSourceTransition
 } from "../../deployment/process-local-source-transition.mjs";
@@ -33,6 +36,10 @@ const CLI = path.join(ROOT, "deployment/process-local-source-transition.mjs");
 const REVISION = "aud065-source-transition-fixture";
 const PENDING_ATTRIBUTION_DOMAIN = Buffer.from(
   "yenhubs-aud065-source-pending-v1\0",
+  "utf8"
+);
+const PRIVATE_REPLACEMENT_ATTRIBUTION_DOMAIN = Buffer.from(
+  "yenhubs-private-values-replacement-v1\0",
   "utf8"
 );
 
@@ -283,6 +290,572 @@ test("snapshots verbatim full sources and binds both digests into the operation 
   }
 });
 
+test("standalone owner-private replacement uses the same exact CAS and is idempotent", () => {
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "aud065-replace-"));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "canonical.yaml");
+  const oldBytes = Buffer.from("OLD_VALUE: preserved\n", "utf8");
+  const newBytes = Buffer.from("NEW_VALUE: accepted\n", "utf8");
+  const attributionKey = Buffer.alloc(32, 0x41);
+  try {
+    writePrivate(canonicalValuesPath, oldBytes);
+    assert.equal(replacePrivateProcessLocalValuesSource({
+      canonicalValuesPath,
+      expectedBytes: oldBytes,
+      replacementBytes: newBytes,
+      attributionKey
+    }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.promoted);
+    assert.equal(fs.readFileSync(canonicalValuesPath).equals(newBytes), true);
+    assert.equal(fs.lstatSync(canonicalValuesPath).mode & 0o7777, 0o600);
+    assert.equal(replacePrivateProcessLocalValuesSource({
+      canonicalValuesPath,
+      expectedBytes: oldBytes,
+      replacementBytes: newBytes,
+      attributionKey
+    }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.alreadyPromoted);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("exact owner-private unlink removes only the recorded inode and bytes", () => {
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "aud065-unlink-"));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "candidate.yaml");
+  const expectedBytes = Buffer.from("CANDIDATE_VALUE: owned\n", "utf8");
+  try {
+    writePrivate(canonicalValuesPath, expectedBytes);
+    const stat = fs.lstatSync(canonicalValuesPath, { bigint: true });
+    assert.equal(unlinkPrivateProcessLocalValuesSourceExact({
+      canonicalValuesPath,
+      expectedBytes,
+      expectedIdentity: { dev: stat.dev, ino: stat.ino }
+    }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.exactUnlinked);
+    assert.equal(fs.existsSync(canonicalValuesPath), false);
+    assert.equal(unlinkPrivateProcessLocalValuesSourceExact({
+      canonicalValuesPath,
+      expectedBytes,
+      expectedIdentity: { dev: stat.dev, ino: stat.ino }
+    }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.exactUnlinked);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("exact unlink preserves a foreign inode substituted before the dirfd CAS", () => {
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "aud065-unlink-race-"));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "candidate.yaml");
+  const expectedBytes = Buffer.from("CANDIDATE_VALUE: owned\n", "utf8");
+  const foreignBytes = Buffer.from("CANDIDATE_VALUE: foreign-substitute\n", "utf8");
+  try {
+    writePrivate(canonicalValuesPath, expectedBytes);
+    const stat = fs.lstatSync(canonicalValuesPath, { bigint: true });
+    expectCode(() => unlinkPrivateProcessLocalValuesSourceExact({
+      canonicalValuesPath,
+      expectedBytes,
+      expectedIdentity: { dev: stat.dev, ino: stat.ino },
+      hooks: {
+        beforeUnlink() {
+          fs.unlinkSync(canonicalValuesPath);
+          writePrivate(canonicalValuesPath, foreignBytes);
+        }
+      }
+    }), "canonical_source_unlink_conflict");
+    assert.equal(fs.readFileSync(canonicalValuesPath).equals(foreignBytes), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("dirfd quarantine never deletes a leaf substituted inside the unlink window", () => {
+  const root = fs.mkdtempSync(path.join(
+    fs.realpathSync(os.tmpdir()),
+    "aud065-unlink-helper-race-"
+  ));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "candidate.yaml");
+  const stagedForeignPath = path.join(root, "foreign-ready.yaml");
+  const displacedPath = path.join(root, "owned-displaced.yaml");
+  const expectedBytes = Buffer.from("CANDIDATE_VALUE: owned\n", "utf8");
+  const foreignBytes = Buffer.from("CANDIDATE_VALUE: foreign-in-helper-window\n", "utf8");
+  try {
+    writePrivate(canonicalValuesPath, expectedBytes);
+    writePrivate(stagedForeignPath, foreignBytes);
+    const stat = fs.lstatSync(canonicalValuesPath, { bigint: true });
+    expectCode(() => unlinkPrivateProcessLocalValuesSourceExact({
+      canonicalValuesPath,
+      expectedBytes,
+      expectedIdentity: { dev: stat.dev, ino: stat.ino },
+      hooks: {
+        helperSubstitutionForTest() {
+          return { foreignPath: stagedForeignPath, displacedPath };
+        }
+      }
+    }), "canonical_source_unlink_conflict");
+    assert.equal(fs.readFileSync(canonicalValuesPath).equals(foreignBytes), true);
+    assert.equal(fs.readFileSync(displacedPath).equals(expectedBytes), true);
+    assert.equal(fs.existsSync(stagedForeignPath), false);
+    assert.deepEqual(
+      fs.readdirSync(root).filter(name =>
+        name.startsWith(".yenhubs-unlink-quarantine-")
+      ),
+      []
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a cut after deterministic quarantine resumes and removes only the exact inode", () => {
+  const root = fs.mkdtempSync(path.join(
+    fs.realpathSync(os.tmpdir()),
+    "aud065-unlink-cut-"
+  ));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "candidate.yaml");
+  const expectedBytes = Buffer.from("CANDIDATE_VALUE: owned-before-cut\n", "utf8");
+  try {
+    writePrivate(canonicalValuesPath, expectedBytes);
+    const stat = fs.lstatSync(canonicalValuesPath, { bigint: true });
+    assert.equal(unlinkPrivateProcessLocalValuesSourceExact({
+      canonicalValuesPath,
+      expectedBytes,
+      expectedIdentity: { dev: stat.dev, ino: stat.ino },
+      hooks: {
+        helperCutAfterQuarantineForTest() {
+          return true;
+        }
+      }
+    }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.exactUnlinked);
+    assert.equal(fs.existsSync(canonicalValuesPath), false);
+    assert.deepEqual(
+      fs.readdirSync(root).filter(name =>
+        name.startsWith(".yenhubs-unlink-quarantine-v2-")
+      ),
+      []
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("exact unlink reconciliation is a no-op for a normal canonical without quarantine", () => {
+  const root = fs.mkdtempSync(path.join(
+    fs.realpathSync(os.tmpdir()),
+    "aud065-unlink-reconcile-noop-"
+  ));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "candidate.yaml");
+  const expectedBytes = Buffer.from("CANDIDATE_VALUE: already-present\n", "utf8");
+  try {
+    writePrivate(canonicalValuesPath, expectedBytes);
+    assert.equal(reconcilePrivateProcessLocalValuesSourceExactUnlink({
+      canonicalValuesPath,
+      expectedBytes
+    }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS
+      .exactUnlinkReconciliationNotRequired);
+    assert.equal(fs.readFileSync(canonicalValuesPath).equals(expectedBytes), true);
+    assert.deepEqual(
+      fs.readdirSync(root).filter(name =>
+        name.startsWith(".yenhubs-unlink-quarantine-v2-")
+      ),
+      []
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a new caller reconciles an exact deterministic quarantine without prior identity", () => {
+  const root = fs.mkdtempSync(path.join(
+    fs.realpathSync(os.tmpdir()),
+    "aud065-unlink-cross-process-"
+  ));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "candidate.yaml");
+  const expectedBytes = Buffer.from("CANDIDATE_VALUE: recover-next-caller\n", "utf8");
+  try {
+    writePrivate(canonicalValuesPath, expectedBytes);
+    const stat = fs.lstatSync(canonicalValuesPath, { bigint: true });
+    expectCode(() => unlinkPrivateProcessLocalValuesSourceExact({
+      canonicalValuesPath,
+      expectedBytes,
+      expectedIdentity: { dev: stat.dev, ino: stat.ino },
+      hooks: {
+        helperCutAfterQuarantineForTest() {
+          return true;
+        },
+        helperDisableRetryForTest() {
+          return true;
+        }
+      }
+    }), "canonical_source_unlink_conflict");
+    assert.equal(fs.existsSync(canonicalValuesPath), false);
+    assert.equal(
+      fs.readdirSync(root).filter(name =>
+        name.startsWith(".yenhubs-unlink-quarantine-v2-")
+      ).length,
+      1
+    );
+    assert.equal(reconcilePrivateProcessLocalValuesSourceExactUnlink({
+      canonicalValuesPath,
+      expectedBytes
+    }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.exactUnlinkReconciled);
+    assert.equal(reconcilePrivateProcessLocalValuesSourceExactUnlink({
+      canonicalValuesPath,
+      expectedBytes
+    }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS
+      .exactUnlinkReconciliationNotRequired);
+    assert.deepEqual(
+      fs.readdirSync(root).filter(name =>
+        name.startsWith(".yenhubs-unlink-quarantine-v2-")
+      ),
+      []
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("separate Node processes reconcile an exact quarantine without shared identity", () => {
+  const root = fs.mkdtempSync(path.join(
+    fs.realpathSync(os.tmpdir()),
+    "aud065-unlink-process-boundary-"
+  ));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "candidate.yaml");
+  const expectedText = "CANDIDATE_VALUE: process-boundary-reentry\n";
+  const expectedBytes = Buffer.from(expectedText, "utf8");
+  const moduleUrl = JSON.stringify(pathToFileURL(CLI).href);
+  const expectedLiteral = JSON.stringify(expectedText);
+  try {
+    writePrivate(canonicalValuesPath, expectedBytes);
+    const firstProcess = String.raw`
+      import fs from "node:fs";
+      import {
+        unlinkPrivateProcessLocalValuesSourceExact
+      } from ${moduleUrl};
+      const [canonicalValuesPath] = process.argv.slice(1);
+      const expectedBytes = Buffer.from(${expectedLiteral}, "utf8");
+      const stat = fs.lstatSync(canonicalValuesPath, { bigint: true });
+      let failureCode;
+      try {
+        unlinkPrivateProcessLocalValuesSourceExact({
+          canonicalValuesPath,
+          expectedBytes,
+          expectedIdentity: { dev: stat.dev, ino: stat.ino },
+          hooks: {
+            helperCutAfterQuarantineForTest() {
+              return true;
+            },
+            helperDisableRetryForTest() {
+              return true;
+            }
+          }
+        });
+      } catch (error) {
+        failureCode = error?.code;
+      }
+      if (failureCode !== "canonical_source_unlink_conflict") {
+        process.exitCode = 1;
+      }
+    `;
+    const first = spawnSync(process.execPath, [
+      "--input-type=module",
+      "--eval", firstProcess,
+      canonicalValuesPath
+    ], { encoding: "utf8" });
+    assert.equal(first.status, 0, first.stderr);
+    assert.equal(first.signal, null);
+    assert.equal(first.stdout, "");
+    assert.equal(first.stderr, "");
+    assert.equal(fs.existsSync(canonicalValuesPath), false);
+    assert.equal(
+      fs.readdirSync(root).filter(name =>
+        name.startsWith(".yenhubs-unlink-quarantine-v2-")
+      ).length,
+      1
+    );
+
+    const secondProcess = String.raw`
+      import fs from "node:fs";
+      import path from "node:path";
+      import {
+        PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS,
+        reconcilePrivateProcessLocalValuesSourceExactUnlink
+      } from ${moduleUrl};
+      const [canonicalValuesPath] = process.argv.slice(1);
+      const expectedBytes = Buffer.from(${expectedLiteral}, "utf8");
+      const result = reconcilePrivateProcessLocalValuesSourceExactUnlink({
+        canonicalValuesPath,
+        expectedBytes
+      });
+      const quarantines = fs.readdirSync(path.dirname(canonicalValuesPath))
+        .filter(name => name.startsWith(".yenhubs-unlink-quarantine-v2-"));
+      if (result !== PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.exactUnlinkReconciled ||
+          fs.existsSync(canonicalValuesPath) || quarantines.length !== 0) {
+        process.exitCode = 1;
+      }
+    `;
+    const second = spawnSync(process.execPath, [
+      "--input-type=module",
+      "--eval", secondProcess,
+      canonicalValuesPath
+    ], { encoding: "utf8" });
+    assert.equal(second.status, 0, second.stderr);
+    assert.equal(second.signal, null);
+    assert.equal(second.stdout, "");
+    assert.equal(second.stderr, "");
+    assert.equal(fs.existsSync(canonicalValuesPath), false);
+    assert.deepEqual(
+      fs.readdirSync(root).filter(name =>
+        name.startsWith(".yenhubs-unlink-quarantine-v2-")
+      ),
+      []
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("reentry removes an exact quarantine while preserving an occupied canonical", () => {
+  const root = fs.mkdtempSync(path.join(
+    fs.realpathSync(os.tmpdir()),
+    "aud065-unlink-cut-occupied-"
+  ));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "candidate.yaml");
+  const expectedBytes = Buffer.from("CANDIDATE_VALUE: owned-before-occupancy\n", "utf8");
+  const foreignBytes = Buffer.from("FOREIGN_CANONICAL: after-cut\n", "utf8");
+  try {
+    writePrivate(canonicalValuesPath, expectedBytes);
+    const stat = fs.lstatSync(canonicalValuesPath, { bigint: true });
+    expectCode(() => unlinkPrivateProcessLocalValuesSourceExact({
+      canonicalValuesPath,
+      expectedBytes,
+      expectedIdentity: { dev: stat.dev, ino: stat.ino },
+      hooks: {
+        helperCutAfterQuarantineForTest() {
+          return true;
+        },
+        helperDisableRetryForTest() {
+          return true;
+        }
+      }
+    }), "canonical_source_unlink_conflict");
+    writePrivate(canonicalValuesPath, foreignBytes);
+    expectCode(() => unlinkPrivateProcessLocalValuesSourceExact({
+      canonicalValuesPath,
+      expectedBytes,
+      expectedIdentity: { dev: stat.dev, ino: stat.ino }
+    }), "canonical_source_unlink_conflict");
+    assert.equal(fs.readFileSync(canonicalValuesPath).equals(foreignBytes), true);
+    assert.deepEqual(
+      fs.readdirSync(root).filter(name =>
+        name.startsWith(".yenhubs-unlink-quarantine-v2-")
+      ),
+      []
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("reentry after a cut restores a substituted foreign quarantine", () => {
+  const root = fs.mkdtempSync(path.join(
+    fs.realpathSync(os.tmpdir()),
+    "aud065-unlink-foreign-cut-"
+  ));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "candidate.yaml");
+  const stagedForeignPath = path.join(root, "foreign-ready.yaml");
+  const displacedPath = path.join(root, "owned-displaced.yaml");
+  const expectedBytes = Buffer.from("CANDIDATE_VALUE: owned-before-foreign-cut\n", "utf8");
+  const foreignBytes = Buffer.from("CANDIDATE_VALUE: foreign-at-cut\n", "utf8");
+  try {
+    writePrivate(canonicalValuesPath, expectedBytes);
+    writePrivate(stagedForeignPath, foreignBytes);
+    const stat = fs.lstatSync(canonicalValuesPath, { bigint: true });
+    expectCode(() => unlinkPrivateProcessLocalValuesSourceExact({
+      canonicalValuesPath,
+      expectedBytes,
+      expectedIdentity: { dev: stat.dev, ino: stat.ino },
+      hooks: {
+        helperSubstitutionForTest() {
+          return { foreignPath: stagedForeignPath, displacedPath };
+        },
+        helperCutAfterQuarantineForTest() {
+          return true;
+        },
+        helperDisableRetryForTest() {
+          return true;
+        }
+      }
+    }), "canonical_source_unlink_conflict");
+    assert.equal(fs.existsSync(canonicalValuesPath), false);
+    expectCode(() => unlinkPrivateProcessLocalValuesSourceExact({
+      canonicalValuesPath,
+      expectedBytes,
+      expectedIdentity: { dev: stat.dev, ino: stat.ino }
+    }), "canonical_source_unlink_conflict");
+    assert.equal(fs.readFileSync(canonicalValuesPath).equals(foreignBytes), true);
+    assert.equal(fs.readFileSync(displacedPath).equals(expectedBytes), true);
+    assert.deepEqual(
+      fs.readdirSync(root).filter(name =>
+        name.startsWith(".yenhubs-unlink-quarantine-v2-")
+      ),
+      []
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("final quarantine substitution is preserved instead of unlinked", () => {
+  const root = fs.mkdtempSync(path.join(
+    fs.realpathSync(os.tmpdir()),
+    "aud065-unlink-final-swap-"
+  ));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "candidate.yaml");
+  const stagedForeignPath = path.join(root, "foreign-ready.yaml");
+  const displacedPath = path.join(root, "owned-displaced.yaml");
+  const expectedBytes = Buffer.from("CANDIDATE_VALUE: owned-final\n", "utf8");
+  const foreignBytes = Buffer.from("CANDIDATE_VALUE: foreign-final\n", "utf8");
+  try {
+    writePrivate(canonicalValuesPath, expectedBytes);
+    writePrivate(stagedForeignPath, foreignBytes);
+    const stat = fs.lstatSync(canonicalValuesPath, { bigint: true });
+    expectCode(() => unlinkPrivateProcessLocalValuesSourceExact({
+      canonicalValuesPath,
+      expectedBytes,
+      expectedIdentity: { dev: stat.dev, ino: stat.ino },
+      hooks: {
+        helperFinalSubstitutionForTest() {
+          return { foreignPath: stagedForeignPath, displacedPath };
+        }
+      }
+    }), "canonical_source_unlink_conflict");
+    assert.equal(fs.readFileSync(canonicalValuesPath).equals(foreignBytes), true);
+    assert.equal(fs.readFileSync(displacedPath).equals(expectedBytes), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("foreign canonical occupancy prevents quarantine restore without clobber", () => {
+  const root = fs.mkdtempSync(path.join(
+    fs.realpathSync(os.tmpdir()),
+    "aud065-unlink-occupied-"
+  ));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "candidate.yaml");
+  const stagedForeignPath = path.join(root, "foreign-quarantine.yaml");
+  const stagedOccupantPath = path.join(root, "foreign-canonical.yaml");
+  const displacedPath = path.join(root, "owned-displaced.yaml");
+  const expectedBytes = Buffer.from("CANDIDATE_VALUE: owned-occupied\n", "utf8");
+  const quarantineForeign = Buffer.from("FOREIGN_QUARANTINE: preserved\n", "utf8");
+  const canonicalForeign = Buffer.from("FOREIGN_CANONICAL: preserved\n", "utf8");
+  try {
+    writePrivate(canonicalValuesPath, expectedBytes);
+    writePrivate(stagedForeignPath, quarantineForeign);
+    writePrivate(stagedOccupantPath, canonicalForeign);
+    const stat = fs.lstatSync(canonicalValuesPath, { bigint: true });
+    expectCode(() => unlinkPrivateProcessLocalValuesSourceExact({
+      canonicalValuesPath,
+      expectedBytes,
+      expectedIdentity: { dev: stat.dev, ino: stat.ino },
+      hooks: {
+        helperFinalSubstitutionForTest() {
+          return { foreignPath: stagedForeignPath, displacedPath };
+        },
+        helperOccupyNameBeforeRestoreForTest() {
+          return stagedOccupantPath;
+        }
+      }
+    }), "canonical_source_unlink_conflict");
+    assert.equal(fs.readFileSync(canonicalValuesPath).equals(canonicalForeign), true);
+    assert.equal(fs.readFileSync(displacedPath).equals(expectedBytes), true);
+    const quarantine = fs.readdirSync(root).find(name =>
+      name.startsWith(".yenhubs-unlink-quarantine-v2-")
+    );
+    assert.equal(typeof quarantine, "string");
+    assert.equal(
+      fs.readFileSync(path.join(root, quarantine)).equals(quarantineForeign),
+      true
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("exact unlink reports a post-unlink creator race without deleting its file", () => {
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "aud065-unlink-post-"));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "candidate.yaml");
+  const expectedBytes = Buffer.from("CANDIDATE_VALUE: owned\n", "utf8");
+  const foreignBytes = Buffer.from("CANDIDATE_VALUE: created-after-unlink\n", "utf8");
+  try {
+    writePrivate(canonicalValuesPath, expectedBytes);
+    const stat = fs.lstatSync(canonicalValuesPath, { bigint: true });
+    expectCode(() => unlinkPrivateProcessLocalValuesSourceExact({
+      canonicalValuesPath,
+      expectedBytes,
+      expectedIdentity: { dev: stat.dev, ino: stat.ino },
+      hooks: {
+        afterUnlink() {
+          writePrivate(canonicalValuesPath, foreignBytes);
+        }
+      }
+    }), "canonical_source_unlink_conflict");
+    assert.equal(fs.readFileSync(canonicalValuesPath).equals(foreignBytes), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("standalone replacement never overwrites a source changed before the rename CAS", () => {
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "aud065-replace-race-"));
+  fs.chmodSync(root, 0o700);
+  const canonicalValuesPath = path.join(root, "canonical.yaml");
+  const oldBytes = Buffer.from("OLD_VALUE: preserved\n", "utf8");
+  const newBytes = Buffer.from("NEW_VALUE: accepted\n", "utf8");
+  const foreignBytes = Buffer.from("FOREIGN_VALUE: wins-the-race\n", "utf8");
+  const attributionKey = Buffer.alloc(32, 0x42);
+  try {
+    writePrivate(canonicalValuesPath, oldBytes);
+    expectCode(() => replacePrivateProcessLocalValuesSource({
+      canonicalValuesPath,
+      expectedBytes: oldBytes,
+      replacementBytes: newBytes,
+      attributionKey,
+      hooks: {
+        beforeRename() {
+          const pending = fs.readdirSync(root).find(name => name.includes("aud065-new-"));
+          const unkeyed = createHash("sha256")
+            .update(PRIVATE_REPLACEMENT_ATTRIBUTION_DOMAIN)
+            .update(Buffer.from([0]))
+            .update(oldBytes)
+            .update(Buffer.from([0]))
+            .update(newBytes)
+            .digest("hex");
+          assert.equal(typeof pending, "string");
+          assert.equal(pending.endsWith(unkeyed), false);
+          fs.writeFileSync(canonicalValuesPath, foreignBytes, { mode: 0o600 });
+        }
+      }
+    }), "canonical_source_cas_mismatch");
+    assert.equal(fs.readFileSync(canonicalValuesPath).equals(foreignBytes), true);
+    assert.deepEqual(
+      fs.readdirSync(root).filter(name => name.includes("aud065-new-")),
+      []
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
 test("snapshot CLI is idempotent and silent for the same private full sources", () => {
   const input = fixture({ seal: false });
   try {
@@ -519,6 +1092,19 @@ test("promotion is exact, atomic, private and reentrant without an old plaintext
       canonicalValuesPath: input.canonicalValuesPath,
       ...continuity(input)
     }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.alreadyPromoted);
+    const stalePendingPath = transitionPendingPath(input);
+    writePrivate(stalePendingPath, input.newBytes);
+    assert.equal(promoteProcessLocalValuesSource({
+      operationDirectory: input.operationDirectory,
+      canonicalValuesPath: input.canonicalValuesPath,
+      ...continuity(input)
+    }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.alreadyPromoted);
+    assert.equal(fs.existsSync(stalePendingPath), false);
+    assert.equal(promoteProcessLocalValuesSource({
+      operationDirectory: input.operationDirectory,
+      canonicalValuesPath: input.canonicalValuesPath,
+      ...continuity(input)
+    }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.alreadyPromoted);
     assert.equal(verifyProcessLocalValuesSourceTransition({
       operationDirectory: input.operationDirectory,
       canonicalValuesPath: input.canonicalValuesPath,
@@ -527,6 +1113,12 @@ test("promotion is exact, atomic, private and reentrant without an old plaintext
     }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.canonicalNew);
     assert.deepEqual(
       fs.readdirSync(input.root).filter(name => name.includes("aud065-new-")),
+      []
+    );
+    assert.deepEqual(
+      fs.readdirSync(input.root).filter(name =>
+        name.startsWith(".yenhubs-unlink-quarantine-v2-")
+      ),
       []
     );
   } finally {

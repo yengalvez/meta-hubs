@@ -52,6 +52,19 @@ const PENDING_ATTRIBUTION_DOMAIN = Buffer.from(
   "yenhubs-aud065-source-pending-v1\0",
   "utf8"
 );
+const PRIVATE_REPLACEMENT_ATTRIBUTION_DOMAIN = Buffer.from(
+  "yenhubs-private-values-replacement-v1\0",
+  "utf8"
+);
+const QUARANTINE_PREFIX = ".yenhubs-unlink-quarantine-v2-";
+const QUARANTINE_DOMAIN = Buffer.from(
+  "yenhubs-unlink-owned-quarantine-v2\0",
+  "utf8"
+);
+const QUARANTINE_NAME = new RegExp(
+  `^${QUARANTINE_PREFIX.replaceAll(".", "\\.")}[a-f0-9]{64}$`,
+  "u"
+);
 
 const INTERNAL_BOT_KEYS = Object.freeze([
   "BOT_ACCESS_KEY",
@@ -73,7 +86,11 @@ export const PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS = Object.freeze({
   canonicalOld: "aud065_source_canonical_old",
   canonicalNew: "aud065_source_canonical_new",
   promoted: "aud065_source_promoted",
-  alreadyPromoted: "aud065_source_already_promoted"
+  alreadyPromoted: "aud065_source_already_promoted",
+  exactUnlinked: "aud065_source_exact_unlinked",
+  exactUnlinkReconciled: "aud065_source_exact_unlink_reconciled",
+  exactUnlinkReconciliationNotRequired:
+    "aud065_source_exact_unlink_reconciliation_not_required"
 });
 
 export class ProcessLocalSourceTransitionError extends Error {
@@ -731,6 +748,27 @@ function anchoredInspect(parentDescriptor, parentStat, name, {
   return decodeHelperOutput(output, code);
 }
 
+function anchoredList(parentDescriptor, parentStat, {
+  code = "canonical_source_changed"
+} = {}) {
+  const output = runDirfdHelper(parentDescriptor, parentStat, "list", {
+    directory: "target"
+  }, { errorCode: code });
+  try {
+    const names = JSON.parse(output.toString("utf8"));
+    if (!Array.isArray(names) || names.some(name =>
+      typeof name !== "string" || !name || name === "." || name === ".." ||
+      name.includes("/") || name.includes("\u0000")
+    ) || new Set(names).size !== names.length) {
+      fail(code);
+    }
+    return names;
+  } catch (error) {
+    if (error instanceof ProcessLocalSourceTransitionError) throw error;
+    fail(code);
+  }
+}
+
 function anchoredWriteReconciled(
   parentDescriptor,
   parentStat,
@@ -778,16 +816,68 @@ function anchoredCasReplace(parentDescriptor, parentStat, {
   return decodeHelperOutput(output, "canonical_source_promotion_failed");
 }
 
-function anchoredUnlinkOwned(parentDescriptor, parentStat, name, expected) {
-  runDirfdHelper(parentDescriptor, parentStat, "unlink-owned", {
+function anchoredUnlinkOwned(parentDescriptor, parentStat, name, expected, {
+  allowMissing = true,
+  errorCode = "canonical_source_cleanup_failed",
+  expectedLength,
+  expectedSha256,
+  testSwapBeforeQuarantine,
+  testCutAfterQuarantine,
+  testSwapQuarantineBeforeUnlink,
+  testOccupyNameBeforeRestore,
+  disableRetryForTest = false
+} = {}) {
+  const helperExpected = expectedSha256 === undefined
+    ? helperStatIdentity(expected)
+    : {
+        dev: String(expected.dev),
+        ino: String(expected.ino),
+        size: String(expectedLength)
+      };
+  const helperArgs = {
     directory: "target",
     name,
-    expected: expected ? helperStatIdentity(expected) : undefined,
-    maximum: MAX_SOURCE_BYTES
-  }, {
-    allowMissing: true,
-    errorCode: "canonical_source_cleanup_failed"
-  });
+    expected: helperExpected,
+    maximum: MAX_SOURCE_BYTES,
+    ...(expectedLength === undefined ? {} : { expectedLength }),
+    ...(expectedSha256 === undefined ? {} : { expectedSha256 }),
+    ...(testSwapBeforeQuarantine === undefined
+      ? {}
+      : { testSwapBeforeQuarantine }),
+    ...(testCutAfterQuarantine === undefined
+      ? {}
+      : { testCutAfterQuarantine }),
+    ...(testSwapQuarantineBeforeUnlink === undefined
+      ? {}
+      : { testSwapQuarantineBeforeUnlink }),
+    ...(testOccupyNameBeforeRestore === undefined
+      ? {}
+      : { testOccupyNameBeforeRestore })
+  };
+  const helperOptions = { allowMissing, errorCode };
+  try {
+    runDirfdHelper(
+      parentDescriptor,
+      parentStat,
+      "unlink-owned",
+      helperArgs,
+      helperOptions
+    );
+  } catch (error) {
+    if (expectedLength === undefined || expectedSha256 === undefined ||
+        disableRetryForTest) {
+      throw error;
+    }
+    const retryArgs = { ...helperArgs };
+    delete retryArgs.testCutAfterQuarantine;
+    runDirfdHelper(
+      parentDescriptor,
+      parentStat,
+      "unlink-owned",
+      retryArgs,
+      helperOptions
+    );
+  }
 }
 
 function runHook(hooks, name, context) {
@@ -819,9 +909,399 @@ function requireCanonicalPathStable({
   }
 }
 
+function requireParentPathStable({
+  parentPath,
+  beforeComponents,
+  parentDescriptor,
+  parentBefore,
+  code
+}) {
+  try {
+    const afterComponents = pathContract(parentPath);
+    const currentParent = fs.fstatSync(parentDescriptor, { bigint: true });
+    if (!privatePromotionDirectory(currentParent) ||
+        !sameNode(parentBefore, currentParent) ||
+        !samePathContract(beforeComponents, afterComponents)) {
+      fail(code);
+    }
+  } catch (error) {
+    if (error instanceof ProcessLocalSourceTransitionError && error.code === code) {
+      throw error;
+    }
+    fail(code);
+  }
+}
+
 function inspectedBytesMatch(stat, bytes) {
   return privateRegularFile(stat) && stat.size === BigInt(bytes.length) &&
     safeHexEqual(stat.sha256, digestHex(bytes));
+}
+
+function privateExactReconciliationDirectory(stat) {
+  return privatePromotionDirectory(stat) &&
+    Number(stat.mode & 0o7777n) === 0o700;
+}
+
+function exactUnlinkQuarantineName(basename, stat, code) {
+  if (typeof basename !== "string" || !basename || basename === "." ||
+      basename === ".." || basename.includes("/") ||
+      typeof stat?.dev !== "bigint" || typeof stat?.ino !== "bigint" ||
+      typeof stat?.size !== "bigint" || stat.dev < 0n || stat.ino < 1n ||
+      stat.size < 0n || stat.size > BigInt(MAX_SOURCE_BYTES) ||
+      !HEX_SHA256.test(stat.sha256 || "")) {
+    fail(code);
+  }
+  const encoded = Buffer.from([
+    "unlink-owned",
+    basename,
+    String(stat.dev),
+    String(stat.ino),
+    String(stat.size),
+    stat.sha256
+  ].join("\0"), "utf8");
+  try {
+    return `${QUARANTINE_PREFIX}${createHash("sha256")
+      .update(QUARANTINE_DOMAIN)
+      .update(encoded)
+      .digest("hex")}`;
+  } finally {
+    encoded.fill(0);
+  }
+}
+
+function matchingExactUnlinkQuarantines(
+  parentDescriptor,
+  parentStat,
+  basename,
+  code
+) {
+  const matches = [];
+  for (const name of anchoredList(parentDescriptor, parentStat, { code })) {
+    if (!QUARANTINE_NAME.test(name)) continue;
+    const stat = anchoredInspect(parentDescriptor, parentStat, name, {
+      allowMissing: true,
+      code
+    });
+    if (stat !== undefined &&
+        name === exactUnlinkQuarantineName(basename, stat, code)) {
+      matches.push(Object.freeze({ name, stat }));
+    }
+  }
+  return matches;
+}
+
+function checkedExactIdentity(value) {
+  const keys = value && typeof value === "object" && !Array.isArray(value)
+    ? Reflect.ownKeys(value)
+    : [];
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      keys.length !== 2 || keys.some(key => typeof key !== "string") ||
+      JSON.stringify([...keys].sort()) !== JSON.stringify(["dev", "ino"]) ||
+      typeof value.dev !== "bigint" || typeof value.ino !== "bigint" ||
+      value.dev < 0n || value.ino < 1n) {
+    fail("canonical_source_unlink_identity_invalid");
+  }
+  return Object.freeze({ dev: value.dev, ino: value.ino });
+}
+
+function helperSubstitutionForTest(hooks, hookName, canonicalValuesPath) {
+  const hook = hooks?.[hookName];
+  if (hook === undefined) return undefined;
+  if (typeof hook !== "function") fail("source_transition_hook_invalid");
+  const value = hook(Object.freeze({ canonicalValuesPath }));
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      JSON.stringify(Object.keys(value).sort()) !==
+        JSON.stringify(["displacedPath", "foreignPath"])) {
+    fail("source_transition_hook_invalid");
+  }
+  const parentPath = path.dirname(canonicalValuesPath);
+  const paths = [value.foreignPath, value.displacedPath];
+  if (paths.some(candidate =>
+    typeof candidate !== "string" || !path.isAbsolute(candidate) ||
+    /[\u0000\r\n]/u.test(candidate) ||
+    path.dirname(path.resolve(candidate)) !== parentPath
+  )) {
+    fail("source_transition_hook_invalid");
+  }
+  const names = paths.map(candidate => path.basename(path.resolve(candidate)));
+  if (new Set([path.basename(canonicalValuesPath), ...names]).size !== 3 ||
+      names.some(name => !name || name === "." || name === "..")) {
+    fail("source_transition_hook_invalid");
+  }
+  return Object.freeze({ foreign: names[0], displaced: names[1] });
+}
+
+function helperOccupantForTest(hooks, canonicalValuesPath) {
+  const hook = hooks?.helperOccupyNameBeforeRestoreForTest;
+  if (hook === undefined) return undefined;
+  if (typeof hook !== "function") fail("source_transition_hook_invalid");
+  const value = hook(Object.freeze({ canonicalValuesPath }));
+  const parentPath = path.dirname(canonicalValuesPath);
+  if (typeof value !== "string" || !path.isAbsolute(value) ||
+      /[\u0000\r\n]/u.test(value) ||
+      path.dirname(path.resolve(value)) !== parentPath ||
+      path.resolve(value) === canonicalValuesPath) {
+    fail("source_transition_hook_invalid");
+  }
+  return path.basename(path.resolve(value));
+}
+
+function helperCutAfterQuarantineForTest(hooks, canonicalValuesPath) {
+  const hook = hooks?.helperCutAfterQuarantineForTest;
+  if (hook === undefined) return undefined;
+  if (typeof hook !== "function" ||
+      hook(Object.freeze({ canonicalValuesPath })) !== true) {
+    fail("source_transition_hook_invalid");
+  }
+  return true;
+}
+
+function helperDisableRetryForTest(hooks, canonicalValuesPath) {
+  const hook = hooks?.helperDisableRetryForTest;
+  if (hook === undefined) return false;
+  if (typeof hook !== "function" ||
+      hook(Object.freeze({ canonicalValuesPath })) !== true) {
+    fail("source_transition_hook_invalid");
+  }
+  return true;
+}
+
+export function unlinkPrivateProcessLocalValuesSourceExact({
+  canonicalValuesPath,
+  expectedBytes,
+  expectedIdentity,
+  hooks
+}) {
+  if (typeof canonicalValuesPath !== "string" || !canonicalValuesPath ||
+      /[\u0000\r\n]/u.test(canonicalValuesPath) ||
+      !Buffer.isBuffer(expectedBytes) || expectedBytes.length < 1 ||
+      expectedBytes.length > MAX_SOURCE_BYTES) {
+    fail("canonical_source_unlink_invalid");
+  }
+  const identity = checkedExactIdentity(expectedIdentity);
+  if (typeof fs.constants.O_NOFOLLOW !== "number" ||
+      typeof fs.constants.O_DIRECTORY !== "number") {
+    fail("canonical_source_filesystem_unsupported");
+  }
+  const absolute = path.resolve(canonicalValuesPath);
+  const parentPath = path.dirname(absolute);
+  const basename = path.basename(absolute);
+  if (!basename || basename === "." || basename === "..") {
+    fail("canonical_source_path_invalid");
+  }
+  let beforeComponents;
+  try {
+    beforeComponents = pathContract(parentPath);
+  } catch {
+    fail("canonical_source_unlink_conflict");
+  }
+  const parentBefore = beforeComponents.at(-1)?.stat;
+  if (!privatePromotionDirectory(parentBefore)) {
+    fail("canonical_source_unlink_conflict");
+  }
+  let parentDescriptor;
+  let result;
+  let failure;
+  try {
+    parentDescriptor = fs.openSync(
+      parentPath,
+      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW
+    );
+    const openedParent = fs.fstatSync(parentDescriptor, { bigint: true });
+    if (!privatePromotionDirectory(openedParent) ||
+        !sameNode(parentBefore, openedParent)) {
+      fail("canonical_source_unlink_conflict");
+    }
+    runHook(hooks, "beforeUnlink", { canonicalValuesPath: absolute });
+    requireParentPathStable({
+      parentPath,
+      beforeComponents,
+      parentDescriptor,
+      parentBefore,
+      code: "canonical_source_unlink_conflict"
+    });
+    const testSwapBeforeQuarantine = helperSubstitutionForTest(
+      hooks,
+      "helperSubstitutionForTest",
+      absolute
+    );
+    const testSwapQuarantineBeforeUnlink = helperSubstitutionForTest(
+      hooks,
+      "helperFinalSubstitutionForTest",
+      absolute
+    );
+    anchoredUnlinkOwned(parentDescriptor, openedParent, basename, identity, {
+      allowMissing: false,
+      errorCode: "canonical_source_unlink_conflict",
+      expectedLength: expectedBytes.length,
+      expectedSha256: digestHex(expectedBytes),
+      testSwapBeforeQuarantine,
+      testCutAfterQuarantine: helperCutAfterQuarantineForTest(hooks, absolute),
+      testSwapQuarantineBeforeUnlink,
+      testOccupyNameBeforeRestore: helperOccupantForTest(hooks, absolute),
+      disableRetryForTest: helperDisableRetryForTest(hooks, absolute)
+    });
+    runHook(hooks, "afterUnlink", { canonicalValuesPath: absolute });
+    if (anchoredInspect(parentDescriptor, openedParent, basename, {
+      allowMissing: true,
+      code: "canonical_source_unlink_conflict"
+    }) !== undefined) {
+      fail("canonical_source_unlink_conflict");
+    }
+    const parentAfter = pathContract(parentPath);
+    const openedParentAfter = fs.fstatSync(parentDescriptor, { bigint: true });
+    if (!privatePromotionDirectory(openedParentAfter) ||
+        !sameNode(parentBefore, openedParentAfter) ||
+        !samePathContract(beforeComponents, parentAfter)) {
+      fail("canonical_source_unlink_conflict");
+    }
+    result = PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.exactUnlinked;
+  } catch (error) {
+    failure = error instanceof ProcessLocalSourceTransitionError
+      ? error
+      : new ProcessLocalSourceTransitionError("canonical_source_unlink_failed");
+  } finally {
+    if (parentDescriptor !== undefined) {
+      try { fs.fsyncSync(parentDescriptor); } catch { /* Best effort. */ }
+      try { fs.closeSync(parentDescriptor); } catch { /* Preserve failure. */ }
+    }
+  }
+  if (failure) throw failure;
+  return result;
+}
+
+export function reconcilePrivateProcessLocalValuesSourceExactUnlink({
+  canonicalValuesPath,
+  expectedBytes
+}) {
+  const errorCode = "canonical_source_unlink_reconciliation_conflict";
+  if (typeof canonicalValuesPath !== "string" || !canonicalValuesPath ||
+      /[\u0000\r\n]/u.test(canonicalValuesPath) ||
+      !Buffer.isBuffer(expectedBytes) || expectedBytes.length < 1 ||
+      expectedBytes.length > MAX_SOURCE_BYTES) {
+    fail("canonical_source_unlink_reconciliation_invalid");
+  }
+  if (typeof fs.constants.O_NOFOLLOW !== "number" ||
+      typeof fs.constants.O_DIRECTORY !== "number") {
+    fail("canonical_source_filesystem_unsupported");
+  }
+  const absolute = path.resolve(canonicalValuesPath);
+  const parentPath = path.dirname(absolute);
+  const basename = path.basename(absolute);
+  if (!basename || basename === "." || basename === "..") {
+    fail("canonical_source_path_invalid");
+  }
+  let beforeComponents;
+  try {
+    beforeComponents = pathContract(parentPath);
+  } catch {
+    fail(errorCode);
+  }
+  const parentBefore = beforeComponents.at(-1)?.stat;
+  if (!privateExactReconciliationDirectory(parentBefore)) fail(errorCode);
+
+  let parentDescriptor;
+  let result;
+  let failure;
+  try {
+    parentDescriptor = fs.openSync(
+      parentPath,
+      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW
+    );
+    const openedParent = fs.fstatSync(parentDescriptor, { bigint: true });
+    if (!privateExactReconciliationDirectory(openedParent) ||
+        !sameNode(parentBefore, openedParent)) {
+      fail(errorCode);
+    }
+    requireParentPathStable({
+      parentPath,
+      beforeComponents,
+      parentDescriptor,
+      parentBefore,
+      code: errorCode
+    });
+
+    const quarantines = matchingExactUnlinkQuarantines(
+      parentDescriptor,
+      openedParent,
+      basename,
+      errorCode
+    );
+    if (quarantines.length > 1) fail(errorCode);
+
+    if (quarantines.length === 1) {
+      const canonical = anchoredInspect(parentDescriptor, openedParent, basename, {
+        allowMissing: true,
+        code: errorCode
+      });
+      if (canonical !== undefined) fail(errorCode);
+      const [{ name, stat }] = quarantines;
+      if (!inspectedBytesMatch(stat, expectedBytes)) fail(errorCode);
+      anchoredUnlinkOwned(
+        parentDescriptor,
+        openedParent,
+        basename,
+        { dev: stat.dev, ino: stat.ino },
+        {
+          allowMissing: false,
+          errorCode,
+          expectedLength: expectedBytes.length,
+          expectedSha256: digestHex(expectedBytes)
+        }
+      );
+      if (anchoredInspect(parentDescriptor, openedParent, basename, {
+        allowMissing: true,
+        code: errorCode
+      }) !== undefined || anchoredInspect(parentDescriptor, openedParent, name, {
+        allowMissing: true,
+        code: errorCode
+      }) !== undefined) {
+        fail(errorCode);
+      }
+      result = PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.exactUnlinkReconciled;
+    } else {
+      result = PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS
+        .exactUnlinkReconciliationNotRequired;
+    }
+
+    if ((result === PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.exactUnlinkReconciled &&
+        anchoredInspect(parentDescriptor, openedParent, basename, {
+          allowMissing: true,
+          code: errorCode
+        }) !== undefined) || matchingExactUnlinkQuarantines(
+      parentDescriptor,
+      openedParent,
+      basename,
+      errorCode
+    ).length !== 0) {
+      fail(errorCode);
+    }
+    requireParentPathStable({
+      parentPath,
+      beforeComponents,
+      parentDescriptor,
+      parentBefore,
+      code: errorCode
+    });
+    if (!privateExactReconciliationDirectory(
+      fs.fstatSync(parentDescriptor, { bigint: true })
+    )) {
+      fail(errorCode);
+    }
+  } catch (error) {
+    failure = error instanceof ProcessLocalSourceTransitionError
+      ? error
+      : new ProcessLocalSourceTransitionError(
+          "canonical_source_unlink_reconciliation_failed"
+        );
+  } finally {
+    if (parentDescriptor !== undefined) {
+      try { fs.fsyncSync(parentDescriptor); } catch { /* Best effort. */ }
+      try { fs.closeSync(parentDescriptor); } catch { /* Preserve failure. */ }
+    }
+  }
+  if (failure) throw failure;
+  return result;
 }
 
 function sourcePendingName(basename, pendingAttribution) {
@@ -829,11 +1309,11 @@ function sourcePendingName(basename, pendingAttribution) {
   return `.${basename}.aud065-new-${pendingAttribution}`;
 }
 
-function promoteCanonicalBytes(
+function replaceCanonicalBytes(
   canonicalValuesPath,
   oldBytes,
   newBytes,
-  intent,
+  pendingAttribution,
   hooks
 ) {
   if (typeof fs.constants.O_NOFOLLOW !== "number" ||
@@ -847,11 +1327,9 @@ function promoteCanonicalBytes(
   if (!basename || basename === "." || basename === "..") {
     fail("canonical_source_path_invalid");
   }
-  const pendingAttribution = derivePendingAttribution({
-    basename,
-    intent,
-    newBytes
-  });
+  if (!HEX_SHA256.test(pendingAttribution || "")) {
+    fail("source_intent_invalid");
+  }
   const beforeComponents = pathContract(absolute);
   const destinationBefore = beforeComponents.at(-1)?.stat;
   const parentBefore = beforeComponents.at(-2)?.stat;
@@ -982,6 +1460,59 @@ function promoteCanonicalBytes(
   }
   if (failure) throw failure;
   return result;
+}
+
+function promoteCanonicalBytes(
+  canonicalValuesPath,
+  oldBytes,
+  newBytes,
+  intent,
+  hooks
+) {
+  return replaceCanonicalBytes(
+    canonicalValuesPath,
+    oldBytes,
+    newBytes,
+    derivePendingAttribution({
+      basename: path.basename(path.resolve(canonicalValuesPath)),
+      intent,
+      newBytes
+    }),
+    hooks
+  );
+}
+
+export function replacePrivateProcessLocalValuesSource({
+  canonicalValuesPath,
+  expectedBytes,
+  replacementBytes,
+  attributionKey,
+  hooks
+}) {
+  if (!Buffer.isBuffer(expectedBytes) || !Buffer.isBuffer(replacementBytes) ||
+      expectedBytes.length < 1 || expectedBytes.length > MAX_SOURCE_BYTES ||
+      replacementBytes.length < 1 || replacementBytes.length > MAX_SOURCE_BYTES ||
+      safeBytesEqual(expectedBytes, replacementBytes)) {
+    fail("canonical_source_replacement_invalid");
+  }
+  if (!Buffer.isBuffer(attributionKey) || attributionKey.length < 32 ||
+      attributionKey.length > MAX_SOURCE_BYTES) {
+    fail("source_attribution_key_invalid");
+  }
+  const attribution = createHmac("sha256", attributionKey)
+    .update(PRIVATE_REPLACEMENT_ATTRIBUTION_DOMAIN)
+    .update(Buffer.from([0]))
+    .update(expectedBytes)
+    .update(Buffer.from([0]))
+    .update(replacementBytes)
+    .digest("hex");
+  return replaceCanonicalBytes(
+    canonicalValuesPath,
+    expectedBytes,
+    replacementBytes,
+    attribution,
+    hooks
+  );
 }
 
 export function promoteProcessLocalValuesSource(options) {

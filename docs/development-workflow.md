@@ -181,17 +181,34 @@ faltan builds de imágenes por Actions, carga física, staging y aceptación liv
 ningún gate de fuentes mide capacidad ni autoriza rollout público.
 
 El orden de la campaña vigente es estricto: primero terminar y fusionar el
-tooling `AUD-065`; después preparar las fuentes privadas, crear el checkpoint y
-completar la rotación sobre el baseline live exclusivamente con
+tooling que corrige la secuencia; después implementar y fusionar `AUD-078` en
+una rama Cloud separada. A continuación se integra en otro PR Cloud el workflow
+conjunto de procedencia y los recibos de fase, y en un PR raíz posterior su
+consumidor y el gitlink. Solo desde un root limpio con
+`HEAD=main=origin/main` se permite la excepción acotada de construir, sin
+generar ni aplicar manifiestos, Reticulum, parent y runner en un único workflow
+de GitHub Actions. Las tres imágenes deben quedar atestadas contra el commit
+Cloud derivado del gitlink integrado.
+
+El run entrega exactamente cinco ficheros distintos: recibo JSON canónico,
+bundle de ese recibo y bundles OCI de Reticulum, parent y runner. Se verifican
+sin overrides usando un `DOCKER_CONFIG` temporal owner-only `0700`, con
+`config.json` `0600`, materializado desde el pull config privado y eliminado
+incluso ante error. Una publicación parcial o un digest escrito a mano falla
+cerrado. Ese build no cambia ninguna imagen live ni sustituye el checkpoint.
+
+Después se crea y valida el primer checkpoint DB+storage. El completador deriva
+el runner de los cinco artefactos, completa OLD bajo Lease y permite preparar
+NEW; entonces se completa la rotación sobre el baseline live exclusivamente con
 `deployment/rotate-process-local-credentials.sh`, la operación privada sellada,
 la promoción atómica y el auditor read-only `aud065_rotation_verified`
-descritos en `deployment/README.md`; el verificador global 0/0 se reserva para
-la aceptación final del control plane aislado. A continuación implementar y fusionar
-`AUD-078` en una rama
-Cloud separada; solo entonces construir las imágenes por Actions y desplegar el
-candidato. Un build anterior no sustituye ni adelanta checkpoint o rotación.
+descritos en `deployment/README.md`. Después de la rotación se crea y valida un
+segundo checkpoint; solo entonces el gestor vuelve a verificar los mismos cinco
+artefactos, deriva los tres digests finales y prepara la copia candidata
+bootstrap con el pull config nuevo. El verificador global 0/0 se reserva para la
+aceptación final.
 
-El cambio de runners se promociona con dos imágenes del mismo commit y tres
+El cambio de runners se promociona con tres imágenes del mismo commit y tres
 manifiestos completos de 58 recursos, regenerados sucesivamente con
 `BOT_RUNNER_ACTIVATION_PHASE=bootstrap`, `admission` y `active`. Cada fase se
 aplica exclusivamente desde `hubs-cloud/community-edition` mediante
@@ -199,7 +216,10 @@ aplica exclusivamente desde `hubs-cloud/community-edition` mediante
 serializa la mutación con el Lease global, mantiene el parent y los runners
 parados hasta completar policy/RBAC/probe, y vuelve a cercar la autoridad si
 detecta error o deriva. No usar un `kubectl apply -f hcce.yaml` directo para
-saltar esa máquina de estados.
+saltar esa máquina de estados. El cambio de fase de la copia candidata y su
+promoción final deben exigir recibos autenticados ligados al fichero exacto,
+commit integrado, digests derivados, checkpoint, contexto/UID y resultado live;
+nunca se marcan por una orden local sin esa evidencia.
 
 Los 58 recursos abarcan los namespaces `hcce` y `hcce-bot-runners`, cuota,
 ValidatingAdmissionPolicy+binding, RBAC mínimo comprobado con revisiones
@@ -213,8 +233,9 @@ verificador live y carga fría actuales con las credenciales rotadas.
 `kubectl apply` de un manifiesto viejo no poda ServiceAccounts, Role,
 RoleBinding, `bot-images-pull` ni NetworkPolicy ausentes de ese YAML. El rollback
 debe inventariarlos y mantenerlos inertes hasta una limpieza trackeada; no usar
-parches manuales. El pull config se actualiza exclusivamente con
-`npm run set-bot-image-pull-config`, `GHCR_TOKEN` oculto/en entorno y sin mostrar
+parches manuales. En esta campaña el pull config se materializa exclusivamente
+desde la credencial NEW del Llavero mediante el gestor privado trackeado; no se
+acepta el token por argv o entorno ni se muestra
 `BOT_IMAGE_PULL_CONFIG_JSON_BASE64`.
 
 Una release solo se acepta cuando:

@@ -2,7 +2,7 @@
 
 Última actualización: 19 de julio de 2026
 
-Estado actual: **EN EJECUCIÓN; Fase 2B, OLD disponible y directorio privado preparados; credenciales externas pendientes**
+Estado actual: **EN EJECUCIÓN; Fase 2B, tooling de secuencia validado localmente; PR/CI/merge pendientes; producción intacta**
 
 Worktree inicial: `/Users/Shared/Gits/YenHubs-aud075-root`
 
@@ -10,7 +10,7 @@ Rama inicial: `codex/aud075-integration`
 
 Worktree activo: `/Users/Shared/Gits/YenHubs`
 
-Rama de reanudación tras integrar este handoff: `main`
+Rama activa de desbloqueo: `codex/aud065-sequencing-unblock`
 
 Este documento es la fuente de verdad de la meta activa. El historial de sesión
 y las cuentas completas de pruebas se conservan exclusivamente en
@@ -87,11 +87,20 @@ La meta solo puede marcarse completa cuando se cumpla todo lo siguiente:
 
 - [ ] `AUD-075` y `AUD-078` pertenecen a las ramas base correspondientes y el
   root `main` fija exactamente esos commits.
-- [ ] Existe un checkpoint fresco, verificable y restaurable con DB y storage.
+- [ ] El productor Cloud de procedencia/recibos y su consumidor raíz están
+  fusionados; un root `main=origin/main` limpio fija el commit Cloud exacto que
+  construyó Reticulum, parent y runner.
+- [ ] Existen los dos checkpoints conjuntos exigidos —antes de la rotación y
+  después de ella antes del rollout— frescos, verificables y restaurables con DB
+  y storage.
 - [ ] Las credenciales afectadas por `AUD-065` fueron rotadas; las anteriores
   están revocadas o rechazadas cuando exista una comprobación segura.
-- [ ] Parent y runner proceden del mismo commit Cloud, fueron construidos por
-  Actions y se ejecutan mediante digests inmutables.
+- [ ] Reticulum, parent y runner proceden del mismo commit y del mismo run Cloud
+  atestado, fueron construidos por Actions y se ejecutan mediante digests
+  inmutables.
+- [ ] El recibo JSON canónico, su bundle de atestación y los tres bundles OCI de
+  Reticulum, parent y runner —cinco ficheros distintos en total— están
+  conservados y verificados sin overrides de commit o digest.
 - [ ] Producción usa el protocolo compatible de sitting, fencing DB,
   aprobación/cuarentena, Pods runner aislados y parada terminal de `AUD-078`.
 - [ ] `verify-live-reactivation.sh` termina con cero fallos y cero avisos.
@@ -120,9 +129,11 @@ pendiente.
   submódulos, sin limpiar ni sobrescribir cambios existentes.
 - [x] Completar la coherencia de runbooks y documentos activos de `AUD-075`.
 - [x] Eliminar referencias activas obsoletas, preservando entradas históricas;
-  corregir especialmente cualquier orden que permita build antes de
+  corregir especialmente cualquier orden que permita desplegar antes de
   checkpoint+rotación, además de conteos antiguos de recursos/policies y el
-  rollout anterior de dos fases.
+  rollout anterior de dos fases. La excepción posterior de build sin deploy,
+  necesaria para obtener el primer digest runner, debe quedar versionada y
+  fail-closed antes de utilizarse.
 - [x] Revisar el diff raíz completo y confirmar que no contiene trabajo ajeno.
 - [x] Ejecutar solo las validaciones afectadas por los últimos cambios; no
   repetir gates verdes cuyos inputs no cambiaron.
@@ -138,7 +149,7 @@ pendiente.
 Resultado: el código, los gates, los scripts de recuperación y la documentación
 de `AUD-075` quedan integrados, todavía sin cambiar el runtime live.
 
-### Fase 2 — cerrar inmediatamente `AUD-065`
+### Fase 2 — preparar el cierre de `AUD-065` sin mutar producción
 
 #### Fase 2A — completar primero el tooling de rotación
 
@@ -210,8 +221,8 @@ Resultado de Fase 2A: la ruta integrada liga y rota `Secret/ghcr-pull`, conserva
 `ServiceAccount/default` como invariante bind-only y verifica por red las
 credenciales GHCR. El merge no creó credenciales, checkpoint ni mutación live;
 el handoff documental pasó seis checks y el PR raíz `#7` se fusionó como
-`main=83732fe6a4372ef0a5bb6cd9a1ab2eb451def7a1`. El hito en curso es integrar
-el preparador privado NEW antes de crear ninguna credencial.
+`main=83732fe6a4372ef0a5bb6cd9a1ab2eb451def7a1`. En ese momento, el siguiente hito
+era integrar el preparador privado NEW antes de crear credenciales.
 
 #### Fase 2B — preparar credenciales sin invalidar todavía el baseline
 
@@ -228,9 +239,9 @@ el preparador privado NEW antes de crear ninguna credencial.
   `29681808358`/`29681809883` y se fusionó como
   `main=50b504a15a4ada8658cf4ce1a3b827d4fab8fc31`; no se creó credencial, NEW ni
   checkpoint antes del merge.
-- [ ] Crear por canales privados las credenciales externas nuevas necesarias y
-  preparar las internas nuevas, manteniendo válidas las anteriores hasta que el
-  rollout coordinado haya sido aceptado.
+- [x] Crear por canales privados las credenciales externas nuevas necesarias,
+  manteniendo válidas las anteriores hasta que el rollout coordinado haya sido
+  aceptado.
 - [x] Hacer disponible el fichero privado en el worktree final mediante una ruta
   absoluta o una copia regular `0600`, nunca mediante Git, symlink, chat o
   salida de terminal; no abrirlo ni usarlo como evidencia. Sin leer contenido,
@@ -241,10 +252,21 @@ el preparador privado NEW antes de crear ninguna credencial.
   `0700`. Una comprobación componente a componente descartó symlinks en toda
   la ruta OLD y en todos los componentes existentes de la ruta NEW; el target
   `new-values.yaml` permanece ausente.
-- [ ] Preparar las fuentes completas anterior y nueva como ficheros privados
-  regulares `0600`, comprobando solo contrato, presencia y atestaciones
-  redactadas. No existe una tercera fuente de credenciales para `rollback` y no
-  se crean todavía los snapshots sellados de la operación.
+- [ ] Integrar primero, mediante rama/PR/CI propios, la corrección de secuencia,
+  el completador atómico de OLD y el preparador bootstrap `create`/`verify` de
+  la copia candidata. `advance` y `promote` permanecen deliberadamente ausentes
+  hasta que otra pareja de PR Cloud/root aporte recibos autenticados. No
+  ejecutar ninguno contra valores reales hasta que este tooling pertenezca a
+  `main`, sus gates estén verdes y exista un digest runner oficial.
+  Las suites focales y ambos gates raíz están verdes localmente sobre el mismo
+  árbol congelado; PR, CI y merge continúan pendientes.
+
+Resultado de Fase 2B: el merge verde del tooling cierra esta fase sin ejecutar
+el completador ni materializar NEW. La siguiente fase es `AUD-078`; completar
+OLD y crear NEW ocurre exclusivamente en Fase 4, después de integrar los PR de
+procedencia/recibos, verificar el build conjunto y crear el primer checkpoint.
+No existe una tercera fuente de credenciales para `rollback` y todavía no se
+crean snapshots sellados de la operación.
 
 Preflight privado de 19 de julio de 2026: `main=origin/main=f14f1f40869d`
 permanecía limpio con los gitlinks aceptados. Las tres etiquetas NEW
@@ -258,6 +280,30 @@ autenticación aún deben verificarse caducidad, `read:packages`,
 `write:packages` y ausencia de `repo` antes de generar. No se creó, leyó ni
 revocó credencial alguna, no existe NEW y no hubo acceso al clúster o
 producción.
+
+Captura privada completada el 19 de julio de 2026, sin mostrar valores: las tres
+etiquetas revisionadas existen en macOS Keychain bajo el prefijo
+`YenHubs-AUD065-NEW-20260719-01`. OpenAI usa la cuenta de servicio de proyecto
+`yenhubs-aud065-20260719-01`, modo Restricted, únicamente Responses Write y
+Moderations Request; la clave personal creada por error durante el formulario
+fue revocada y no se reutilizó. Mailtrap quedó limitado a `Domain Admin` de
+`meta-hubs.org`, con las lecturas dependientes que impone el proveedor. El PAT
+classic de GitHub caduca el 19 de julio de 2027, contiene solo
+`read:packages`/`write:packages` y excluye `repo`, `workflow` y
+`delete:packages`. Todas las credenciales OLD siguen válidas.
+
+El bridge Keychain se ejecutó una vez y falló cerrado con NEW todavía ausente.
+La diagnosis de presencia, sin valores, identificó exactamente dos claves que
+el OLD histórico anterior a los runners aislados no contiene:
+`OVERRIDE_BOT_RUNNER_IMAGE` y `BOT_IMAGE_PULL_CONFIG_JSON_BASE64`. No existe aún
+un paquete/digest oficial `ghcr.io/yengalvez/bot-runner`, por lo que no se
+inventó ningún digest ni se editó OLD. Esto reveló una circularidad real del
+orden anterior: el gate de rotación exige el runner, pero ese artefacto solo
+puede construirse después de integrar `AUD-078` y los PR Cloud/root de
+procedencia/recibos. La corrección autorizada permite únicamente construir por
+Actions sin desplegar, mantiene todos los workloads live exactos durante
+`AUD-065` y exige, después de la rotación, un segundo checkpoint antes de crear
+la copia candidata y antes del primer apply.
 
 El preparador integrado de esta fase construye NEW sin editar valores a mano:
 lee proveedores desde etiquetas nuevas de macOS Keychain, entrega el frame solo
@@ -279,8 +325,9 @@ diagnóstica mal acotada
 alcanzó el `hcce.yaml` ignorado de Cloud y mostró el JWT público derivado; el
 valor no se reutilizó y `PERMS_KEY`/JWT permanecen dentro de la rotación
 preventiva obligatoria. No se creó credencial/checkpoint ni se consultó o mutó
-producción. Esta evidencia solo autoriza PR/CI/merge del tooling; las tres
-casillas privadas anteriores permanecen pendientes. El commit `a6ed7b3fe3f9`
+producción. En ese momento, esta evidencia solo autorizaba PR/CI/merge del
+preparador; la captura privada de credenciales y la materialización de NEW
+seguían bloqueadas. El commit `a6ed7b3fe3f9`
 pasó los seis checks de los runs push/PR `29675286715`/`29675308171`; el PR raíz
 `#8` se fusionó como `main=623d70c607f23ff8bf45387cf1af3ea6ab57eb61`.
 La compatibilidad OLD descrita a continuación pasó entonces a ser la primera
@@ -295,8 +342,8 @@ que no había BOM y que la primera línea era un marcador; no mostró contenido.
 La corrección candidata acepta como máximo un `---` exacto en la primera línea,
 liga su presencia y terminación LF/CRLF entre OLD y NEW, lo preserva byte a byte
 y mantiene fail-closed todos los marcadores internos, duplicados o
-multidocumento. Credenciales, NEW, checkpoint y producción siguen intactos hasta
-integrar y revalidar esta compatibilidad.
+multidocumento. En ese punto, credenciales, NEW, checkpoint y producción
+permanecían intactos hasta integrar y revalidar esta compatibilidad.
 
 Tras admitir el marcador, la misma consulta redactada se detuvo en la única
 construcción restante fuera del subset: el legado exacto `PERMS_KEY: |`. Un
@@ -332,75 +379,12 @@ P1/P2. Como el cambio material invalidó los verdes anteriores, se repitieron lo
 gates sobre los bytes finales: transición 24/24, preparador 23/23, seguridad
 50/50, el agregado AUD-065, `./scripts/verify-project.sh` y
 `./scripts/verify-project.sh --full` terminaron con código 0; el full cerró con
-Reticulum 430 pruebas, 5 propiedades y 0 fallos. No se creó
-credencial/NEW/checkpoint, no se leyó Keychain real y no hubo acceso al clúster
-ni mutación de producción. El PR raíz `#9` quedó fusionado como
-`main=50b504a15a4ada8658cf4ce1a3b827d4fab8fc31`; la primera casilla pendiente es
-ahora la captura privada de credenciales externas.
-
-#### Fase 2C — checkpoint y rotación inmediata
-
-- [ ] Confirmar contexto Kubernetes, namespace, UID, PVC, Deployments e imágenes
-  mediante rutas redactadas; no abrir ni imprimir manifiestos privados.
-- [ ] Crear un checkpoint nuevo con
-  `ALLOW_CHECKPOINT_DOWNTIME=1 ./deployment/create-checkpoint.sh` que incluya
-  PostgreSQL y `ret-pvc`.
-- [ ] Verificar `SHA256SUMS`, gzip, contrato DB, pares de storage y restore
-  dry-run.
-- [ ] Conservar una segunda copia cifrada del checkpoint fuera del equipo cuando
-  el runbook lo exija.
-- [ ] Ejecutar `rotate-process-local-credentials.sh plan` después del checkpoint.
-  `plan` debe crear y sellar exactamente `old-snapshot.json` y
-  `new-snapshot.json`, validar GHCR OLD -> NEW contra cada digest aplicable y
-  terminar únicamente con `aud065_plan_ready`; no permitir `execute` ni el
-  primer CAS si cualquiera de las dos credenciales falla.
-- [ ] Confirmar que la recuperación one-way queda ligada al snapshot nuevo
-  sellado y a los mismos digests del checkpoint. El subcomando `rollback` solo
-  se usa desde `db-rotated` o `bundle-applied`, converge al estado nuevo y nunca
-  restaura una contraseña, Secret o fuente anterior.
-- [ ] Ejecutar la rotación interna coordinada de `AUD-065` sin revocar todavía
-  credenciales en proveedores externos y sin copiar valores a Git, tarea, chat
-  o salida de terminal.
-- [ ] Separar credenciales externas de las internas del runtime y aplicar estas
-  últimas coordinadamente mediante el bundle `AUD-065` generado por código
-  trackeado: materializar y aplicar exactamente `Secret/configs`,
-  `Secret/ghcr-pull` y seis Deployments mediante CAS de UID/resourceVersion de
-  Kubernetes, verificando `ServiceAccount/default` sin mutarlo. El manifiesto
-  Hubs CE completo queda intacto porque el generador actual representa el
-  candidato `AUD-075`, no el baseline live `process-local`; nunca usar
-  `kubectl patch`, edición manual de Secrets, un apply parcial ad hoc ni
-  hotpatches.
-- [ ] Mantener los digests y el modo `process-local` exactos que ya están live;
-  verificar por contrato redactado que el bundle no adelanta `AUD-075` ni
-  introduce cambios de workload ajenos a la rotación. Promover los values por
-  rename atómico bajo exclusión absoluta de otros escritores del mismo usuario:
-  esa promoción no se considera un CAS linealizable frente a procesos ajenos.
-- [ ] Reiniciar todos los consumidores que correspondan y mantener `PERMS_KEY`
-  idéntica en Reticulum y Dialog, comprobando únicamente su paridad por huella.
-- [ ] Verificar por presencia/huella el estado nuevo, los pulls GHCR y los
-  filtros de logs, sin usar todavía la revocación externa como prueba terminal.
-- [ ] Ejecutar el auditor live de solo lectura de `AUD-065` y exigir el token
-  exacto `aud065_rotation_verified`; comprobar además los smokes funcionales
-  estrechos de chat, magic-link, pulls y proveedores aplicables. El verificador
-  global `verify-live-reactivation.sh` con 0/0 y la carga fría desktop/móvil
-  permanecen en Fase 6, después de desplegar `AUD-075` y `AUD-078`.
-- [ ] Solo después de `aud065_rotation_verified` y antes de revocar GHCR OLD,
-  actualizar por el supervisor Keychain ambos `REGISTRY_PASSWORD` de GitHub
-  Actions (`yengalvez/hubs` y `yengalvez/hubs-cloud`), exigir exit 0 y un
-  `updatedAt` nuevo para cada uno, y revalidar pull más autorización de upload
-  no publicante con NEW. El CLI debe conservar su lock global `lockf` de escritor
-  único y usar el mismo item inmutable;
-  ante resultado parcial/error, mantener OLD válido y reintentar sin cambiar de
-  prefijo hasta el token fijo. Después cerrar cada dominio externo en este orden:
-  credencial nueva aceptada, anterior revocada en el proveedor, anterior
-  rechazada específicamente por autenticación y nueva aceptada otra vez. Un
-  timeout, error DNS, rate limit o `5xx` no demuestra revocación.
-- [ ] Registrar únicamente qué credenciales fueron rotadas y su estado, nunca
-  sus valores.
-
-Resultado: el servicio anterior continúa sano, existe recuperación one-way
-completa hacia el estado nuevo y las credenciales potencialmente expuestas dejan
-de ser válidas.
+Reticulum 430 pruebas, 5 propiedades y 0 fallos. En ese hito histórico todavía
+no se había creado credencial/NEW/checkpoint, leído Keychain real ni accedido al
+clúster. El PR raíz `#9` quedó fusionado como
+`main=50b504a15a4ada8658cf4ce1a3b827d4fab8fc31`; después se completó la captura
+privada de credenciales descrita en Fase 2B. La primera casilla pendiente actual
+es fusionar el tooling de secuencia sin ejecutarlo contra valores reales.
 
 ### Fase 3 — implementar `AUD-078` de forma aislada
 
@@ -424,50 +408,150 @@ de ser válidas.
 Resultado: Reticulum no declara una parada completa mientras quede o reaparezca
 un runner gestionado para la sala.
 
-### Fase 4 — construir artefactos publicables
+### Fase 4 — integrar evidencias, construir sin desplegar y completar `AUD-065`
 
 - [ ] Ejecutar la auditoría upstream de solo lectura y registrar el resultado;
   no incorporar upstream dentro de esta meta.
-- [ ] Identificar únicamente las imágenes cuyo código cambió.
-- [ ] Construirlas mediante los workflows GitHub Actions aprobados.
-- [ ] Detenerse ante fallos de Actions o GHCR; no usar builds dentro del clúster,
+- [ ] En una rama/PR Cloud separada de `AUD-078`, integrar un workflow fijo que
+  construya/ateste Reticulum, parent y runner en un único run, la regeneración
+  exacta values -> manifiesto antes del primer `kubectl` y recibos autenticados
+  `bootstrap`/`admission`/`active` bajo el Lease global.
+- [ ] Después del merge Cloud, actualizar su gitlink en una rama/PR raíz propia
+  e integrar el consumidor de recibos: operación privada ligada a checkpoint,
+  commits, digests, contexto/UID y candidato; sin esa cadena `advance` y
+  `promote` deben fallar sin mutar archivos.
+- [ ] Congelar ese commit Cloud final. Justo antes del build,
+  actualizar ambos `REGISTRY_PASSWORD` de Actions mediante el supervisor
+  Keychain y exigir `aud065_actions_secrets_updated`; OLD permanece válido y no
+  se revoca nada todavía.
+- [ ] Construir mediante un único workflow GitHub Actions aprobado Reticulum,
+  `bot-orchestrator` y `bot-runner` desde ese commit Cloud exacto. Esta es una
+  excepción de supply-chain sin deploy: no crea checkpoint, no genera/aplica
+  manifiesto y no cambia Kubernetes.
+- [ ] Detenerse ante cualquier fallo o publicación parcial de Actions/GHCR. No
+  aceptar parent sin runner o viceversa, y no usar builds dentro del clúster,
   hotpatches, `kubectl cp`, `kubectl set image` ni reemplazos manuales.
-- [ ] Exigir que parent y runner procedan del mismo commit Cloud.
-- [ ] Capturar y fijar los digests sin imprimir valores privados.
-- [ ] Regenerar el manifiesto desde valores locales y verificar el inventario
-  exacto; nunca editar `hcce.yaml` a mano.
-- [ ] Ejecutar preflight final contra checkpoint, commits y digests exactos.
+- [ ] Descargar y conservar exactamente cinco ficheros distintos del mismo run:
+  el recibo JSON canónico, su bundle de atestación y los tres bundles OCI de
+  Reticulum, parent y runner. Exigir que las cuatro atestaciones liguen las tres
+  imágenes al mismo commit, workflow e `invocationId`; una ausencia, alias,
+  publicación parcial o digest escrito a mano bloquea la fase.
+- [ ] Verificar esos cinco ficheros únicamente desde un root limpio con
+  `HEAD=main=origin/main`; el verificador deriva el commit esperado del gitlink
+  `hubs-cloud`, exige que checkout y `origin/master` lo contengan y devuelve los
+  tres digests inmutables. No acepta un override de commit o imagen.
+- [ ] Para las verificaciones OCI, materializar desde el pull config privado un
+  `DOCKER_CONFIG` efímero mediante el helper trackeado: padre y directorio
+  temporales owner-only `0700`, `config.json` `0600`, sin `docker login`, argv ni
+  entorno global, y borrado/wipe incluso si falla la atestación.
+- [ ] Confirmar contexto Kubernetes, namespace, UID, PVC, Deployments e imágenes
+  mediante rutas redactadas; no abrir ni imprimir manifiestos privados.
+- [ ] Crear el primer checkpoint nuevo con
+  `ALLOW_CHECKPOINT_DOWNTIME=1 ./deployment/create-checkpoint.sh` antes de que el
+  completador de OLD adquiera el Lease global. Debe incluir PostgreSQL y
+  `ret-pvc`; verificar `SHA256SUMS`, gzip, contrato DB, pares de storage y restore
+  dry-run, y conservar la copia cifrada exigida.
+- [ ] Ejecutar desde `main` el completador versionado de OLD. Primero hace una
+  copia byte-exacta y ligada por inode de los cinco artefactos ya validados en
+  un snapshot privado aleatorio antes del primer `kubectl`; solo esa copia puede
+  alimentar la captura preliminar read-only del pull auth y de
+  `Deployment/bot-orchestrator`, el `DOCKER_CONFIG` efímero y la derivación del
+  runner final. Después adquiere el Lease global, hace dos capturas estables y
+  una tercera captura post-CAS, todas silenciosas, del `Secret/ghcr-pull` live,
+  `ServiceAccount/default` y el parent, ligando UID, resourceVersion, contenedor
+  único, imagen OLD exacta y herencia de pull exclusiva mediante ese
+  ServiceAccount, sin override en el Pod; verifica por red ese parent live y el runner, y
+  añade por CAS únicamente el pull config exacto y
+  `OVERRIDE_BOT_RUNNER_IMAGE`. El runner es aquí solo un binding de verificación:
+  ningún workload live ni otro digest cambia.
+- [ ] Exigir `aud065_old_source_completed_v1` y después
+  `aud065_old_source_verified_v1`; estado parcial, drift de UID/resourceVersion,
+  denegación GHCR o digest inventado bloquean la fase sin editar OLD. Tras el
+  CAS local, solo una renovación y aserción fresca del Lease permite rollback;
+  pérdida de Lease o ACK ambiguo de release conserva el completado exacto y
+  exige reentrada/reconciliación, nunca una restauración a ciegas.
+- [ ] Ejecutar de nuevo el bridge Keychain para materializar NEW desde el OLD ya
+  completo y exigir exactamente `aud065_new_values_prepared_from_keychain` y
+  `aud065_new_values_verified`. NEW usa las credenciales nuevas pero conserva
+  todos los workloads live y el binding runner exacto.
+- [ ] Mantener OLD, NEW y las credenciales bajo exclusión de escritores. No crear
+  todavía los snapshots sellados ni generar el manifiesto candidato.
 
-Resultado: todos los artefactos candidatos tienen procedencia y rollback, pero
-aún no se han aplicado.
+Resultado: existen los artefactos finales y las dos fuentes completas de
+rotación, pero el runtime live sigue byte/imagen-equivalente al baseline.
 
-### Fase 5 — desplegar de forma fail-closed
+### Fase 5 — rotación coordinada de `AUD-065`
 
-- [ ] Confirmar de nuevo contexto, checkpoint, rotación y preflight justo antes
-  de la primera mutación.
-- [ ] Revalidar la frescura exigida del checkpoint y repetirlo si ha superado el
-  TTL o si cambiaron DB, storage, commits, digests o inventario relevantes.
-- [ ] Ejecutar `kubectl diff` mediante la ruta privada/redactada sin mostrar
-  cuerpos de Secrets.
-- [ ] Desplegar primero Reticulum compatible y sus migraciones.
-- [ ] Revisar el inventario redactado creado por `AUD-077` y aprobar o poner en
-  cuarentena cada configuración individualmente.
-- [ ] Regenerar y aplicar sucesivamente las fases `bootstrap`, `admission` y
-  `active` exclusivamente con el wrapper `npm run apply` y contexto exacto.
-- [ ] No usar `kubectl apply -f hcce.yaml` directamente ni parches manuales.
-- [ ] Mantener Reticulum en una réplica, `Recreate`, sin HPA y con el contrato
-  vigente de `ret-pvc`.
+- [ ] Revalidar que el primer checkpoint conjunto sigue dentro de su TTL y que
+  contexto, namespace UID, PVC UID, commits, workload digests, DB y storage no
+  han derivado desde su creación; repetirlo antes de `plan` ante cualquier
+  cambio.
+- [ ] Ejecutar `rotate-process-local-credentials.sh plan`. Debe sellar exactamente
+  OLD/NEW, validar GHCR OLD -> NEW contra cada digest aplicable y terminar solo
+  con `aud065_plan_ready`; no permitir `execute` ni el primer CAS ante fallo.
+- [ ] Confirmar que la recuperación one-way queda ligada al snapshot nuevo y al
+  checkpoint. `rollback` solo se usa desde `db-rotated` o `bundle-applied`,
+  converge al estado nuevo y nunca restaura una credencial anterior.
+- [ ] Ejecutar la rotación interna coordinada sin revocar aún proveedores:
+  materializar/aplicar exactamente `Secret/configs`, `Secret/ghcr-pull` y seis
+  Deployments por CAS de UID/resourceVersion, verificando
+  `ServiceAccount/default` sin mutarlo. Nunca usar patch, edición manual, apply
+  parcial o el manifiesto candidato.
+- [ ] Mantener los digests de workloads y `process-local` exactos. Reiniciar los
+  consumidores requeridos, conservar `PERMS_KEY` idéntica entre Reticulum y
+  Dialog y verificar únicamente por presencia/huella y gates funcionales
+  estrechos.
+- [ ] Ejecutar el auditor live de solo lectura y exigir exactamente
+  `aud065_rotation_verified`. El verificador global y la carga fría pertenecen a
+  Fase 7, después del candidato completo.
+- [ ] Reejecutar el supervisor Actions con el mismo ítem NEW como reconciliación
+  terminal y revalidar pull/upload no publicante. Después cerrar cada dominio:
+  NEW aceptada, OLD revocada, OLD rechazada específicamente por autenticación y
+  NEW aceptada otra vez. Timeout, DNS, rate limit o `5xx` no prueban revocación.
+- [ ] Registrar únicamente nombres/estados de credenciales, nunca sus valores.
+
+Resultado: el baseline anterior continúa sano con credenciales nuevas y
+recuperación one-way; todavía no se ha desplegado el candidato.
+
+### Fase 6 — preparar y desplegar el candidato de forma fail-closed
+
+- [ ] Crear y validar un segundo checkpoint conjunto fresco del baseline ya
+  rotado. Repetirlo si supera el TTL o cambian DB, storage, commits, digests,
+  values o inventario relevantes.
+- [ ] Desde la fuente canónica ya promovida por `AUD-065`, crear una operación
+  privada ligada al segundo checkpoint y publicar una copia candidata bootstrap
+  separada mediante el gestor versionado. El gestor vuelve a verificar el
+  recibo y los cuatro bundles con un `DOCKER_CONFIG` efímero dentro del padre
+  privado de la candidata, deriva sin overrides los digests finales de
+  Reticulum, parent y runner y fija la credencial GHCR NEW; no modificar los
+  OLD/NEW sellados de la rotación.
+- [ ] Exigir `aud065_candidate_values_created` y
+  `aud065_candidate_values_verified`, además de recibo conjunto de procedencia,
+  pulls de todos los digests GHCR, baseline exacto sellado y preservación
+  byte-exacta de todo valor no autorizado.
+- [ ] Ejecutar preflight final contra ese segundo checkpoint, commits y digests.
+  Generar el manifiesto completo desde la copia candidata; nunca editar
+  `hcce.yaml`.
+- [ ] Ejecutar el diff privado/redactado y aplicar `bootstrap` únicamente con
+  `KUBECTL_CONTEXT` exacto y `npm run apply`; Reticulum compatible y sus
+  migraciones llegan primero mientras la autoridad runner permanece inerte.
+- [ ] Revisar el inventario de `AUD-077`. Avanzar la copia candidata únicamente
+  al consumir el recibo bootstrap final del wrapper trackeado, regenerar/diff/apply y exigir
+  policy, RBAC efectivo y probe negativo con el parent parado.
+- [ ] Avanzar después `admission -> active` solo con el recibo admission
+  encadenado, volver a verificar,
+  regenerar/diff/apply y exigir `/transport-ready`, readiness autoritativa,
+  NetworkPolicies exactas, un Pod runner por sala y cero huérfanos.
+- [ ] No usar `kubectl apply -f hcce.yaml`, parches manuales ni atajos. Mantener
+  Reticulum en una réplica, `Recreate`, sin HPA y con el contrato de `ret-pvc`.
 - [ ] Si cambia la imagen Hubs, reiniciar Reticulum según el runbook para renovar
-  HTML y assets con hash.
-- [ ] Confirmar Deployments por digest, RBAC/admission/NetworkPolicies exactos,
-  un Pod runner por sala y ausencia de runners huérfanos.
-- [ ] Ante cualquier fallo, detener el rollout y usar el rollback publicado; no
-  improvisar otro método.
+  HTML/assets con hash. Ante cualquier fallo, detener el rollout y usar el
+  rollback publicado.
 
 Resultado: producción ejecuta el candidato endurecido sin una ventana de
-autoridad mixta.
+autoridad mixta; la promoción canónica final espera la aceptación.
 
-### Fase 6 — aceptación y cierre
+### Fase 7 — aceptación y cierre
 
 - [ ] Ejecutar `./deployment/verify-live-reactivation.sh` con cero fallos y cero
   avisos.
@@ -496,6 +580,10 @@ autoridad mixta.
   necesaria para demostrar que el rollout no los rompió.
 - [ ] Verificar backup/restore y rollback en modo seguro previsto por el runbook;
   no ejecutar una restauración destructiva live como smoke.
+- [ ] Solo después de toda la aceptación live, promover por CAS la copia candidata
+  `active` a la fuente canónica mediante el gestor versionado, exigiendo los
+  recibos encadenados `active`, live 0/0 y cold-browser desktop/móvil, y conservar la
+  copia sellada de la operación `AUD-065` como evidencia privada, sin reescribirla.
 - [ ] Actualizar auditoría, evidencia, handoff, changelog, inventario y este plan
   con commits, PR, workflows, digests y resultados sin secretos.
 - [ ] Confirmar root `main` limpio y submódulos en commits de sus ramas base.

@@ -707,21 +707,34 @@ export async function verifyProcessLocalSnapshotGhcrAccess({
 }) {
   const snapshot = readPrivateProcessLocalSnapshot(snapshotPath);
   try {
-    const images = processLocalGhcrImages(snapshot);
-    const allowedRepositories = new Set(
-      PROCESS_LOCAL_IMAGE_PULL_CONTRACTS.flatMap(contract =>
-        contract.repositories.filter(repository => repository.startsWith("ghcr.io/")))
-    );
-    return await verifyGhcrImages({
-      encoded: snapshot.BOT_IMAGE_PULL_CONFIG_JSON_BASE64,
-      images,
-      allowedRepositories,
+    return await verifyProcessLocalValuesGhcrAccess({
+      snapshot,
       fetchImpl,
       requestTimeoutMs
     });
   } finally {
     for (const key of Object.keys(snapshot)) snapshot[key] = "";
   }
+}
+
+export async function verifyProcessLocalValuesGhcrAccess({
+  snapshot,
+  fetchImpl = globalThis.fetch,
+  requestTimeoutMs = DEFAULT_REGISTRY_TIMEOUT_MS
+}) {
+  if (!object(snapshot)) reject("process_local_snapshot_invalid");
+  const images = processLocalGhcrImages(snapshot);
+  const allowedRepositories = new Set(
+    PROCESS_LOCAL_IMAGE_PULL_CONTRACTS.flatMap(contract =>
+      contract.repositories.filter(repository => repository.startsWith("ghcr.io/")))
+  );
+  return verifyGhcrImages({
+    encoded: snapshot.BOT_IMAGE_PULL_CONFIG_JSON_BASE64,
+    images,
+    allowedRepositories,
+    fetchImpl,
+    requestTimeoutMs
+  });
 }
 
 function checksum(value) {
