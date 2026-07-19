@@ -2,7 +2,7 @@
 
 Última actualización: 19 de julio de 2026
 
-Estado actual: **EN EJECUCIÓN; Fase 2A, cierre GHCR del tooling `AUD-065`**
+Estado actual: **EN EJECUCIÓN; Fase 2B, handoff documental previo a credenciales**
 
 Worktree inicial: `/Users/Shared/Gits/YenHubs-aud075-root`
 
@@ -10,7 +10,7 @@ Rama inicial: `codex/aud075-integration`
 
 Worktree activo: `/Users/Shared/Gits/YenHubs`
 
-Rama activa: `codex/aud065-process-local-rotation`
+Rama activa: `codex/aud065-phase2b-handoff`
 
 Este documento es la fuente de verdad de la meta activa. El detalle histórico y
 las cuentas completas de pruebas se conservan en
@@ -173,7 +173,7 @@ de `AUD-075` quedan integrados, todavía sin cambiar el runtime live.
   por red que las credenciales GHCR antigua y nueva pueden leer todos los
   digests GHCR fijados del baseline más el runner; un timeout, 5xx o permiso
   denegado no cuenta como aceptación.
-- [ ] Cubrir coordinador, fallo parcial, rollback y redacción con fixtures; pasar
+- [x] Cubrir coordinador, fallo parcial, rollback y redacción con fixtures; pasar
   los gates proporcionales, revisión independiente, PR/CI y merge antes de crear
   el checkpoint live.
 
@@ -190,8 +190,8 @@ materialización y dos falsos TOCTOU por `nlink` de directorios. Una revisión
 posterior al CI descubrió el P1 GHCR descrito en la casilla anterior; por tanto
 la evidencia no autoriza todavía merge ni checkpoint.
 
-Evidencia local nueva del 2026-07-19, todavía sin nuevo CI/merge, checkpoint ni
-mutación live: el agregador final de 15 suites terminó con `exit 0` (lock 27/27,
+Evidencia final del 2026-07-19, todavía sin checkpoint ni mutación live: el
+agregador de 15 suites terminó con `exit 0` (lock 27/27,
 barrera 56/56, transición DB 54/54 más PostgreSQL real, coordinador 163/163,
 perfil 31/31, operación 34/34, source 20/20, prepare 21/21, materialización
 18/18, publicación privada 13/13, proyección 6/6, GHCR 44/44, captura 9/9 y
@@ -199,39 +199,58 @@ verificador redactado 31/31). Dos revisiones independientes confirmaron el orden
 OLD -> NEW antes del lock/CAS, la denegación fail-closed, NEW antes del primer
 restart y en auditoría, el dispatcher real y la rama normal `bundle-applied`,
 sin falsos verdes P1/P2. `verify-project.sh` y `verify-project.sh --full`
-terminaron después con código 0; el nuevo CI/merge sigue pendiente.
+terminaron después con código 0. El commit `4ac252b875e8` pasó los seis checks de
+los runs `29667729457` y `29667730561` (seguridad estática y PostgreSQL 12.19 y
+14.23 para push y PR); el PR raíz `#6` se fusionó en
+`main=c87f5b3982f7b68547702b6fa5b6b6212705f679`. El `main` sincronizado quedó
+limpio con los gitlinks Hubs `674ece411691` y Cloud `5392495b0772` intactos.
 
-Resultado intermedio: la ruta local ya liga y rota `Secret/ghcr-pull`, conserva
+Resultado de Fase 2A: la ruta integrada liga y rota `Secret/ghcr-pull`, conserva
 `ServiceAccount/default` como invariante bind-only y verifica por red las
-credenciales GHCR. Faltan el nuevo CI y el merge antes de crear
-credenciales/checkpoint o mutar producción.
+credenciales GHCR. El merge no creó credenciales, checkpoint ni mutación live;
+el hito en curso es fusionar este handoff documental. La primera casilla de Fase
+2B solo se ejecuta después de que el handoff pertenezca a `main`.
 
 #### Fase 2B — preparar credenciales sin invalidar todavía el baseline
 
+- [ ] Tras quedar este handoff fusionado, sincronizar un `main` limpio que
+  contenga el merge `c87f5b3982f7`, confirmar los gitlinks fijados y repetir
+  `verify-project.sh` y `verify-project.sh --full` antes de crear credenciales o
+  datos de checkpoint.
 - [ ] Crear por canales privados las credenciales externas nuevas necesarias y
   preparar las internas nuevas, manteniendo válidas las anteriores hasta que el
   rollout coordinado haya sido aceptado.
-- [ ] Probar, desde los snapshots privados y sin imprimir credenciales, que los
-  PAT GHCR anterior y nuevo autentican cada digest aplicable; no revocar el
-  anterior ni permitir el primer CAS si cualquiera de las dos pruebas falla.
 - [ ] Hacer disponible el fichero privado en el worktree final mediante una ruta
   absoluta o una copia regular `0600`, nunca mediante Git, symlink, chat o
   salida de terminal; no abrirlo ni usarlo como evidencia.
-- [ ] Preparar values anterior/nuevo y rollback como snapshots privados `0600`,
-  comprobando solo esquema, presencia y huellas.
+- [ ] Preparar las fuentes completas anterior y nueva como ficheros privados
+  regulares `0600`, comprobando solo contrato, presencia y atestaciones
+  redactadas. No existe una tercera fuente de credenciales para `rollback` y no
+  se crean todavía los snapshots sellados de la operación.
 
 #### Fase 2C — checkpoint y rotación inmediata
 
 - [ ] Confirmar contexto Kubernetes, namespace, UID, PVC, Deployments e imágenes
   mediante rutas redactadas; no abrir ni imprimir manifiestos privados.
-- [ ] Crear un checkpoint nuevo con `./deployment/create-checkpoint.sh` que
-  incluya PostgreSQL y `ret-pvc`.
+- [ ] Crear un checkpoint nuevo con
+  `ALLOW_CHECKPOINT_DOWNTIME=1 ./deployment/create-checkpoint.sh` que incluya
+  PostgreSQL y `ret-pvc`.
 - [ ] Verificar `SHA256SUMS`, gzip, contrato DB, pares de storage y restore
   dry-run.
 - [ ] Conservar una segunda copia cifrada del checkpoint fuera del equipo cuando
   el runbook lo exija.
-- [ ] Rotar coordinadamente todas las credenciales incluidas en el alcance
-  preventivo de `AUD-065`, sin copiarlas a Git, tarea, chat o salida de terminal.
+- [ ] Ejecutar `rotate-process-local-credentials.sh plan` después del checkpoint.
+  `plan` debe crear y sellar exactamente `old-snapshot.json` y
+  `new-snapshot.json`, validar GHCR OLD -> NEW contra cada digest aplicable y
+  terminar únicamente con `aud065_plan_ready`; no permitir `execute` ni el
+  primer CAS si cualquiera de las dos credenciales falla.
+- [ ] Confirmar que la recuperación one-way queda ligada al snapshot nuevo
+  sellado y a los mismos digests del checkpoint. El subcomando `rollback` solo
+  se usa desde `db-rotated` o `bundle-applied`, converge al estado nuevo y nunca
+  restaura una contraseña, Secret o fuente anterior.
+- [ ] Ejecutar la rotación interna coordinada de `AUD-065` sin revocar todavía
+  credenciales en proveedores externos y sin copiar valores a Git, tarea, chat
+  o salida de terminal.
 - [ ] Separar credenciales externas de las internas del runtime y aplicar estas
   últimas coordinadamente mediante el bundle `AUD-065` generado por código
   trackeado: materializar y aplicar exactamente `Secret/configs`,
@@ -248,23 +267,23 @@ credenciales/checkpoint o mutar producción.
   esa promoción no se considera un CAS linealizable frente a procesos ajenos.
 - [ ] Reiniciar todos los consumidores que correspondan y mantener `PERMS_KEY`
   idéntica en Reticulum y Dialog, comprobando únicamente su paridad por huella.
-- [ ] Verificar por presencia/huella, revocación o rechazo seguro de valores
-  anteriores, pulls GHCR y filtros de logs.
+- [ ] Verificar por presencia/huella el estado nuevo, los pulls GHCR y los
+  filtros de logs, sin usar todavía la revocación externa como prueba terminal.
 - [ ] Ejecutar el auditor live de solo lectura de `AUD-065` y exigir el token
   exacto `aud065_rotation_verified`; comprobar además los smokes funcionales
   estrechos de chat, magic-link, pulls y proveedores aplicables. El verificador
   global `verify-live-reactivation.sh` con 0/0 y la carga fría desktop/móvil
   permanecen en Fase 6, después de desplegar `AUD-075` y `AUD-078`.
-- [ ] Preparar y verificar, sin revelar secretos, la recuperación one-way del
-  mismo baseline y los mismos digests fijados en el checkpoint, usando
-  exclusivamente las credenciales nuevas; un restore nunca debe reactivar
-  credenciales revocadas. El rollback a imágenes anteriores corresponde al
-  rollout candidato posterior, no a `AUD-065`.
+- [ ] Solo después de `aud065_rotation_verified`, cerrar cada dominio externo en
+  este orden: credencial nueva aceptada, anterior revocada en el proveedor,
+  anterior rechazada específicamente por autenticación y nueva aceptada otra
+  vez. Un timeout, error DNS, rate limit o `5xx` no demuestra revocación.
 - [ ] Registrar únicamente qué credenciales fueron rotadas y su estado, nunca
   sus valores.
 
-Resultado: el servicio anterior continúa sano, existe rollback completo y las
-credenciales potencialmente expuestas dejan de ser válidas.
+Resultado: el servicio anterior continúa sano, existe recuperación one-way
+completa hacia el estado nuevo y las credenciales potencialmente expuestas dejan
+de ser válidas.
 
 ### Fase 3 — implementar `AUD-078` de forma aislada
 
@@ -387,8 +406,10 @@ autoridad mixta.
 
 ## Registro de avance
 
-Añadir una fila después de cada hito; no usar este registro para guardar
-secretos ni reemplazar la evidencia original.
+Este registro conserva los hitos escritos antes de consolidar `AGENTS.md`. No
+añadir filas nuevas: el historial de sesión posterior pertenece exclusivamente a
+`docs/session-changelog.md`; este plan solo actualiza estado, casillas y evidencia
+resumida, siempre sin secretos.
 
 | Fecha/hora | Fase y casilla | Evidencia | Resultado / siguiente casilla |
 | --- | --- | --- | --- |
@@ -414,9 +435,8 @@ secretos ni reemplazar la evidencia original.
 | 2026-07-19 02:44 CEST | Fase 2A: gates raíz finales | `verify-project.sh` y `verify-project.sh --full` terminan con código 0 sobre el árbol final. Pasan seguridad 47/47, recuperación 243/243, el agregado AUD-065, Actionlint, ShellCheck, tres escaneos Gitleaks y auditoría upstream; además Hubs 97/97 y build, Admin, navegador 11/11, capacidad 115/115 fail-closed, servicios CE, Spoke 68/68 y build, y Reticulum 430 tests + 5 properties. | Revisar/stagear el diff exacto, crear y publicar el commit, exigir el nuevo CI verde y fusionar PR `#6`; no crear aún checkpoint ni mutar producción. |
 
 La copia autoritativa está ahora en `/Users/Shared/Gits/YenHubs` con la misma
-ruta relativa. El worktree anterior se conserva solo como evidencia hasta que
-la transición y el primer commit de Fase 2A queden publicados; no se reanuda
-trabajo desde él.
+ruta relativa. La Fase 2A ya quedó publicada y fusionada; cualquier worktree
+anterior es únicamente evidencia histórica y nunca se reanuda trabajo desde él.
 
 ## Prompt de meta
 
@@ -426,9 +446,10 @@ Copiar literalmente el siguiente texto como meta:
 Completa el cierre seguro y endurecido de YenHubs siguiendo
 /Users/Shared/Gits/YenHubs/docs/active-goal-plan-2026-07-18.md
 como única fuente de verdad operativa y respetando también AGENTS.md. Reanuda
-desde la primera casilla pendiente
-de la fase activa, actualiza el propio Markdown tras cada evidencia y no repitas
-gates verdes salvo que hayan cambiado sus inputs. Conserva el runtime que ya
+desde la primera casilla pendiente de la fase activa, actualiza en este Markdown
+solo su estado, casillas y evidencia resumida, registra el historial de sesión
+exclusivamente en docs/session-changelog.md y no repitas gates verdes salvo que
+hayan cambiado sus inputs. Conserva el runtime que ya
 funciona, no expongas secretos y no mutes producción antes de disponer del
 checkpoint y las comprobaciones exigidas. Integra subrepositorios antes que sus
 punteros raíz, usa únicamente GitHub Actions para imágenes, despliega mediante el
