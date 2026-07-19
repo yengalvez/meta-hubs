@@ -2,7 +2,7 @@
 
 Última actualización: 19 de julio de 2026
 
-Estado actual: **EN EJECUCIÓN; Fase 2B, tooling de secuencia validado localmente; PR/CI/merge pendientes; producción intacta**
+Estado actual: **EN EJECUCIÓN; Fase 2B cerrada, Fase 3 AUD-078 pendiente; producción intacta**
 
 Worktree inicial: `/Users/Shared/Gits/YenHubs-aud075-root`
 
@@ -10,7 +10,7 @@ Rama inicial: `codex/aud075-integration`
 
 Worktree activo: `/Users/Shared/Gits/YenHubs`
 
-Rama activa de desbloqueo: `codex/aud065-sequencing-unblock`
+Última rama de desbloqueo fusionada: `codex/aud065-sequencing-unblock`
 
 Este documento es la fuente de verdad de la meta activa. El historial de sesión
 y las cuentas completas de pruebas se conservan exclusivamente en
@@ -252,14 +252,16 @@ era integrar el preparador privado NEW antes de crear credenciales.
   `0700`. Una comprobación componente a componente descartó symlinks en toda
   la ruta OLD y en todos los componentes existentes de la ruta NEW; el target
   `new-values.yaml` permanece ausente.
-- [ ] Integrar primero, mediante rama/PR/CI propios, la corrección de secuencia,
+- [x] Integrar primero, mediante rama/PR/CI propios, la corrección de secuencia,
   el completador atómico de OLD y el preparador bootstrap `create`/`verify` de
   la copia candidata. `advance` y `promote` permanecen deliberadamente ausentes
   hasta que otra pareja de PR Cloud/root aporte recibos autenticados. No
   ejecutar ninguno contra valores reales hasta que este tooling pertenezca a
   `main`, sus gates estén verdes y exista un digest runner oficial.
-  Las suites focales y ambos gates raíz están verdes localmente sobre el mismo
-  árbol congelado; PR, CI y merge continúan pendientes.
+  Las suites focales y ambos gates raíz quedaron verdes sobre el mismo árbol
+  congelado. El head `e144dafe6e77` del PR raíz `#12` pasó los seis checks de
+  los runs push/PR `29699523880`/`29699535163` y se fusionó como
+  `main=4651596b452aa4227446f5046ab916a3c1810264`.
 
 Resultado de Fase 2B: el merge verde del tooling cierra esta fase sin ejecutar
 el completador ni materializar NEW. La siguiente fase es `AUD-078`; completar
@@ -384,7 +386,8 @@ no se había creado credencial/NEW/checkpoint, leído Keychain real ni accedido 
 clúster. El PR raíz `#9` quedó fusionado como
 `main=50b504a15a4ada8658cf4ce1a3b827d4fab8fc31`; después se completó la captura
 privada de credenciales descrita en Fase 2B. La primera casilla pendiente actual
-es fusionar el tooling de secuencia sin ejecutarlo contra valores reales.
+es crear desde Cloud `master` la rama aislada de `AUD-078`; el tooling de
+secuencia ya quedó fusionado sin ejecutarse contra valores reales.
 
 ### Fase 3 — implementar `AUD-078` de forma aislada
 
