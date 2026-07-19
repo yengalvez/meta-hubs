@@ -2,7 +2,7 @@
 
 Última actualización: 19 de julio de 2026
 
-Estado actual: **EN EJECUCIÓN; Fase 2B, handoff documental previo a credenciales**
+Estado actual: **EN EJECUCIÓN; Fase 2B, preparador NEW validado; PR/CI/merge previo a credenciales**
 
 Worktree inicial: `/Users/Shared/Gits/YenHubs-aud075-root`
 
@@ -10,12 +10,13 @@ Rama inicial: `codex/aud075-integration`
 
 Worktree activo: `/Users/Shared/Gits/YenHubs`
 
-Rama activa: `codex/aud065-phase2b-handoff`
+Rama activa: `codex/aud065-new-values-preparer`
 
-Este documento es la fuente de verdad de la meta activa. El detalle histórico y
-las cuentas completas de pruebas se conservan en
-`docs/completion-plan-2026-07-18.md`; no deben utilizarse para ampliar el alcance
-de esta meta.
+Este documento es la fuente de verdad de la meta activa. El historial de sesión
+y las cuentas completas de pruebas se conservan exclusivamente en
+`docs/session-changelog.md`. `docs/completion-plan-2026-07-18.md` es solo una
+referencia consolidada anterior y no debe utilizarse para ampliar el alcance de
+esta meta.
 
 ## Meta
 
@@ -208,15 +209,18 @@ limpio con los gitlinks Hubs `674ece411691` y Cloud `5392495b0772` intactos.
 Resultado de Fase 2A: la ruta integrada liga y rota `Secret/ghcr-pull`, conserva
 `ServiceAccount/default` como invariante bind-only y verifica por red las
 credenciales GHCR. El merge no creó credenciales, checkpoint ni mutación live;
-el hito en curso es fusionar este handoff documental. La primera casilla de Fase
-2B solo se ejecuta después de que el handoff pertenezca a `main`.
+el handoff documental pasó seis checks y el PR raíz `#7` se fusionó como
+`main=83732fe6a4372ef0a5bb6cd9a1ab2eb451def7a1`. El hito en curso es integrar
+el preparador privado NEW antes de crear ninguna credencial.
 
 #### Fase 2B — preparar credenciales sin invalidar todavía el baseline
 
-- [ ] Tras quedar este handoff fusionado, sincronizar un `main` limpio que
-  contenga el merge `c87f5b3982f7`, confirmar los gitlinks fijados y repetir
-  `verify-project.sh` y `verify-project.sh --full` antes de crear credenciales o
-  datos de checkpoint.
+- [x] Tras quedar el handoff fusionado, sincronizar un `main` limpio, confirmar
+  los gitlinks fijados y repetir `verify-project.sh` y
+  `verify-project.sh --full` antes de crear credenciales o datos de checkpoint.
+  Ambos gates terminaron con código 0 sobre
+  `main=83732fe6a4372ef0a5bb6cd9a1ab2eb451def7a1`, Hubs `674ece411691` y Cloud
+  `5392495b0772`.
 - [ ] Crear por canales privados las credenciales externas nuevas necesarias y
   preparar las internas nuevas, manteniendo válidas las anteriores hasta que el
   rollout coordinado haya sido aceptado.
@@ -227,6 +231,29 @@ el hito en curso es fusionar este handoff documental. La primera casilla de Fase
   regulares `0600`, comprobando solo contrato, presencia y atestaciones
   redactadas. No existe una tercera fuente de credenciales para `rollback` y no
   se crean todavía los snapshots sellados de la operación.
+
+El preparador candidato de esta fase construye NEW sin editar valores a mano:
+lee proveedores desde etiquetas nuevas de macOS Keychain, entrega el frame solo
+por FD 3, genera los secretos internos y `PERMS_KEY`, deriva URI/JWT/GHCR,
+preserva byte a byte las líneas no autorizadas y publica una única salida
+`0600` sin clobber. La corrección final usa `OLD -> NEW -> OLD` tanto en prepare
+como en verify. El agregado de 17 suites terminó con código 0, incluidos NEW
+21/21, Keychain/supervisor 27/27, source 21/21 y proyección 8/8; el gate raíz
+normal también terminó con código 0. El primer gate completo agotó una sola vez
+el timeout de prueba de 100 ms al esperar un ACK de spawn de Reticulum; el foco
+pasó después 100/100, la suite Reticulum 430/430 y una ejecución canónica nueva
+de `verify-project.sh --full` terminó con código 0 y
+`Full project verification passed`. Se clasifica como temporización transitoria
+del test, no como fallo funcional ni cambio de runtime. Un falso positivo de
+Gitleaks en el nombre de una propiedad de fixture se corrigió mediante un
+renombrado sin cambio funcional; los escaneos root/Hubs/Cloud quedan limpios.
+No se leyó ninguna fuente real de values ni Keychain real. Una búsqueda
+diagnóstica mal acotada
+alcanzó el `hcce.yaml` ignorado de Cloud y mostró el JWT público derivado; el
+valor no se reutilizó y `PERMS_KEY`/JWT permanecen dentro de la rotación
+preventiva obligatoria. No se creó credencial/checkpoint ni se consultó o mutó
+producción. Esta evidencia solo autoriza PR/CI/merge del tooling; las tres
+casillas privadas anteriores permanecen pendientes.
 
 #### Fase 2C — checkpoint y rotación inmediata
 
@@ -274,10 +301,17 @@ el hito en curso es fusionar este handoff documental. La primera casilla de Fase
   estrechos de chat, magic-link, pulls y proveedores aplicables. El verificador
   global `verify-live-reactivation.sh` con 0/0 y la carga fría desktop/móvil
   permanecen en Fase 6, después de desplegar `AUD-075` y `AUD-078`.
-- [ ] Solo después de `aud065_rotation_verified`, cerrar cada dominio externo en
-  este orden: credencial nueva aceptada, anterior revocada en el proveedor,
-  anterior rechazada específicamente por autenticación y nueva aceptada otra
-  vez. Un timeout, error DNS, rate limit o `5xx` no demuestra revocación.
+- [ ] Solo después de `aud065_rotation_verified` y antes de revocar GHCR OLD,
+  actualizar por el supervisor Keychain ambos `REGISTRY_PASSWORD` de GitHub
+  Actions (`yengalvez/hubs` y `yengalvez/hubs-cloud`), exigir exit 0 y un
+  `updatedAt` nuevo para cada uno, y revalidar pull más autorización de upload
+  no publicante con NEW. El CLI debe conservar su lock global `lockf` de escritor
+  único y usar el mismo item inmutable;
+  ante resultado parcial/error, mantener OLD válido y reintentar sin cambiar de
+  prefijo hasta el token fijo. Después cerrar cada dominio externo en este orden:
+  credencial nueva aceptada, anterior revocada en el proveedor, anterior
+  rechazada específicamente por autenticación y nueva aceptada otra vez. Un
+  timeout, error DNS, rate limit o `5xx` no demuestra revocación.
 - [ ] Registrar únicamente qué credenciales fueron rotadas y su estado, nunca
   sus valores.
 

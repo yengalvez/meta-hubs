@@ -9,7 +9,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { loadProcessLocalRotationProfile } from "../../deployment/process-local-rotation.mjs";
-import { projectProcessLocalValues } from "../../deployment/project-process-local-values.mjs";
+import {
+  ProcessLocalValuesProjectionError,
+  projectProcessLocalValues,
+  projectProcessLocalValuesMap
+} from "../../deployment/project-process-local-values.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const CLI = path.join(ROOT, "deployment/project-process-local-values.mjs");
@@ -44,6 +48,49 @@ function fixture() {
 function cleanup(root) {
   fs.rmSync(root, { recursive: true, force: true });
 }
+
+function directValuesMap() {
+  const required = new Set([
+    profile.namespace_value_key,
+    ...profile.secret_keys.filter(name => !profile.derived_secret_keys.includes(name)),
+    ...profile.image_pairs.map(pair => pair.value_key),
+    profile.legacy_image_pull.snapshot_value_key,
+    ...profile.legacy_image_pull.verified_image_value_keys
+  ]);
+  return new Map([...required].sort().map(name => [
+    name,
+    name === "Namespace" ? "hcce" : `fixture-${name.toLowerCase()}`
+  ]));
+}
+
+test("pure Map projection returns the exact keyset and configured optional values", () => {
+  const values = directValuesMap();
+  values.set("UNRELATED_AUD075_VALUE", "ignored-fixture");
+  values.set("PGRST_JWT_SECRET", "fixture-derived");
+
+  const projected = projectProcessLocalValuesMap(values);
+  const expectedKeys = [...values.keys()]
+    .filter(name => name !== "UNRELATED_AUD075_VALUE")
+    .sort();
+
+  assert.deepEqual(Object.keys(projected).sort(), expectedKeys);
+  assert.equal(projected.PGRST_JWT_SECRET, "fixture-derived");
+  assert.equal(projected.UNRELATED_AUD075_VALUE, undefined);
+  assert.equal(values.get("UNRELATED_AUD075_VALUE"), "ignored-fixture");
+});
+
+test("pure Map projection omits empty optionals and rejects a missing required value", () => {
+  const values = directValuesMap();
+  values.set("PGRST_JWT_SECRET", "");
+  assert.equal(projectProcessLocalValuesMap(values).PGRST_JWT_SECRET, undefined);
+
+  values.delete("DB_PASS");
+  assert.throws(
+    () => projectProcessLocalValuesMap(values),
+    error => error instanceof ProcessLocalValuesProjectionError &&
+      error.code === "required_value_missing"
+  );
+});
 
 test("projects only the exact historical direct keys into one private JSON file", () => {
   const input = fixture();

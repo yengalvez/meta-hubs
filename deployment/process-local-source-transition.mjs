@@ -196,14 +196,22 @@ function sourceTransitionContract(profile) {
   const optionalRotations = [...new Set(
     profile.rotate_if_configured_secret_keys
   )].sort();
+  // Snapshot-derived values may be absent from the full local-values source.
+  // When present they remain an authorized change, but the strong snapshot
+  // validator derives them from the canonical material instead of requiring a
+  // redundant source line. Database URIs are direct source values and remain
+  // mandatory.
+  const requiredDerivedChanges = [...new Set(
+    Object.keys(profile.database_uri_contracts)
+  )].sort();
   const derivedChanges = [...new Set([
     ...profile.derived_secret_keys,
-    ...Object.keys(profile.database_uri_contracts)
+    ...requiredDerivedChanges
   ])].sort();
   const requiredKeys = [...new Set([
     ...requiredRotations,
     ...optionalRotations,
-    ...derivedChanges,
+    ...requiredDerivedChanges,
     ...INTERNAL_BOT_KEYS,
     "OVERRIDE_BOT_ORCHESTRATOR_IMAGE",
     "OVERRIDE_BOT_RUNNER_IMAGE"

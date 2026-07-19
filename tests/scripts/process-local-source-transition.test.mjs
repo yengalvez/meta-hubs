@@ -312,6 +312,25 @@ test("configured optional secrets rotate with stable presence", () => {
   }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.transitionVerified);
 });
 
+test("allows the snapshot-derived JWT to be absent while preserving source keysets", () => {
+  const absentOld = sourceValues("old");
+  const absentNew = sourceValues("new");
+  delete absentOld.PGRST_JWT_SECRET;
+  delete absentNew.PGRST_JWT_SECRET;
+  assert.equal(validateProcessLocalValuesSourceTransition({
+    oldBytes: yamlBytes(absentOld),
+    newBytes: yamlBytes(absentNew)
+  }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.transitionVerified);
+
+  const presentOld = sourceValues("old");
+  const missingNew = sourceValues("new");
+  delete missingNew.PGRST_JWT_SECRET;
+  expectCode(() => validateProcessLocalValuesSourceTransition({
+    oldBytes: yamlBytes(presentOld),
+    newBytes: yamlBytes(missingNew)
+  }), "source_keyset_changed");
+});
+
 test("only the allowlisted rotation and derived keys may change", () => {
   const oldValues = sourceValues("old");
   const unauthorized = sourceValues("new");

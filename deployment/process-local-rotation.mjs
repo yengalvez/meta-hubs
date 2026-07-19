@@ -709,6 +709,16 @@ function assertSnapshotKeyset(snapshot, profile, codePrefix) {
   }
 }
 
+export function validateProcessLocalValuesSnapshot(
+  snapshot,
+  { profile = loadProcessLocalRotationProfile(), codePrefix = "snapshot" } = {}
+) {
+  const checkedProfile = validateProfile(profile);
+  assertSnapshotKeyset(snapshot, checkedProfile, codePrefix);
+  materializeSnapshotValues(snapshot, checkedProfile, codePrefix);
+  return true;
+}
+
 function assertLiveSecretMatchesSnapshot(liveValues, snapshotValues, profile) {
   for (const key of profile.secret_keys) {
     if (!safeEqual(liveValues[key], snapshotValues[key])) {
