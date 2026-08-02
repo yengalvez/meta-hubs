@@ -10,21 +10,27 @@ clave por URL ni estado cliente. Ghost publica avatares y rutas por Phoenix/NAF
 sin renderizar la sala, mientras Reticulum conserva la autoridad sobre
 identidad, spawn, actualizaciones y comandos.
 
-> Estado: `AUD-075` está integrado en la fuente Cloud final
-> `5392495b077249edcedfb3092551201645f648f1`; sus PR `#11`/`#12` y CI están
-> verdes. Todavía no se ha construido por Actions el par de imágenes, desplegado
-> ni atestado en staging/live. Por ello el rollout público sigue bloqueado hasta
-> cerrar `AUD-065`/`AUD-078`, fijar ambos digests, desplegar la topología
-> generada y superar los gates live de `deployment/README.md`. La certificación
-> física de capacidad es una campaña futura separada.
+> Estado: `AUD-075` está integrado desde Cloud `5392495b0772` y `AUD-078` ya se
+> fusionó inicialmente mediante los PR Cloud `#13`/`#14` en
+> `development=0a2163468844` y `master=1cf95ca8719b`. Los PR `#15/#16`
+> corrigieron después los relevos causales y `#17/#18` promovieron el fence de
+> operación hasta el head actual `master=24d09706c2d9`, con CI post-merge verde.
+> Hubs está ahora en `ce8390a8905f` tras corregir la compatibilidad segura de
+> Draft.js con Immutable.js 4.3.9. El worktree raíz contiene la compatibilidad
+> Fase 3B y apunta al gitlink `24d0970`; recovery 861/861 y el gate normal final
+> pasan, pero full, revisión, PR/CI y merge siguen pendientes. Todavía no se construyeron las imágenes candidatas, no hubo
+> checkpoint, despliegue ni atestación staging/live. El rollout público sigue
+> bloqueado hasta completar esas puertas y el flujo de `deployment/README.md`.
+> La certificación física de capacidad es una campaña futura separada.
 
-El corte usa Hubs `674ece411691` y Hubs Cloud
-`5392495b077249edcedfb3092551201645f648f1`, que incluye el baseline
-`0f151eb88da1` de fencing y aprobación. Pasan 128/128 pruebas del orquestador,
-30/30 del generador con 58 recursos, 45/45 del verificador de Pods runner,
-19/19 del pull/configuración, 18/18 del Deployment, 43/43 gates raíz de
-seguridad y 239/239 de recuperación. El dictamen es GO de fuente/CI únicamente:
-no se ejecutaron builds de rollout, staging, despliegue ni aceptación live.
+El último corte raíz aceptado usa Hubs `674ece411691` y Hubs Cloud
+`5392495b077249edcedfb3092551201645f648f1`; sus conteos de gates permanecen
+como evidencia histórica de ese input. Cloud `1cf95ca8719` añade la outbox y la
+parada terminal de `AUD-078`; `24d09706c2d9` añade el relevo causal y el fence
+de operación. Los PR Cloud tienen CI verde. No se atribuyen esos verdes a la
+Fase 3B raíz: todavía debe completar sus
+pruebas y gates sobre los bytes definitivos. El dictamen continúa siendo sólo
+fuente candidata, nunca build, staging, despliegue ni aceptación live.
 
 Límites de seguridad por defecto:
 
@@ -241,6 +247,31 @@ atestación de runtime. `process-local` solo se admite como rollback privado con
 bots públicos deshabilitados; no es una topología aceptable para público ni
 para certificar capacidad.
 
+### Fencing durante checkpoint/restore (`AUD-078`, Fase 3B)
+
+La recuperación durable conserva cinco pares exactos de
+`ValidatingAdmissionPolicy`/binding —10 recursos cluster— junto a dos Namespace
+y 13 recursos namespaced. El quinto par es el fence de operación: su estado
+firmado sólo puede ser `dormant` o `active`. Un checkpoint `durable-v2` lo cambia
+por CAS a `active` después de probar cinco writers a cero y lo devuelve a
+`dormant` justo antes de reanudar. En restore, Cloud `restore-fence` escala y
+reconcilia, activa el binding y prueba denegaciones server-side; root EXECUTE
+adopta esa identidad durante DB/PVC y validación, y Cloud `active` vuelve a
+`dormant` inmediatamente antes de devolver autoridad. FINALIZE comprueba el
+estado dormido. Legacy no exige este quinto par y nunca lo activa.
+
+Dos monitores causales, uno de writers y otro de runner durable, publican
+capabilities checksummed ligadas a PID/start, paths/hashes, operación, lock y
+Lease. Sólo aceptan `operation_owner=checkpoint-backup` o
+`checkpoint-restore`; `READY`, progreso y `FINAL` están tokenizados. Cada hijo
+durable exige ambos guards padre más su guard local, y el `FINAL` durable se
+cierra antes que el de writers. Desde justo antes del stream mutable de PVC
+hasta terminar la validación exacta, cualquier fallo conserva el helper Pod
+exacto, su NetworkPolicy deny-all y el lock; lo mismo ocurre si una reentrada
+adoptada falla o el destino aparece no vacío/inseguro. No se declara reentrada
+completa. El `clear-stale` raíz sólo admite el quinto fence ya dormido; un fence
+activo requiere recuperación Cloud revisada.
+
 ### Otros bloqueos operativos
 
 - `AUD-065` exige checkpoint fresco de DB+storage y rotación coordinada de todos
@@ -252,9 +283,13 @@ para certificar capacidad.
 - El código de aprobación/cuarentena está integrado pero no desplegado; tras la
   migración debe revisarse el inventario redactado y aprobar cada configuración
   válida antes de reactivar bots.
-- El aviso `room_stop` es best-effort. La desactivación persistida y el snapshot
-  periódico convergen, pero un fallo HTTP no garantiza la parada inmediata del
-  runner.
+- El baseline live aún trata `room_stop` como best-effort. El hito Cloud
+  `1cf95ca`
+  implementa outbox transaccional, `runtime_revision`, claims recuperables y un
+  ACK terminal que exige ausencia observada de nombre+UID y cero Pods de la
+  sala; `24d0970` añade sus relevos causales y el fence de operación. No es
+  comportamiento operativo hasta integrar raíz, construir y desplegar el
+  candidato.
 - No existe medición física de capacidad ni aceptación staging/live para este
   candidato.
 
@@ -447,11 +482,16 @@ Superficie que debe revalidarse en cada upgrade:
 - `bot-runner-system.js` y template `#remote-bot-avatar`;
 - handlers NAF, Presence y autenticación de `HubChannel`;
 - normalización, chat, readiness y límites de `bot-orchestrator/app.js`;
+- outbox PostgreSQL, `runtime_revision`, claims/retry y ACK terminal de
+  `room_stop`;
 - parser GLB, navmesh, namespace y ACKs de `run-ghost-runner.js`;
 - generador Hubs CE y verificaciones fail-closed.
 - manager Kubernetes, cliente de control y token de generación v1;
-- ambos Dockerfiles, workflow de dos imágenes, RBAC/ServiceAccounts, Secret de
-  pull y NetworkPolicy del runner.
+- Dockerfiles y workflow conjunto de Reticulum/parent/runner,
+  RBAC/ServiceAccounts, Secret de pull, NetworkPolicy y evidencia durable de
+  checkpoint/restore;
+- cinco pares policy/binding, transición `dormant|active`, ambos monitores
+  causales, capabilities padre/hijo y orden de sus `FINAL`.
 
 Gate mínimo:
 

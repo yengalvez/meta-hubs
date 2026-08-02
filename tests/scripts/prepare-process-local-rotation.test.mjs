@@ -50,6 +50,8 @@ const operationMetadata = Object.freeze({
   checkpointDumpSha256: "a".repeat(64),
   checkpointStorageSha256: "b".repeat(64),
   checkpointInventorySha256: "c".repeat(64),
+  checkpointRunnerEvidenceSha256: "d".repeat(64),
+  checkpointRuntimeGeneration: "legacy-absent",
   profileId: profile.profile_id,
   profileSha256: sha256(Buffer.from(canonicalJson(profile), "utf8"))
 });

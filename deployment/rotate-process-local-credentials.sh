@@ -259,7 +259,7 @@ aud065_sha256() {
 aud065_load_checkpoint_contract() {
   local metadata="$AUD065_CHECKPOINT_DIRECTORY/checkpoint-metadata.json"
   local inventory="$AUD065_CHECKPOINT_DIRECTORY/deployment-images.json"
-  local stamp created_at_epoch
+  local stamp created_at_epoch metadata_evidence_sha metadata_generation
   aud065_require_private_directory "$AUD065_CHECKPOINT_DIRECTORY" || return 1
   stamp="$(jq -er '.stamp | select(type == "string")' "$metadata")" || return 1
   created_at_epoch="$(jq -er '
@@ -270,11 +270,24 @@ aud065_load_checkpoint_contract() {
   recovery_verify_checkpoint_directory "$AUD065_CHECKPOINT_DIRECTORY" "$stamp" || return 1
   jq -e --arg context "$EXPECTED_KUBE_CONTEXT" --arg namespace "$NAMESPACE" \
     --arg namespace_uid "$EXPECTED_NAMESPACE_UID" --arg pvc_uid "$EXPECTED_RET_PVC_UID" '
+      .schema_version == 3 and
       .kube_context == $context and .namespace == $namespace and
       .namespace_uid == $namespace_uid and .ret_pvc_uid == $pvc_uid
     ' "$metadata" >/dev/null || return 1
   recovery_checkpoint_deployment_inventory_is_acceptable "$inventory" "$NAMESPACE" || return 1
+  [[ "$(jq -er '.schema_version' "$inventory")" == 4 ]] || return 1
   [[ "$(jq -er '.bot_runner_runtime.mode' "$inventory")" == process-local ]] || return 1
+  metadata_evidence_sha="$(jq -er '
+    .runner_cutover_evidence_sha256 |
+    select(type == "string" and test("^[a-f0-9]{64}$"))
+  ' "$metadata")" || return 1
+  metadata_generation="$(jq -er '
+    .runtime_generation |
+    select(. == "legacy-absent" or . == "durable-v2")
+  ' "$metadata")" || return 1
+  [[ "$metadata_generation" == legacy-absent ]] || return 1
+  [[ "$(jq -er '.bot_runner_runtime.generation' "$inventory")" == "$metadata_generation" ]] ||
+    return 1
   RECOVERY_CHECKPOINT_STAMP="$stamp"
   AUD065_CHECKPOINT_CREATED_AT_EPOCH="$created_at_epoch"
   RECOVERY_DUMP_SHA256="$(recovery_checkpoint_digest_for \
@@ -282,8 +295,13 @@ aud065_load_checkpoint_contract() {
   RECOVERY_STORAGE_SHA256="$(recovery_checkpoint_digest_for \
     "$AUD065_CHECKPOINT_DIRECTORY" "ret-storage-$stamp.tar.gz")" || return 1
   RECOVERY_DEPLOYMENT_INVENTORY_SHA256="$(aud065_sha256 "$inventory")" || return 1
+  RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256="$(recovery_checkpoint_digest_for \
+    "$AUD065_CHECKPOINT_DIRECTORY" "runner-cutover-evidence.json")" || return 1
+  [[ "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" == "$metadata_evidence_sha" ]] || return 1
+  RECOVERY_RUNNER_RUNTIME_GENERATION="$metadata_generation"
   export RECOVERY_CHECKPOINT_STAMP RECOVERY_DUMP_SHA256 RECOVERY_STORAGE_SHA256 \
-    RECOVERY_DEPLOYMENT_INVENTORY_SHA256
+    RECOVERY_DEPLOYMENT_INVENTORY_SHA256 RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256 \
+    RECOVERY_RUNNER_RUNTIME_GENERATION
 }
 
 aud065_current_epoch() {
@@ -350,6 +368,8 @@ aud065_plan() {
     --checkpoint-dump-sha256 "$RECOVERY_DUMP_SHA256" \
     --checkpoint-storage-sha256 "$RECOVERY_STORAGE_SHA256" \
     --checkpoint-inventory-sha256 "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256" \
+    --checkpoint-runner-evidence-sha256 "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" \
+    --checkpoint-runtime-generation "$RECOVERY_RUNNER_RUNTIME_GENERATION" \
     --profile-id "$AUD065_PROFILE_ID" --profile-sha256 "$AUD065_PROFILE_SHA256" || return 1
   aud065_load_intent || return 1
   aud065_operation_tool verify \
@@ -385,7 +405,8 @@ const fields = [
   value.rotationRevision, value.expectedKubeContext, value.namespaceName,
   value.namespaceUid, value.retPvcUid, value.checkpointStamp,
   value.checkpointDumpSha256, value.checkpointStorageSha256,
-  value.checkpointInventorySha256, value.profileId, value.profileSha256
+  value.checkpointInventorySha256, value.checkpointRunnerEvidenceSha256,
+  value.checkpointRuntimeGeneration, value.profileId, value.profileSha256
 ];
 if (fields.some(item => typeof item !== "string" || /[\t\r\n]/u.test(item))) process.exit(1);
 process.stdout.write(fields.join("\t"));
@@ -395,8 +416,9 @@ NODE
   IFS=$'\t' read -r RECOVERY_OPERATION_TOKEN RECOVERY_OPERATION_ID \
     RECOVERY_OPERATION_BINDING_SHA256 AUD065_ROTATION_REVISION context namespace \
     namespace_uid pvc_uid RECOVERY_CHECKPOINT_STAMP RECOVERY_DUMP_SHA256 \
-    RECOVERY_STORAGE_SHA256 RECOVERY_DEPLOYMENT_INVENTORY_SHA256 profile_id \
-    profile_sha <<<"$payload"
+    RECOVERY_STORAGE_SHA256 RECOVERY_DEPLOYMENT_INVENTORY_SHA256 \
+    RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256 RECOVERY_RUNNER_RUNTIME_GENERATION \
+    profile_id profile_sha <<<"$payload"
   payload=""
   [[ "$context" == "$EXPECTED_KUBE_CONTEXT" && "$namespace" == "$NAMESPACE" &&
      "$namespace_uid" == "$EXPECTED_NAMESPACE_UID" &&
@@ -404,7 +426,9 @@ NODE
      "$profile_id" == "$AUD065_PROFILE_ID" && "$profile_sha" == "$AUD065_PROFILE_SHA256" &&
      "$RECOVERY_OPERATION_TOKEN" =~ ^[a-f0-9]{32}$ &&
      "$RECOVERY_OPERATION_ID" =~ ^[a-f0-9]{32}$ &&
-     "$RECOVERY_OPERATION_BINDING_SHA256" =~ ^[a-f0-9]{64}$ ]] || return 1
+     "$RECOVERY_OPERATION_BINDING_SHA256" =~ ^[a-f0-9]{64}$ &&
+     "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" =~ ^[a-f0-9]{64}$ &&
+     "$RECOVERY_RUNNER_RUNTIME_GENERATION" == legacy-absent ]] || return 1
   RECOVERY_OPERATION_OWNER=aud065-rotation
   RECOVERY_OPERATION_LOCK_NAME="$AUD065_LOCK_NAME"
   # Read by recovery_acquire_operation_lock from the sourced safety library.
@@ -413,22 +437,28 @@ NODE
   export RECOVERY_OPERATION_TOKEN RECOVERY_OPERATION_ID RECOVERY_OPERATION_BINDING_SHA256 \
     RECOVERY_OPERATION_OWNER RECOVERY_OPERATION_LOCK_NAME RECOVERY_OPERATION_STATE \
     RECOVERY_CHECKPOINT_STAMP RECOVERY_DUMP_SHA256 RECOVERY_STORAGE_SHA256 \
-    RECOVERY_DEPLOYMENT_INVENTORY_SHA256
+    RECOVERY_DEPLOYMENT_INVENTORY_SHA256 RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256 \
+    RECOVERY_RUNNER_RUNTIME_GENERATION
 }
 
 aud065_verify_operation_checkpoint() {
   local intent_stamp intent_dump intent_storage intent_inventory
+  local intent_runner_evidence intent_runtime_generation
   aud065_require_private_directory "$AUD065_OPERATION_DIRECTORY" || return 1
   aud065_load_intent || return 1
   intent_stamp="$RECOVERY_CHECKPOINT_STAMP"
   intent_dump="$RECOVERY_DUMP_SHA256"
   intent_storage="$RECOVERY_STORAGE_SHA256"
   intent_inventory="$RECOVERY_DEPLOYMENT_INVENTORY_SHA256"
+  intent_runner_evidence="$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256"
+  intent_runtime_generation="$RECOVERY_RUNNER_RUNTIME_GENERATION"
   aud065_load_checkpoint_contract || return 1
   [[ "$RECOVERY_CHECKPOINT_STAMP" == "$intent_stamp" &&
      "$RECOVERY_DUMP_SHA256" == "$intent_dump" &&
      "$RECOVERY_STORAGE_SHA256" == "$intent_storage" &&
-     "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256" == "$intent_inventory" ]] || return 1
+     "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256" == "$intent_inventory" &&
+     "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" == "$intent_runner_evidence" &&
+     "$RECOVERY_RUNNER_RUNTIME_GENERATION" == "$intent_runtime_generation" ]] || return 1
   recovery_require_cluster_identity || return 1
   recovery_require_pvc_identity ret-pvc || return 1
   recovery_require_live_images_match_checkpoint \
@@ -444,6 +474,8 @@ aud065_verify_operation_checkpoint() {
     --checkpoint-dump-sha256 "$RECOVERY_DUMP_SHA256" \
     --checkpoint-storage-sha256 "$RECOVERY_STORAGE_SHA256" \
     --checkpoint-inventory-sha256 "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256" \
+    --checkpoint-runner-evidence-sha256 "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" \
+    --checkpoint-runtime-generation "$RECOVERY_RUNNER_RUNTIME_GENERATION" \
     --profile-id "$AUD065_PROFILE_ID" --profile-sha256 "$AUD065_PROFILE_SHA256" || return 1
 }
 

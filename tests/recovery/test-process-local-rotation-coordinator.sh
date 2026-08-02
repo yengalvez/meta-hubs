@@ -599,6 +599,8 @@ run_operation_checkpoint_guard_fixture() {
       RECOVERY_DUMP_SHA256="$(printf "a%.0s" {1..64})"
       RECOVERY_STORAGE_SHA256="$(printf "b%.0s" {1..64})"
       RECOVERY_DEPLOYMENT_INVENTORY_SHA256="$(printf "c%.0s" {1..64})"
+      RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256="$(printf "d%.0s" {1..64})"
+      RECOVERY_RUNNER_RUNTIME_GENERATION=legacy-absent
       RECOVERY_OPERATION_ID="$(printf "1%.0s" {1..32})"
       RECOVERY_OPERATION_BINDING_SHA256="$(printf "2%.0s" {1..64})"
       guard_step load-intent
@@ -608,6 +610,13 @@ run_operation_checkpoint_guard_fixture() {
       RECOVERY_DUMP_SHA256="$(printf "a%.0s" {1..64})"
       RECOVERY_STORAGE_SHA256="$(printf "b%.0s" {1..64})"
       RECOVERY_DEPLOYMENT_INVENTORY_SHA256="$(printf "c%.0s" {1..64})"
+      RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256="$(printf "d%.0s" {1..64})"
+      RECOVERY_RUNNER_RUNTIME_GENERATION=legacy-absent
+      if [[ "$FAILURE_STAGE" == runner-evidence-drift ]]; then
+        RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256="$(printf "e%.0s" {1..64})"
+      elif [[ "$FAILURE_STAGE" == runtime-generation-drift ]]; then
+        RECOVERY_RUNNER_RUNTIME_GENERATION=durable-v2
+      fi
       guard_step checkpoint-contract
     }
     recovery_require_cluster_identity() { guard_step cluster-identity; }
@@ -619,7 +628,8 @@ run_operation_checkpoint_guard_fixture() {
 }
 
 for checkpoint_guard in private-directory load-intent checkpoint-contract \
-  cluster-identity pvc-identity checkpoint-images operation-tool; do
+  runner-evidence-drift runtime-generation-drift cluster-identity pvc-identity \
+  checkpoint-images operation-tool; do
   expect_failure "operation checkpoint propagates $checkpoint_guard failure under a conditional caller" \
     run_operation_checkpoint_guard_fixture "$checkpoint_guard"
 done
@@ -686,6 +696,87 @@ for lock_failure in acquire crash discover require; do
     run_operation_lock_guard_fixture "$lock_failure"
 done
 
+run_aud065_inventory_lock_binding_fixture() {
+  local fixture_mode="$1"
+  bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    FIXTURE_MODE="$2"
+    NAMESPACE=hcce
+    RECOVERY_OPERATION_LOCK_NAME="$RECOVERY_OPERATION_LOCK_GLOBAL_NAME"
+    RECOVERY_OPERATION_LOCK_UID=aud065-lock-uid
+    RECOVERY_OPERATION_LOCK_RESOURCE_VERSION=17
+    RECOVERY_OPERATION_TOKEN="$(printf "1%.0s" {1..32})"
+    RECOVERY_OPERATION_ID="$(printf "2%.0s" {1..32})"
+    RECOVERY_OPERATION_OWNER=aud065-rotation
+    RECOVERY_NAMESPACE_UID=fixture-namespace-uid
+    RECOVERY_PVC_UID=fixture-pvc-uid
+    RECOVERY_CHECKPOINT_STAMP=20260718-120000
+    RECOVERY_DUMP_SHA256="$(printf "a%.0s" {1..64})"
+    RECOVERY_STORAGE_SHA256="$(printf "b%.0s" {1..64})"
+    RECOVERY_OPERATION_STATE=quiesced
+    RECOVERY_OPERATION_BINDING_SHA256="$(printf "c%.0s" {1..64})"
+    RECOVERY_DEPLOYMENT_INVENTORY_SHA256="$(printf "d%.0s" {1..64})"
+    RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256="$(printf "e%.0s" {1..64})"
+    RECOVERY_RUNNER_RUNTIME_GENERATION=legacy-absent
+    RECOVERY_FENCE_PRE_EPOCH=""
+    RECOVERY_FENCE_TARGET_EPOCH=""
+    RECOVERY_CHECKPOINT_METADATA_COPY=""
+    RECOVERY_DEPLOYMENT_INVENTORY_COPY=""
+    RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY=""
+    live_inventory_sha="$RECOVERY_DEPLOYMENT_INVENTORY_SHA256"
+    if [[ "$FIXTURE_MODE" == mismatch ]]; then
+      live_inventory_sha="$(printf "f%.0s" {1..64})"
+    fi
+    lock_json="$(jq -cn \
+      --arg uid "$RECOVERY_OPERATION_LOCK_UID" \
+      --arg resource_version "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION" \
+      --arg token "$RECOVERY_OPERATION_TOKEN" \
+      --arg operation_id "$RECOVERY_OPERATION_ID" \
+      --arg namespace_uid "$RECOVERY_NAMESPACE_UID" \
+      --arg pvc_uid "$RECOVERY_PVC_UID" \
+      --arg stamp "$RECOVERY_CHECKPOINT_STAMP" \
+      --arg dump_sha "$RECOVERY_DUMP_SHA256" \
+      --arg storage_sha "$RECOVERY_STORAGE_SHA256" \
+      --arg binding_sha "$RECOVERY_OPERATION_BINDING_SHA256" \
+      --arg inventory_sha "$live_inventory_sha" \
+      --arg evidence_sha "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" '\''
+      {
+        apiVersion:"v1", kind:"ConfigMap",
+        metadata:{
+          name:"yenhubs-recovery-operation-lock", namespace:"hcce",
+          uid:$uid, resourceVersion:$resource_version,
+          labels:{"yenhubs.org/recovery-owner":"aud065-rotation"},
+          annotations:{
+            "yenhubs.org/operation-id":$operation_id,
+            "yenhubs.org/recovery-token":$token,
+            "yenhubs.org/namespace-uid":$namespace_uid,
+            "yenhubs.org/pvc-uid":$pvc_uid,
+            "yenhubs.org/checkpoint-stamp":$stamp,
+            "yenhubs.org/dump-sha256":$dump_sha,
+            "yenhubs.org/storage-sha256":$storage_sha,
+            "yenhubs.org/deployment-inventory-sha256":$inventory_sha,
+            "yenhubs.org/recovery-state":"quiesced",
+            "yenhubs.org/operation-binding-sha256":$binding_sha,
+            "yenhubs.org/runner-cutover-evidence-sha256":$evidence_sha,
+            "yenhubs.org/runner-runtime-generation":"legacy-absent"
+          }
+        },
+        immutable:true
+      }
+    '\'')"
+    recovery_operation_lock_json_is_exact "$lock_json"
+  ' bash "$DRIVER" "$fixture_mode"
+}
+
+if run_aud065_inventory_lock_binding_fixture exact; then
+  pass 'AUD-065 lock accepts the exact checkpoint deployment inventory hash'
+else
+  fail 'AUD-065 lock accepts the exact checkpoint deployment inventory hash'
+fi
+expect_failure 'AUD-065 lock rejects deployment inventory hash drift' \
+  run_aud065_inventory_lock_binding_fixture mismatch
+
 # Expansion is intentionally performed by the isolated Bash process.
 # shellcheck disable=SC2016
 expect_failure 'runtime credential emitter stops at an xtrace guard failure inside a pipeline' \
@@ -731,7 +822,7 @@ tool="${1##*/}"
 shift
 if [[ "$tool" == --input-type=module && "${1:-}" == - && "$#" == 3 ]]; then
   printf 'node:process-local-rotation-operation.mjs:load-intent\n' >>"$PLAN_LOG"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     11111111111111111111111111111111 \
     22222222222222222222222222222222 \
     3333333333333333333333333333333333333333333333333333333333333333 \
@@ -740,6 +831,8 @@ if [[ "$tool" == --input-type=module && "${1:-}" == - && "$#" == 3 ]]; then
     aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
     cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+    dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
+    legacy-absent \
     yenhubs-process-local-credential-rotation-v1 \
     8252ddb7a957950b022fdae482c6363fbc102a57a0c140022031408bc4f6ea1b
   exit 0
@@ -760,6 +853,26 @@ fi
 if [[ "$tool" == prepare-process-local-rotation.mjs &&
       "${1:-}" == verify-plan && -n "${PLAN_VERIFY_FAILURE:-}" ]]; then
   exit 71
+fi
+if [[ "$tool" == process-local-rotation-operation.mjs && "${1:-}" == seal ]]; then
+  runner_evidence_seen=0
+  runtime_generation_seen=0
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --checkpoint-runner-evidence-sha256)
+        [[ "${2:-}" == dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd ]] || exit 72
+        runner_evidence_seen=1
+        shift 2
+        ;;
+      --checkpoint-runtime-generation)
+        [[ "${2:-}" == legacy-absent ]] || exit 72
+        runtime_generation_seen=1
+        shift 2
+        ;;
+      *) shift ;;
+    esac
+  done
+  [[ "$runner_evidence_seen" == 1 && "$runtime_generation_seen" == 1 ]] || exit 72
 fi
 if [[ "$tool" == process-local-rotation-operation.mjs && "${1:-}" == init ]]; then
   shift
@@ -818,6 +931,8 @@ aud065_load_checkpoint_contract() {
   RECOVERY_DUMP_SHA256="$(printf 'a%.0s' {1..64})"
   RECOVERY_STORAGE_SHA256="$(printf 'b%.0s' {1..64})"
   RECOVERY_DEPLOYMENT_INVENTORY_SHA256="$(printf 'c%.0s' {1..64})"
+  RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256="$(printf 'd%.0s' {1..64})"
+  RECOVERY_RUNNER_RUNTIME_GENERATION=legacy-absent
 }
 aud065_verify_live_plan_boundary() { printf 'read:live-boundary\n' >>"$PLAN_LOG"; }
 PLAN_CURRENT_EPOCH=200
@@ -843,6 +958,12 @@ MAX_CHECKPOINT_AGE_SECONDS=100
 plan_output="$(aud065_plan)"
 PATH="$old_path"
 expect_equal "$plan_output" aud065_plan_ready 'plan returns a value-free success token'
+if [[ "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" == dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd &&
+      "$RECOVERY_RUNNER_RUNTIME_GENERATION" == legacy-absent ]]; then
+  pass 'plan seals and reloads the exact checkpoint runner evidence and generation'
+else
+  fail 'plan seals and reloads the exact checkpoint runner evidence and generation'
+fi
 if ! grep -qE '^kubectl:' "$PLAN_LOG"; then
   pass 'plan performs zero Kubernetes mutations in the fixture'
 else

@@ -48,7 +48,7 @@ try {
     fetchImpl: async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ hubs: [{ hub_sid: hubSid, bots }] })
+      json: async () => ({ hubs: [{ hub_sid: hubSid, runtime_revision: 1, bots }] })
     })
   });
 

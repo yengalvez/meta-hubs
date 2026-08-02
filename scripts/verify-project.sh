@@ -47,6 +47,8 @@ shellcheck "$ROOT_DIR/hubs-cloud/community-edition/services/coturn/"*.sh
   cd "$ROOT_DIR/hubs-cloud/community-edition/services/bot-orchestrator"
   npm ci --ignore-scripts --no-audit
 )
+node --test "$ROOT_DIR/tests/recovery/runner-cutover-checkpoint-evidence.test.mjs"
+node --test "$ROOT_DIR/tests/scripts/durable-runner-quiescence-monitor.test.mjs"
 "$ROOT_DIR/tests/scripts/security-gates.test.sh"
 "$ROOT_DIR/tests/recovery/test-recovery-safety.sh"
 "$ROOT_DIR/scripts/test-aud065.sh"

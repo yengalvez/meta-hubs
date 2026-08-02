@@ -39,6 +39,8 @@ const metadata = Object.freeze({
   checkpointDumpSha256: "1".repeat(64),
   checkpointStorageSha256: "2".repeat(64),
   checkpointInventorySha256: "3".repeat(64),
+  checkpointRunnerEvidenceSha256: "a".repeat(64),
+  checkpointRuntimeGeneration: "legacy-absent",
   profileId: "yenhubs-process-local-credential-rotation-v1",
   profileSha256: "4".repeat(64)
 });
@@ -260,6 +262,9 @@ function cliMetadataArgs() {
     "--checkpoint-dump-sha256", metadata.checkpointDumpSha256,
     "--checkpoint-storage-sha256", metadata.checkpointStorageSha256,
     "--checkpoint-inventory-sha256", metadata.checkpointInventorySha256,
+    "--checkpoint-runner-evidence-sha256",
+    metadata.checkpointRunnerEvidenceSha256,
+    "--checkpoint-runtime-generation", metadata.checkpointRuntimeGeneration,
     "--profile-id", metadata.profileId,
     "--profile-sha256", metadata.profileSha256
   ];
@@ -356,6 +361,14 @@ test("seal and verify bind metadata, identity and all five stable inputs", () =>
       metadata
     });
     assert.equal(loaded.operationId, intent.operationId);
+    assert.equal(
+      loaded.checkpointRunnerEvidenceSha256,
+      metadata.checkpointRunnerEvidenceSha256
+    );
+    assert.equal(
+      loaded.checkpointRuntimeGeneration,
+      metadata.checkpointRuntimeGeneration
+    );
     loaded.operationId = "f".repeat(32);
     assert.equal(readJson(intentPath).operationId, intent.operationId);
   } finally {
@@ -978,6 +991,29 @@ test("noncanonical revision JSON and metadata mismatch fail verification", () =>
     }));
   } finally {
     cleanup(mismatch.parent);
+  }
+
+  const evidenceMismatch = fixture();
+  try {
+    assert.throws(() => verifyProcessLocalRotationOperation({
+      operationDirectory: evidenceMismatch.operationDirectory,
+      metadata: {
+        ...metadata,
+        checkpointRunnerEvidenceSha256: "b".repeat(64)
+      }
+    }));
+  } finally {
+    cleanup(evidenceMismatch.parent);
+  }
+
+  const invalidGeneration = fixture({ seal: false });
+  try {
+    assert.throws(() => sealProcessLocalRotationOperation({
+      operationDirectory: invalidGeneration.operationDirectory,
+      metadata: { ...metadata, checkpointRuntimeGeneration: "durable-v2" }
+    }));
+  } finally {
+    cleanup(invalidGeneration.parent);
   }
 });
 

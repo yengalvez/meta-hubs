@@ -732,14 +732,14 @@ reset_fixture
 aud065_pgsql_probe_bind_image "$PGSQL_IMAGE"
 capture_normal
 aud065_pgsql_probe_create
-AUD065_PGSQL_PROBE_UID=foreign-uid
+AUD065_PGSQL_PROBE_UID="foreign-uid"
 if ! aud065_pgsql_probe_create; then
   pass 'rejects a same-name probe UID replacement'
 else
   fail 'probe UID replacement'
 fi
 
-AUD065_PGSQL_PROBE_UID=probe-uid
+AUD065_PGSQL_PROBE_UID="probe-uid"
 if ! aud065_pgsql_probe_cleanup terminal_only_callback && [[ ! -e "$DELETE_FILE" ]]; then
   pass 'does not UID-delete a probe until the API reports a terminal phase'
 else

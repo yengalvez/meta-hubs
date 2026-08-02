@@ -15,6 +15,13 @@ fi
 DUMP_PATH="$1"
 ARCHIVE_PATH="$2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TMP_DIR=""
+TMP_DIR_PRIVATE_TOKEN=""
+TMP_DIR_CLEANUP_ATTEMPTED=0
+TMP_DIR_RETIRED=0
+VALIDATION_PENDING_SIGNAL_STATUS=0
+VALIDATION_SETUP_STATUS=0
+VALIDATION_DEFERRED_SIGNAL_STATUS=0
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
 
@@ -45,19 +52,73 @@ if ! recovery_database_contract_is_acceptable "$CONTRACT_PATH"; then
   exit 1
 fi
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yenhubs-checkpoint-validation.XXXXXX")"
 cleanup_validation() {
-  rm -rf -- "$TMP_DIR"
+  [[ "$TMP_DIR_RETIRED" == 0 ]] || return 0
+  [[ "$TMP_DIR_CLEANUP_ATTEMPTED" == 0 ]] || return 1
+  TMP_DIR_CLEANUP_ATTEMPTED=1
+  if [[ -z "$TMP_DIR_PRIVATE_TOKEN" ]]; then
+    [[ -z "$TMP_DIR" ]] || printf 'Private validation directory has no cleanup identity; preserving its empty orphan.\n' >&2
+    [[ -z "$TMP_DIR" ]]
+    return
+  fi
+  if recovery_cleanup_private_directory "$TMP_DIR_PRIVATE_TOKEN" \
+      f:retdb.sql \
+      f:active-uuids.raw f:active-uuids \
+      f:archive-paths f:archive-verbose \
+      f:blob-uuids.raw f:meta-uuids.raw \
+      f:blob-uuids f:meta-uuids; then
+    TMP_DIR_RETIRED=1
+    return 0
+  fi
+  printf 'Private validation directory cleanup failed closed; any exact empty orphan or replacement was preserved.\n' >&2
+  return 1
 }
 validation_interrupted() {
   local status="$1"
-  trap - EXIT INT TERM
-  cleanup_validation
   exit "$status"
 }
-trap cleanup_validation EXIT
+validation_record_pending_signal() {
+  local status="$1"
+  if [[ "$VALIDATION_PENDING_SIGNAL_STATUS" == 0 ]]; then
+    VALIDATION_PENDING_SIGNAL_STATUS="$status"
+    trap '' INT TERM
+  fi
+}
+validation_exit_cleanup() {
+  local status="$?"
+  trap - EXIT
+  trap '' INT TERM
+  if ! cleanup_validation && [[ "$status" == 0 ]]; then
+    status=1
+  fi
+  exit "$status"
+}
+trap validation_exit_cleanup EXIT
+trap 'validation_record_pending_signal 130' INT
+trap 'validation_record_pending_signal 143' TERM
+VALIDATION_SETUP_STATUS=0
+if ! TMP_DIR="$(
+    trap '' INT TERM
+    mktemp -d "${TMPDIR:-/tmp}/yenhubs-checkpoint-validation.XXXXXX"
+  )"; then
+  VALIDATION_SETUP_STATUS=1
+elif ! TMP_DIR_PRIVATE_TOKEN="$(
+    trap '' INT TERM
+    recovery_capture_private_directory_token "$TMP_DIR"
+  )"; then
+  VALIDATION_SETUP_STATUS=1
+fi
 trap 'validation_interrupted 130' INT
 trap 'validation_interrupted 143' TERM
+VALIDATION_DEFERRED_SIGNAL_STATUS="$VALIDATION_PENDING_SIGNAL_STATUS"
+VALIDATION_PENDING_SIGNAL_STATUS=0
+if [[ "$VALIDATION_DEFERRED_SIGNAL_STATUS" != 0 ]]; then
+  validation_interrupted "$VALIDATION_DEFERRED_SIGNAL_STATUS"
+fi
+if [[ "$VALIDATION_SETUP_STATUS" != 0 ]]; then
+  printf 'Could not bind the private validation directory identity; any empty orphan was preserved.\n' >&2
+  exit 1
+fi
 SQL_PATH="$TMP_DIR/retdb.sql"
 ACTIVE_UUIDS_RAW="$TMP_DIR/active-uuids.raw"
 ACTIVE_UUIDS="$TMP_DIR/active-uuids"

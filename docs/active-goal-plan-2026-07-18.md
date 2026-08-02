@@ -1,22 +1,75 @@
 # Meta activa de YenHubs: cierre seguro y runtime endurecido
 
-Última actualización: 19 de julio de 2026
+Última actualización: 2 de agosto de 2026
 
-Estado actual: **EN EJECUCIÓN; Fase 2B cerrada, Fase 3 AUD-078 pendiente; producción intacta**
+Estado actual: **EN EJECUCIÓN; la revalidación raíz `--full` confirmó recovery
+`861/861`, incluido el caso 850, y todos los bloques y builds anteriores. Sus
+cuatro advisories finales de Guardian `2.4.0` se resolvieron mediante la única
+línea de lock `2.4.1`, primera release oficial corregida. Formato, compilación,
+Hex audit, dos migraciones, `461` tests + `5` properties, release y CI
+PostgreSQL 12.19/14.23 están verdes; los PR Cloud `#21`/`#22` se fusionaron en
+`master=c0a3419b`. El gitlink raíz ya lo fija, los controles proporcionales y la
+revisión final pasan sin P0/P1/P2; falta commit/PR/CI/merge raíz. Producción
+permanece intacta.**
+
+Punto exacto de reanudación: crear el commit del árbol raíz ya staged, abrir su
+PR, exigir CI verde y fusionarlo en `main`. Los pines, diff-check, auditoría
+upstream, Gitleaks y revisión final ya pasan; recovery, Hubs, Spoke y capacidad
+quedaron verdes en el full y no se repiten porque Guardian no los afecta.
+Después continuar con la cadena definida de build, checkpoints, rotación,
+staging, rollout y aceptación live, sin añadir funciones nuevas.
 
 Worktree inicial: `/Users/Shared/Gits/YenHubs-aud075-root`
 
 Rama inicial: `codex/aud075-integration`
 
-Worktree activo: `/Users/Shared/Gits/YenHubs`
+Worktree activo: `/Users/Shared/Gits/YenHubs-aud078-root`
 
 Última rama de desbloqueo fusionada: `codex/aud065-sequencing-unblock`
 
-Este documento es la fuente de verdad de la meta activa. El historial de sesión
-y las cuentas completas de pruebas se conservan exclusivamente en
+Durante la Fase 3B, este fichero exacto del worktree activo es la única fuente
+de verdad operativa:
+`/Users/Shared/Gits/YenHubs-aud078-root/docs/active-goal-plan-2026-07-18.md`.
+Los worktrees `aud075`, `aud076` y `aud077` son evidencia histórica y nunca se
+usan para reanudar. Después de fusionar el PR raíz de Fase 3B, la autoridad pasa
+a la copia trackeada de un `/Users/Shared/Gits/YenHubs` limpio en `main`, y el
+campo «Worktree activo» debe actualizarse antes de continuar.
+
+Panel humano obligatorio:
+`/Users/Shared/Gits/YenHubs-aud078-root/docs/estado-sencillo.md`. Debe
+actualizarse después de cada hito real y siempre que cambie la acción actual,
+manteniendo casillas y lenguaje sencillo coherentes con este plan técnico. Si
+hubiera una discrepancia, este plan gobierna la ejecución y ambos documentos se
+sincronizan antes de continuar.
+
+El historial de sesión y las cuentas completas de pruebas se conservan exclusivamente en
 `docs/session-changelog.md`. `docs/completion-plan-2026-07-18.md` es solo una
 referencia consolidada anterior y no debe utilizarse para ampliar el alcance de
 esta meta.
+
+## Panel operativo vigente
+
+- Fase activa: **3B, integración raíz final**.
+- Primera acción al reanudar: crear el commit y PR raíz del árbol ya staged,
+  validado y revisado; no abrir otra ronda general de dependencias, diseño o
+  auditoría.
+- El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
+  incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
+  `mix hex.audit` final por cuatro advisories nuevos de Guardian `2.4.0`.
+- Guardian `2.4.1` ya está validado e integrado mediante los PR `#21`/`#22` en
+  Cloud `master=c0a3419b`; el gitlink, los controles proporcionales y la única
+  revisión final están cerrados. Queda commit/PR/CI/merge raíz.
+- Camino crítico posterior: (1) integrar la procedencia de Cloud y su
+  consumidor raíz; (2) construir por Actions cuatro imágenes trazables —Hubs,
+  Reticulum, parent y runner—; (3) checkpoint 1, rotación y checkpoint 2;
+  (4) staging server-first y rollout producción con los mismos digests; (5)
+  aceptación live, checkpoint 3 y cierre documental.
+- Las casillas de «Definición de terminado» son resultados de auditoría, no un
+  selector de orden. Los párrafos cronológicos y hashes supersedidos son
+  evidencia, no acciones. Solo mandan las casillas de la fase activa.
+- Las prohibiciones fail-closed son guardarraíles, no trabajo adicional. Una
+  repetición solo procede si cambian código, workflow, gitlinks, values,
+  commits, digests, inventario, DB/storage o el TTL del checkpoint.
 
 ## Meta
 
@@ -65,7 +118,10 @@ Si aparece una nueva release upstream durante la ejecución, se registra mediant
 `scripts/audit-upstream.sh` y se difiere a una rama propia, salvo que exista un
 bloqueo crítico demostrado. No se absorbe silenciosamente en esta meta.
 
-## Estado de partida confirmado
+## Estado de partida histórico confirmado
+
+Este bloque describe el baseline con el que comenzó la campaña; no sustituye el
+estado vigente del panel superior.
 
 - [x] El baseline anterior de producción estaba operativo en la última
   aceptación documentada; el candidato nuevo todavía no se ha desplegado.
@@ -77,7 +133,14 @@ bloqueo crítico demostrado. No se absorbe silenciosamente en esta meta.
 - [x] Los gates raíz normal y completo pasaron sobre esos commits finales.
 - [x] `AUD-076` (lease/epoch PostgreSQL) y `AUD-077`
   (aprobación/cuarentena) están integrados en fuente.
-- [x] El diseño de `AUD-078` está auditado; su implementación está pendiente.
+- [x] El diseño de `AUD-078` está auditado y su candidato fuente está publicado
+  como Cloud `a3b7396`; 79/79 pruebas de aplicación y revisión independiente
+  están verdes. El PR `#13` está fusionado en
+  `development=0a21634688445eeb2ad2935627ad1c2f7a233f72` y la
+  promoción separada PR `#14` terminó con CI verde en `master=1cf95ca`. Las
+  correcciones causales posteriores y el fence de operación se fusionaron por
+  los PR `#15`–`#18`; el head Cloud actual es `master=24d09706c2d9` y sus runs
+  post-merge están verdes.
 - [x] No se ha construido ni desplegado el nuevo runtime y producción no fue
   mutada por `AUD-075`.
 
@@ -90,22 +153,32 @@ La meta solo puede marcarse completa cuando se cumpla todo lo siguiente:
 - [ ] El productor Cloud de procedencia/recibos y su consumidor raíz están
   fusionados; un root `main=origin/main` limpio fija el commit Cloud exacto que
   construyó Reticulum, parent y runner.
-- [ ] Existen los dos checkpoints conjuntos exigidos —antes de la rotación y
-  después de ella antes del rollout— frescos, verificables y restaurables con DB
+- [ ] Existen los tres checkpoints conjuntos exigidos: uno antes de la rotación,
+  otro después de ella y antes del rollout, y un tercero posterior a `P6` que
+  liga el journal durable; todos son frescos, verificables y restaurables con DB
   y storage.
 - [ ] Las credenciales afectadas por `AUD-065` fueron rotadas; las anteriores
   están revocadas o rechazadas cuando exista una comprobación segura.
 - [ ] Reticulum, parent y runner proceden del mismo commit y del mismo run Cloud
   atestado, fueron construidos por Actions y se ejecutan mediante digests
   inmutables.
+- [ ] Hubs procede del commit exacto fijado por el gitlink raíz, fue construido
+  por el workflow Actions aprobado y queda ligado a run, commit y digest
+  inmutable; el mismo digest aceptado en staging se ejecuta en producción.
 - [ ] El recibo JSON canónico, su bundle de atestación y los tres bundles OCI de
   Reticulum, parent y runner —cinco ficheros distintos en total— están
   conservados y verificados sin overrides de commit o digest.
 - [ ] Producción usa el protocolo compatible de sitting, fencing DB,
   aprobación/cuarentena, Pods runner aislados y parada terminal de `AUD-078`.
+- [ ] Un staging aislado demuestra primero Reticulum protocol 2 con el Hubs
+  anterior y después el Hubs protocol 2; la escena publicada tiene
+  `Disable motion`, `Can be occupied`, `Clickable` e identidad estable, y la
+  carrera de dos navegadores produce exactamente un ganador antes de promover
+  los mismos digests a producción.
 - [ ] `verify-live-reactivation.sh` termina con cero fallos y cero avisos.
 - [ ] Una carga fría desktop y móvil demuestra `APP`, `AFRAME`, escena, audio,
-  sitting, bots y chat sin errores ni respuestas anómalas.
+  español, cámara primera/tercera persona, avatares, sitting, bots y chat sin
+  errores ni respuestas anómalas.
 - [ ] Los logs revisados no contienen secretos, prompts ni mensajes completos.
 - [ ] Existe rollback documentado hacia los digests anteriores y el checkpoint.
 - [ ] El rollback usa las credenciales nuevas y nunca restaura o reactiva valores
@@ -301,8 +374,8 @@ el OLD histórico anterior a los runners aislados no contiene:
 un paquete/digest oficial `ghcr.io/yengalvez/bot-runner`, por lo que no se
 inventó ningún digest ni se editó OLD. Esto reveló una circularidad real del
 orden anterior: el gate de rotación exige el runner, pero ese artefacto solo
-puede construirse después de integrar `AUD-078` y los PR Cloud/root de
-procedencia/recibos. La corrección autorizada permite únicamente construir por
+puede construirse después de integrar en raíz la Fase 3B de `AUD-078` y los PR
+Cloud/root de procedencia/recibos. La corrección autorizada permite únicamente construir por
 Actions sin desplegar, mantiene todos los workloads live exactos durante
 `AUD-065` y exige, después de la rotación, un segundo checkpoint antes de crear
 la copia candidata y antes del primer apply.
@@ -385,31 +458,504 @@ Reticulum 430 pruebas, 5 propiedades y 0 fallos. En ese hito histórico todavía
 no se había creado credencial/NEW/checkpoint, leído Keychain real ni accedido al
 clúster. El PR raíz `#9` quedó fusionado como
 `main=50b504a15a4ada8658cf4ce1a3b827d4fab8fc31`; después se completó la captura
-privada de credenciales descrita en Fase 2B. La primera casilla pendiente actual
-es crear desde Cloud `master` la rama aislada de `AUD-078`; el tooling de
-secuencia ya quedó fusionado sin ejecutarse contra valores reales.
+privada de credenciales descrita en Fase 2B. Ese era el punto de entrada
+histórico a `AUD-078`; la rama y el candidato Cloud ya existen y la fase activa
+actual es cerrar su CI junto con la compatibilidad de checkpoint de Fase 3B.
 
 ### Fase 3 — implementar `AUD-078` de forma aislada
 
-- [ ] Crear una rama Cloud nueva desde `master`; no mezclarla con `AUD-075`,
+- [x] Crear una rama Cloud nueva desde `master`; no mezclarla con `AUD-075`,
   dependencias, upstream ni infraestructura no relacionada.
-- [ ] Añadir `runtime_revision` durable y outbox PostgreSQL transaccional.
-- [ ] Encolar config/stop en la misma transacción que aprobación, cuarentena y
+- [x] Añadir `runtime_revision` durable y outbox PostgreSQL transaccional.
+- [x] Encolar config/stop en la misma transacción que aprobación, cuarentena y
   revoke epoch.
-- [ ] Implementar claims recuperables con CAS, expiración, retry y orden estricto
+- [x] Implementar claims recuperables con CAS, expiración, retry y orden estricto
   por sala.
-- [ ] Impedir que un snapshot posterior atraviese un stop pendiente.
-- [ ] Considerar terminal una parada solo después de observar ausencia del
+- [x] Impedir que un snapshot posterior atraviese un stop pendiente.
+- [x] Considerar terminal una parada solo después de observar ausencia del
   nombre+UID y cero Pods gestionados de la sala.
-- [ ] Cubrir `202`, timeout, `2xx` legacy, ABA, Pod desconocido, creación tardía,
+- [x] Cubrir `202`, timeout, `2xx` legacy, ABA, Pod desconocido, creación tardía,
   reinicio y pérdida de claim.
-- [ ] Verificar migraciones PostgreSQL 12/14, Reticulum, orquestador, generador,
+- [x] Verificar migraciones PostgreSQL 12/14, Reticulum, orquestador, generador,
   seguridad y rollback.
-- [ ] PR Cloud hacia `development`, promoción separada a `master` y CI verde.
-- [ ] Actualizar después el gitlink raíz en una rama/PR raíz propia y fusionarlo.
+- [x] PR Cloud hacia `development`, promoción separada a `master` y CI verde.
+- [x] Cerrar en un PR Cloud separado el hueco causal descubierto después de la
+  promoción: cada `LIST` causal debe venir de la API raw con un
+  `resourceVersion` no cero; el watch exacto inicial y cada successor deben
+  demostrar progreso mediante su propio `BOOKMARK` in-band antes de detener el
+  predecesor. Tiempo transcurrido, cierre limpio, ausencia de bookmark,
+  hang/`410`/churn o listas incompletas fallan cerrado. Repetir `test:apply`,
+  revisión independiente, CI y promoción `development -> master` antes de mover
+  el gitlink raíz.
+Integración raíz diferida: no abre una casilla ni un PR independiente aquí. El
+gitlink se actualiza una sola vez junto con los callsites de checkpoint/restore
+en la última casilla de Fase 3B.
 
 Resultado: Reticulum no declara una parada completa mientras quede o reaparezca
 un runner gestionado para la sala.
+
+Evidencia final Cloud: candidato `a3b7396`, apply 79/79 y revisión independiente
+sin P0/P1/P2. El PR `hubs-cloud #13` pasó su CI, incluida la matriz PostgreSQL
+12/14, y quedó fusionado en
+`development=0a21634688445eeb2ad2935627ad1c2f7a233f72`; la promoción separada
+`hubs-cloud #14` terminó también verde y fusionó
+`master=1cf95ca8719b40aa94adc8ffa987cce835316066`. El worktree raíz fija ya ese
+commit como candidato, pero el gitlink no se considera integrado hasta que el
+PR raíz de Fase 3B quede verde y fusionado. No hubo build de imágenes ni
+mutación live.
+
+Corrección causal posterior en curso: el candidato local
+`codex/aud078-watch-boundary` usa `LIST` raw completo y watches exactos con
+relevos demostrados por `BOOKMARK` in-band. Un smoke live estrictamente de solo
+lectura observó bookmarks en Pods `hcce` (~121 s), Pods
+`hcce-bot-runners` (~62 s) y ReplicaSets `hcce` (~121 s), sin mutaciones ni
+procesos residuales; también confirmó que los items de un LIST pueden omitir
+TypeMeta, por lo que se exige metadata exacta y TypeMeta exacto solo cuando
+aparece, mientras los eventos WATCH siguen exigiéndolo. Sobre los bytes actuales
+`npm run test:apply` pasa 106/106; `git diff --check`, la sintaxis Node de los
+cinco ficheros ejecutables/test afectados y Gitleaks sobre 57,24 MB terminan con
+código 0. La revisión independiente final no encontró P0, P1 ni P2 nuevos,
+confirmó el fail-close ante EPERM/ESRCH y dejó el escape deliberado de la sesión
+POSIX fuera del límite confiable explícito de `kubectl`/plugins de confianza.
+El commit `7baee36e6e06` pasó todos los checks push/PR; el PR Cloud `#15` se
+fusionó en `development=1a370dd6e48d7f74692544a285dcfefbfda10472`. La
+promoción separada `#16` pasó también guard de rama, dos checks de seguridad,
+dos de servicios Node y dos de Spoke, y quedó fusionada en
+`master=4c0f7be4a4793fc5f370263f081e8a077cb52e59`; los runs post-merge
+`29790381506` (seguridad) y `29790381527` (servicios) terminaron también con
+éxito sobre ese SHA exacto. El fence de operación posterior pasó 30/30 del
+generador, 110/110 de apply y dos E2E contra Kubernetes 1.34.8; los PR Cloud
+`#17/#18` quedaron fusionados y promovieron
+`master=24d09706c2d9302888ce5192de562005c155bd67`, con seguridad y servicios
+post-merge verdes. El gitlink candidato raíz ya apunta a ese SHA, pero sigue sin
+estar integrado hasta cerrar sus callsites, gates y PR root.
+
+### Fase 3B — hacer checkpoint/restore compatible con el journal durable
+
+- [x] Rechazar `cold-rebind` antes de toda mutación. Una futura recuperación con
+  Namespace UID nuevo será una campaña `namespace-epoch` separada, autenticada y
+  destructiva; nunca una bandera de restore normal.
+- [x] Exigir igualdad de generación: checkpoint `legacy-absent` solo sobre un
+  destino legacy exacto sin residuos AUD-078, y `durable-v2` solo sobre el mismo
+  Namespace UID, journal y control plane durable. No cruzar generaciones.
+- [x] Generar `checkpoint-metadata.json` schema 3,
+  `deployment-images.json` schema 4 y el artefacto obligatorio
+  `runner-cutover-evidence.json` schema 3, ligado por checksum y con contratos
+  normalizados del control plane. La evidencia registra
+  `recovery_operation_fence_state` exacto (`dormant` o `active`); el pull Secret
+  se liga solo mediante HMAC con la clave privada del journal, nunca mediante
+  datos o hashes sin clave. Conservar lectura de checkpoints schema 2 históricos
+  únicamente para legacy in-place.
+- [x] Verificar el journal canónico y su HMAC sin archivar ni mostrar la clave;
+  ligar operación, Namespace UID, manifest/target hashes, finalizer, políticas y
+  bindings observados, Deployment padre y fences exactos.
+- [x] Cambiar quiescencia a cero runners ejecutables, cero intents y cero objetos
+  desconocidos, permitiendo y preservando fences permanentes por nombre+UID. Un
+  fence borrado, reemplazado, terminando o malformado debe abortar.
+- [x] Añadir y fusionar primero en Cloud un
+  `ValidatingAdmissionPolicy` sin parámetros y un binding permanente y
+  fail-closed. El binding debe viajar dormido, mediante un `namespaceSelector`
+  imposible, en `bootstrap`/`admission`/`active`, y activo únicamente en
+  `restore-fence` para `hcce` y `hcce-bot-runners`. Una vez alcanzados cinco
+  writers a cero y reconciliados los fences runner exactos, la raíz cambia el
+  selector por CAS de UID/resourceVersion bajo el lock global y su Lease. El
+  modo activo deniega en el API server cualquier creación de los cinco writers
+  en `hcce` y las operaciones peligrosas de Pods runner y sus subrecursos en
+  `hcce-bot-runners`; antes de reanudar writers vuelve por CAS al selector
+  dormido. Cada transición debe probarse con GET exacto y dry-runs server-side:
+  negativos al activar y positivos al desactivar, ligados al diagnóstico de la
+  policy; observar solo el objeto local no basta. No añadir RBAC, no hacer
+  legible ningún secreto y no usar `paramKind`/`paramRef`. Integrar generador,
+  inventarios, apply/live verifier, tests y promoción Cloud antes de mover de
+  nuevo el gitlink raíz. Antes del merge, un CI efímero con la misma versión
+  Kubernetes de producción debe probar compilación CEL/estado observado,
+  propagación, CAS/ABA y los dry-runs positivos/negativos sin usar el clúster
+  live. Este fence se exige solo a `durable-v2`: debe estar
+  observado antes de abrir bytes de un restore durable, pero no se despliega
+  anticipadamente ni rompe la regla que sitúa el primer checkpoint legacy antes
+  de toda mutación live.
+- [x] Sustituir todo uso de `deployments/scale` por una transición del objeto
+  Deployment completo con CAS de UID/resourceVersion bajo la Lease global; no
+  debilitar la política Cloud que prohíbe `/scale`.
+- [x] Supervisar cada stream largo de DB y `ret-pvc` con una vuelta completa
+  estrictamente nueva antes de abrirlo, progreso monotónico publicado
+  atómicamente, frescura máxima de 10 s, sondeo productivo de 1 s, Lease leída
+  con timeout máximo de 5 s —reducido a 1 s cuando queden como máximo 5 s del
+  presupuesto de frescura— y cancelación/recolección del grupo exacto por PID
+  e identidad de arranque. Los overrides temporales solo son válidos bajo
+  atestación de fixture local.
+- [x] Cubrir schemas, checksums, symlinks, snapshot inmutable, HMAC, UID,
+  finalizer, policies, fences, residuos, cruces de generación, redacción,
+  señales, frescura/abort de streams y reentrada con pruebas fail-closed. Las
+  pruebas focales y la suite completa deben repetirse sobre los bytes finales;
+  ningún verde anterior a la última corrección cierra esta casilla. Evidencia
+  final: `env -u NODE_PATH /usr/bin/time -p bash
+  tests/recovery/test-recovery-safety.sh` terminó el 21 de julio sobre los bytes
+  definitivos con `861/861`, exit `0` y `real 13325.23` s. Incluye integralmente
+  los antiguos fallos 323/324, el consumidor transitorio de `ret-pvc`, la
+  restauración legacy/durable, el preflight final y todas las baterías de
+  writers, helpers, streams y watchdog. No quedaron procesos fixture.
+- [x] Integrar primero la corrección mínima de los advisories nuevos de
+  Reticulum: PR Cloud `#19`, CI PostgreSQL 12/14, merge
+  `development=b2abe936`, promoción separada PR `#20` y
+  `master=c540c292`. No se amplió la allowlist ni cambió otra dependencia.
+- [x] Fijar en raíz Cloud `c540c292` junto a Hubs `ce8390a89` y ejecutar una
+  sola vez el gate `--full` sobre esos nuevos bytes. La ejecución recorrió
+  todos los bloques y terminó con 860/861 de recovery por el fallo temporal
+  aislado del caso 850; no se presenta como gate verde.
+- [x] Diagnosticar de forma focal el caso 850 y corregir solo su causa
+  demostrada. La llamada completa estaba dentro de 5 s y la inversión era de
+  −1 ms entre marcadores de fixture; el runtime revocó y recogió el grupo. La
+  publicación de marcadores es ahora atómica y el fallback acepta solo −1 ms
+  cuando el cronómetro completo también queda bajo 5 s. El test exige además
+  al menos un Lease GET lento post-launch. Bash, ShellCheck, diff-check y el
+  foco final `stream-guards` 81/81 pasan; revisión independiente sin P0/P1.
+- [x] Ejecutar una única revalidación `--full` sobre el fixture final. Recovery
+  pasó `861/861`, incluido el caso 850, y los demás bloques llegaron verdes al
+  control final de dependencias; el gate terminó exit `1`, `real 12834.18` s,
+  por cuatro advisories nuevos de Guardian `2.4.0`.
+- [x] Corregir únicamente esos cuatro advisories con Guardian `2.4.1`. El diff
+  Cloud cambia una sola entrada de `mix.lock`; pasan formato, compilación,
+  `mix hex.audit`, dos verificadores de migración, `461` tests + `5` properties,
+  release, Gitleaks y CI PostgreSQL 12.19/14.23. PR `#21` se fusionó en
+  `development=67e89a15` y PR `#22` en `master=c0a3419b`; los runs post-merge
+  `30725805066` y `30725805072` están verdes.
+- [x] Fijar Cloud `c0a3419b` en raíz y ejecutar la validación proporcional:
+  pines exactos, diff-check, auditoría upstream y Gitleaks raíz verdes. La única
+  revisión final no encontró P0/P1/P2 ni archivos accidentales.
+- [ ] Crear el commit y PR raíz, exigir CI verde y fusionarlo en `main`. No crear
+  todavía un checkpoint real.
+
+Resultado: los checkpoints anteriores siguen siendo legibles en su generación,
+pero el rollout durable solo puede avanzar con evidencia restaurable ligada al
+journal y sin destruir sus fences causales.
+
+#### Historial de cierre de Fase 3B
+
+Los párrafos de esta subsección conservan evidencia cronológica y estados
+intermedios que quedaron supersedidos. No se usan para seleccionar trabajo; el
+estado operativo vigente es el panel superior y la última evidencia de esta
+subsección.
+
+Estado de la Fase 3B al 21 de julio: la fuente candidata se está cerrando en
+`codex/aud078-root-integration` sobre root
+`main=origin/main=ed8c9d13fbbd2336417c36e54663d09e032193ba`; Hubs candidato apunta a
+`master=ce8390a8905fa38fa0acdb10d5f94290981477ec` y el gitlink Cloud candidato es
+`24d09706c2d9302888ce5192de562005c155bd67`, ya colocado en el worktree pero
+todavía no fusionado en root. La revisión adversarial que invalidó el cierre
+anterior encontró un handoff LIST/watch no causal, snapshots durable-v2 sin
+watcher continuo y cancelación tardía del stream cuando se congelaba el watcher
+de writers. El Cloud corregido está fusionado mediante los PR `#15`–`#18`; en
+raíz se han implementado dos monitores causales separados. Ambos publican una
+autoridad JSON checksummed que liga PID e identidad de arranque, paths y hashes
+de contrato/baselines, operación, propietario, lock y Lease; sus handshakes
+`READY`, progreso y `FINAL` están tokenizados y una sustitución o replay falla
+cerrado. `operation_owner` solo admite `checkpoint-backup` o
+`checkpoint-restore`.
+
+El monitor de writers mantiene los cinco Deployments a cero. El monitor durable
+liga esa frontera de control y conserva watches de Pods/ReplicaSets con handoff
+in-band; no compara `resourceVersion` opacos por orden. En los hijos durable, la
+autoridad heredada exige a la vez la capability del writer padre, la capability
+del monitor durable padre y el guard local del stream. Al cerrar, `FINAL` del
+monitor durable se exige antes de detener y aceptar `FINAL` del monitor de
+writers. Los focos propios de ambos monitores y sus revisiones independientes
+están verdes, pero las casillas de quiescencia, supervisión de streams y
+cobertura fail-closed permanecen abiertas hasta cerrar los callsites/fixtures
+y repetir la suite completa sobre bytes inmóviles.
+
+El handoff del monitor legacy quedó inicialmente congelado en
+`watch-checkpoint-writers.mjs=6acc75c821103c776279301b51d19f176a8d2110b29c7728728f38bd94e4c1f5`,
+`recovery-safety.sh=8c5aecda7151ca012647b9788525c52ee2e44afef6566af1377b0d02a2706a7d`
+y
+`restore-checkpoint.sh=57e831021a5bb61e7efb0283394eea97096f321b4f3602fa89df4abba7581a04`.
+Dos revisiones independientes no encuentran P0/P1/P2 en esos bytes; `node
+--check`, `bash -n`, ShellCheck y `git diff --check` terminan con código 0. El
+protocolo enlaza ARM, recibo CAS, COMMIT y ACK con lock, Lease, UID,
+`resourceVersion` y autoridad exactos; Reticulum es el primer writer que vuelve,
+el recibo se retira por CAS tras recapturar su RV posterior al rollout y
+`clear-stale` nunca elimina el lock dejando un recibo huérfano. Esta evidencia
+es todavía estática: no cierra las casillas hasta que las fixtures adversariales
+y la suite completa pasen sobre los mismos hashes. El hash de la librería de
+seguridad quedó después supersedido por la limpieza común descrita abajo; el
+watcher y el coordinador restore permanecen byte a byte en sus hashes citados,
+pero el conjunto debe repetir sus focos sobre la librería final.
+
+La auditoría de equivalencia del gate detectó que el verificador local sí
+ejecutaba la suite causal durable, pero el workflow raíz todavía la omitía.
+`project-security.yml` invoca ahora tanto
+`runner-cutover-checkpoint-evidence.test.mjs` como
+`durable-runner-quiescence-monitor.test.mjs`, y una regresión fija exactamente
+ambas entradas en local y CI. `bash -n`, ShellCheck y `git diff --check` pasan;
+`tests/scripts/security-gates.test.sh` termina con `51/51`, exit `0`. La casilla
+de gates permanece abierta hasta la ejecución normal/completa y el CI del PR.
+
+La auditoría literal de cierre encuentra `P0=0`, pero impide congelar todavía
+por tres P1: el `pg_dump` coordinado tiene capabilities padre pero no guard
+local continuo de la identidad PostgreSQL; los backups standalone DB/PVC aún
+abren streams que no pueden constituir el checkpoint conjunto exigido; y tres
+monitores locales aceptan cadencias directas no atestadas —incluido un default
+DB de 0,25 s— en vez del segundo productivo único. También pide como P2 fijar
+en los callsites restore que matar, estancar o intercambiar una capability
+padre cancela y recoge el stream conservando lock y fence. Las correcciones se
+aplican antes de nuevas focales o de repetir la suite recovery completa.
+
+El candidato source que cierra esos P1 queda en
+`backup-retdb.sh=fcaf9566deffad4ac34c347b8c6f324280caac392ff40d4b187275517d3c007e`,
+`backup-ret-storage-quiesced.sh=c02606a47d58df0ee23322cf6a458e71584dc2fc4af6b6f03798f7032c9b977c`,
+`restore-retdb.sh=2a60cc55576dec766e0759c0989b47b486bebd3a4f3e8ce95c70ea470b091a66`
+y
+`restore-ret-storage.sh=eadf05f035291b77b65aec979e58336ed8c5baccce164cce47a5ef7de12d530d`.
+El dump solo admite el hijo coordinado, añade guard PostgreSQL local continuo y
+vuelve a listar la identidad exacta después del stream. El restore DB incorpora
+esa identidad PostgreSQL al barrido continuo que guarda tanto `DROP/CREATE`
+como la importación. Si la publicación secuencial de dump y contrato falla, el
+child retira solo los nombres finales que aún conservan sus inodos exactos y no
+puede borrar un reemplazo ajeno. El backup storage
+standalone queda como stub sin lectura Kubernetes ni salida; su implementación
+histórica está inventariada en `OLD/` y el sustituto activo es el checkpoint
+conjunto. Todos los monitores derivan una sola cadencia mediante el helper que
+fija un segundo en producción y solo acepta override en fixture atestada.
+`bash -n`, ShellCheck y `git diff --check` terminan con código 0; falta todavía
+auditoría independiente y cobertura dinámica sobre estos hashes.
+
+Los hashes de source del párrafo anterior quedan supersedidos por la auditoría
+posterior de publicación y directorios privados: no son candidatos de suite ni
+de commit. El árbol vuelve a estado no congelado mientras se sustituye todo
+`rm -rf` de Fase 3B por una capacidad `dev:ino`/`dirfd` común y se repiten sus
+estáticos, auditoría y focales.
+
+El source vuelve a quedar congelado tras esa corrección en
+`recovery-safety.sh=aeef24f71bf7847ebe3e52caa067bd598d5fc935c83f34fae993ec26bd771ec0`,
+`create-checkpoint.sh=5fef9a3a891a6ef9bc6c2f426e8b0c87e8a4c8ed2cef836ae26d56e7b2b92730`,
+`validate-checkpoint.sh=2d973b7f5cceb45c2b324b9a09593a8d0741876cdbfdbc68ce54bb640175f069`,
+`backup-retdb.sh=4d2cda39a9a599f20aa711a35f5181f4fa5a1104aaef5584e5dd77fc59d4d2e5`,
+`restore-retdb.sh=2a60cc55576dec766e0759c0989b47b486bebd3a4f3e8ce95c70ea470b091a66`,
+`backup-ret-storage-quiesced.sh=2596a1b509568e8d4fe331e0fd2e08bb0829e42802c58c8e9a150f97b631e34d`
+y
+`restore-ret-storage.sh=9fcf9550ca68e686c1013fe833c0dd336d990caa4f95084c08c9ecde095fd394`.
+La capacidad opaca liga padre y raíz canónicos por `dev:ino`, UID, modos y
+`dirfd` con `O_NOFOLLOW`; prevalida el árbol completo contra allowlists
+`d:`/`f:`, conserva el descriptor exacto hasta `unlink` y nunca recurre a un
+borrado por pathname. Staging/final, materialización schema 2/3, validadores y
+el `WORK_DIR` storage difieren `INT`/`TERM` hasta armar identidad, marker y
+latch; una limpieza fallida queda terminal y preserva replacement u orphan.
+`bash -n`, Node `--check`, ShellCheck, compilación del Python embebido,
+`git diff --check` y la ausencia de `rm -rf` en esos callsites terminan con
+código 0. Smokes locales pasan happy recursivo y rechazan/preservan extra,
+marker incorrecto y root swap. El límite residual portable es la nanorace
+POSIX same-UID entre última comparación y `unlink`/`rmdir`; ante drift o
+`SIGKILL` se falla conservando el reemplazo o un orphan, nunca borrándolo por
+fallback. Los fixtures finales y la suite completa siguen siendo necesarios.
+
+El primer foco adversarial del recibo legacy termina con `59/59`, exit `0`:
+replay W1/LIST para ReplicaSet y Pod, evento status-only sin ACK, happy path con
+solape H largo y R posterior, y fallos R por `410`, cierre prematuro y exit 91.
+No deja procesos H/R huérfanos. Es evidencia intermedia: el mismo fichero de
+fixtures seguirá cambiando para integrar el driver shell, los guards DB/PVC y
+los rechazos standalone, por lo que el foco se repetirá sobre el hash final.
+
+La evidencia runner schema 3 registra dos Namespace, 13 recursos namespaced y
+cinco pares policy/binding —10 recursos cluster—, incluido el fence de operación.
+En `durable-v2`, checkpoint activa por CAS el binding `dormant -> active` después
+de los cinco writers a cero y vuelve a `dormant` justo antes de reanudar. Legacy
+no exige ese quinto par y solo acepta semántica `dormant`; nunca activa el fence.
+Restore aplica la máquina de estados documentada en `deployment/README.md`:
+PREPARE/PREFLIGHT dormidos, `restore-fence` reconcilia y activa con sondas,
+EXECUTE adopta la identidad activa y la conserva durante streams, validación y
+el lock awaiting-reactivation; el apply Cloud `active` vuelve por CAS a dormant
+inmediatamente antes de devolver autoridad a workloads, y FINALIZE comprueba
+dormant. Desde justo antes de abrir el stream mutable de PVC hasta terminar su
+validación exacta, cualquier fallo de stream o validación —incluida una
+reentrada exacta que no termina o un `owned` no vacío/inseguro— conserva el
+helper Pod, la NetworkPolicy deny-all y el lock. El `clear-stale` durable sólo
+admite el quinto fence exacto ya dormido; si está activo, no muta helper, lock
+ni fence y exige una recuperación Cloud revisada.
+
+La última auditoría causal del supervisor multi-guard descubrió que las
+esperas secuenciales podían atribuir a un incremento una fecha no observada y
+no demostrar una ventana fresca simultánea. El source final
+`recovery-safety.sh=93afad8ce84a41fd66d953dcc73fc84a5a0d6fe88f58579d8a6d70cee9734200`
+usa dos vueltas round-robin en foreground, progreso monotónico con cota temporal
+conservadora, autoridad exacta y comparación estricta de frescura antes del
+stream. La revisión independiente de fuente no encontró P0–P3. Sobre ese
+source y el fixture entonces candidato
+`test-recovery-safety.sh=37e814b149c2b74f720ddea43efce1ecb7983f8d42d73e5b770f7a1a37800a56`,
+el foco multi-guard determinista termina 48/48 y la matriz durable DB/PVC
+termina 72/72, exit `0`, `real 824.87` s, incluida la revocación en vuelo por
+PID, progreso y autoridad con lock, fence y frontera cero preservados. No deja
+procesos fixture.
+
+La primera suite completa posterior detectó en sus checks 105/107 una fixture
+legacy desfasada, no un fallo de producto: el segundo inventario de
+`runner-reappears*` era consumido por la nueva frontera exacta parent-writer y
+el child no alcanzaba el waiter residual/timeout que debía probar. La ejecución
+se detuvo una vez invalidada. El fixture final
+`test-recovery-safety.sh=a36447bc9e1ea30d68f0d9bba3a8e65fc6157d5f9e0f2e3c186b01673ad52ba6`
+reserva vacías la lectura de generación y la frontera padre y hace reaparecer
+el runner en el tercer inventario del waiter. Su foco reutilizable termina
+49/49, exit `0`, `real 32.33` s, con diagnósticos exactos residual/timeout y dos
+pruebas de ausencia de `dropdb`. Una revisión independiente no encuentra
+P1–P3 ni modos hermanos afectados; Bash syntax y `git diff --check` pasan y
+ShellCheck no añade diagnósticos en las líneas cambiadas.
+
+La segunda ejecución completa alcanzó 155 comprobaciones verdes y produjo un
+checkpoint durable completo y verificable, pero el caso que lo reutiliza para
+restore falló después de publicar y retirar el marker, exactamente dentro de
+`resume_writers`. El fallback conservó cinco writers a cero y el lock global;
+los logs posteriores de la fixture impidieron identificar el subgate. Un foco
+aislado confirmó además que dos diagnósticos antiguos de drift del fence ya
+ocurrían antes, durante el stream DB, por el monitor continuo; se ligaron a
+markers causales exactos y el foco resultante pasó 51/51. Esa ejecución completa
+no cuenta como gate verde y debe repetirse sobre los bytes finales.
+
+La auditoría de finalización posterior encontró dos P2 antes de autorizar esa
+repetición: la identidad `dormant` producida por el CAS se capturaba pero no se
+revalidaba hasta liberar el lock, y los fallos posteriores a validación solo
+emitían un mensaje genérico. El candidato actual fija UID y `resourceVersion`
+del policy/binding durante cada resume y justo antes del borrado CAS del lock;
+una excursión `dormant(rv3) -> active(rv4) -> dormant(rv5)` falla cerrada tanto
+antes del primer writer como después del último. El diagnóstico conserva el
+status original y solo admite pares literales `stage/code`, sin rutas, líneas,
+UID, RV, hashes, manifests ni payloads. Dos revisiones independientes no
+encuentran P0–P2; el único P3 de etiquetado temprano quedó corregido.
+
+El foco writer final descubrió únicamente tres desajustes del arnés: los E2E
+durable no resembraban el binding `dormant` después de `reset_stub`, el código
+diagnóstico esperado en la frontera final aún decía `writer-stop` en vez de
+`writer-monitor`, y el caso de salida 143 sustituía el PID sin volver a firmar
+su autoridad. Las correcciones quedan confinadas a fixtures y añaden un marker
+causal post-READY y un límite de recolección de 10 s. Tres revisiones
+independientes confirmaron la causa y no encontraron P0/P1; el foco corto de
+salida 143 pasa 46/46 y el foco completo
+`YENHUBS_RECOVERY_TEST_FOCUS=checkpoint-writers` pasa 170/170, exit `0`,
+`real 2001.66` s, sin procesos residuales.
+
+Los bytes congelados en ese hito intermedio —no los bytes actuales— eran
+`create-checkpoint.sh=2cec747e1dd24bf201a386a6128b672d2f2946b3c0509bde77e07b1dc748a037`,
+`recovery-safety.sh=93afad8ce84a41fd66d953dcc73fc84a5a0d6fe88f58579d8a6d70cee9734200`,
+`watch-durable-runner-quiescence.mjs=54a25fbf17d417ea89acc79ca08e6eddbe627ae161f582abdffb9a0823fdc47d`,
+`watch-checkpoint-writers.mjs=6acc75c821103c776279301b51d19f176a8d2110b29c7728728f38bd94e4c1f5`
+y
+`restore-checkpoint.sh=d1ab89e77635976abd96329b541a4ea229b48c9b8389690365c7d9c86fe1b4b9`
+y
+`test-recovery-safety.sh=4b2eb4401cd987ee2e19081e401c186dff9eb8c89db30512d8d666d4aae9e2eb`.
+Bash syntax, ShellCheck y `git diff --check` están verdes. El foco durable
+se repitió sobre el mismo hash y pasa 60/60, exit `0`, `real 838.38` s. Demuestra
+preservación del fence permanente por UID/RV, reconciliación exacta de runner e
+intent, rechazo sin borrado de Pods desconocidos y retención de lock/cinco
+writers a cero si el fence desaparece, se reemplaza o termina. No deja procesos
+residuales. La suite recovery completa inmutable termina 861/861, exit `0`,
+`real 13325.23` s; Bash syntax, ShellCheck y `git diff --check` también pasan y
+una revisión independiente no encuentra P0/P1/P2 en los últimos ajustes de
+fixtures. Quedan ambos gates raíz, revisión final, commit, PR/CI y merge. No se
+construyó ninguna imagen, no se creó un checkpoint real y no hubo apply,
+despliegue ni mutación de producción.
+
+El primer `./scripts/verify-project.sh` posterior a recovery terminó con código
+0 sobre Hubs `674ece411691` y Cloud `24d0970`, incluida recovery 861/861. El
+primer `--full` volvió a pasar seguridad 51/51 y recovery 861/861, pero se
+detuvo en el audit de producción de Hubs por dos advisories publicados para
+Immutable.js `<4.3.9`; no se aceptó una allowlist. El PR Hubs `#5` fija
+Immutable.js 4.3.9, aplica de forma fail-closed la compatibilidad necesaria para
+Draft.js 0.11.7 y añade regresiones del editor Tweet. Localmente pasan audit de
+producción con 0 vulnerabilidades, 100/100 pruebas, TypeScript y build; los tres
+checks del PR pasaron y el merge dejó `master=ce8390a89`. La repetición normal
+sobre los gitlinks finales Hubs `ce8390a8905f` y Cloud `24d09706c2d9` terminó
+después con código 0 (`real 13647.23` s): seguridad 51/51, recovery 861/861,
+todas las suites `AUD-065`, Gitleaks en los tres repositorios y auditoría
+upstream sin release estable pendiente. Solo queda ejecutar `--full` una vez
+sobre esos mismos bytes, revisar y publicar el PR raíz.
+
+La primera repetición `--full` alcanzó el happy path durable de restore y falló
+en su cierre porque dos monitores del kubectl stub ejecutaban cientos de WATCH
+de dos segundos como cierres instantáneos. El restore real no falló de forma
+determinista: DB/PVC quedaron validados y el lock/fence se retuvo fail-closed.
+Se añadió `STUB_MONITOR_WATCH_PACE=1` solo a los EXECUTE durable; los focos
+`restore-finalize-positive` 54/54 (`real 639.24` s) y `restore-execute-cas`
+55/55 (`real 956.62` s) pasaron. La siguiente repetición `--full` confirmó que
+el pacing eliminaba el spin —los casos 284–290 pasaron—, pero otro restore
+positivo consecutivo volvió a fallar al revalidar los monitores y el run se
+detuvo con exit `1` (`real 4153.50` s).
+
+El diagnóstico posterior descartó la frescura productiva de 10 s: el fallo
+ocurría fuera del stream, durante la revalidación final. El monitor durable
+usaba para `local-fixture` un handshake de solo 1 s, aunque cada frontera
+inicial abre dos procesos reales del stub (`kubectl` recursivo y `jq`) y la ruta
+productiva ya permite 7 s. El fixture atestado usa ahora ese mismo límite
+acotado de 7 s; producción no cambia. El diagnóstico seguro queda activo solo
+ante fallo y el foco nuevo `restore-repeat-positive` ejecuta tres restores
+completos en un único proceso. Pasan el test Node 11/11 y la regresión final
+61/61, exit `0`, `real 1334.59` s, incluidos tres restores DB+storage, ambos
+monitores con `watch=true`, el replace CAS exacto del lock identificado solo
+después de validar UID/RV/estado y los tres estados finales fail-closed. Una
+revisión independiente confirma que el cambio solo alcanza
+`YENHUBS_RECOVERY_TEST_MODE=local-fixture` con contexto fixture. El full debe
+reiniciarse una vez y será el único gate amplio vigente de esos bytes.
+
+Esa ejecución pasó los casos 284–294 y después falló con
+`durable_runner_monitor_error:parent_pod_contract`, exit `1`,
+`real 4261.81` s. El Pod helper del stub se publicaba en cinco ficheros
+independientes; un LIST concurrente con DELETE podía observar solo parte de
+ellos, algo que Kubernetes no hace al devolver un objeto Pod. El fixture publica
+ahora un único snapshot JSON con `mv` atómico, LIST conserva un descriptor al
+snapshot completo y DELETE lo retira por UID exacto. También se aísla
+preventivamente el contexto kubectl entre escenarios. Los focos
+`storage-helper-pod-snapshot-race` y `restore-context-isolation` pasan 46/46
+cada uno, y `restore-repeat-positive` vuelve a pasar tres restores completos:
+61/61, exit `0`, `real 1081.42` s. Bash syntax, ShellCheck y `git diff --check`
+quedan verdes. No cambió fuente productiva; como sí cambiaron los bytes del
+fixture, corresponde exactamente una revalidación `--full` post-corrección.
+
+Esa revalidación alcanzó y pasó los antiguos casos críticos 284–288, pero se
+detuvo voluntariamente al observar que un LIST que perdía el snapshot justo
+antes de `open(2)` devolvía correctamente lista vacía pero dejaba el diagnóstico
+shell `No such file or directory` en stderr. No se aceptaron horas adicionales
+sobre bytes ya incompletos. La apertura se agrupa ahora con stderr suprimido
+solo para ese `ENOENT` esperado; el retorno sigue distinguiendo GET obligatorio
+de LIST vacío. La regresión determinista cubre tanto DELETE posterior a open
+como DELETE anterior a open y pasa 46/46, exit `0`, `real 8.49` s, sin stderr.
+No se repite 61/61 porque esta corrección no cambia su semántica ni su retorno.
+Sí corresponde una única revalidación `--full` porque cambió el fixture.
+
+La revalidación final se ejecutó una vez y terminó todos los bloques anteriores:
+seguridad, recovery 861/861, suites AUD-065, auditoría upstream, Gitleaks de los
+tres repositorios, Hubs/Admin, navegador, capacidad fail-closed, orquestador,
+servicios CE, Spoke y compilación Reticulum. El último `mix hex.audit` descubrió
+dos avisos publicados después del baseline: `EEF-CVE-2026-59248` en Cowlib
+2.18.0 y `EEF-CVE-2026-65624` en Cowboy 2.15.0. El run terminó con exit `1` y
+`real 12474.87` s; no se amplió la allowlist y producción no cambió.
+
+Las fuentes oficiales fijan las primeras correcciones en Cowlib 2.19.0 y Cowboy
+2.18.0. La rama Cloud `codex/reticulum-http-advisories`, commit `fc0b45f`,
+cambia únicamente la restricción directa Cowboy y las dos entradas necesarias
+del lock; Ranch queda en 2.2.0. Pasan formato, compilación, `mix hex.audit`, las
+dos verificaciones de migraciones, 461 tests + 5 properties sobre PostgreSQL
+14.23, release `turkey`, diff-check y Gitleaks de fuente trackeada. El PR `#19`
+repitió seguridad, PostgreSQL 12.19/14.23 y release y se fusionó como
+`development=b2abe936`; la promoción separada `#20` repitió los mismos gates y
+se fusionó como `master=c540c292`. Los runs post-merge
+`security-ci=30709212953` y `reticulum-ci=30709212992` quedaron verdes; en ese
+momento quedó pendiente la revalidación raíz sobre el gitlink nuevo.
+
+Esa revalidación confirmó recovery 861/861 y todos los bloques anteriores, pero
+el Hex audit final recibió cuatro advisories nuevos de Guardian `2.4.0`. La
+primera release oficial corregida, Guardian `2.4.1`, se integró cambiando una
+sola entrada del lock mediante PR `#21` y promoción `#22`; Cloud
+`master=c0a3419b` y sus CI post-merge PostgreSQL 12/14, seguridad y release están
+verdes. Como el único byte lógico posterior pertenece a la dependencia ya
+validada de Reticulum, no se vuelven a ejecutar recovery, Hubs, Spoke o
+capacidad.
+
+Hashes vigentes sometidos a la regresión final y al full que confirmó recovery
+861/861:
+`create-checkpoint.sh=2cec747e1dd24bf201a386a6128b672d2f2946b3c0509bde77e07b1dc748a037`,
+`recovery-safety.sh=93afad8ce84a41fd66d953dcc73fc84a5a0d6fe88f58579d8a6d70cee9734200`,
+`watch-checkpoint-writers.mjs=6acc75c821103c776279301b51d19f176a8d2110b29c7728728f38bd94e4c1f5`,
+`watch-durable-runner-quiescence.mjs=d2df0c06c8b816ba9137e60c66026b25e3d2c1b90f69973b48b4e23bb48c59b2`,
+`restore-checkpoint.sh=d1ab89e77635976abd96329b541a4ea229b48c9b8389690365c7d9c86fe1b4b9`
+y
+`test-recovery-safety.sh=0ea88ed52e80ec8a420fa5bd53a77eba56776c518238f1eb9b9d8388ebb18bc0`.
 
 ### Fase 4 — integrar evidencias, construir sin desplegar y completar `AUD-065`
 
@@ -418,12 +964,20 @@ un runner gestionado para la sala.
 - [ ] En una rama/PR Cloud separada de `AUD-078`, integrar un workflow fijo que
   construya/ateste Reticulum, parent y runner en un único run, la regeneración
   exacta values -> manifiesto antes del primer `kubectl` y recibos autenticados
-  `bootstrap`/`admission`/`active` bajo el Lease global.
-- [ ] Después del merge Cloud, actualizar su gitlink en una rama/PR raíz propia
-  e integrar el consumidor de recibos: operación privada ligada a checkpoint,
-  commits, digests, contexto/UID y candidato; sin esa cadena `advance` y
-  `promote` deben fallar sin mutar archivos.
-- [ ] Congelar ese commit Cloud final. Justo antes del build,
+  `bootstrap-server`/`bootstrap-client`/`admission`/`active` bajo el Lease
+  global. Las dos generaciones bootstrap representan explícitamente el orden
+  Reticulum-first/Hubs-second y ninguna permite saltar directo al cliente.
+- [ ] Después del merge Cloud, actualizar su gitlink en una rama raíz —Hubs ya
+  queda fijado por el PR de Fase 3B— e integrar el consumidor de
+  recibos/evidencia: operación privada ligada a
+  checkpoint, commits Hubs/Cloud, cuatro digests, contexto/UID y candidato; sin
+  esa cadena `advance` y `promote` deben fallar sin mutar archivos.
+- [ ] Sobre esos nuevos bytes —sus inputs sí habrán cambiado— ejecutar una vez
+  `./scripts/verify-project.sh` y `./scripts/verify-project.sh --full`, hacer una
+  única revisión final, y solo entonces publicar/validar/fusionar el PR raíz.
+  No repetirlos tras quedar verdes salvo cambio material posterior.
+- [ ] Congelar los commits Hubs y Cloud fijados por ese root limpio. Justo antes
+  del build,
   actualizar ambos `REGISTRY_PASSWORD` de Actions mediante el supervisor
   Keychain y exigir `aud065_actions_secrets_updated`; OLD permanece válido y no
   se revoca nada todavía.
@@ -431,7 +985,13 @@ un runner gestionado para la sala.
   `bot-orchestrator` y `bot-runner` desde ese commit Cloud exacto. Esta es una
   excepción de supply-chain sin deploy: no crea checkpoint, no genera/aplica
   manifiesto y no cambia Kubernetes.
-- [ ] Detenerse ante cualquier fallo o publicación parcial de Actions/GHCR. No
+- [ ] Construir Hubs mediante el workflow Actions aprobado
+  `custom-docker-build-push` desde el commit Hubs exacto fijado por el mismo
+  root y resolver su digest inmutable. El build no genera/aplica manifiesto ni
+  cambia Kubernetes.
+
+Regla fail-closed: detenerse ante cualquier fallo o publicación parcial de
+Actions/GHCR. No
   aceptar parent sin runner o viceversa, y no usar builds dentro del clúster,
   hotpatches, `kubectl cp`, `kubectl set image` ni reemplazos manuales.
 - [ ] Descargar y conservar exactamente cinco ficheros distintos del mismo run:
@@ -439,21 +999,29 @@ un runner gestionado para la sala.
   Reticulum, parent y runner. Exigir que las cuatro atestaciones liguen las tres
   imágenes al mismo commit, workflow e `invocationId`; una ausencia, alias,
   publicación parcial o digest escrito a mano bloquea la fase.
-- [ ] Verificar esos cinco ficheros únicamente desde un root limpio con
+- [ ] Conservar y verificar además el identificador de run, commit y digest del
+  build Hubs contra el gitlink Hubs exacto. Esta evidencia es independiente de
+  los cinco ficheros Cloud y no se sustituye por un tag o un digest escrito a
+  mano.
+- [ ] Verificar las evidencias Cloud y Hubs únicamente desde un root limpio con
   `HEAD=main=origin/main`; el verificador deriva el commit esperado del gitlink
-  `hubs-cloud`, exige que checkout y `origin/master` lo contengan y devuelve los
-  tres digests inmutables. No acepta un override de commit o imagen.
+  correspondiente, exige que cada checkout y `origin/master` lo contengan y
+  devuelve los cuatro digests inmutables. No acepta un override de commit o
+  imagen.
 - [ ] Para las verificaciones OCI, materializar desde el pull config privado un
   `DOCKER_CONFIG` efímero mediante el helper trackeado: padre y directorio
   temporales owner-only `0700`, `config.json` `0600`, sin `docker login`, argv ni
   entorno global, y borrado/wipe incluso si falla la atestación.
 - [ ] Confirmar contexto Kubernetes, namespace, UID, PVC, Deployments e imágenes
-  mediante rutas redactadas; no abrir ni imprimir manifiestos privados.
+  mediante rutas redactadas; no abrir ni imprimir manifiestos privados. Exigir
+  además un `kubectl` dentro del skew soportado de +/-1 minor frente al API
+  server: el cliente local observado `1.36.2` no puede mutar el servidor
+  `1.34.8`; usar/pinear `1.34.x` o `1.35.x` antes de cualquier operación live.
 - [ ] Crear el primer checkpoint nuevo con
   `ALLOW_CHECKPOINT_DOWNTIME=1 ./deployment/create-checkpoint.sh` antes de que el
   completador de OLD adquiera el Lease global. Debe incluir PostgreSQL y
   `ret-pvc`; verificar `SHA256SUMS`, gzip, contrato DB, pares de storage y restore
-  dry-run, y conservar la copia cifrada exigida.
+  dry-run, evidencia `legacy-absent` y la copia cifrada exigida.
 - [ ] Ejecutar desde `main` el completador versionado de OLD. Primero hace una
   copia byte-exacta y ligada por inode de los cinco artefactos ya validados en
   un snapshot privado aleatorio antes del primer `kubectl`; solo esa copia puede
@@ -477,7 +1045,9 @@ un runner gestionado para la sala.
   completo y exigir exactamente `aud065_new_values_prepared_from_keychain` y
   `aud065_new_values_verified`. NEW usa las credenciales nuevas pero conserva
   todos los workloads live y el binding runner exacto.
-- [ ] Mantener OLD, NEW y las credenciales bajo exclusión de escritores. No crear
+
+Regla de estado: mantener OLD, NEW y las credenciales bajo exclusión de
+escritores. No crear
   todavía los snapshots sellados ni generar el manifiesto candidato.
 
 Resultado: existen los artefactos finales y las dos fuentes completas de
@@ -520,14 +1090,15 @@ recuperación one-way; todavía no se ha desplegado el candidato.
 
 - [ ] Crear y validar un segundo checkpoint conjunto fresco del baseline ya
   rotado. Repetirlo si supera el TTL o cambian DB, storage, commits, digests,
-  values o inventario relevantes.
+  values o inventario relevantes; antes del cutover todavía debe registrar
+  `legacy-absent` exacto.
 - [ ] Desde la fuente canónica ya promovida por `AUD-065`, crear una operación
   privada ligada al segundo checkpoint y publicar una copia candidata bootstrap
   separada mediante el gestor versionado. El gestor vuelve a verificar el
   recibo y los cuatro bundles con un `DOCKER_CONFIG` efímero dentro del padre
   privado de la candidata, deriva sin overrides los digests finales de
-  Reticulum, parent y runner y fija la credencial GHCR NEW; no modificar los
-  OLD/NEW sellados de la rotación.
+  Hubs, Reticulum, parent y runner desde sus evidencias respectivas y fija la
+  credencial GHCR NEW; no modificar los OLD/NEW sellados de la rotación.
 - [ ] Exigir `aud065_candidate_values_created` y
   `aud065_candidate_values_verified`, además de recibo conjunto de procedencia,
   pulls de todos los digests GHCR, baseline exacto sellado y preservación
@@ -535,21 +1106,45 @@ recuperación one-way; todavía no se ha desplegado el candidato.
 - [ ] Ejecutar preflight final contra ese segundo checkpoint, commits y digests.
   Generar el manifiesto completo desde la copia candidata; nunca editar
   `hcce.yaml`.
-- [ ] Ejecutar el diff privado/redactado y aplicar `bootstrap` únicamente con
-  `KUBECTL_CONTEXT` exacto y `npm run apply`; Reticulum compatible y sus
-  migraciones llegan primero mientras la autoridad runner permanece inerte.
-- [ ] Revisar el inventario de `AUD-077`. Avanzar la copia candidata únicamente
-  al consumir el recibo bootstrap final del wrapper trackeado, regenerar/diff/apply y exigir
-  policy, RBAC efectivo y probe negativo con el parent parado.
+- [ ] Fijar un destino staging aislado y context-pinned que no cree recursos
+  DigitalOcean ni coste adicional. Si no existe una ruta aislada sobre la
+  infraestructura actual y hiciera falta crear o ampliar recursos, detenerse en
+  el cost gate y pedir autorización explícita; no llamar staging a un canary
+  improvisado en producción.
+- [ ] Desde Spoke y con checkpoint 2 ya válido, publicar en el contenido de
+  staging los asientos previstos con `Disable motion`, `Can be occupied` y
+  `Clickable`, conservar un `networked.id` estable y comprobar que
+  `info@virtualmente.com` mantiene propiedad editable del proyecto `qa3U3Ke` y
+  la escena `f6VKtim`. No editar geometría o waypoints fuera de Spoke.
+- [ ] Aplicar en staging dos manifiestos completos y trackeados: primero
+  Reticulum protocol 2 conservando el digest Hubs anterior y verificando
+  migración, capability y compatibilidad legacy; después el digest Hubs
+  candidato con la autoridad runner aún inerte. Correr la carrera de dos
+  navegadores sobre el mismo asiento y exigir exactamente un ganador, pose
+  remota idéntica, Stand, reclaim y release por desconexión. Solo esos mismos
+  cuatro digests pueden pasar a producción.
+- [ ] Ejecutar en producción el diff privado/redactado y aplicar la generación
+  `bootstrap-server` únicamente con `KUBECTL_CONTEXT` exacto y `npm run apply`;
+  Reticulum compatible y sus migraciones llegan primero, el digest Hubs live se
+  conserva y la autoridad runner permanece inerte.
+- [ ] Consumir el recibo exacto `bootstrap-server` para generar/aplicar la
+  generación completa `bootstrap-client` con el digest Hubs ya aceptado en
+  staging. Reiniciar Reticulum mediante el wrapper/runbook para renovar
+  HTML/assets con hash y repetir capability/cold-load estrecho antes de avanzar.
+- [ ] Revisar el inventario de `AUD-077`, registrar fingerprints redactados y
+  aprobar o rechazar individualmente cada configuración; no existe aprobación
+  masiva ni autostart de una configuración no aprobada. Avanzar la copia
+  candidata únicamente al consumir el recibo `bootstrap-client` final del
+  wrapper trackeado, regenerar/diff/apply y exigir policy, RBAC efectivo y probe
+  negativo con el parent parado.
 - [ ] Avanzar después `admission -> active` solo con el recibo admission
   encadenado, volver a verificar,
   regenerar/diff/apply y exigir `/transport-ready`, readiness autoritativa,
   NetworkPolicies exactas, un Pod runner por sala y cero huérfanos.
-- [ ] No usar `kubectl apply -f hcce.yaml`, parches manuales ni atajos. Mantener
+Regla de rollout: no usar `kubectl apply -f hcce.yaml`, parches manuales ni
+atajos. Mantener
   Reticulum en una réplica, `Recreate`, sin HPA y con el contrato de `ret-pvc`.
-- [ ] Si cambia la imagen Hubs, reiniciar Reticulum según el runbook para renovar
-  HTML/assets con hash. Ante cualquier fallo, detener el rollout y usar el
-  rollback publicado.
+Ante cualquier fallo, detener el rollout y usar el rollback publicado.
 
 Resultado: producción ejecuta el candidato endurecido sin una ventana de
 autoridad mixta; la promoción canónica final espera la aceptación.
@@ -559,7 +1154,11 @@ autoridad mixta; la promoción canónica final espera la aceptación.
 - [ ] Ejecutar `./deployment/verify-live-reactivation.sh` con cero fallos y cero
   avisos.
 - [ ] Realizar carga fría desktop y móvil comprobando página, consola, red,
-  `APP`, `AFRAME`, escena, assets y audio.
+  `APP`, `AFRAME`, escena, assets, audio, UI española, cámara primera/tercera
+  persona y layouts sin overflow, sin errores ni warnings first-party.
+- [ ] Solicitar y consumir un magic link real con la credencial Mailtrap nueva,
+  entrar con `info@virtualmente.com` y comprobar acceso operativo a sala y Admin
+  sin registrar token, contenido del correo ni otros datos sensibles.
 - [ ] Realizar un smoke de audio con dos sesiones aisladas que publiquen y
   consuman audio y alcancen signaling, ICE y `PeerConnection` conectado; no es
   una prueba de carga.
@@ -579,10 +1178,17 @@ autoridad mixta; la promoción canónica final espera la aceptación.
   safety ID y acciones allowlisted.
 - [ ] Revisar logs de Hubs, Reticulum, parent y runner sin exponer su contenido
   sensible.
-- [ ] Probar el flujo GLB manual/provider-neutral y Spoke únicamente en la medida
-  necesaria para demostrar que el rollout no los rompió.
+- [ ] Probar con contenido desechable el flujo GLB manual/provider-neutral,
+  avatar normal y full-body, preview/import Admin y Featured; verificar además
+  que `info@virtualmente.com` conserva propiedad y capacidad de edición/publicación
+  del proyecto Spoke `qa3U3Ke` y la escena `f6VKtim`, sin republicar contenido
+  permanente salvo el cambio de asientos ya aprobado.
 - [ ] Verificar backup/restore y rollback en modo seguro previsto por el runbook;
   no ejecutar una restauración destructiva live como smoke.
+- [ ] Después de alcanzar `P6` y la aceptación live, crear y validar un tercer
+  checkpoint conjunto fresco con DB, `ret-pvc` y evidencia `durable-v2` del
+  journal/HMAC; conservar una segunda copia cifrada. Los checkpoints 1 y 2 no
+  sustituyen este artefacto posterior al cutover.
 - [ ] Solo después de toda la aceptación live, promover por CAS la copia candidata
   `active` a la fuente canónica mediante el gestor versionado, exigiendo los
   recibos encadenados `active`, live 0/0 y cold-browser desktop/móvil, y conservar la
@@ -600,7 +1206,9 @@ autoridad mixta; la promoción canónica final espera la aceptación.
 2. Marcar una casilla únicamente con evidencia concreta: commit, PR, workflow,
    comando, cuenta exacta o resultado live.
 3. No repetir un gate verde si no cambió ninguno de sus inputs. Tras cambios
-   documentales se usa validación documental/estática proporcional.
+   documentales se usa validación documental/estática proporcional. Si un gate
+   falla, se corrige una causa concreta y con ello cambian sus inputs, una sola
+   revalidación post-corrección es necesaria y no constituye un loop.
 4. No confundir proceso activo, Pod Ready o HTTP 200 con aceptación funcional.
 5. Integrar siempre el subrepo antes de actualizar y fusionar su puntero raíz.
 6. Mantener feature, actualización upstream, dependencias y despliegue en
@@ -611,6 +1219,10 @@ autoridad mixta; la promoción canónica final espera la aceptación.
    el error exacto; no se finge éxito ni se cambia de método.
 10. Nunca imprimir, abrir, buscar ampliamente ni usar como evidencia un fichero
     privado que pueda contener secretos.
+11. La auditoría general de proceso del 1 de agosto se ejecuta una sola vez. No
+    reabrirla ni rediseñar trabajo ya verificado salvo evidencia nueva concreta;
+    las revisiones futuras se limitan al diff material de cada PR y a su gate de
+    aceptación correspondiente.
 
 ## Registro de avance
 
@@ -641,9 +1253,10 @@ resumida, siempre sin secretos.
 | 2026-07-19 01:29 CEST | Fase 2A: revisión adversarial del cierre GHCR | La captura/preparación exigen ahora 44 recursos operativos; el bundle aplica por prefijo 2 Secrets más 6 Deployments y liga 16 recursos, con `ServiceAccount/default` bind-only. La estructura live de `ghcr-pull` se inspeccionó de forma redactada y reveló la forma histórica `metadata.annotations:{}` del last-applied, ya cubierta. Materialización 18/18, coordinador 154/154 y auditoría 31/31 están verdes. Dos revisiones cerraron un falso exit 0 del harness, una afirmación de ausencia no demostrable, ABA de RV final y riesgo de stream interactivo. Detectaron además que faltaba demostrar permisos reales del PAT nuevo antes del primer CAS. | Integrar el gate de red old+new para todos los digests GHCR fijados más runner antes de lock/mutación y revalidarlo antes del restart; después repetir el agregado, seguridad, recuperación, revisión, CI y merge. Producción no fue mutada. |
 | 2026-07-19 02:03 CEST | Fase 2A: gate GHCR online y agregado local final | El gate lee snapshots privados estables, autentica por pull cada digest GHCR aplicable más runner y exige el digest exacto. `plan` y execute/resume/rollback prueban OLD -> NEW; cualquier fallo libera el Lease antes del operation lock/callbacks. NEW se revalida antes del primer pool y en audit. El coordinador final pasa 163/163 y el agregador de 15 suites termina con `exit 0`, incluidos GHCR 44/44, materialización 18/18 y auditoría 31/31. Dos revisiones independientes no encuentran falsos verdes P1/P2. | Ejecutar seguridad, recuperación y gates raíz/estáticos; publicar el nuevo SHA, exigir CI verde y fusionar PR `#6`. Producción permanece intacta. |
 | 2026-07-19 02:44 CEST | Fase 2A: gates raíz finales | `verify-project.sh` y `verify-project.sh --full` terminan con código 0 sobre el árbol final. Pasan seguridad 47/47, recuperación 243/243, el agregado AUD-065, Actionlint, ShellCheck, tres escaneos Gitleaks y auditoría upstream; además Hubs 97/97 y build, Admin, navegador 11/11, capacidad 115/115 fail-closed, servicios CE, Spoke 68/68 y build, y Reticulum 430 tests + 5 properties. | Revisar/stagear el diff exacto, crear y publicar el commit, exigir el nuevo CI verde y fusionar PR `#6`; no crear aún checkpoint ni mutar producción. |
-La copia autoritativa está ahora en `/Users/Shared/Gits/YenHubs` con la misma
-ruta relativa. La Fase 2A ya quedó publicada y fusionada; cualquier worktree
-anterior es únicamente evidencia histórica y nunca se reanuda trabajo desde él.
+Esa afirmación pertenecía al cierre histórico de Fase 2A. En la Fase 3B actual,
+la copia autoritativa es la del worktree `YenHubs-aud078-root` indicada en el
+panel superior. La autoridad volverá a `/Users/Shared/Gits/YenHubs` únicamente
+después de fusionar el PR raíz y sincronizar un `main=origin/main` limpio.
 
 ## Prompt de meta
 
@@ -651,21 +1264,34 @@ Copiar literalmente el siguiente texto como meta:
 
 ```text
 Completa el cierre seguro y endurecido de YenHubs siguiendo
-/Users/Shared/Gits/YenHubs/docs/active-goal-plan-2026-07-18.md
-como única fuente de verdad operativa y respetando también AGENTS.md. Reanuda
-desde la primera casilla pendiente de la fase activa, actualiza en este Markdown
-solo su estado, casillas y evidencia resumida, registra el historial de sesión
-exclusivamente en docs/session-changelog.md y no repitas gates verdes salvo que
-hayan cambiado sus inputs. Conserva el runtime que ya
-funciona, no expongas secretos y no mutes producción antes de disponer del
-checkpoint y las comprobaciones exigidas. Integra subrepositorios antes que sus
-punteros raíz, usa únicamente GitHub Actions para imágenes, despliega mediante el
-flujo fail-closed publicado y no termines en la integración de código: continúa
-hasta la aceptación live y el cierre documental, o registra con evidencia un
-bloqueo externo real. Respeta explícitamente lo que el plan declara fuera de
-alcance: no certifiques 30/100/300/10.000 usuarios, no conviertas Reticulum en
-multi-réplica, no modernices masivamente Spoke/dependencias, no incorpores
-upstream/master y no añadas trabajos de VR, SaaS de avatares o infraestructura
-no necesaria. No pidas aprobaciones rutinarias ya concedidas, pero mantén todos
-los gates de seguridad, coste, rollback y protección de datos del repositorio.
+la copia trackeada de docs/active-goal-plan-2026-07-18.md en el worktree raíz
+activo declarado en su panel superior y respetando también AGENTS.md. En el
+punto actual la fuente exacta es
+/Users/Shared/Gits/YenHubs-aud078-root/docs/active-goal-plan-2026-07-18.md;
+después de fusionar el PR raíz de Fase 3B, sincroniza un
+/Users/Shared/Gits/YenHubs limpio en main, actualiza el campo Worktree activo y
+continúa desde esa copia. Nunca reanudes desde aud075/aud076/aud077.
+
+Reanuda desde la primera acción del panel operativo y trabaja una sola casilla
+de la fase activa cada vez. Actualiza en el plan solo estado, casillas y
+evidencia resumida; registra el historial exclusivamente en
+docs/session-changelog.md. No repitas gates o auditorías verdes salvo cambio
+material de inputs o un fallo concreto. Conserva el runtime que ya funciona,
+no expongas secretos y no mutes producción antes de los checkpoints y gates
+exigidos.
+
+Integra subrepositorios antes que sus punteros raíz. Construye únicamente por
+GitHub Actions las imágenes Hubs, Reticulum, parent y runner, fija sus digests y
+procedencia, ejecuta staging Reticulum-first/Hubs-second con sitting v2 y
+promueve exactamente los mismos digests mediante el flujo fail-closed
+publicado. No termines en la integración de código: continúa hasta aceptación
+live, checkpoint durable final y cierre documental, o registra con evidencia un
+bloqueo externo real.
+
+Respeta lo que el plan declara fuera de alcance: no certifiques
+30/100/300/10.000 usuarios, no conviertas Reticulum en multi-réplica, no
+modernices masivamente Spoke/dependencias, no incorpores upstream/master y no
+añadas VR, SaaS de avatares o infraestructura no necesaria. No pidas
+aprobaciones rutinarias ya concedidas, pero conserva los gates de seguridad,
+coste, rollback y protección de datos.
 ```

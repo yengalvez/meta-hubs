@@ -60,8 +60,8 @@ else
   fail_test "sitting capability negotiation contract"
 fi
 
-bot_ready_good='{"ok":true,"authoritative_snapshot_ready":true,"capacity_exceeded":false,"configured_room_count":1,"max_active_rooms":5,"snapshot_reason":"ready","snapshot_age_ms":100,"runner_health_ttl_ms":30000,"authoritative_snapshot_ttl_ms":60000,"expected_hubs":["room-a"],"unready_hubs":[],"process_hubs":["room-a"],"extra_process_hubs":[],"stopping_hubs":[],"active_hubs":["room-a"],"runner_bots":{"room-a":{"authenticated":true,"authoritative_spawn_acks":true,"navigation_ready":true,"config_applied":true,"ready":true,"lifecycle":"running","reason":"ready","desired":5,"active":5}}}'
-bot_ready_bad='{"ok":true,"authoritative_snapshot_ready":true,"capacity_exceeded":false,"configured_room_count":1,"max_active_rooms":5,"snapshot_reason":"ready","snapshot_age_ms":100,"runner_health_ttl_ms":30000,"authoritative_snapshot_ttl_ms":60000,"expected_hubs":["room-a"],"unready_hubs":[],"process_hubs":["room-a"],"extra_process_hubs":[],"stopping_hubs":[],"active_hubs":["room-a"],"runner_bots":{"room-a":{"authenticated":true,"authoritative_spawn_acks":false,"navigation_ready":true,"config_applied":true,"ready":true,"lifecycle":"running","reason":"ready","desired":5,"active":5}}}'
+bot_ready_good='{"ok":true,"authoritative_snapshot_ready":true,"capacity_exceeded":false,"configured_room_count":1,"max_active_rooms":5,"runner_guard_capacity":{"observed":true,"intents":0,"fences":0,"total":0,"warning":false,"warning_threshold":60,"start_limit":80,"reserve":20,"quota":100},"snapshot_reason":"ready","snapshot_age_ms":100,"runner_health_ttl_ms":30000,"authoritative_snapshot_ttl_ms":60000,"expected_hubs":["room-a"],"unready_hubs":[],"process_hubs":["room-a"],"extra_process_hubs":[],"stopping_hubs":[],"active_hubs":["room-a"],"runner_bots":{"room-a":{"authenticated":true,"authoritative_spawn_acks":true,"navigation_ready":true,"config_applied":true,"ready":true,"lifecycle":"running","reason":"ready","desired":5,"active":5}}}'
+bot_ready_bad='{"ok":true,"authoritative_snapshot_ready":true,"capacity_exceeded":false,"configured_room_count":1,"max_active_rooms":5,"runner_guard_capacity":{"observed":true,"intents":0,"fences":0,"total":0,"warning":false,"warning_threshold":60,"start_limit":80,"reserve":20,"quota":100},"snapshot_reason":"ready","snapshot_age_ms":100,"runner_health_ttl_ms":30000,"authoritative_snapshot_ttl_ms":60000,"expected_hubs":["room-a"],"unready_hubs":[],"process_hubs":["room-a"],"extra_process_hubs":[],"stopping_hubs":[],"active_hubs":["room-a"],"runner_bots":{"room-a":{"authenticated":true,"authoritative_spawn_acks":false,"navigation_ready":true,"config_applied":true,"ready":true,"lifecycle":"running","reason":"ready","desired":5,"active":5}}}'
 if reactivation_bot_readiness_is_acceptable "$bot_ready_good" &&
   ! reactivation_bot_readiness_is_acceptable "$bot_ready_bad" &&
   ! reactivation_bot_readiness_is_acceptable "${bot_ready_good/\"ok\":true/\"ok\":true,\"unexpected\":true}" &&
@@ -78,6 +78,9 @@ if reactivation_bot_readiness_is_acceptable "$bot_ready_good" &&
   ! reactivation_bot_readiness_is_acceptable "${bot_ready_good/\"config_applied\":true/\"config_applied\":true,\"unexpected\":true}" &&
   ! reactivation_bot_readiness_is_acceptable "${bot_ready_good/\"lifecycle\":\"running\"/\"lifecycle\":\"starting\"}" &&
   ! reactivation_bot_readiness_is_acceptable "${bot_ready_good/\"snapshot_age_ms\":100/\"snapshot_age_ms\":60001}" &&
+  ! reactivation_bot_readiness_is_acceptable "${bot_ready_good/\"observed\":true/\"observed\":false}" &&
+  ! reactivation_bot_readiness_is_acceptable "${bot_ready_good/\"intents\":0,\"fences\":0,\"total\":0,\"warning\":false/\"intents\":30,\"fences\":30,\"total\":60,\"warning\":true}" &&
+  ! reactivation_bot_readiness_is_acceptable "${bot_ready_good/\"total\":0/\"total\":1}" &&
   ! reactivation_bot_readiness_is_acceptable "${bot_ready_good/\"runner_bots\":{/\"runner_bots\":{\"room-extra\":{},}"; then
   pass_test "bot readiness requires exact keys, running lifecycle, fresh snapshot, auth, ACK, navigation, config and population"
 else
@@ -85,8 +88,9 @@ else
 fi
 
 if real_ready_payload="$(node "$ROOT_DIR/tests/scripts/emit-real-readiness-payload.mjs")" &&
-  reactivation_bot_readiness_is_acceptable "$real_ready_payload"; then
-  pass_test "root readiness accepts the payload emitted by the real HTTP handler"
+  reactivation_bot_readiness_payload_is_well_formed "$real_ready_payload" &&
+  ! reactivation_bot_readiness_is_acceptable "$real_ready_payload"; then
+  pass_test "root readiness recognizes the real HTTP payload and requires observed guard capacity for production"
 else
   fail_test "root readiness must be tested against the real HTTP handler"
 fi
@@ -1259,6 +1263,23 @@ if [[ -x "$aud065_aggregate" && "$aud065_inventory_ok" == true ]] &&
   pass_test "AUD-065 aggregate and external PostgreSQL 12/14 CI matrix are pinned"
 else
   fail_test "AUD-065 aggregate, local gate or PostgreSQL CI matrix drift"
+fi
+
+causal_monitor_gate_inventory_ok=true
+for causal_monitor_test in \
+  runner-cutover-checkpoint-evidence.test.mjs \
+  durable-runner-quiescence-monitor.test.mjs; do
+  [[ "$(grep -Fc "$causal_monitor_test" \
+    "$ROOT_DIR/scripts/verify-project.sh")" == 1 ]] ||
+    causal_monitor_gate_inventory_ok=false
+  [[ "$(grep -Fc "$causal_monitor_test" \
+    "$ROOT_DIR/.github/workflows/project-security.yml")" == 1 ]] ||
+    causal_monitor_gate_inventory_ok=false
+done
+if [[ "$causal_monitor_gate_inventory_ok" == true ]]; then
+  pass_test "runner evidence and causal monitor coverage are pinned in local and CI gates"
+else
+  fail_test "runner evidence or causal monitor gate coverage drift"
 fi
 
 printf '\n%d security gate regression tests passed\n' "$test_count"

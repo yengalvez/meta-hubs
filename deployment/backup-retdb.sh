@@ -16,6 +16,15 @@ OUTPUT_DIR="$(dirname "$OUTPUT_PATH")"
 CONTRACT_OUTPUT_PATH="$OUTPUT_DIR/database-contract.json"
 NAMESPACE="${NAMESPACE:-hcce}"
 COORDINATED="${BACKUP_COORDINATED:-0}"
+if [[ "$COORDINATED" != 0 && "$COORDINATED" != 1 ]]; then
+  printf 'BACKUP_COORDINATED must be 0 or 1.\n' >&2
+  exit 2
+fi
+if [[ "$COORDINATED" != 1 ]]; then
+  printf 'Standalone database backup is superseded. Run %s/create-checkpoint.sh so PostgreSQL metadata and ret-pvc bytes are captured together.\n' \
+    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" >&2
+  exit 1
+fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The coordinated parent exports its immutable server-side lock binding. The
 # shared library deliberately clears materialization state when sourced, so
@@ -26,18 +35,67 @@ PARENT_DUMP_SHA256="${RECOVERY_DUMP_SHA256:-}"
 PARENT_STORAGE_SHA256="${RECOVERY_STORAGE_SHA256:-}"
 PARENT_NAMESPACE_UID="${RECOVERY_NAMESPACE_UID:-}"
 PARENT_PVC_UID="${RECOVERY_PVC_UID:-}"
+PARENT_CHECKPOINT_RUNNER_GENERATION="${CHECKPOINT_RUNNER_GENERATION:-}"
+PARENT_DURABLE_FENCE_BASELINE_PATH="${CHECKPOINT_DURABLE_FENCE_BASELINE_PATH:-}"
+PARENT_DURABLE_FENCE_BASELINE_SHA256="${CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256:-}"
+PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY="${YENHUBS_PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY:-}"
 PARENT_LEASE_HOLDER="${YENHUBS_PARENT_LEASE_HOLDER:-}"
 PARENT_LEASE_UID="${YENHUBS_PARENT_LEASE_UID:-}"
 PARENT_PROCESS_PID="${YENHUBS_PARENT_PROCESS_PID:-}"
 PARENT_PROCESS_START_IDENTITY="${YENHUBS_PARENT_PROCESS_START_IDENTITY:-}"
+PARENT_WRITER_MONITOR_CONTRACT_PATH="${YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_PATH:-}"
+PARENT_WRITER_MONITOR_CONTRACT_SHA256="${YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_SHA256:-}"
+PARENT_WRITER_MONITOR_BASELINE_PATH="${YENHUBS_PARENT_WRITER_MONITOR_BASELINE_PATH:-}"
+PARENT_WRITER_MONITOR_BASELINE_SHA256="${YENHUBS_PARENT_WRITER_MONITOR_BASELINE_SHA256:-}"
+PARENT_WRITER_MONITOR_PID="${YENHUBS_PARENT_WRITER_MONITOR_PID:-}"
+PARENT_WRITER_MONITOR_START_IDENTITY="${YENHUBS_PARENT_WRITER_MONITOR_START_IDENTITY:-}"
+PARENT_WRITER_MONITOR_FAILURE_PATH="${YENHUBS_PARENT_WRITER_MONITOR_FAILURE_PATH:-}"
+PARENT_WRITER_MONITOR_READY_PATH="${YENHUBS_PARENT_WRITER_MONITOR_READY_PATH:-}"
+PARENT_WRITER_MONITOR_PROGRESS_PATH="${YENHUBS_PARENT_WRITER_MONITOR_PROGRESS_PATH:-}"
+PARENT_WRITER_MONITOR_AUTHORITY_SHA256="${YENHUBS_PARENT_WRITER_MONITOR_AUTHORITY_SHA256:-}"
+PARENT_WRITER_MONITOR_MAX_STALE_SECONDS=""
+PARENT_STREAM_GUARD_ARGS=()
+PARENT_DURABLE_MONITOR_CONTROL_BASELINE_PATH="${YENHUBS_PARENT_DURABLE_MONITOR_CONTROL_BASELINE_PATH:-}"
+PARENT_DURABLE_MONITOR_CONTROL_BASELINE_SHA256="${YENHUBS_PARENT_DURABLE_MONITOR_CONTROL_BASELINE_SHA256:-}"
+PARENT_DURABLE_MONITOR_PID="${YENHUBS_PARENT_DURABLE_MONITOR_PID:-}"
+PARENT_DURABLE_MONITOR_START_IDENTITY="${YENHUBS_PARENT_DURABLE_MONITOR_START_IDENTITY:-}"
+PARENT_DURABLE_MONITOR_FAILURE_PATH="${YENHUBS_PARENT_DURABLE_MONITOR_FAILURE_PATH:-}"
+PARENT_DURABLE_MONITOR_READY_PATH="${YENHUBS_PARENT_DURABLE_MONITOR_READY_PATH:-}"
+PARENT_DURABLE_MONITOR_PROGRESS_PATH="${YENHUBS_PARENT_DURABLE_MONITOR_PROGRESS_PATH:-}"
+PARENT_DURABLE_MONITOR_CAPABILITY_SHA256="${YENHUBS_PARENT_DURABLE_MONITOR_CAPABILITY_SHA256:-}"
+PARENT_DURABLE_MONITOR_AUTHORITY_SHA256="${YENHUBS_PARENT_DURABLE_MONITOR_AUTHORITY_SHA256:-}"
+PARENT_DURABLE_MONITOR_MAX_STALE_SECONDS=""
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
+unset YENHUBS_PARENT_WRITER_MONITOR_PID \
+  YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_PATH \
+  YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_SHA256 \
+  YENHUBS_PARENT_WRITER_MONITOR_BASELINE_PATH \
+  YENHUBS_PARENT_WRITER_MONITOR_BASELINE_SHA256 \
+  YENHUBS_PARENT_WRITER_MONITOR_START_IDENTITY \
+  YENHUBS_PARENT_WRITER_MONITOR_FAILURE_PATH \
+  YENHUBS_PARENT_WRITER_MONITOR_READY_PATH \
+  YENHUBS_PARENT_WRITER_MONITOR_PROGRESS_PATH \
+  YENHUBS_PARENT_WRITER_MONITOR_AUTHORITY_SHA256 \
+  YENHUBS_PARENT_DURABLE_MONITOR_CONTROL_BASELINE_PATH \
+  YENHUBS_PARENT_DURABLE_MONITOR_CONTROL_BASELINE_SHA256 \
+  YENHUBS_PARENT_DURABLE_MONITOR_PID \
+  YENHUBS_PARENT_DURABLE_MONITOR_START_IDENTITY \
+  YENHUBS_PARENT_DURABLE_MONITOR_FAILURE_PATH \
+  YENHUBS_PARENT_DURABLE_MONITOR_READY_PATH \
+  YENHUBS_PARENT_DURABLE_MONITOR_PROGRESS_PATH \
+  YENHUBS_PARENT_DURABLE_MONITOR_CAPABILITY_SHA256 \
+  YENHUBS_PARENT_DURABLE_MONITOR_AUTHORITY_SHA256 \
+  YENHUBS_PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY
 if [[ "$COORDINATED" == 1 ]]; then
   RECOVERY_CHECKPOINT_STAMP="$PARENT_CHECKPOINT_STAMP"
   RECOVERY_DUMP_SHA256="$PARENT_DUMP_SHA256"
   RECOVERY_STORAGE_SHA256="$PARENT_STORAGE_SHA256"
   RECOVERY_NAMESPACE_UID="$PARENT_NAMESPACE_UID"
   RECOVERY_PVC_UID="$PARENT_PVC_UID"
+  CHECKPOINT_RUNNER_GENERATION="$PARENT_CHECKPOINT_RUNNER_GENERATION"
+  CHECKPOINT_DURABLE_FENCE_BASELINE_PATH="$PARENT_DURABLE_FENCE_BASELINE_PATH"
+  CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256="$PARENT_DURABLE_FENCE_BASELINE_SHA256"
   recovery_adopt_parent_operation_serialization \
     "$PARENT_LEASE_HOLDER" "$PARENT_LEASE_UID" \
     "$PARENT_PROCESS_PID" "$PARENT_PROCESS_START_IDENTITY"
@@ -45,25 +103,268 @@ fi
 unset YENHUBS_PARENT_LEASE_HOLDER YENHUBS_PARENT_LEASE_UID \
   YENHUBS_PARENT_PROCESS_PID YENHUBS_PARENT_PROCESS_START_IDENTITY
 
-if [[ "$COORDINATED" != 0 && "$COORDINATED" != 1 ]]; then
-  printf 'BACKUP_COORDINATED must be 0 or 1.\n' >&2
-  exit 2
+require_parent_writer_monitor_capability() {
+  [[ "$(recovery_monitor_authority_sha256_for_ready \
+      "$PARENT_WRITER_MONITOR_READY_PATH" 2>/dev/null || :)" == \
+     "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" ]] &&
+  recovery_require_checkpoint_writer_monitor_healthy \
+    "$PARENT_WRITER_MONITOR_CONTRACT_PATH" \
+    "$PARENT_WRITER_MONITOR_CONTRACT_SHA256" \
+    "$PARENT_WRITER_MONITOR_BASELINE_PATH" \
+    "$PARENT_WRITER_MONITOR_BASELINE_SHA256" \
+    "$PARENT_WRITER_MONITOR_FAILURE_PATH" \
+    "$PARENT_WRITER_MONITOR_READY_PATH" \
+    "$PARENT_WRITER_MONITOR_PID" \
+    "$PARENT_WRITER_MONITOR_START_IDENTITY" \
+    "$CHECKPOINT_RUNNER_GENERATION" \
+    "$RECOVERY_OPERATION_OWNER" &&
+    recovery_stream_guard_progress_value \
+      "$PARENT_WRITER_MONITOR_PROGRESS_PATH" \
+      "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" >/dev/null
+}
+
+require_parent_durable_monitor_capability() {
+  [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 &&
+     -n "$PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY" &&
+     "$PARENT_DURABLE_MONITOR_CONTROL_BASELINE_PATH" == \
+       "$PARENT_WRITER_MONITOR_BASELINE_PATH" &&
+     "$PARENT_DURABLE_MONITOR_CONTROL_BASELINE_SHA256" == \
+       "$PARENT_WRITER_MONITOR_BASELINE_SHA256" &&
+     "$PARENT_DURABLE_MONITOR_PID" != "$PARENT_WRITER_MONITOR_PID" &&
+     "$(recovery_monitor_authority_sha256_for_ready \
+       "$PARENT_DURABLE_MONITOR_READY_PATH" 2>/dev/null || :)" == \
+       "$PARENT_DURABLE_MONITOR_AUTHORITY_SHA256" ]] || return 1
+  recovery_require_durable_runner_quiescence_monitor_healthy \
+    "$CHECKPOINT_DURABLE_FENCE_BASELINE_PATH" \
+    "$CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256" \
+    "$PARENT_DURABLE_MONITOR_CONTROL_BASELINE_PATH" \
+    "$PARENT_DURABLE_MONITOR_CONTROL_BASELINE_SHA256" \
+    "$PARENT_DURABLE_MONITOR_FAILURE_PATH" \
+    "$PARENT_DURABLE_MONITOR_READY_PATH" \
+    "$PARENT_DURABLE_MONITOR_PROGRESS_PATH" \
+    "$PARENT_DURABLE_MONITOR_PID" \
+    "$PARENT_DURABLE_MONITOR_START_IDENTITY" \
+    "$PARENT_DURABLE_MONITOR_CAPABILITY_SHA256" \
+    "$RECOVERY_OPERATION_OWNER" &&
+    recovery_stream_guard_progress_value \
+      "$PARENT_DURABLE_MONITOR_PROGRESS_PATH" \
+      "$PARENT_DURABLE_MONITOR_AUTHORITY_SHA256" >/dev/null &&
+    recovery_require_recovery_operation_fence_state active \
+      "$PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY"
+}
+
+if [[ "$COORDINATED" == 1 ]]; then
+  if ! require_parent_writer_monitor_capability ||
+     ! PARENT_WRITER_MONITOR_MAX_STALE_SECONDS="$(
+       recovery_stream_guard_max_stale_seconds
+     )"; then
+    printf 'Coordinated DB backup requires the live parent writer monitor guard.\n' >&2
+    exit 1
+  fi
+  PARENT_STREAM_GUARD_ARGS=(
+    --guard-process-capability checkpoint-writer-monitor
+    "$PARENT_WRITER_MONITOR_PID"
+    "$PARENT_WRITER_MONITOR_START_IDENTITY"
+    "$PARENT_WRITER_MONITOR_FAILURE_PATH"
+    "$PARENT_WRITER_MONITOR_READY_PATH"
+    "$PARENT_WRITER_MONITOR_PROGRESS_PATH"
+    "${PARENT_WRITER_MONITOR_READY_PATH}.authority.json"
+    "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256"
+    "$PARENT_WRITER_MONITOR_MAX_STALE_SECONDS"
+  )
+  if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
+    if ! require_parent_durable_monitor_capability ||
+       ! PARENT_DURABLE_MONITOR_MAX_STALE_SECONDS="$(
+         recovery_stream_guard_max_stale_seconds
+       )"; then
+      printf 'Coordinated durable DB backup requires the live parent durable monitor guard.\n' >&2
+      exit 1
+    fi
+    PARENT_STREAM_GUARD_ARGS+=(
+      --guard-process-capability durable-runner-quiescence-monitor
+      "$PARENT_DURABLE_MONITOR_PID"
+      "$PARENT_DURABLE_MONITOR_START_IDENTITY"
+      "$PARENT_DURABLE_MONITOR_FAILURE_PATH"
+      "$PARENT_DURABLE_MONITOR_READY_PATH"
+      "$PARENT_DURABLE_MONITOR_PROGRESS_PATH"
+      "${PARENT_DURABLE_MONITOR_READY_PATH}.authority.json"
+      "$PARENT_DURABLE_MONITOR_AUTHORITY_SHA256"
+      "$PARENT_DURABLE_MONITOR_MAX_STALE_SECONDS"
+    )
+  elif [[ -n "$PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY" ||
+          -n "$CHECKPOINT_DURABLE_FENCE_BASELINE_PATH" ||
+          -n "$CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256" ||
+          -n "$PARENT_DURABLE_MONITOR_CONTROL_BASELINE_PATH" ||
+          -n "$PARENT_DURABLE_MONITOR_CONTROL_BASELINE_SHA256" ||
+          -n "$PARENT_DURABLE_MONITOR_PID" ||
+          -n "$PARENT_DURABLE_MONITOR_START_IDENTITY" ||
+          -n "$PARENT_DURABLE_MONITOR_FAILURE_PATH" ||
+          -n "$PARENT_DURABLE_MONITOR_READY_PATH" ||
+          -n "$PARENT_DURABLE_MONITOR_PROGRESS_PATH" ||
+          -n "$PARENT_DURABLE_MONITOR_CAPABILITY_SHA256" ||
+          -n "$PARENT_DURABLE_MONITOR_AUTHORITY_SHA256" ]]; then
+    printf 'Legacy coordinated DB backup rejects inherited durable capabilities.\n' >&2
+    exit 1
+  fi
 fi
 
 require_backup_guard() {
   local deployment
-  [[ "$COORDINATED" == 1 ]] || return 0
-  [[ "${RECOVERY_OPERATION_OWNER:-}" == checkpoint-backup &&
-     -n "${RECOVERY_CONSUMER_CONTRACT_JSON:-}" ]] || return 1
+  [[ "$COORDINATED" == 1 &&
+     "${RECOVERY_OPERATION_OWNER:-}" == checkpoint-backup &&
+     -n "${RECOVERY_CONSUMER_CONTRACT_JSON:-}" &&
+     "$CHECKPOINT_RUNNER_GENERATION" =~ ^(legacy-absent|durable-v2)$ ]] ||
+    return 1
   recovery_require_operation_lock || return 1
   for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
     recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
       "$deployment" 0 || return 1
   done
-  recovery_require_no_managed_bot_runner_pods
+  require_parent_writer_monitor_capability || return 1
+  recovery_require_checkpoint_runner_quiescence_exact \
+    "$CHECKPOINT_RUNNER_GENERATION" \
+    "$CHECKPOINT_DURABLE_FENCE_BASELINE_PATH" \
+    "$CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256" || return 1
+  if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
+    require_parent_durable_monitor_capability
+  fi
 }
 
-if [[ -e "$OUTPUT_PATH" || -e "$CONTRACT_OUTPUT_PATH" ]]; then
+DUMP_STREAM_GUARD_ARGS=()
+DB_SOURCE_MONITOR_STOP=""
+DB_SOURCE_MONITOR_FAILURE=""
+DB_SOURCE_MONITOR_PROGRESS=""
+DB_SOURCE_MONITOR_PID=""
+DB_SOURCE_MONITOR_START_IDENTITY=""
+DB_SOURCE_MONITOR_MAX_STALE_SECONDS=""
+DB_SOURCE_MONITOR_INITIAL_DEADLINE_SECONDS=""
+DB_SOURCE_MONITOR_POLL_SECONDS=""
+
+require_exact_pgsql_source_now() {
+  local current_pods_json current_pod_info current_pod_json
+  local current_pod current_pod_uid current_deployment_uid
+  current_pods_json="$(
+    recovery_kubectl get pod -n "$NAMESPACE" -l app=pgsql -o json
+  )" || return 1
+  current_pod_info="$(recovery_exact_ready_deployment_pod_info \
+    "$current_pods_json" pgsql pgsql)" || return 1
+  IFS=$'\t' read -r current_pod current_pod_uid current_deployment_uid \
+    <<<"$current_pod_info"
+  [[ "$current_pod" == "$PGSQL_POD" &&
+     "$current_pod_uid" == "$PGSQL_POD_UID" &&
+     "$current_deployment_uid" == "$PGSQL_DEPLOYMENT_UID" ]] || return 1
+  current_pod_json="$(jq -cer --arg uid "$PGSQL_POD_UID" '
+    [.items[] | select(.metadata.uid == $uid)] |
+    select(length == 1) | .[0]
+  ' <<<"$current_pods_json")" || return 1
+  recovery_require_pod_identity "$PGSQL_POD" "$PGSQL_POD_UID" || return 1
+  recovery_require_pod_deployment_ownership \
+    "$current_pod_json" pgsql "$PGSQL_DEPLOYMENT_UID"
+}
+
+monitor_exact_pgsql_source() {
+  local progress=0
+  while [[ ! -e "$DB_SOURCE_MONITOR_STOP" ]]; do
+    if ! recovery_require_cluster_identity ||
+       ! recovery_require_operation_serialization ||
+       ! recovery_require_operation_lock ||
+       ! require_exact_pgsql_source_now; then
+      printf 'pgsql_source_or_authority_drift\n' >"$DB_SOURCE_MONITOR_FAILURE"
+      return 1
+    fi
+    progress=$((progress + 1))
+    if ! recovery_write_stream_guard_progress \
+        "$DB_SOURCE_MONITOR_PROGRESS" "$progress"; then
+      printf 'progress_publish_failed\n' >"$DB_SOURCE_MONITOR_FAILURE"
+      return 1
+    fi
+    sleep "$DB_SOURCE_MONITOR_POLL_SECONDS"
+  done
+}
+
+stop_db_source_monitor() {
+  local monitor_status=0
+  if [[ -n "$DB_SOURCE_MONITOR_PID" ]]; then
+    : >"$DB_SOURCE_MONITOR_STOP"
+    if wait "$DB_SOURCE_MONITOR_PID"; then
+      monitor_status=0
+    else
+      monitor_status=$?
+    fi
+    DB_SOURCE_MONITOR_PID=""
+    DB_SOURCE_MONITOR_START_IDENTITY=""
+  fi
+  if [[ -n "$DB_SOURCE_MONITOR_FAILURE" &&
+        -s "$DB_SOURCE_MONITOR_FAILURE" ]]; then
+    monitor_status=1
+  fi
+  DUMP_STREAM_GUARD_ARGS=()
+  [[ "$monitor_status" == 0 ]]
+}
+
+start_db_source_monitor() {
+  [[ -z "$DB_SOURCE_MONITOR_PID" &&
+     -z "$DB_SOURCE_MONITOR_START_IDENTITY" ]] || return 2
+  DB_SOURCE_MONITOR_STOP="$(
+    mktemp "${OUTPUT_PATH}.pgsql-monitor-stop.XXXXXX"
+  )" || return 1
+  DB_SOURCE_MONITOR_FAILURE="$(
+    mktemp "${OUTPUT_PATH}.pgsql-monitor-failure.XXXXXX"
+  )" || return 1
+  DB_SOURCE_MONITOR_PROGRESS="$(
+    mktemp "${OUTPUT_PATH}.pgsql-monitor-progress.XXXXXX"
+  )" || return 1
+  rm -f -- "$DB_SOURCE_MONITOR_STOP"
+  chmod 600 "$DB_SOURCE_MONITOR_FAILURE" "$DB_SOURCE_MONITOR_PROGRESS" ||
+    return 1
+  DB_SOURCE_MONITOR_POLL_SECONDS="$(recovery_stream_poll_seconds)" || return 1
+  (
+    # Prevent Bash 3.2 from tail-execing a nested kubectl and replacing the
+    # long-lived process whose start identity is passed to the stream guard.
+    db_source_monitor_exit_status=0
+    trap 'db_source_monitor_exit_status=$?; trap - EXIT; exit "$db_source_monitor_exit_status"' EXIT
+    monitor_exact_pgsql_source
+  ) &
+  DB_SOURCE_MONITOR_PID=$!
+  if ! DB_SOURCE_MONITOR_START_IDENTITY="$(
+    recovery_process_start_identity "$DB_SOURCE_MONITOR_PID"
+  )"; then
+    : >"$DB_SOURCE_MONITOR_STOP"
+    wait "$DB_SOURCE_MONITOR_PID" 2>/dev/null || :
+    DB_SOURCE_MONITOR_PID=""
+    DB_SOURCE_MONITOR_START_IDENTITY=""
+    return 1
+  fi
+  if ! DB_SOURCE_MONITOR_MAX_STALE_SECONDS="$(
+       recovery_stream_guard_max_stale_seconds
+     )" ||
+     ! DB_SOURCE_MONITOR_INITIAL_DEADLINE_SECONDS="$(
+       recovery_stream_guard_initial_deadline_seconds
+     )" ||
+     ! recovery_wait_for_stream_guard_initial_progress \
+       "$DB_SOURCE_MONITOR_PID" "$DB_SOURCE_MONITOR_START_IDENTITY" \
+       "$DB_SOURCE_MONITOR_FAILURE" "$DB_SOURCE_MONITOR_PROGRESS" \
+       "$DB_SOURCE_MONITOR_INITIAL_DEADLINE_SECONDS"; then
+    : >"$DB_SOURCE_MONITOR_STOP"
+    wait "$DB_SOURCE_MONITOR_PID" 2>/dev/null || :
+    DB_SOURCE_MONITOR_PID=""
+    DB_SOURCE_MONITOR_START_IDENTITY=""
+    DB_SOURCE_MONITOR_MAX_STALE_SECONDS=""
+    DB_SOURCE_MONITOR_INITIAL_DEADLINE_SECONDS=""
+    return 1
+  fi
+  DUMP_STREAM_GUARD_ARGS=(
+    --guard-process "$DB_SOURCE_MONITOR_PID"
+    "$DB_SOURCE_MONITOR_START_IDENTITY"
+    "$DB_SOURCE_MONITOR_FAILURE"
+    "$DB_SOURCE_MONITOR_PROGRESS"
+    "$DB_SOURCE_MONITOR_MAX_STALE_SECONDS"
+  )
+  DUMP_STREAM_GUARD_ARGS+=("${PARENT_STREAM_GUARD_ARGS[@]}")
+}
+
+if [[ -e "$OUTPUT_PATH" || -L "$OUTPUT_PATH" ||
+      -e "$CONTRACT_OUTPUT_PATH" || -L "$CONTRACT_OUTPUT_PATH" ]]; then
   printf 'Refusing to overwrite existing backup or database contract.\n' >&2
   exit 1
 fi
@@ -74,16 +375,193 @@ SQL_CHECK_PATH="$(mktemp "${OUTPUT_PATH}.verify.sql.XXXXXX")"
 CONTRACT_BEFORE="$(mktemp "${OUTPUT_PATH}.contract-before.XXXXXX")"
 CONTRACT_AFTER="$(mktemp "${OUTPUT_PATH}.contract-after.XXXXXX")"
 CONTRACT_BOUND="$(mktemp "${OUTPUT_PATH}.contract-bound.XXXXXX")"
+BACKUP_SUCCEEDED=0
+OUTPUT_PUBLISHED=0
+OUTPUT_PUBLISHED_IDENTITY=""
+CONTRACT_PUBLISHED=0
+CONTRACT_PUBLISHED_IDENTITY=""
+PARTIAL_OWNED_IDENTITY=""
+CONTRACT_BOUND_OWNED_IDENTITY=""
+
+backup_file_identity() {
+  local path="$1" identity
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  if identity="$(stat -f '%d:%i' -- "$path" 2>/dev/null)"; then
+    :
+  elif identity="$(stat -c '%d:%i' -- "$path" 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+  [[ "$identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+  printf '%s\n' "$identity"
+}
+
+backup_private_file_identity() {
+  local path="$1" identity
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  if identity="$(stat -f '%d:%i:%Lp' -- "$path" 2>/dev/null)"; then
+    :
+  elif identity="$(stat -c '%d:%i:%a' -- "$path" 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+  [[ "$identity" =~ ^([0-9]+:[0-9]+):600$ ]] || return 1
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+publish_private_file_no_clobber() {
+  local source_path="$1" destination_path="$2" expected_identity="$3"
+  command python3 -I - "$source_path" "$destination_path" \
+    "$expected_identity" <<'PY'
+import os
+import stat
+import sys
+
+
+def exact(value, expected_dev, expected_ino, links, baseline=None):
+    return (
+        stat.S_ISREG(value.st_mode)
+        and value.st_uid == os.getuid()
+        and stat.S_IMODE(value.st_mode) == 0o600
+        and value.st_dev == expected_dev
+        and value.st_ino == expected_ino
+        and value.st_nlink == links
+        and value.st_size > 0
+        and (
+            baseline is None
+            or (
+                value.st_size == baseline.st_size
+                and value.st_mtime_ns == baseline.st_mtime_ns
+            )
+        )
+    )
+
+
+def main():
+    source = os.path.abspath(sys.argv[1])
+    destination = os.path.abspath(sys.argv[2])
+    expected_dev, expected_ino = (int(value) for value in sys.argv[3].split(":"))
+    parent = os.path.dirname(source)
+    if parent != os.path.dirname(destination):
+        raise RuntimeError("cross_directory_publication")
+    source_name = os.path.basename(source)
+    destination_name = os.path.basename(destination)
+    if source_name in ("", ".", "..") or destination_name in ("", ".", ".."):
+        raise RuntimeError("invalid_leaf")
+    flags = os.O_RDONLY | os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    directory_fd = os.open(parent, flags)
+    try:
+        before = os.stat(source_name, dir_fd=directory_fd, follow_symlinks=False)
+        if not exact(before, expected_dev, expected_ino, 1):
+            raise RuntimeError("source_changed")
+        try:
+            os.stat(destination_name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise FileExistsError("destination_exists")
+        os.link(
+            source_name,
+            destination_name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+        linked_source = os.stat(
+            source_name, dir_fd=directory_fd, follow_symlinks=False
+        )
+        linked_destination = os.stat(
+            destination_name, dir_fd=directory_fd, follow_symlinks=False
+        )
+        if (
+            not exact(linked_source, expected_dev, expected_ino, 2, before)
+            or not exact(linked_destination, expected_dev, expected_ino, 2, before)
+        ):
+            raise RuntimeError("link_identity_changed")
+        os.fsync(directory_fd)
+        unlink_source = os.stat(
+            source_name, dir_fd=directory_fd, follow_symlinks=False
+        )
+        unlink_destination = os.stat(
+            destination_name, dir_fd=directory_fd, follow_symlinks=False
+        )
+        if (
+            not exact(unlink_source, expected_dev, expected_ino, 2, before)
+            or not exact(unlink_destination, expected_dev, expected_ino, 2, before)
+        ):
+            raise RuntimeError("unlink_identity_changed")
+        os.unlink(source_name, dir_fd=directory_fd)
+        try:
+            os.stat(source_name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise RuntimeError("source_still_linked")
+        final = os.stat(
+            destination_name, dir_fd=directory_fd, follow_symlinks=False
+        )
+        if not exact(final, expected_dev, expected_ino, 1, before):
+            raise RuntimeError("final_identity_changed")
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+try:
+    main()
+except BaseException:
+    raise SystemExit(1)
+PY
+}
+
+remove_owned_published_file() {
+  local published="$1" expected_identity="$2" path="$3" current_identity
+  [[ "$published" == 1 && -n "$expected_identity" ]] || return 0
+  current_identity="$(backup_file_identity "$path" 2>/dev/null)" || return 0
+  [[ "$current_identity" == "$expected_identity" ]] || return 0
+  if ! rm -f -- "$path"; then
+    printf 'Could not remove an incomplete published database backup artifact: %s\n' \
+      "$path" >&2
+  fi
+  return 0
+}
+
 cleanup_backup() {
-  rm -f -- "$PARTIAL_PATH" "$SQL_CHECK_PATH" "$CONTRACT_BEFORE" "$CONTRACT_AFTER" \
-    "$CONTRACT_BOUND"
+  trap '' INT TERM
+  if [[ "$BACKUP_SUCCEEDED" != 1 ]]; then
+    remove_owned_published_file \
+      "$CONTRACT_PUBLISHED" "$CONTRACT_PUBLISHED_IDENTITY" \
+      "$CONTRACT_OUTPUT_PATH"
+    remove_owned_published_file \
+      "$OUTPUT_PUBLISHED" "$OUTPUT_PUBLISHED_IDENTITY" "$OUTPUT_PATH"
+  fi
+  remove_owned_published_file 1 "$PARTIAL_OWNED_IDENTITY" "$PARTIAL_PATH"
+  remove_owned_published_file \
+    1 "$CONTRACT_BOUND_OWNED_IDENTITY" "$CONTRACT_BOUND"
+  stop_db_source_monitor || :
+  rm -f -- "$SQL_CHECK_PATH" "$CONTRACT_BEFORE" "$CONTRACT_AFTER" || :
+  [[ -z "$DB_SOURCE_MONITOR_STOP" ]] ||
+    rm -f -- "$DB_SOURCE_MONITOR_STOP" || :
+  [[ -z "$DB_SOURCE_MONITOR_FAILURE" ]] ||
+    rm -f -- "$DB_SOURCE_MONITOR_FAILURE" || :
+  [[ -z "$DB_SOURCE_MONITOR_PROGRESS" ]] ||
+    rm -f -- "$DB_SOURCE_MONITOR_PROGRESS" \
+      "${DB_SOURCE_MONITOR_PROGRESS}.next" || :
+  return 0
 }
 backup_interrupted() {
   local status="$1"
-  trap - EXIT INT TERM
+  trap - EXIT
+  trap '' INT TERM
   cleanup_backup
   exit "$status"
 }
+PARTIAL_OWNED_IDENTITY="$(backup_file_identity "$PARTIAL_PATH")"
+CONTRACT_BOUND_OWNED_IDENTITY="$(backup_file_identity "$CONTRACT_BOUND")"
 trap cleanup_backup EXIT
 trap 'backup_interrupted 130' INT
 trap 'backup_interrupted 143' TERM
@@ -106,11 +584,8 @@ if ! PGSQL_POD_INFO="$(recovery_exact_ready_deployment_pod_info \
   exit 1
 fi
 IFS=$'\t' read -r PGSQL_POD PGSQL_POD_UID PGSQL_DEPLOYMENT_UID <<<"$PGSQL_POD_INFO"
-PGSQL_POD_JSON="$(jq -cer '.items[0]' <<<"$PGSQL_PODS_JSON")"
 require_pgsql_source() {
-  recovery_require_pod_identity "$PGSQL_POD" "$PGSQL_POD_UID" &&
-    recovery_require_pod_deployment_ownership \
-      "$PGSQL_POD_JSON" pgsql "$PGSQL_DEPLOYMENT_UID"
+  require_exact_pgsql_source_now
 }
 
 require_backup_guard
@@ -127,19 +602,32 @@ ACTIVE_FILES="$(jq -r '.critical_counts.active_owned_files' "$CONTRACT_BEFORE")"
 recovery_require_cluster_identity
 require_backup_guard
 require_pgsql_source
+start_db_source_monitor || {
+  printf 'Could not start the exact PostgreSQL source monitor.\n' >&2
+  exit 1
+}
 run_dump_stream() {
   # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
   # shellcheck disable=SC2016
-  if [[ "$COORDINATED" == 1 ]]; then
-    recovery_kubectl_stream_guarded 3600 exec -n "$NAMESPACE" "$PGSQL_POD" -- \
-      sh -ec 'pg_dump -U "$POSTGRES_USER" --format=plain retdb'
-  else
-    recovery_kubectl_stream 3600 exec -n "$NAMESPACE" "$PGSQL_POD" -- \
-      sh -ec 'pg_dump -U "$POSTGRES_USER" --format=plain retdb'
-  fi
+  recovery_kubectl_stream_guarded 3600 \
+    "${DUMP_STREAM_GUARD_ARGS[@]}" -- \
+    exec -n "$NAMESPACE" "$PGSQL_POD" -- \
+    sh -ec 'pg_dump -U "$POSTGRES_USER" --format=plain retdb'
 }
-run_dump_stream |
-  gzip -9 > "$PARTIAL_PATH"
+if run_dump_stream | gzip -9 >"$PARTIAL_PATH"; then
+  dump_status=0
+else
+  dump_status=$?
+fi
+if stop_db_source_monitor; then
+  source_monitor_status=0
+else
+  source_monitor_status=$?
+fi
+if [[ "$dump_status" != 0 || "$source_monitor_status" != 0 ]]; then
+  printf 'Database dump stream or its exact PostgreSQL source monitor failed.\n' >&2
+  exit 1
+fi
 chmod 600 "$PARTIAL_PATH"
 
 gzip -t "$PARTIAL_PATH"
@@ -190,15 +678,61 @@ if printf '%s\n' "$DUMP_ACTIVE_UUIDS" | sed '/^$/d' | awk '
   exit 1
 fi
 
-mv "$PARTIAL_PATH" "$OUTPUT_PATH"
-mv "$CONTRACT_BOUND" "$CONTRACT_OUTPUT_PATH"
-chmod 600 "$OUTPUT_PATH"
-chmod 600 "$CONTRACT_OUTPUT_PATH"
-cleanup_backup
-trap - EXIT INT TERM
+# Arm cleanup before each no-clobber hard link. If publication completes but
+# the shell is interrupted before it can observe the status, inode equality
+# still proves whether this child owns the final pathname.
+OUTPUT_PUBLISHED_IDENTITY="$(backup_private_file_identity "$PARTIAL_PATH")"
+[[ "$OUTPUT_PUBLISHED_IDENTITY" == "$PARTIAL_OWNED_IDENTITY" ]] || {
+  printf 'Database dump staging identity or mode changed unexpectedly.\n' >&2
+  exit 1
+}
+OUTPUT_PUBLISHED=1
+if publish_private_file_no_clobber \
+    "$PARTIAL_PATH" "$OUTPUT_PATH" "$OUTPUT_PUBLISHED_IDENTITY"; then
+  :
+else
+  printf 'Could not publish the database dump.\n' >&2
+  exit 1
+fi
+[[ "$(backup_private_file_identity "$OUTPUT_PATH")" == \
+   "$OUTPUT_PUBLISHED_IDENTITY" ]] || {
+  printf 'Published database dump identity or mode changed unexpectedly.\n' >&2
+  exit 1
+}
+
+CONTRACT_PUBLISHED_IDENTITY="$(backup_private_file_identity "$CONTRACT_BOUND")"
+[[ "$CONTRACT_PUBLISHED_IDENTITY" == "$CONTRACT_BOUND_OWNED_IDENTITY" ]] || {
+  printf 'Database contract staging identity or mode changed unexpectedly.\n' >&2
+  exit 1
+}
+CONTRACT_PUBLISHED=1
+if publish_private_file_no_clobber \
+    "$CONTRACT_BOUND" "$CONTRACT_OUTPUT_PATH" \
+    "$CONTRACT_PUBLISHED_IDENTITY"; then
+  :
+else
+  printf 'Could not publish the database contract.\n' >&2
+  exit 1
+fi
+[[ "$(backup_private_file_identity "$CONTRACT_OUTPUT_PATH")" == \
+   "$CONTRACT_PUBLISHED_IDENTITY" ]] || {
+  printf 'Published database contract identity or mode changed unexpectedly.\n' >&2
+  exit 1
+}
+if [[ "$(backup_private_file_identity "$OUTPUT_PATH" 2>/dev/null || :)" != \
+        "$OUTPUT_PUBLISHED_IDENTITY" ||
+      "$(backup_private_file_identity "$CONTRACT_OUTPUT_PATH" 2>/dev/null || :)" != \
+        "$CONTRACT_PUBLISHED_IDENTITY" ]]; then
+  printf 'Published database backup artifact ownership or mode changed unexpectedly.\n' >&2
+  exit 1
+fi
 
 SIZE_BYTES="$(recovery_file_size_bytes "$OUTPUT_PATH")"
 SHA256="$(recovery_sha256_file "$OUTPUT_PATH" | awk '{print $1}')"
 
 printf 'Reticulum database backup completed: path=%s schema_tables=%s migrations=%s hubs=%s active_files=%s size_bytes=%s sha256=%s\n' \
   "$OUTPUT_PATH" "$SCHEMA_TABLES" "$MIGRATIONS" "$HUBS_COUNT" "$ACTIVE_FILES" "$SIZE_BYTES" "$SHA256"
+trap '' INT TERM
+BACKUP_SUCCEEDED=1
+cleanup_backup
+trap - EXIT

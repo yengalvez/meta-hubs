@@ -12,6 +12,8 @@ source "$ROOT_DIR/deployment/lib/recovery-safety.sh"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yenhubs-aud065-lock-tests.XXXXXX")"
 MUTATION_MARKER="$TMP_DIR/mutation-called"
+DELETE_OPTIONS_MARKER="$TMP_DIR/delete-options.json"
+DELETE_OBSERVED_MARKER="$TMP_DIR/delete-observed"
 trap 'rm -rf -- "$TMP_DIR"' EXIT INT TERM
 
 PASS_COUNT=0
@@ -32,11 +34,17 @@ RECOVERY_DUMP_SHA256="$(printf 'a%.0s' {1..64})"
 RECOVERY_STORAGE_SHA256="$(printf 'b%.0s' {1..64})"
 RECOVERY_OPERATION_STATE=quiesced
 RECOVERY_OPERATION_BINDING_SHA256="$(printf 'c%.0s' {1..64})"
+RECOVERY_DEPLOYMENT_INVENTORY_SHA256="$(printf 'd%.0s' {1..64})"
+RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256="$(printf 'e%.0s' {1..64})"
+RECOVERY_RUNNER_RUNTIME_GENERATION=legacy-absent
 LOCK_FIXTURE_RESOURCE_VERSION=17
 
 lock_json() {
   jq -cn \
     --arg binding "$RECOVERY_OPERATION_BINDING_SHA256" \
+    --arg inventory "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256" \
+    --arg runner_evidence "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" \
+    --arg runner_generation "$RECOVERY_RUNNER_RUNTIME_GENERATION" \
     --arg state "$RECOVERY_OPERATION_STATE" \
     --arg owner "$RECOVERY_OPERATION_OWNER" \
     --arg resource_version "$LOCK_FIXTURE_RESOURCE_VERSION" '
@@ -54,8 +62,11 @@ lock_json() {
           "yenhubs.org/checkpoint-stamp":"20260718-120000",
           "yenhubs.org/dump-sha256":("a" * 64),
           "yenhubs.org/storage-sha256":("b" * 64),
+          "yenhubs.org/deployment-inventory-sha256":$inventory,
           "yenhubs.org/recovery-state":$state,
-          "yenhubs.org/operation-binding-sha256":$binding
+          "yenhubs.org/operation-binding-sha256":$binding,
+          "yenhubs.org/runner-cutover-evidence-sha256":$runner_evidence,
+          "yenhubs.org/runner-runtime-generation":$runner_generation
         }
       },
       immutable:true
@@ -114,6 +125,7 @@ fi
 
 recovery_require_operation_serialization() { return 0; }
 recovery_kubectl_mutate() { printf 'called\n' >"$MUTATION_MARKER"; return 99; }
+recovery_kubectl() { return 1; }
 RECOVERY_OPERATION_STATE=preflight
 if ! recovery_acquire_operation_lock aud065-rotation yenhubs-recovery-operation-lock &&
    [[ ! -e "$MUTATION_MARKER" ]]; then
@@ -123,13 +135,23 @@ else
 fi
 
 RECOVERY_OPERATION_BINDING_SHA256="$(printf 'c%.0s' {1..64})"
-if ! recovery_acquire_operation_lock checkpoint-restore yenhubs-recovery-operation-lock &&
+RECOVERY_OPERATION_STATE=""
+RECOVERY_DEPLOYMENT_INVENTORY_SHA256=""
+RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256=""
+RECOVERY_RUNNER_RUNTIME_GENERATION=""
+RECOVERY_FENCE_PRE_EPOCH=""
+RECOVERY_FENCE_TARGET_EPOCH=""
+rm -f -- "$MUTATION_MARKER"
+if ! recovery_acquire_operation_lock checkpoint-backup yenhubs-recovery-operation-lock &&
    [[ ! -e "$MUTATION_MARKER" ]]; then
-  pass 'operation-intent bindings cannot be attached to checkpoint-restore locks'
+  pass 'operation-intent bindings cannot be attached to checkpoint-backup locks'
 else
   fail 'cross-owner operation-intent binding reached the mutation transport'
 fi
 
+RECOVERY_DEPLOYMENT_INVENTORY_SHA256="$(printf 'd%.0s' {1..64})"
+RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256="$(printf 'e%.0s' {1..64})"
+RECOVERY_RUNNER_RUNTIME_GENERATION=legacy-absent
 RECOVERY_OPERATION_STATE=""
 if ! recovery_acquire_operation_lock aud065-rotation yenhubs-recovery-operation-lock &&
    [[ ! -e "$MUTATION_MARKER" ]]; then
@@ -175,17 +197,40 @@ reset_lock_fixture() {
   RECOVERY_OPERATION_OWNER=aud065-rotation
   RECOVERY_OPERATION_STATE=quiesced
   RECOVERY_OPERATION_BINDING_SHA256="$(printf 'c%.0s' {1..64})"
+  RECOVERY_DEPLOYMENT_INVENTORY_SHA256="$(printf 'd%.0s' {1..64})"
+  RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256="$(printf 'e%.0s' {1..64})"
+  RECOVERY_RUNNER_RUNTIME_GENERATION=legacy-absent
   LOCK_FIXTURE_RESOURCE_VERSION=17
   LIVE_LOCK_JSON="$(lock_json)"
-  rm -f -- "$MUTATION_MARKER"
+  rm -f -- "$MUTATION_MARKER" "$DELETE_OPTIONS_MARKER" \
+    "$DELETE_OBSERVED_MARKER"
 }
 
 recovery_require_cluster_identity() { return 0; }
 recovery_require_pvc_identity() { return 0; }
-recovery_kubectl() { printf '%s\n' "$LIVE_LOCK_JSON"; }
+recovery_kubectl() {
+  if [[ -e "$DELETE_OBSERVED_MARKER" &&
+        "$*" == "get configmap yenhubs-recovery-operation-lock -n hcce --ignore-not-found -o json" ]]; then
+    return 0
+  fi
+  printf '%s\n' "$LIVE_LOCK_JSON"
+}
 recovery_kubectl_mutate() {
-  local request
+  local request command_line="$*"
   request="$(cat)" || return 1
+  if [[ "$command_line" == \
+      "delete --raw=/api/v1/namespaces/hcce/configmaps/yenhubs-recovery-operation-lock -f -" ]]; then
+    printf '%s\n' "$request" >"$DELETE_OPTIONS_MARKER"
+    jq -e '
+      . == {
+        apiVersion:"v1",kind:"DeleteOptions",propagationPolicy:"Foreground",
+        preconditions:{uid:"lock-uid",resourceVersion:"22"}
+      }
+    ' >/dev/null <<<"$request" || return 1
+    : >"$DELETE_OBSERVED_MARKER"
+    printf 'deleted\n' >"$MUTATION_MARKER"
+    return 0
+  fi
   printf '%s\n' "$request" >"$MUTATION_MARKER"
   jq -c '.metadata.resourceVersion = "18"' <<<"$request"
 }
@@ -221,9 +266,6 @@ else
   fail 'reverse AUD-065 state reached replace'
 fi
 
-recovery_delete_namespaced_with_uid() {
-  printf 'deleted\n' >"$MUTATION_MARKER"
-}
 aud065_require_pgsql_barrier_released() { return 0; }
 rm -f -- "$MUTATION_MARKER"
 if ! recovery_release_operation_lock && [[ ! -e "$MUTATION_MARKER" ]]; then
@@ -285,7 +327,13 @@ fi
 
 aud065_require_pgsql_barrier_released() { return 0; }
 rm -f -- "$MUTATION_MARKER"
-if recovery_release_operation_lock && [[ -e "$MUTATION_MARKER" ]]; then
+if recovery_release_operation_lock && [[ -e "$MUTATION_MARKER" ]] &&
+   jq -e '
+     . == {
+       apiVersion:"v1",kind:"DeleteOptions",propagationPolicy:"Foreground",
+       preconditions:{uid:"lock-uid",resourceVersion:"22"}
+     }
+   ' >/dev/null "$DELETE_OPTIONS_MARKER"; then
   pass 'cleanup-authorized AUD-065 lock can be released only after barrier cleanup'
 else
   fail 'cleanup-authorized AUD-065 lock release'
