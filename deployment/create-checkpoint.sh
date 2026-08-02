@@ -1922,6 +1922,7 @@ acquire_checkpoint_operation_lock() {
 checkpoint_error() {
   local status="$?" failure_stage="$CHECKPOINT_FAILURE_STAGE"
   local failure_code="$CHECKPOINT_FAILURE_CODE"
+  local resume_failure_stage="" resume_failure_code=""
   # errtrace also copies ERR into command substitutions and background
   # subshells. Those processes have only stale copies of ownership variables;
   # they must report failure to the main shell, never resume writers or delete
@@ -1940,6 +1941,13 @@ checkpoint_error() {
     if resume_writers_with_single_reentry; then
       printf 'Checkpoint failed, but every writer was restored to its exact pre-snapshot scale.\n' >&2
     else
+      resume_failure_stage="$CHECKPOINT_FAILURE_STAGE"
+      resume_failure_code="$CHECKPOINT_FAILURE_CODE"
+      if checkpoint_failure_context_is_safe \
+          "$resume_failure_stage" "$resume_failure_code"; then
+        printf 'Checkpoint automatic resume failed: stage=%s code=%s.\n' \
+          "$resume_failure_stage" "$resume_failure_code" >&2
+      fi
       printf 'Checkpoint failed and exact automatic resume was impossible; the global lock is retained.\n' >&2
       return "$status"
     fi

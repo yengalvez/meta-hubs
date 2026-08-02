@@ -2806,21 +2806,34 @@ recovery_live_runner_epoch() {
   for deployment in reticulum bot-orchestrator; do
     deployment_json="$(
       recovery_kubectl get deployment "$deployment" -n "$NAMESPACE" -o json
-    )" || return 1
-    epoch="$(printf '%s' "$deployment_json" | jq -er \
-      --arg deployment "$deployment" --arg namespace "$NAMESPACE" '
+    )" || {
+      printf 'Could not read Deployment/%s while proving the live runner epoch.\n' \
+        "$deployment" >&2
+      return 1
+    }
+    epoch="$(jq -er --arg deployment "$deployment" \
+      --arg namespace "$NAMESPACE" '
       select(.apiVersion == "apps/v1" and .kind == "Deployment" and
         .metadata.name == $deployment and .metadata.namespace == $namespace) |
       ((.spec.template.metadata.annotations // {})[
         "yenhubs.org/bot-runner-recovery-epoch"
       ] // "") | select(type == "string")
-    ')" || return 1
-    [[ -z "$epoch" ||
-       "$epoch" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || return 1
+    ' <<<"$deployment_json")" || {
+      printf 'Deployment/%s has no structurally valid live runner epoch field.\n' \
+        "$deployment" >&2
+      return 1
+    }
+    if [[ -n "$epoch" &&
+          ! "$epoch" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]; then
+      printf 'Deployment/%s exposes a non-canonical live runner epoch.\n' \
+        "$deployment" >&2
+      return 1
+    fi
     if [[ "$first" == 1 ]]; then
       expected_epoch="$epoch"
       first=0
     elif [[ "$epoch" != "$expected_epoch" ]]; then
+      printf 'Reticulum and bot-orchestrator expose different live runner epochs.\n' >&2
       return 1
     fi
   done

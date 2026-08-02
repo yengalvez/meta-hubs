@@ -27,13 +27,15 @@ actualiza cada vez que cambia la tarea activa o se completa un hito.
 ```
 
 Estamos al final del bloque 1. El PR raíz `#14` está fusionado y el PR `#15`
-arregló el límite de tiempo y evitó ejecutar dos veces el gate. Su única
-ejecución sí llegó mucho más lejos y encontró 19 fallos, pero todos proceden de
-la misma causa: Linux no permite entregar a un programa un argumento tan grande
-como el inventario de 214.796 bytes. En macOS sí cabía y por eso no se había
-visto. La comparación no se elimina ni se relaja: ahora lee ese inventario desde
-un fichero temporal privado y lo borra después. No se avanzará al bloque 2 hasta
-publicar esta corrección y obtener un gate completo verde.
+arregló el límite de tiempo y evitó ejecutar dos veces el gate. La primera
+corrección Linux funcionó: el nuevo gate pasó de 19 fallos a 7 (`857/864`). Los
+7 restantes no son cambios nuevos del metaverso; son variantes de la misma
+salida segura al finalizar o reanudar una copia. Los logs sitúan el corte al
+comprobar que Reticulum y el coordinador de bots comparten la misma versión de
+recuperación. Se ha eliminado una segunda forma innecesaria de pasar esos datos
+a `jq` y se han añadido diagnósticos seguros para que, si Linux aún rechaza un
+caso, diga el paso exacto sin mostrar valores ni secretos. No se avanzará al
+bloque 2 hasta publicar esta corrección y obtener un gate completo verde.
 
 ## Qué se ha terminado
 
@@ -71,7 +73,13 @@ publicar esta corrección y obtener un gate completo verde.
   privado `0600`, con aceptación, rechazo y borrado comprobados.
 - [x] Pasar el caso durable completo `50/50` con el límite Linux simulado, más
   los 51 controles de seguridad, Actionlint, ShellCheck, gitlinks y Gitleaks.
-- [ ] Publicar esta corrección mínima en el PR `#15`.
+- [x] Publicar esta corrección mínima como `354919c` en el PR `#15` y volver a
+  confirmar que solo queda una ejecución remota.
+- [x] Comprobar que `354919c` eliminó 12 fallos y acotar los 7 residuales a la
+  salida segura de finalización/rollback, sin tocar producción.
+- [x] Validar la comprobación portable del epoch y sus diagnósticos seguros en
+  el foco local `47/47`, además de Bash, ShellCheck y diff-check.
+- [ ] Publicar la corrección residual en el mismo PR `#15`.
 - [ ] Exigir un gate Linux completo verde antes de pasar al bloque 2.
 
 Este arreglo pertenece al sistema de checkpoint/restore. No modifica la sala,

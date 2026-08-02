@@ -5,24 +5,25 @@
 Estado actual: **EN EJECUCIÓN; el PR raíz `#14` fusionó `78b7165` como
 `main=9c1b85be99a7` y el checkout canónico está sincronizado. El commit
 `d303d3e` del PR borrador `#15` amplió correctamente el timeout a 360 minutos y
-deduplicó push+PR. Su único run `30731785217` terminó recovery con `845/864`:
-los 19 fallos son cascadas de una sola incompatibilidad Linux demostrada. La
-función de comparación de imágenes pasaba un JSON live de 214.796 bytes a
-`jq --argjson`; Linux limita un argumento a unos 128 KiB y devolvió `Argument
-list too long`, mientras macOS lo aceptaba. La corrección local conserva la
-misma comparación, pero hace que `jq` lea el JSON desde un fichero `0600` bajo
-la raíz temporal privada y lo elimina tanto al aceptar como al rechazar el
-inventario. La reproducción match/mismatch bajo un límite Linux simulado pasa
-con cleanup exacto; el foco end-to-end durable pasa `50/50` bajo ese mismo
-límite, y Actionlint, Bash, ShellCheck, los 51 gates de seguridad, gitlinks,
-diff-check y Gitleaks 9,09 MB están verdes. Falta publicar el commit en el mismo
-PR y exigir un único CI verde. Producción permanece intacta.**
+deduplicó push+PR. El commit `354919c` eliminó el primer límite Linux
+`ARG_MAX`: su único run `30745238145` avanzó de `845/864` a `857/864`. Los siete
+fallos residuales siguen siendo fail-closed y convergen al reingreso de
+finalización/rollback. El log exacto corta tras leer los Deployments Reticulum y
+bot-orchestrator para probar su epoch compartido; esa función conservaba una
+segunda frontera de pipe innecesaria y devolvía `1` sin diagnóstico. La
+corrección local entrega el JSON a `jq` mediante here-string, conserva la misma
+validación estricta y añade mensajes sin valores para distinguir lectura,
+estructura, formato o desacuerdo de epoch. El handler de checkpoint registra
+además solo el stage/code allowlisted si el reingreso automático falla, sin
+secretos. Bash, ShellCheck, diff-check y el foco diagnóstico `47/47` están
+verdes. Falta publicar esta corrección mínima en el mismo PR y exigir un único
+CI integral verde. Producción permanece intacta.**
 
-Punto exacto de reanudación: publicar la única corrección portable ya validada
-en el PR `#15` y esperar el gate que dispare el push; no relanzarlo manualmente
-ni repetir el full local. Si el gate queda verde, marcar el PR listo, fusionarlo
-y cerrar la Fase 3B. Si falla, corregir solo la nueva causa exacta. No se avanza
-a Fase 4 antes del verde.
+Punto exacto de reanudación: publicar en el PR `#15` únicamente la corrección
+del límite residual y sus diagnósticos seguros; esperar el único gate que
+dispare el push, sin relanzarlo ni repetir el full local. Si queda verde, marcar
+listo, fusionar y cerrar la Fase 3B. Si falla, usar el nuevo stage exacto y
+corregir solo esa causa. No se avanza a Fase 4 antes del verde.
 Después continuar con build, checkpoints, rotación, staging, rollout y
 aceptación live, sin añadir funciones nuevas.
 
@@ -56,19 +57,20 @@ esta meta.
 ## Panel operativo vigente
 
 - Fase activa: **3B, integración raíz final**.
-- Primera acción al reanudar: publicar en el mismo PR `#15` la lectura por
-  fichero privado ya validada que elimina el `ARG_MAX` Linux del run
-  `30731785217`; después exigir un único gate completo verde. No abrir otra
-  ronda general de dependencias, diseño o auditoría.
+- Primera acción al reanudar: publicar en el mismo PR `#15` la corrección
+  residual ya acotada y esperar su único gate completo. No abrir otra ronda
+  general de dependencias, diseño o auditoría.
 - El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
   incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
   `mix hex.audit` final por cuatro advisories nuevos de Guardian `2.4.0`.
 - Guardian `2.4.1` ya está validado e integrado mediante los PR `#21`/`#22` en
   Cloud `master=c0a3419b`; el gitlink, los controles proporcionales y la única
   revisión final están cerrados. El PR raíz `#14` está fusionado. El timeout CI
-  ya está resuelto y el gate posterior reveló una única incompatibilidad
-  `ARG_MAX` en la comparación local de inventarios; esa es la única superficie
-  abierta antes de Fase 4.
+  ya está resuelto; la primera incompatibilidad `ARG_MAX` también. El segundo
+  gate dejó siete fallos fail-closed en una única superficie residual de
+  finalización/rollback, ahora acotada a la comprobación del epoch compartido y
+  con diagnóstico seguro del stage. Esa es la única superficie abierta antes
+  de Fase 4.
 - Camino crítico posterior: (1) integrar la procedencia de Cloud y su
   consumidor raíz; (2) construir por Actions cuatro imágenes trazables —Hubs,
   Reticulum, parent y runner—; (3) checkpoint 1, rotación y checkpoint 2;
