@@ -26,8 +26,66 @@ PARENT_LEASE_HOLDER="${YENHUBS_PARENT_LEASE_HOLDER:-}"
 PARENT_LEASE_UID="${YENHUBS_PARENT_LEASE_UID:-}"
 PARENT_PROCESS_PID="${YENHUBS_PARENT_PROCESS_PID:-}"
 PARENT_PROCESS_START_IDENTITY="${YENHUBS_PARENT_PROCESS_START_IDENTITY:-}"
+PARENT_DURABLE_FENCE_BASELINE_PATH="${YENHUBS_PARENT_DURABLE_MONITOR_BASELINE_PATH:-}"
+PARENT_DURABLE_FENCE_BASELINE_SHA256="${YENHUBS_PARENT_DURABLE_MONITOR_BASELINE_SHA256:-}"
+PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY="${YENHUBS_PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY:-}"
+PARENT_WRITER_MONITOR_PID="${YENHUBS_PARENT_WRITER_MONITOR_PID:-}"
+PARENT_WRITER_MONITOR_START_IDENTITY="${YENHUBS_PARENT_WRITER_MONITOR_START_IDENTITY:-}"
+PARENT_WRITER_MONITOR_CONTRACT_PATH="${YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_PATH:-}"
+PARENT_WRITER_MONITOR_CONTRACT_SHA256="${YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_SHA256:-}"
+PARENT_WRITER_MONITOR_BASELINE_PATH="${YENHUBS_PARENT_WRITER_MONITOR_BASELINE_PATH:-}"
+PARENT_WRITER_MONITOR_BASELINE_SHA256="${YENHUBS_PARENT_WRITER_MONITOR_BASELINE_SHA256:-}"
+PARENT_WRITER_MONITOR_FAILURE_PATH="${YENHUBS_PARENT_WRITER_MONITOR_FAILURE_PATH:-}"
+PARENT_WRITER_MONITOR_READY_PATH="${YENHUBS_PARENT_WRITER_MONITOR_READY_PATH:-}"
+PARENT_WRITER_MONITOR_PROGRESS_PATH="${YENHUBS_PARENT_WRITER_MONITOR_PROGRESS_PATH:-}"
+PARENT_WRITER_MONITOR_AUTHORITY_SHA256="${YENHUBS_PARENT_WRITER_MONITOR_AUTHORITY_SHA256:-}"
+PARENT_WRITER_MONITOR_MAX_STALE_SECONDS=""
+PARENT_WRITER_STREAM_GUARD_ARGS=()
+PARENT_DURABLE_MONITOR_PID="${YENHUBS_PARENT_DURABLE_MONITOR_PID:-}"
+PARENT_DURABLE_MONITOR_START_IDENTITY="${YENHUBS_PARENT_DURABLE_MONITOR_START_IDENTITY:-}"
+PARENT_DURABLE_MONITOR_FAILURE_PATH="${YENHUBS_PARENT_DURABLE_MONITOR_FAILURE_PATH:-}"
+PARENT_DURABLE_MONITOR_READY_PATH="${YENHUBS_PARENT_DURABLE_MONITOR_READY_PATH:-}"
+PARENT_DURABLE_MONITOR_PROGRESS_PATH="${YENHUBS_PARENT_DURABLE_MONITOR_PROGRESS_PATH:-}"
+PARENT_DURABLE_MONITOR_CAPABILITY_SHA256="${YENHUBS_PARENT_DURABLE_MONITOR_CAPABILITY_SHA256:-}"
+PARENT_DURABLE_MONITOR_AUTHORITY_SHA256="${YENHUBS_PARENT_DURABLE_MONITOR_AUTHORITY_SHA256:-}"
+PARENT_DURABLE_MONITOR_MAX_STALE_SECONDS=""
+PARENT_DURABLE_STREAM_GUARD_ARGS=()
+VALUES_INPUT_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
+CUTOVER_KEY_INPUT_FILE="${PROCESS_LOCAL_CUTOVER_KEY_PATH:-}"
+VALUES_SOURCE_FILE=""
+CUTOVER_KEY_SNAPSHOT=""
+PROCESS_LOCAL_CUTOVER_KEY_PATH=""
+VALIDATION_DIR=""
+VALIDATION_DIR_PRIVATE_TOKEN=""
+VALIDATION_DIR_CLEANUP_ATTEMPTED=0
+VALIDATION_DIR_RETIRED=0
+VALIDATION_SETUP_STATUS=0
+export PROCESS_LOCAL_CUTOVER_KEY_PATH
+# shellcheck source=deployment/lib/reactivation-gate-functions.sh
+source "$SCRIPT_DIR/lib/reactivation-gate-functions.sh"
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
+unset YENHUBS_PARENT_WRITER_MONITOR_PID \
+  YENHUBS_PARENT_WRITER_MONITOR_START_IDENTITY \
+  YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_PATH \
+  YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_SHA256 \
+  YENHUBS_PARENT_WRITER_MONITOR_BASELINE_PATH \
+  YENHUBS_PARENT_WRITER_MONITOR_BASELINE_SHA256 \
+  YENHUBS_PARENT_WRITER_MONITOR_FAILURE_PATH \
+  YENHUBS_PARENT_WRITER_MONITOR_READY_PATH \
+  YENHUBS_PARENT_WRITER_MONITOR_PROGRESS_PATH \
+  YENHUBS_PARENT_WRITER_MONITOR_AUTHORITY_SHA256 \
+  YENHUBS_PARENT_DURABLE_MONITOR_PID \
+  YENHUBS_PARENT_DURABLE_MONITOR_START_IDENTITY \
+  YENHUBS_PARENT_DURABLE_MONITOR_BASELINE_PATH \
+  YENHUBS_PARENT_DURABLE_MONITOR_BASELINE_SHA256 \
+  YENHUBS_PARENT_DURABLE_MONITOR_FAILURE_PATH \
+  YENHUBS_PARENT_DURABLE_MONITOR_READY_PATH \
+  YENHUBS_PARENT_DURABLE_MONITOR_PROGRESS_PATH \
+  YENHUBS_PARENT_DURABLE_MONITOR_CAPABILITY_SHA256 \
+  YENHUBS_PARENT_DURABLE_MONITOR_AUTHORITY_SHA256 \
+  YENHUBS_PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY
+recovery_require_in_place_restore_target_mode
 
 if [[ -n "${RESTORE_STORAGE_DRY_RUN:-}" && -z "${RESTORE_STORAGE_PREFLIGHT:-}" ]]; then
   printf 'RESTORE_STORAGE_DRY_RUN is deprecated; this is a preflight only. Use RESTORE_STORAGE_PREFLIGHT=1.\n' >&2
@@ -53,18 +111,29 @@ if [[ "$PREFLIGHT" == "0" && "$COORDINATED" != "1" ]]; then
   exit 2
 fi
 
-VALIDATION_DIR=""
 RESTORE_POD_CREATED=0
 RESTORE_POD_UID=""
 RESTORE_NETWORK_POLICY_CREATED=0
 RESTORE_NETWORK_POLICY_UID=""
+RESTORE_CHILD_PENDING_SIGNAL_STATUS=0
+RESTORE_CHILD_SIGNAL_OWNER_SUBSHELL="$BASH_SUBSHELL"
 PVC_MONITOR_PID=""
+PVC_MONITOR_START_IDENTITY=""
 PVC_MONITOR_STOP=""
 PVC_MONITOR_FAILURE=""
+PVC_MONITOR_PROGRESS=""
 RUNNER_WATCH_PID=""
+RUNNER_WATCH_START_IDENTITY=""
 RUNNER_WATCH_STOP=""
 RUNNER_WATCH_FAILURE=""
 RUNNER_WATCH_READY=""
+RUNNER_WATCH_PROGRESS=""
+STORAGE_STREAM_GUARD_ARGS=()
+STORAGE_STREAM_GUARD_MAX_STALE_SECONDS=""
+STORAGE_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=""
+PVC_MONITOR_POLL_SECONDS=""
+PVC_MUTATION_STREAM_ARMED=0
+REMOTE_RESTORE_STATE_RETAINED=0
 RESTORE_PHASE="validating"
 
 stop_pvc_monitor() {
@@ -77,55 +146,135 @@ stop_pvc_monitor() {
       monitor_status=$?
     fi
     PVC_MONITOR_PID=""
+    PVC_MONITOR_START_IDENTITY=""
   fi
   if [[ -n "$PVC_MONITOR_FAILURE" && -s "$PVC_MONITOR_FAILURE" ]]; then
+    STORAGE_STREAM_GUARD_ARGS=()
+    STORAGE_STREAM_GUARD_MAX_STALE_SECONDS=""
+    STORAGE_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=""
     printf 'PVC consumer/identity monitoring failed during extraction.\n' >&2
     return 1
   fi
+  STORAGE_STREAM_GUARD_ARGS=()
+  STORAGE_STREAM_GUARD_MAX_STALE_SECONDS=""
+  STORAGE_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=""
   [[ "$monitor_status" -eq 0 ]]
 }
 
+initialize_runner_quiescence() {
+  case "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" in
+    legacy-absent)
+      recovery_wait_for_no_managed_bot_runner_pods 180s &&
+        require_parent_restore_guards
+      ;;
+    durable-v2)
+      recovery_require_checkpoint_runner_quiescence_exact durable-v2 \
+        "$PARENT_DURABLE_FENCE_BASELINE_PATH" \
+        "$PARENT_DURABLE_FENCE_BASELINE_SHA256" &&
+        require_parent_restore_guards
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+require_runner_quiescence() {
+  case "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" in
+    legacy-absent)
+      recovery_require_no_managed_bot_runner_pods &&
+        require_parent_restore_guards
+      ;;
+    durable-v2)
+      recovery_require_checkpoint_runner_quiescence_exact durable-v2 \
+        "$PARENT_DURABLE_FENCE_BASELINE_PATH" \
+        "$PARENT_DURABLE_FENCE_BASELINE_SHA256" &&
+        require_parent_restore_guards
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+require_runner_watch_healthy() {
+  if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
+    [[ -z "$RUNNER_WATCH_PID" &&
+       -z "$RUNNER_WATCH_START_IDENTITY" ]] || return 1
+    require_runner_quiescence
+  else
+    recovery_require_no_managed_bot_runner_watch_healthy \
+      "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" "$RUNNER_WATCH_PID" \
+      "$RUNNER_WATCH_START_IDENTITY" &&
+      require_parent_restore_guards
+  fi
+}
+
 start_runner_watch() {
+  [[ -z "$RUNNER_WATCH_PID" &&
+     -z "$RUNNER_WATCH_START_IDENTITY" ]] || return 2
+  if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
+    require_runner_quiescence
+    return
+  fi
+  [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == legacy-absent ]] || return 1
+  require_runner_quiescence || return 1
   : >"$RUNNER_WATCH_STOP"
   : >"$RUNNER_WATCH_FAILURE"
   : >"$RUNNER_WATCH_READY"
-  chmod 600 "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY"
+  : >"$RUNNER_WATCH_PROGRESS"
+  chmod 600 "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" \
+    "$RUNNER_WATCH_PROGRESS"
   recovery_start_no_managed_bot_runner_watch \
-    "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" RUNNER_WATCH_PID
+    "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" \
+    RUNNER_WATCH_PID RUNNER_WATCH_START_IDENTITY "$RUNNER_WATCH_PROGRESS"
 }
 
 stop_runner_watch() {
   local status=0
-  [[ -n "$RUNNER_WATCH_PID" ]] || return 2
-  if ! recovery_stop_no_managed_bot_runner_watch \
-    "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" \
-    "$RUNNER_WATCH_PID"; then
-    status=1
+  if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
+    [[ -z "$RUNNER_WATCH_PID" &&
+       -z "$RUNNER_WATCH_START_IDENTITY" ]] || status=1
+    require_runner_quiescence || status=1
+  else
+    [[ "$RUNNER_WATCH_PID" =~ ^[1-9][0-9]*$ ]] || return 2
+    if ! recovery_stop_no_managed_bot_runner_watch \
+      "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" \
+      "$RUNNER_WATCH_PID" "$RUNNER_WATCH_START_IDENTITY"; then
+      status=1
+    fi
+    require_runner_quiescence || status=1
   fi
   RUNNER_WATCH_PID=""
+  RUNNER_WATCH_START_IDENTITY=""
   [[ "$status" == 0 ]]
 }
 
 restore_pod_spec_is_exact() {
   local pod_json="$1"
-  [[ -n "$RESTORE_POD_UID" ]] || return 1
+  local pod_uid="${2:-$RESTORE_POD_UID}"
+  [[ -n "$pod_uid" ]] || return 1
   recovery_storage_helper_pod_is_exact "$pod_json" "$RESTORE_POD" \
-    "$RESTORE_POD_UID" ret-storage-restore "$RET_IMAGE" false
+    "$pod_uid" ret-storage-restore "$RET_IMAGE" false
 }
 
 restore_network_policy_spec_is_exact() {
   local policy_json="$1"
-  [[ -n "$RESTORE_NETWORK_POLICY_UID" ]] || return 1
+  local policy_uid="${2:-$RESTORE_NETWORK_POLICY_UID}"
+  [[ -n "$policy_uid" ]] || return 1
   recovery_storage_helper_network_policy_is_exact "$policy_json" \
-    "$RESTORE_NETWORK_POLICY" "$RESTORE_NETWORK_POLICY_UID" ret-storage-restore
+    "$RESTORE_NETWORK_POLICY" "$policy_uid" ret-storage-restore
 }
 
 capture_restore_pod_identity() {
-  local pod_json pod_uid
-  pod_json="$(recovery_kubectl get pod "$RESTORE_POD" -n "$NAMESPACE" -o json)" || return 1
+  local pod_json="${1:-}" pod_uid
+  if [[ -z "$pod_json" ]]; then
+    pod_json="$(recovery_kubectl get pod "$RESTORE_POD" \
+      -n "$NAMESPACE" -o json)" || return 1
+  fi
   pod_uid="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' <<<"$pod_json")" || return 1
+  restore_pod_spec_is_exact "$pod_json" "$pod_uid" || return 1
   RESTORE_POD_UID="$pod_uid"
-  restore_pod_spec_is_exact "$pod_json"
 }
 
 require_owned_restore_pod() {
@@ -138,13 +287,78 @@ require_owned_restore_pod() {
 }
 
 capture_restore_network_policy_identity() {
-  local policy_json policy_uid
-  policy_json="$(recovery_kubectl get networkpolicy "$RESTORE_NETWORK_POLICY" \
-    -n "$NAMESPACE" -o json)" || return 1
+  local policy_json="${1:-}" policy_uid
+  if [[ -z "$policy_json" ]]; then
+    policy_json="$(recovery_kubectl get networkpolicy "$RESTORE_NETWORK_POLICY" \
+      -n "$NAMESPACE" -o json)" || return 1
+  fi
   policy_uid="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' \
     <<<"$policy_json")" || return 1
+  restore_network_policy_spec_is_exact "$policy_json" "$policy_uid" || return 1
   RESTORE_NETWORK_POLICY_UID="$policy_uid"
-  restore_network_policy_spec_is_exact "$policy_json"
+}
+
+acquire_restore_network_policy() {
+  local policy_json="" acquisition_status=0
+  [[ "$RESTORE_NETWORK_POLICY_CREATED" == 0 &&
+     -z "$RESTORE_NETWORK_POLICY_UID" ]] || return 2
+  RESTORE_CHILD_PENDING_SIGNAL_STATUS=0
+  trap 'restore_child_record_pending_signal 130' INT
+  trap 'restore_child_record_pending_signal 143' TERM
+  if policy_json="$(recovery_kubectl_mutate create -f - -o json)" &&
+     capture_restore_network_policy_identity "$policy_json"; then
+    RESTORE_NETWORK_POLICY_CREATED=1
+  else
+    RESTORE_NETWORK_POLICY_UID=""
+    if recovery_require_operation_lock &&
+       policy_json="$(recovery_kubectl get networkpolicy \
+         "$RESTORE_NETWORK_POLICY" -n "$NAMESPACE" -o json)" &&
+       capture_restore_network_policy_identity "$policy_json"; then
+      # A failed create response is ambiguous. Adopt only the exact object
+      # carrying this private operation token, lock UID and admitted spec.
+      RESTORE_NETWORK_POLICY_CREATED=1
+      REMOTE_RESTORE_STATE_RETAINED=1
+    else
+      RESTORE_NETWORK_POLICY_UID=""
+      acquisition_status=1
+    fi
+  fi
+  if [[ "$RESTORE_NETWORK_POLICY_CREATED" == 1 ]] &&
+     ! recovery_require_operation_lock; then
+    acquisition_status=1
+  fi
+  restore_child_finish_capability_boundary "$acquisition_status"
+}
+
+acquire_restore_pod() {
+  local pod_json="" acquisition_status=0
+  [[ "$RESTORE_POD_CREATED" == 0 && -z "$RESTORE_POD_UID" ]] || return 2
+  RESTORE_CHILD_PENDING_SIGNAL_STATUS=0
+  trap 'restore_child_record_pending_signal 130' INT
+  trap 'restore_child_record_pending_signal 143' TERM
+  if pod_json="$(recovery_kubectl_mutate create -f - -o json)" &&
+     capture_restore_pod_identity "$pod_json"; then
+    RESTORE_POD_CREATED=1
+  else
+    RESTORE_POD_UID=""
+    if recovery_require_operation_lock &&
+       pod_json="$(recovery_kubectl get pod "$RESTORE_POD" \
+         -n "$NAMESPACE" -o json)" &&
+       capture_restore_pod_identity "$pod_json"; then
+      # Reconcile only an exact same-operation helper. Name alone grants no
+      # ownership and therefore no cleanup authority.
+      RESTORE_POD_CREATED=1
+      REMOTE_RESTORE_STATE_RETAINED=1
+    else
+      RESTORE_POD_UID=""
+      acquisition_status=1
+    fi
+  fi
+  if [[ "$RESTORE_POD_CREATED" == 1 ]] &&
+     ! recovery_require_operation_lock; then
+    acquisition_status=1
+  fi
+  restore_child_finish_capability_boundary "$acquisition_status"
 }
 
 require_owned_restore_network_policy() {
@@ -176,6 +390,7 @@ cleanup_restore_pod() {
     return 1
   fi
   RESTORE_POD_CREATED=0
+  RESTORE_POD_UID=""
   recovery_require_exact_pvc_consumers ret-pvc
 }
 
@@ -194,6 +409,7 @@ cleanup_restore_network_policy() {
     return 1
   fi
   RESTORE_NETWORK_POLICY_CREATED=0
+  RESTORE_NETWORK_POLICY_UID=""
 }
 
 clear_stale_helper_resources() {
@@ -205,13 +421,12 @@ clear_stale_helper_resources() {
   RESTORE_POD="ret-storage-restore-${RECOVERY_OPERATION_ID:0:12}"
   RESTORE_NETWORK_POLICY="ret-storage-restore-deny-${RECOVERY_OPERATION_ID:0:12}"
   if pod_json="$(recovery_kubectl get pod "$RESTORE_POD" -n "$NAMESPACE" -o json 2>/dev/null)"; then
-    RESTORE_POD_UID="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' \
-      <<<"$pod_json")" || return 1
-    RESTORE_POD_CREATED=1
-    restore_pod_spec_is_exact "$pod_json" || {
+    RESTORE_POD_UID=""
+    capture_restore_pod_identity "$pod_json" || {
       printf 'Stale helper pod is not bound to the exact retained operation.\n' >&2
       return 1
     }
+    RESTORE_POD_CREATED=1
     recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD" || return 1
     cleanup_restore_pod || return 1
   else
@@ -219,13 +434,12 @@ clear_stale_helper_resources() {
   fi
   if policy_json="$(recovery_kubectl get networkpolicy "$RESTORE_NETWORK_POLICY" \
     -n "$NAMESPACE" -o json 2>/dev/null)"; then
-    RESTORE_NETWORK_POLICY_UID="$(jq -er \
-      '.metadata.uid | select(type == "string" and length > 0)' <<<"$policy_json")" || return 1
-    RESTORE_NETWORK_POLICY_CREATED=1
-    restore_network_policy_spec_is_exact "$policy_json" || {
+    RESTORE_NETWORK_POLICY_UID=""
+    capture_restore_network_policy_identity "$policy_json" || {
       printf 'Stale helper NetworkPolicy is not bound to the exact retained operation.\n' >&2
       return 1
     }
+    RESTORE_NETWORK_POLICY_CREATED=1
     cleanup_restore_network_policy || return 1
   else
     policies_json="$(recovery_kubectl get networkpolicy -n "$NAMESPACE" -o json)" || return 1
@@ -237,34 +451,76 @@ clear_stale_helper_resources() {
 }
 
 cleanup_local() {
-  if [[ -n "$VALIDATION_DIR" ]]; then
-    rm -rf -- "$VALIDATION_DIR"
+  local cleanup_status=0
+  if [[ -n "$VALIDATION_DIR_PRIVATE_TOKEN" &&
+        "$VALIDATION_DIR_RETIRED" == 0 ]]; then
+    if [[ "$VALIDATION_DIR_CLEANUP_ATTEMPTED" == 1 ]]; then
+      cleanup_status=1
+    else
+      VALIDATION_DIR_CLEANUP_ATTEMPTED=1
+      if recovery_cleanup_private_directory "$VALIDATION_DIR_PRIVATE_TOKEN" \
+          f:archive-paths f:archive-verbose \
+          f:blob-uuids f:meta-uuids f:db-active-uuids \
+          f:quiesced-db-active-uuids \
+          f:quiesced-database-contract.json \
+          f:restored-blob-uuids f:restored-meta-uuids f:restored-paths \
+          f:monitor-stop f:monitor-failure f:monitor-progress \
+          f:monitor-progress.next \
+          f:runner-watch-stop f:runner-watch-failure f:runner-watch-ready \
+          f:runner-watch-progress f:runner-watch-progress.next; then
+        VALIDATION_DIR_RETIRED=1
+        VALIDATION_DIR_PRIVATE_TOKEN=""
+        VALIDATION_DIR=""
+      else
+        printf 'Private storage-restore validation cleanup failed closed; any exact empty orphan or replacement was preserved.\n' >&2
+        cleanup_status=1
+      fi
+    fi
+  elif [[ -n "$VALIDATION_DIR" && "$VALIDATION_DIR_RETIRED" == 0 ]]; then
+    printf 'Private storage-restore validation directory has no cleanup identity; preserving its empty orphan.\n' >&2
+    cleanup_status=1
   fi
-  recovery_cleanup_materialized_checkpoint
+  reactivation_cleanup_temp_paths
+  recovery_cleanup_materialized_checkpoint || cleanup_status=1
+  [[ "$cleanup_status" == 0 ]]
 }
 
 final_cleanup() {
   local status="$?"
   local cleanup_status=0
   local pod_cleanup_status=0
-  trap - EXIT ERR INT TERM
-  if [[ -n "$RUNNER_WATCH_PID" ]]; then
-    recovery_discard_no_managed_bot_runner_watch "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_PID"
-    RUNNER_WATCH_PID=""
-  fi
+  local retain_remote_restore_state=0
+  trap - EXIT ERR
+  trap '' INT TERM
   if ! stop_pvc_monitor; then
     cleanup_status=1
   fi
-  if ! cleanup_restore_pod; then
-    printf 'The restore pod could not be cleaned up; inspect the pinned target before continuing.\n' >&2
-    cleanup_status=1
-    pod_cleanup_status=1
+  if [[ "$RUNNER_WATCH_PID" =~ ^[1-9][0-9]*$ ]]; then
+    recovery_discard_no_managed_bot_runner_watch \
+      "$RUNNER_WATCH_STOP" "$RUNNER_WATCH_PID" \
+      "$RUNNER_WATCH_START_IDENTITY"
+    RUNNER_WATCH_PID=""
+    RUNNER_WATCH_START_IDENTITY=""
   fi
-  if [[ "$pod_cleanup_status" == 0 ]] && ! cleanup_restore_network_policy; then
-    printf 'The deny-all helper NetworkPolicy remains for fail-closed inspection.\n' >&2
-    cleanup_status=1
+  RUNNER_WATCH_START_IDENTITY=""
+  if [[ "$status" -ne 0 &&
+        ( "$PVC_MUTATION_STREAM_ARMED" == 1 ||
+          "$REMOTE_RESTORE_STATE_RETAINED" == 1 ) ]]; then
+    retain_remote_restore_state=1
+    printf 'PVC mutation may be partial; retaining the exact restore helper, deny-all NetworkPolicy and operation lock for fail-closed inspection.\n' >&2
   fi
-  cleanup_local
+  if [[ "$retain_remote_restore_state" == 0 ]]; then
+    if ! cleanup_restore_pod; then
+      printf 'The restore pod could not be cleaned up; inspect the pinned target before continuing.\n' >&2
+      cleanup_status=1
+      pod_cleanup_status=1
+    fi
+    if [[ "$pod_cleanup_status" == 0 ]] && ! cleanup_restore_network_policy; then
+      printf 'The deny-all helper NetworkPolicy remains for fail-closed inspection.\n' >&2
+      cleanup_status=1
+    fi
+  fi
+  cleanup_local || cleanup_status=1
   if [[ "$status" -eq 0 && "$cleanup_status" -ne 0 ]]; then
     status=1
   fi
@@ -285,6 +541,34 @@ storage_restore_interrupted() {
   exit "$status"
 }
 
+restore_child_record_pending_signal() {
+  local status="$1"
+  [[ "$BASH_SUBSHELL" == "$RESTORE_CHILD_SIGNAL_OWNER_SUBSHELL" ]] || return 0
+  [[ "$status" == 130 || "$status" == 143 ]] || return 2
+  if [[ "$RESTORE_CHILD_PENDING_SIGNAL_STATUS" == 0 ]]; then
+    RESTORE_CHILD_PENDING_SIGNAL_STATUS="$status"
+    # Keep the first cooperative interruption pending until a remotely created
+    # object has either armed an exact UID capability or failed reconciliation.
+    trap '' INT TERM
+  fi
+}
+
+restore_child_signal_traps() {
+  trap 'storage_restore_interrupted 130' INT
+  trap 'storage_restore_interrupted 143' TERM
+}
+
+restore_child_finish_capability_boundary() {
+  local acquisition_status="$1" pending_signal_status
+  restore_child_signal_traps
+  pending_signal_status="$RESTORE_CHILD_PENDING_SIGNAL_STATUS"
+  RESTORE_CHILD_PENDING_SIGNAL_STATUS=0
+  if [[ "$pending_signal_status" != 0 ]]; then
+    storage_restore_interrupted "$pending_signal_status"
+  fi
+  [[ "$acquisition_status" == 0 ]]
+}
+
 trap final_cleanup EXIT
 trap storage_restore_failed ERR
 trap 'storage_restore_interrupted 130' INT
@@ -293,6 +577,21 @@ trap 'storage_restore_interrupted 143' TERM
 # Verify the exact allowlisted checkpoint, copy both halves into private files,
 # rehash them, and jointly validate the copied pair before contacting Kubernetes.
 recovery_materialize_checkpoint "$ARCHIVE_PATH" "$SCRIPT_DIR/validate-checkpoint.sh"
+if ! reactivation_snapshot_private_file \
+  VALUES_SOURCE_FILE "$VALUES_INPUT_FILE" restore-values; then
+  printf 'Could not bind a private immutable restore values snapshot.\n' >&2
+  exit 1
+fi
+if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
+  if [[ -z "$CUTOVER_KEY_INPUT_FILE" ]] ||
+     ! reactivation_snapshot_private_file \
+       CUTOVER_KEY_SNAPSHOT "$CUTOVER_KEY_INPUT_FILE" restore-cutover-key; then
+    printf 'A private PROCESS_LOCAL_CUTOVER_KEY_PATH is required for durable preflight.\n' >&2
+    exit 1
+  fi
+  PROCESS_LOCAL_CUTOVER_KEY_PATH="$CUTOVER_KEY_SNAPSHOT"
+  export PROCESS_LOCAL_CUTOVER_KEY_PATH
+fi
 
 if [[ "$CLEAR_STALE_HELPER" == "1" ]]; then
   recovery_adopt_parent_operation_serialization \
@@ -307,8 +606,25 @@ if [[ "$CLEAR_STALE_HELPER" == "1" ]]; then
   exit 0
 fi
 
-VALIDATION_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yenhubs-storage-restore.XXXXXX")"
-chmod 700 "$VALIDATION_DIR"
+VALIDATION_SETUP_STATUS=0
+RESTORE_CHILD_PENDING_SIGNAL_STATUS=0
+trap 'restore_child_record_pending_signal 130' INT
+trap 'restore_child_record_pending_signal 143' TERM
+if ! VALIDATION_DIR="$(
+    trap '' INT TERM
+    mktemp -d "${TMPDIR:-/tmp}/yenhubs-storage-restore.XXXXXX"
+  )"; then
+  VALIDATION_SETUP_STATUS=1
+elif ! VALIDATION_DIR_PRIVATE_TOKEN="$(
+    trap '' INT TERM
+    recovery_capture_private_directory_token "$VALIDATION_DIR"
+  )"; then
+  VALIDATION_SETUP_STATUS=1
+fi
+if ! restore_child_finish_capability_boundary "$VALIDATION_SETUP_STATUS"; then
+  printf 'Could not bind the private storage-restore validation directory identity; any empty orphan was preserved.\n' >&2
+  exit 1
+fi
 ARCHIVE_PATHS="$VALIDATION_DIR/archive-paths"
 ARCHIVE_VERBOSE="$VALIDATION_DIR/archive-verbose"
 ARCHIVE_BLOB_UUIDS="$VALIDATION_DIR/blob-uuids"
@@ -321,14 +637,19 @@ RESTORED_META_UUIDS="$VALIDATION_DIR/restored-meta-uuids"
 RESTORED_PATHS="$VALIDATION_DIR/restored-paths"
 PVC_MONITOR_STOP="$VALIDATION_DIR/monitor-stop"
 PVC_MONITOR_FAILURE="$VALIDATION_DIR/monitor-failure"
+PVC_MONITOR_PROGRESS="$VALIDATION_DIR/monitor-progress"
 RUNNER_WATCH_STOP="$VALIDATION_DIR/runner-watch-stop"
 RUNNER_WATCH_FAILURE="$VALIDATION_DIR/runner-watch-failure"
 RUNNER_WATCH_READY="$VALIDATION_DIR/runner-watch-ready"
+RUNNER_WATCH_PROGRESS="$VALIDATION_DIR/runner-watch-progress"
+: >"$PVC_MONITOR_FAILURE"
+: >"$PVC_MONITOR_PROGRESS"
 : >"$DB_ACTIVE_UUIDS"
 : >"$QUIESCED_DB_ACTIVE_UUIDS"
 : >"$RESTORED_BLOB_UUIDS"
 : >"$RESTORED_META_UUIDS"
-chmod 600 "$DB_ACTIVE_UUIDS" "$QUIESCED_DB_ACTIVE_UUIDS" \
+chmod 600 "$PVC_MONITOR_FAILURE" "$PVC_MONITOR_PROGRESS" "$DB_ACTIVE_UUIDS" \
+  "$QUIESCED_DB_ACTIVE_UUIDS" \
   "$RESTORED_BLOB_UUIDS" "$RESTORED_META_UUIDS"
 
 gzip -t "$RECOVERY_STORAGE_COPY"
@@ -381,6 +702,16 @@ if ! recovery_require_live_images_match_checkpoint \
   printf 'The live workload image inventory does not exactly match the checkpoint.\n' >&2
   exit 1
 fi
+if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == legacy-absent ]] &&
+   ! recovery_require_checkpoint_generation_matches_live \
+     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" "$VALUES_SOURCE_FILE"; then
+  printf 'The live process-local runner generation does not match the legacy checkpoint.\n' >&2
+  exit 1
+fi
+if [[ "$COORDINATED" != 1 ]]; then
+  recovery_require_restore_epoch_candidate \
+    "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" "$VALUES_SOURCE_FILE"
+fi
 recovery_wait_for_deployment_rollout pgsql 300
 PGSQL_PODS_JSON="$(recovery_kubectl get pod -n "$NAMESPACE" -l app=pgsql -o json)"
 if ! PGSQL_POD_INFO="$(recovery_exact_ready_deployment_pod_info \
@@ -390,11 +721,23 @@ if ! PGSQL_POD_INFO="$(recovery_exact_ready_deployment_pod_info \
   exit 1
 fi
 IFS=$'\t' read -r PGSQL_POD PGSQL_POD_UID PGSQL_DEPLOYMENT_UID <<<"$PGSQL_POD_INFO"
-PGSQL_POD_JSON="$(jq -cer '.items[0]' <<<"$PGSQL_PODS_JSON")"
 require_pgsql_source() {
+  local current_pods current_info current_name current_uid current_deployment_uid
+  local current_pod
+  current_pods="$(recovery_kubectl get pod -n "$NAMESPACE" -l app=pgsql -o json)" ||
+    return 1
+  current_info="$(recovery_exact_ready_deployment_pod_info \
+    "$current_pods" pgsql pgsql)" || return 1
+  IFS=$'\t' read -r current_name current_uid current_deployment_uid \
+    <<<"$current_info"
+  [[ "$current_name" == "$PGSQL_POD" && "$current_uid" == "$PGSQL_POD_UID" &&
+     "$current_deployment_uid" == "$PGSQL_DEPLOYMENT_UID" ]] || return 1
+  current_pod="$(jq -cer --arg uid "$current_uid" '
+    [.items[] | select(.metadata.uid == $uid)] | select(length == 1) | .[0]
+  ' <<<"$current_pods")" || return 1
   recovery_require_pod_identity "$PGSQL_POD" "$PGSQL_POD_UID" &&
     recovery_require_pod_deployment_ownership \
-      "$PGSQL_POD_JSON" pgsql "$PGSQL_DEPLOYMENT_UID"
+      "$current_pod" pgsql "$PGSQL_DEPLOYMENT_UID"
 }
 # Expansion is intentionally deferred to the PostgreSQL container.
 # shellcheck disable=SC2016
@@ -428,6 +771,27 @@ if [[ -n "$MISSING_ACTIVE_STORAGE" ]]; then
 fi
 
 if [[ "$PREFLIGHT" == "1" ]]; then
+  recovery_require_cluster_identity
+  recovery_require_pvc_identity ret-pvc
+  recovery_require_restore_target_binding
+  recovery_require_live_runner_control_plane_matches_checkpoint \
+    "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
+  recovery_require_live_images_match_checkpoint \
+    "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
+  require_pgsql_source
+  if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == legacy-absent ]]; then
+    recovery_require_checkpoint_generation_matches_live \
+      "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" "$VALUES_SOURCE_FILE"
+  fi
+  if [[ "$COORDINATED" != 1 ]]; then
+    recovery_require_restore_epoch_candidate \
+      "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" "$VALUES_SOURCE_FILE"
+  fi
+  if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
+    recovery_verify_runner_cutover_evidence_live \
+      "$VALUES_SOURCE_FILE" "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY" \
+      "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" dormant "" active-source
+  fi
   printf 'Storage restore preflight passed (no restore performed): source=%s checkpoint=%s dump_sha256=%s storage_sha256=%s active_files=%s complete_pairs=%s deferred_pairs=%s context=%s namespace=%s namespace_uid=%s pvc=ret-pvc pvc_uid=%s\n' \
     "$ARCHIVE_PATH" "$RECOVERY_CHECKPOINT_STAMP" "$RECOVERY_DUMP_SHA256" \
     "$RECOVERY_STORAGE_SHA256" "$DB_ACTIVE_COUNT" "$ARCHIVE_BLOB_COUNT" \
@@ -450,6 +814,172 @@ if [[ -z "${RECOVERY_CONSUMER_CONTRACT_JSON:-}" ]] ||
   printf 'Destructive storage restore lacks the exact parent lock/consumer contract.\n' >&2
   exit 1
 fi
+
+initialize_parent_writer_guard() {
+  local runtime_generation="$1"
+  [[ "$runtime_generation" == legacy-absent ||
+     "$runtime_generation" == durable-v2 ]] || return 2
+  if [[ "$(recovery_monitor_authority_sha256_for_ready \
+        "$PARENT_WRITER_MONITOR_READY_PATH" 2>/dev/null || :)" != \
+        "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" ]] ||
+     ! recovery_require_checkpoint_writer_monitor_healthy \
+       "$PARENT_WRITER_MONITOR_CONTRACT_PATH" \
+       "$PARENT_WRITER_MONITOR_CONTRACT_SHA256" \
+       "$PARENT_WRITER_MONITOR_BASELINE_PATH" \
+       "$PARENT_WRITER_MONITOR_BASELINE_SHA256" \
+       "$PARENT_WRITER_MONITOR_FAILURE_PATH" \
+       "$PARENT_WRITER_MONITOR_READY_PATH" \
+       "$PARENT_WRITER_MONITOR_PID" \
+       "$PARENT_WRITER_MONITOR_START_IDENTITY" "$runtime_generation" \
+       checkpoint-restore ||
+     ! recovery_stream_guard_progress_value \
+       "$PARENT_WRITER_MONITOR_PROGRESS_PATH" \
+       "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" >/dev/null ||
+     ! PARENT_WRITER_MONITOR_MAX_STALE_SECONDS="$(
+       recovery_stream_guard_max_stale_seconds
+     )"; then
+    return 1
+  fi
+  PARENT_WRITER_STREAM_GUARD_ARGS=(
+    --guard-process-capability checkpoint-writer-monitor
+    "$PARENT_WRITER_MONITOR_PID"
+    "$PARENT_WRITER_MONITOR_START_IDENTITY"
+    "$PARENT_WRITER_MONITOR_FAILURE_PATH"
+    "$PARENT_WRITER_MONITOR_READY_PATH"
+    "$PARENT_WRITER_MONITOR_PROGRESS_PATH"
+    "${PARENT_WRITER_MONITOR_READY_PATH}.authority.json"
+    "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256"
+    "$PARENT_WRITER_MONITOR_MAX_STALE_SECONDS"
+  )
+}
+
+initialize_parent_restore_guards() {
+  [[ "${RECOVERY_OPERATION_OWNER:-}" == checkpoint-restore ]] || return 1
+  case "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" in
+    legacy-absent)
+      if [[ -n "$PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY" ||
+            -n "$PARENT_DURABLE_FENCE_BASELINE_PATH" ||
+            -n "$PARENT_DURABLE_FENCE_BASELINE_SHA256" ||
+            -n "$PARENT_DURABLE_MONITOR_PID" ||
+            -n "$PARENT_DURABLE_MONITOR_START_IDENTITY" ||
+            -n "$PARENT_DURABLE_MONITOR_FAILURE_PATH" ||
+            -n "$PARENT_DURABLE_MONITOR_READY_PATH" ||
+            -n "$PARENT_DURABLE_MONITOR_PROGRESS_PATH" ||
+            -n "$PARENT_DURABLE_MONITOR_CAPABILITY_SHA256" ||
+            -n "$PARENT_DURABLE_MONITOR_AUTHORITY_SHA256" ]] ||
+         ! initialize_parent_writer_guard legacy-absent; then
+        printf 'Legacy storage restore requires one live parent writer guard and rejects durable fence capabilities.\n' >&2
+        return 1
+      fi
+      ;;
+    durable-v2)
+      if [[ -z "$PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY" ||
+            "$PARENT_WRITER_MONITOR_PID" == "$PARENT_DURABLE_MONITOR_PID" ||
+            "$(recovery_monitor_authority_sha256_for_ready \
+              "$PARENT_DURABLE_MONITOR_READY_PATH" 2>/dev/null || :)" != \
+              "$PARENT_DURABLE_MONITOR_AUTHORITY_SHA256" ]] ||
+         ! initialize_parent_writer_guard durable-v2 ||
+         ! recovery_require_durable_runner_quiescence_monitor_healthy \
+           "$PARENT_DURABLE_FENCE_BASELINE_PATH" \
+           "$PARENT_DURABLE_FENCE_BASELINE_SHA256" \
+           "$PARENT_WRITER_MONITOR_BASELINE_PATH" \
+           "$PARENT_WRITER_MONITOR_BASELINE_SHA256" \
+           "$PARENT_DURABLE_MONITOR_FAILURE_PATH" \
+           "$PARENT_DURABLE_MONITOR_READY_PATH" \
+           "$PARENT_DURABLE_MONITOR_PROGRESS_PATH" \
+           "$PARENT_DURABLE_MONITOR_PID" \
+           "$PARENT_DURABLE_MONITOR_START_IDENTITY" \
+           "$PARENT_DURABLE_MONITOR_CAPABILITY_SHA256" checkpoint-restore ||
+         ! recovery_stream_guard_progress_value \
+           "$PARENT_DURABLE_MONITOR_PROGRESS_PATH" \
+           "$PARENT_DURABLE_MONITOR_AUTHORITY_SHA256" >/dev/null ||
+         ! PARENT_DURABLE_MONITOR_MAX_STALE_SECONDS="$(
+           recovery_stream_guard_max_stale_seconds
+         )"; then
+        printf 'Durable storage restore requires both live parent monitor guards.\n' >&2
+        return 1
+      fi
+      PARENT_DURABLE_STREAM_GUARD_ARGS=(
+        --guard-process-capability durable-runner-quiescence-monitor
+        "$PARENT_DURABLE_MONITOR_PID"
+        "$PARENT_DURABLE_MONITOR_START_IDENTITY"
+        "$PARENT_DURABLE_MONITOR_FAILURE_PATH"
+        "$PARENT_DURABLE_MONITOR_READY_PATH"
+        "$PARENT_DURABLE_MONITOR_PROGRESS_PATH"
+        "${PARENT_DURABLE_MONITOR_READY_PATH}.authority.json"
+        "$PARENT_DURABLE_MONITOR_AUTHORITY_SHA256"
+        "$PARENT_DURABLE_MONITOR_MAX_STALE_SECONDS"
+      )
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+require_parent_restore_guards() {
+  [[ "${RECOVERY_OPERATION_OWNER:-}" == checkpoint-restore ]] || return 1
+  [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == legacy-absent ||
+     "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]] || return 1
+  [[ "$(recovery_monitor_authority_sha256_for_ready \
+       "$PARENT_WRITER_MONITOR_READY_PATH" 2>/dev/null || :)" == \
+       "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" ]] || return 1
+  recovery_require_checkpoint_writer_monitor_healthy \
+    "$PARENT_WRITER_MONITOR_CONTRACT_PATH" \
+    "$PARENT_WRITER_MONITOR_CONTRACT_SHA256" \
+    "$PARENT_WRITER_MONITOR_BASELINE_PATH" \
+    "$PARENT_WRITER_MONITOR_BASELINE_SHA256" \
+    "$PARENT_WRITER_MONITOR_FAILURE_PATH" \
+    "$PARENT_WRITER_MONITOR_READY_PATH" \
+    "$PARENT_WRITER_MONITOR_PID" \
+    "$PARENT_WRITER_MONITOR_START_IDENTITY" \
+    "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" \
+    checkpoint-restore || return 1
+  recovery_stream_guard_progress_value \
+    "$PARENT_WRITER_MONITOR_PROGRESS_PATH" \
+    "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" >/dev/null || return 1
+  if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == legacy-absent ]]; then
+    [[ -z "$PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY" &&
+       -z "$PARENT_DURABLE_FENCE_BASELINE_PATH" &&
+       -z "$PARENT_DURABLE_FENCE_BASELINE_SHA256" &&
+       -z "$PARENT_DURABLE_MONITOR_PID" &&
+       -z "$PARENT_DURABLE_MONITOR_START_IDENTITY" &&
+       -z "$PARENT_DURABLE_MONITOR_FAILURE_PATH" &&
+       -z "$PARENT_DURABLE_MONITOR_READY_PATH" &&
+       -z "$PARENT_DURABLE_MONITOR_PROGRESS_PATH" &&
+       -z "$PARENT_DURABLE_MONITOR_CAPABILITY_SHA256" &&
+       -z "$PARENT_DURABLE_MONITOR_AUTHORITY_SHA256" ]]
+    return
+  fi
+  [[ "$PARENT_WRITER_MONITOR_PID" != "$PARENT_DURABLE_MONITOR_PID" &&
+     "$(recovery_monitor_authority_sha256_for_ready \
+       "$PARENT_DURABLE_MONITOR_READY_PATH" 2>/dev/null || :)" == \
+       "$PARENT_DURABLE_MONITOR_AUTHORITY_SHA256" ]] || return 1
+  recovery_require_durable_runner_quiescence_monitor_healthy \
+    "$PARENT_DURABLE_FENCE_BASELINE_PATH" \
+    "$PARENT_DURABLE_FENCE_BASELINE_SHA256" \
+    "$PARENT_WRITER_MONITOR_BASELINE_PATH" \
+    "$PARENT_WRITER_MONITOR_BASELINE_SHA256" \
+    "$PARENT_DURABLE_MONITOR_FAILURE_PATH" \
+    "$PARENT_DURABLE_MONITOR_READY_PATH" \
+    "$PARENT_DURABLE_MONITOR_PROGRESS_PATH" \
+    "$PARENT_DURABLE_MONITOR_PID" \
+    "$PARENT_DURABLE_MONITOR_START_IDENTITY" \
+    "$PARENT_DURABLE_MONITOR_CAPABILITY_SHA256" checkpoint-restore || return 1
+  recovery_stream_guard_progress_value \
+    "$PARENT_DURABLE_MONITOR_PROGRESS_PATH" \
+    "$PARENT_DURABLE_MONITOR_AUTHORITY_SHA256" >/dev/null || return 1
+  recovery_require_checkpoint_runner_quiescence_exact durable-v2 \
+    "$PARENT_DURABLE_FENCE_BASELINE_PATH" \
+    "$PARENT_DURABLE_FENCE_BASELINE_SHA256" || return 1
+  recovery_require_recovery_operation_fence_state active \
+    "$PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY"
+}
+
+initialize_parent_restore_guards || {
+  printf 'Destructive storage restore lacks the exact parent monitor capabilities.\n' >&2
+  exit 1
+}
 RESTORE_POD="ret-storage-restore-${RECOVERY_OPERATION_ID:0:12}"
 RESTORE_NETWORK_POLICY="ret-storage-restore-deny-${RECOVERY_OPERATION_ID:0:12}"
 
@@ -525,7 +1055,7 @@ for index in "${!RESTORE_DEPLOYMENTS[@]}"; do
   recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
     "${RESTORE_DEPLOYMENTS[$index]}" 0
 done
-recovery_wait_for_no_managed_bot_runner_pods 180s
+initialize_runner_quiescence
 recovery_require_exact_pvc_consumers ret-pvc
 
 # The driver already restored this exact DB contract. Recheck it and the full
@@ -534,7 +1064,7 @@ recovery_require_exact_pvc_consumers ret-pvc
 # storage extraction even if the child is invoked incorrectly outside the
 # driver.
 recovery_require_operation_lock
-recovery_require_no_managed_bot_runner_pods
+require_runner_quiescence
 require_pgsql_source
 if ! recovery_capture_live_database_contract "$PGSQL_POD" "$QUIESCED_DATABASE_CONTRACT" ||
    ! recovery_database_contracts_match \
@@ -562,12 +1092,12 @@ fi
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 recovery_require_operation_lock
-recovery_require_no_managed_bot_runner_pods
+require_runner_quiescence
 recovery_require_exact_pvc_consumers ret-pvc
 start_runner_watch
 # The deny-all policy is create-only and must be admitted exactly before the
 # PVC helper pod exists. Its selector is unique to this operation_id.
-cat <<EOF | recovery_kubectl_mutate create -f - >/dev/null
+if ! acquire_restore_network_policy <<EOF
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -587,8 +1117,7 @@ spec:
   ingress: []
   egress: []
 EOF
-RESTORE_NETWORK_POLICY_CREATED=1
-if ! capture_restore_network_policy_identity; then
+then
   printf 'Deny-all helper NetworkPolicy does not match the exact admitted contract.\n' >&2
   exit 1
 fi
@@ -597,7 +1126,7 @@ require_owned_restore_network_policy
 
 # Create-only is intentional. A unique operation name plus the exact admitted
 # UID/spec prevents adoption of a concurrent or stale helper.
-cat <<EOF | recovery_kubectl_mutate create -f - >/dev/null
+if ! acquire_restore_pod <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -641,12 +1170,15 @@ spec:
         claimName: ret-pvc
         readOnly: false
 EOF
-RESTORE_POD_CREATED=1
+then
+  printf 'Restore pod identity or admitted spec does not match the exact safe contract.\n' >&2
+  exit 1
+fi
 recovery_wait_for_pod_ready "$RESTORE_POD" 180
 recovery_require_operation_lock
 require_owned_restore_network_policy
 recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD"
-if ! capture_restore_pod_identity; then
+if ! require_owned_restore_pod; then
   printf 'Restore pod identity or admitted spec does not match the exact safe contract.\n' >&2
   exit 1
 fi
@@ -660,24 +1192,31 @@ EXISTING_ENTRY="$(
      fi'
 )"
 if [[ -n "$EXISTING_ENTRY" ]]; then
+  REMOTE_RESTORE_STATE_RETAINED=1
   printf 'Refusing to merge into non-empty or unsafe ret-pvc owned root.\n' >&2
   printf 'All DB consumers remain at zero for inspection.\n' >&2
   exit 1
 fi
 
 monitor_pvc_during_extraction() {
+  local progress=0
   while [[ ! -e "$PVC_MONITOR_STOP" ]]; do
     if ! recovery_require_cluster_identity ||
        ! recovery_require_pvc_identity ret-pvc ||
        ! recovery_require_operation_lock ||
-       ! recovery_require_no_managed_bot_runner_pods ||
+       ! require_runner_quiescence ||
        ! require_owned_restore_network_policy ||
        ! recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD" ||
        ! require_owned_restore_pod; then
       printf 'failed\n' >"$PVC_MONITOR_FAILURE"
       return 1
     fi
-    sleep "${PVC_MONITOR_INTERVAL_SECONDS:-1}"
+    progress=$((progress + 1))
+    if ! recovery_write_stream_guard_progress "$PVC_MONITOR_PROGRESS" "$progress"; then
+      printf 'progress_publish_failed\n' >"$PVC_MONITOR_FAILURE"
+      return 1
+    fi
+    sleep "$PVC_MONITOR_POLL_SECONDS"
   done
 }
 
@@ -687,17 +1226,70 @@ RESTORE_PHASE="restoring"
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 recovery_require_operation_lock
-recovery_require_no_managed_bot_runner_pods
-recovery_require_no_managed_bot_runner_watch_healthy \
-  "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" "$RUNNER_WATCH_PID"
+require_runner_quiescence
+require_runner_watch_healthy
 require_owned_restore_network_policy
 recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD"
 require_owned_restore_pod
-monitor_pvc_during_extraction &
+PVC_MONITOR_POLL_SECONDS="$(recovery_stream_poll_seconds)" || {
+  printf 'Could not derive the attested PVC monitor poll interval.\n' >&2
+  exit 1
+}
+(
+  # Keep the Bash 3.2 supervisor as the process identified by $!. Without an
+  # EXIT obligation, an async function can tail-exec a nested kubectl command
+  # and disappear successfully after that single request.
+  pvc_monitor_exit_status=0
+  trap 'pvc_monitor_exit_status=$?; trap - EXIT; exit "$pvc_monitor_exit_status"' EXIT
+  monitor_pvc_during_extraction
+) &
 PVC_MONITOR_PID=$!
+if ! PVC_MONITOR_START_IDENTITY="$(
+  recovery_process_start_identity "$PVC_MONITOR_PID"
+)"; then
+  : >"$PVC_MONITOR_STOP"
+  wait "$PVC_MONITOR_PID" 2>/dev/null || :
+  PVC_MONITOR_PID=""
+  PVC_MONITOR_START_IDENTITY=""
+  printf 'Could not bind the PVC monitor to its exact process identity.\n' >&2
+  exit 1
+fi
+if ! STORAGE_STREAM_GUARD_MAX_STALE_SECONDS="$(
+  recovery_stream_guard_max_stale_seconds
+)" || ! STORAGE_STREAM_GUARD_INITIAL_DEADLINE_SECONDS="$(
+  recovery_stream_guard_initial_deadline_seconds
+)" || ! recovery_wait_for_stream_guard_initial_progress \
+  "$PVC_MONITOR_PID" "$PVC_MONITOR_START_IDENTITY" \
+  "$PVC_MONITOR_FAILURE" "$PVC_MONITOR_PROGRESS" \
+  "$STORAGE_STREAM_GUARD_INITIAL_DEADLINE_SECONDS"; then
+  : >"$PVC_MONITOR_STOP"
+  wait "$PVC_MONITOR_PID" 2>/dev/null || :
+  PVC_MONITOR_PID=""
+  PVC_MONITOR_START_IDENTITY=""
+  STORAGE_STREAM_GUARD_MAX_STALE_SECONDS=""
+  STORAGE_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=""
+  printf 'PVC monitor did not complete its initial exact safety sweep.\n' >&2
+  exit 1
+fi
+STORAGE_STREAM_GUARD_ARGS=(
+  --guard-process "$PVC_MONITOR_PID" "$PVC_MONITOR_START_IDENTITY"
+  "$PVC_MONITOR_FAILURE" "$PVC_MONITOR_PROGRESS"
+  "$STORAGE_STREAM_GUARD_MAX_STALE_SECONDS"
+)
+STORAGE_STREAM_GUARD_ARGS+=("${PARENT_WRITER_STREAM_GUARD_ARGS[@]}")
+if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
+  STORAGE_STREAM_GUARD_ARGS+=("${PARENT_DURABLE_STREAM_GUARD_ARGS[@]}")
+elif [[ "$RUNNER_WATCH_PID" =~ ^[1-9][0-9]*$ ]]; then
+  STORAGE_STREAM_GUARD_ARGS+=(
+    --guard-process "$RUNNER_WATCH_PID" "$RUNNER_WATCH_START_IDENTITY"
+    "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_PROGRESS"
+    "$STORAGE_STREAM_GUARD_MAX_STALE_SECONDS"
+  )
+fi
+PVC_MUTATION_STREAM_ARMED=1
 if gzip -cd "$RECOVERY_STORAGE_COPY" |
-  recovery_kubectl_stream_mutate 3600 exec -i -n "$NAMESPACE" "$RESTORE_POD" -- \
-    tar -C /storage -xf -; then
+  recovery_kubectl_stream_mutate 3600 "${STORAGE_STREAM_GUARD_ARGS[@]}" -- \
+    exec -i -n "$NAMESPACE" "$RESTORE_POD" -- tar -C /storage -xf -; then
   extraction_status=0
 else
   extraction_status=$?
@@ -714,9 +1306,8 @@ fi
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 recovery_require_operation_lock
-recovery_require_no_managed_bot_runner_pods
-recovery_require_no_managed_bot_runner_watch_healthy \
-  "$RUNNER_WATCH_FAILURE" "$RUNNER_WATCH_READY" "$RUNNER_WATCH_PID"
+require_runner_quiescence
+require_runner_watch_healthy
 require_owned_restore_network_policy
 recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD"
 require_owned_restore_pod
@@ -745,7 +1336,9 @@ if [[ "$RESTORED_BLOBS" != "$ARCHIVE_BLOB_COUNT" ||
   exit 1
 fi
 
-recovery_require_no_managed_bot_runner_pods
+require_runner_quiescence
+PVC_MUTATION_STREAM_ARMED=0
+REMOTE_RESTORE_STATE_RETAINED=0
 cleanup_restore_pod
 cleanup_restore_network_policy
 if ! stop_runner_watch; then

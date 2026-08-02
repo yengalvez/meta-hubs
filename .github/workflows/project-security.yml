@@ -15,7 +15,7 @@ concurrency:
 jobs:
   static-security:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 75
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -151,6 +151,8 @@ jobs:
 
       - name: Run security gate regression tests
         run: |
+          node --test tests/recovery/runner-cutover-checkpoint-evidence.test.mjs
+          node --test tests/scripts/durable-runner-quiescence-monitor.test.mjs
           bash tests/scripts/security-gates.test.sh
           bash tests/recovery/test-recovery-safety.sh
           bash scripts/test-aud065.sh

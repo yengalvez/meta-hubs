@@ -252,9 +252,16 @@ function verifyPod(pod, context) {
   ) reject("pod_metadata");
 
   const labels = pod.metadata.labels;
-  if (!exactKeys(labels, ["app", "yenhubs.org/generation", "yenhubs.org/managed-by", "yenhubs.org/room-key"]) ||
+  if (!exactKeys(labels, [
+    "app",
+    "yenhubs.org/generation",
+    "yenhubs.org/managed-by",
+    "yenhubs.org/room-key",
+    "yenhubs.org/runner-protocol"
+  ]) ||
       labels.app !== "bot-runner" ||
-      labels["yenhubs.org/managed-by"] !== "bot-orchestrator") {
+      labels["yenhubs.org/managed-by"] !== "bot-orchestrator" ||
+      labels["yenhubs.org/runner-protocol"] !== "durable-fence-v2") {
     reject("pod_labels");
   }
   const generation = labels["yenhubs.org/generation"];

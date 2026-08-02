@@ -77,6 +77,8 @@ const PUBLIC_METADATA_KEYS = Object.freeze([
   "checkpointDumpSha256",
   "checkpointStorageSha256",
   "checkpointInventorySha256",
+  "checkpointRunnerEvidenceSha256",
+  "checkpointRuntimeGeneration",
   "profileId",
   "profileSha256"
 ]);
@@ -512,6 +514,8 @@ function validatePublicMetadata(metadata) {
       !HEX_SHA256.test(metadata.checkpointDumpSha256 || "") ||
       !HEX_SHA256.test(metadata.checkpointStorageSha256 || "") ||
       !HEX_SHA256.test(metadata.checkpointInventorySha256 || "") ||
+      !HEX_SHA256.test(metadata.checkpointRunnerEvidenceSha256 || "") ||
+      metadata.checkpointRuntimeGeneration !== "legacy-absent" ||
       typeof metadata.profileId !== "string" || metadata.profileId.length > 128 ||
       !SAFE_PROFILE_ID.test(metadata.profileId) ||
       !HEX_SHA256.test(metadata.profileSha256 || "")) {
@@ -1909,6 +1913,8 @@ const METADATA_FLAGS = Object.freeze({
   "--checkpoint-dump-sha256": "checkpointDumpSha256",
   "--checkpoint-storage-sha256": "checkpointStorageSha256",
   "--checkpoint-inventory-sha256": "checkpointInventorySha256",
+  "--checkpoint-runner-evidence-sha256": "checkpointRunnerEvidenceSha256",
+  "--checkpoint-runtime-generation": "checkpointRuntimeGeneration",
   "--profile-id": "profileId",
   "--profile-sha256": "profileSha256"
 });

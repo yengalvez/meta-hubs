@@ -15,7 +15,10 @@ source "$SCRIPT_DIR/lib/reactivation-gate-functions.sh"
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
 
 VALUES_SOURCE_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
+CUTOVER_KEY_SOURCE_FILE="${PROCESS_LOCAL_CUTOVER_KEY_PATH:-}"
 VALUES_FILE=""
+PROCESS_LOCAL_CUTOVER_KEY_PATH=""
+export PROCESS_LOCAL_CUTOVER_KEY_PATH
 BACKUP_DIR="${BACKUP_DIR:-}"
 DUMP_PATH="${DUMP_PATH:-}"
 RET_STORAGE_ARCHIVE="${RET_STORAGE_ARCHIVE:-}"
@@ -24,7 +27,7 @@ DOCTL_CONTEXT="${DOCTL_CONTEXT:-yenhubs}"
 CLUSTER_NAME="${CLUSTER_NAME:-hubs-ce}"
 NAMESPACE="${NAMESPACE:-hcce}"
 
-reactivation_install_cleanup_traps ""
+reactivation_install_cleanup_traps recovery_cleanup_materialized_checkpoint
 
 failures=0
 warnings=0
@@ -206,6 +209,10 @@ fi
 
 printf '\nBackup\n'
 CHECKPOINT_VALID=false
+checkpoint_generation=""
+checkpoint_pvc_uid=""
+CHECKPOINT_INVENTORY_PATH=""
+RUNNER_EVIDENCE_INPUTS_VALID=false
 if [[ -z "$BACKUP_DIR" ]]; then
   fail "BACKUP_DIR debe señalar explicitamente el checkpoint de este rollout"
 elif [[ ! -d "$BACKUP_DIR" || -L "$BACKUP_DIR" ]] ||
@@ -221,33 +228,26 @@ else
   elif ! recovery_checkpoint_metadata_is_acceptable \
     "$metadata_path" "$(jq -r '.stamp // empty' "$metadata_path" 2>/dev/null)" ||
        ! metadata_json="$(jq -ce '
-    select(.schema_version == 2) |
-    select(.provenance == {generator:"yenhubs-local-coordinated-checkpoint-v2",external_import:false}) |
+    select(.schema_version == 3) |
+    select(.provenance == {generator:"yenhubs-local-coordinated-checkpoint-v3",external_import:false}) |
     select(.stamp | type == "string" and test("^[0-9]{8}-[0-9]{6}$")) |
     select(.created_at_epoch | type == "number" and floor == .) |
     select(.kube_context | type == "string" and length > 0) |
     select(.namespace | type == "string" and length > 0) |
-    select(.namespace_uid | type == "string" and length > 0)
+    select(.namespace_uid | type == "string" and length > 0) |
+    select(.ret_pvc_uid | type == "string" and length > 0) |
+    select(.runtime_generation == "legacy-absent" or .runtime_generation == "durable-v2") |
+    select(.runner_cutover_evidence_sha256 | type == "string" and test("^[a-f0-9]{64}$"))
   ' "$metadata_path" 2>/dev/null)"; then
-    fail "checkpoint-metadata.json falta, no prueba quiescencia local o no cumple el contrato"
+    fail "checkpoint-metadata.json no es schema 3 con evidencia runner obligatoria para este rollout"
   else
     checkpoint_stamp="$(printf '%s' "$metadata_json" | jq -r '.stamp')"
     checkpoint_epoch="$(printf '%s' "$metadata_json" | jq -r '.created_at_epoch')"
     checkpoint_context="$(printf '%s' "$metadata_json" | jq -r '.kube_context')"
     checkpoint_namespace="$(printf '%s' "$metadata_json" | jq -r '.namespace')"
     checkpoint_namespace_uid="$(printf '%s' "$metadata_json" | jq -r '.namespace_uid')"
-    if [[ ! "$MAX_CHECKPOINT_AGE_SECONDS" =~ ^[0-9]+$ || "$MAX_CHECKPOINT_AGE_SECONDS" -eq 0 ]]; then
-      fail "MAX_CHECKPOINT_AGE_SECONDS debe ser un entero positivo"
-    else
-      now_epoch="$(date -u '+%s')"
-      checkpoint_age=$((now_epoch - checkpoint_epoch))
-      if ! reactivation_checkpoint_age_is_acceptable \
-        "$checkpoint_epoch" "$now_epoch" "$MAX_CHECKPOINT_AGE_SECONDS"; then
-        fail "El checkpoint no es fresco para este rollout (edad=${checkpoint_age}s limite=${MAX_CHECKPOINT_AGE_SECONDS}s)"
-      else
-        pass "Checkpoint fresco para este rollout (edad=${checkpoint_age}s)"
-      fi
-    fi
+    checkpoint_pvc_uid="$(printf '%s' "$metadata_json" | jq -r '.ret_pvc_uid')"
+    checkpoint_generation="$(printf '%s' "$metadata_json" | jq -r '.runtime_generation')"
     expected_dump="$BACKUP_DIR/retdb-$checkpoint_stamp.sql.gz"
     expected_storage="$BACKUP_DIR/ret-storage-$checkpoint_stamp.tar.gz"
     if [[ -n "$DUMP_PATH" && "$DUMP_PATH" != "$expected_dump" ]]; then
@@ -258,10 +258,43 @@ else
     fi
     DUMP_PATH="$expected_dump"
     RET_STORAGE_ARCHIVE="$expected_storage"
-    if recovery_verify_checkpoint_directory "$BACKUP_DIR" "$checkpoint_stamp" &&
-       "$SCRIPT_DIR/validate-checkpoint.sh" "$DUMP_PATH" "$RET_STORAGE_ARCHIVE" >/dev/null; then
-      CHECKPOINT_VALID=true
-      pass "Checkpoint exacto, completo, checksummed y validado conjuntamente"
+    if recovery_materialize_checkpoint \
+      "$DUMP_PATH" "$SCRIPT_DIR/validate-checkpoint.sh"; then
+      metadata_path="$RECOVERY_CHECKPOINT_METADATA_COPY"
+      CHECKPOINT_INVENTORY_PATH="$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
+      metadata_json="$(jq -ce '
+        select(.schema_version == 3) |
+        select(.provenance == {
+          generator:"yenhubs-local-coordinated-checkpoint-v3",
+          external_import:false
+        })
+      ' "$metadata_path")" || {
+        fail "El snapshot privado del checkpoint no conserva su metadata schema 3"
+        metadata_json=""
+      }
+      if [[ -n "$metadata_json" ]]; then
+        checkpoint_stamp="$(printf '%s' "$metadata_json" | jq -r '.stamp')"
+        checkpoint_epoch="$(printf '%s' "$metadata_json" | jq -r '.created_at_epoch')"
+        checkpoint_context="$(printf '%s' "$metadata_json" | jq -r '.kube_context')"
+        checkpoint_namespace="$(printf '%s' "$metadata_json" | jq -r '.namespace')"
+        checkpoint_namespace_uid="$(printf '%s' "$metadata_json" | jq -r '.namespace_uid')"
+        checkpoint_pvc_uid="$(printf '%s' "$metadata_json" | jq -r '.ret_pvc_uid')"
+        checkpoint_generation="$(printf '%s' "$metadata_json" | jq -r '.runtime_generation')"
+        if [[ ! "$MAX_CHECKPOINT_AGE_SECONDS" =~ ^[0-9]+$ ||
+              "$MAX_CHECKPOINT_AGE_SECONDS" -eq 0 ]]; then
+          fail "MAX_CHECKPOINT_AGE_SECONDS debe ser un entero positivo"
+        else
+          now_epoch="$(date -u '+%s')"
+          checkpoint_age=$((now_epoch - checkpoint_epoch))
+          if reactivation_checkpoint_age_is_acceptable \
+            "$checkpoint_epoch" "$now_epoch" "$MAX_CHECKPOINT_AGE_SECONDS"; then
+            CHECKPOINT_VALID=true
+            pass "Checkpoint exacto, completo y fresco (edad=${checkpoint_age}s)"
+          else
+            fail "El checkpoint privado no es fresco (edad=${checkpoint_age}s limite=${MAX_CHECKPOINT_AGE_SECONDS}s)"
+          fi
+        fi
+      fi
     else
       fail "El checkpoint no supera layout, SHA256SUMS o validacion conjunta"
     fi
@@ -275,13 +308,31 @@ else
       fail "El UID de namespace fijado no coincide con el checkpoint"
     fi
     if recovery_deployment_inventory_is_acceptable \
-      "$BACKUP_DIR/deployment-images.json" "$checkpoint_namespace" "$checkpoint_namespace_uid"; then
+      "$CHECKPOINT_INVENTORY_PATH" "$checkpoint_namespace" "$checkpoint_namespace_uid"; then
       pass "Inventario de Deployments exacto, unico y fijado por digest"
     else
       fail "El inventario de Deployments no cumple el contrato exacto"
     fi
   fi
 fi
+
+case "$checkpoint_generation" in
+  legacy-absent)
+    RUNNER_EVIDENCE_INPUTS_VALID=true
+    ;;
+  durable-v2)
+    if [[ -z "$CUTOVER_KEY_SOURCE_FILE" ]]; then
+      fail "PROCESS_LOCAL_CUTOVER_KEY_PATH es obligatorio para verificar evidencia durable"
+    elif reactivation_snapshot_private_file PROCESS_LOCAL_CUTOVER_KEY_PATH \
+      "$CUTOVER_KEY_SOURCE_FILE" cutover-key; then
+      export PROCESS_LOCAL_CUTOVER_KEY_PATH
+      RUNNER_EVIDENCE_INPUTS_VALID=true
+      pass "Snapshot privado de la clave HMAC de cutover preparado"
+    else
+      fail "La clave HMAC de cutover no es un fichero privado estable"
+    fi
+    ;;
+esac
 
 printf '\nConfiguracion local\n'
 VALUES_PARSE_OK=false
@@ -378,19 +429,38 @@ if [[ "$VALUES_PARSE_OK" == true ]]; then
     CORE_IMAGES_VALID=false
     fail "OVERRIDE_BOT_ORCHESTRATOR_IMAGE debe ser ghcr.io/yengalvez/bot-orchestrator@sha256:<64hex>"
   fi
-  if reactivation_image_override_is_exact bot-runner "$bot_runner_image"; then
-    pass "OVERRIDE_BOT_RUNNER_IMAGE exacto"
-  else
-    CORE_IMAGES_VALID=false
-    fail "OVERRIDE_BOT_RUNNER_IMAGE debe ser ghcr.io/yengalvez/bot-runner@sha256:<64hex>"
-  fi
-  if node "$SCRIPT_DIR/verify-bot-image-pull-config.mjs" \
-      --values "$VALUES_FILE" --verify-registry; then
-    pass "La credencial kubelet exacta autentica ambos digests bot en GHCR"
-  else
-    CORE_IMAGES_VALID=false
-    fail "BOT_IMAGE_PULL_CONFIG_JSON_BASE64 no autentica ambos digests bot en GHCR"
-  fi
+  case "$checkpoint_generation" in
+    durable-v2)
+      if reactivation_image_override_is_exact bot-runner "$bot_runner_image"; then
+        pass "OVERRIDE_BOT_RUNNER_IMAGE exacto para runtime durable"
+      else
+        CORE_IMAGES_VALID=false
+        fail "OVERRIDE_BOT_RUNNER_IMAGE debe ser ghcr.io/yengalvez/bot-runner@sha256:<64hex>"
+      fi
+      if node "$SCRIPT_DIR/verify-bot-image-pull-config.mjs" \
+          --values "$VALUES_FILE" --verify-registry; then
+        pass "La credencial kubelet exacta autentica ambos digests bot en GHCR"
+      else
+        CORE_IMAGES_VALID=false
+        fail "BOT_IMAGE_PULL_CONFIG_JSON_BASE64 no autentica ambos digests bot en GHCR"
+      fi
+      pgsql_container=pgsql
+      ;;
+    legacy-absent)
+      if [[ "$bot_runner_image" == No ]]; then
+        pass "Runtime legacy conserva OVERRIDE_BOT_RUNNER_IMAGE=No"
+      else
+        CORE_IMAGES_VALID=false
+        fail "Un checkpoint legacy exige OVERRIDE_BOT_RUNNER_IMAGE=No"
+      fi
+      pgsql_container=postgresql
+      ;;
+    *)
+      CORE_IMAGES_VALID=false
+      pgsql_container=invalid
+      fail "No se pudo determinar el contrato de imagen runner del checkpoint"
+      ;;
+  esac
   EXPECTED_IMAGES_JSON="$(jq -cn \
     --arg bot "$bot_image" \
     --arg coturn "$(yaml_value OVERRIDE_COTURN_IMAGE)" \
@@ -403,7 +473,8 @@ if [[ "$VALUES_PARSE_OK" == true ]]; then
     --arg postgres "$(yaml_value OVERRIDE_POSTGRES_IMAGE)" \
     --arg postgrest "$(yaml_value OVERRIDE_POSTGREST_IMAGE)" \
     --arg reticulum "$reticulum_image" \
-    --arg spoke "$(yaml_value OVERRIDE_SPOKE_IMAGE)" '
+    --arg spoke "$(yaml_value OVERRIDE_SPOKE_IMAGE)" \
+    --arg pgsql_container "$pgsql_container" '
     {
       "bot-orchestrator/bot-orchestrator": $bot,
       "coturn/coturn": $coturn,
@@ -414,7 +485,7 @@ if [[ "$VALUES_PARSE_OK" == true ]]; then
       "pgbouncer/pgbouncer": $pgbouncer,
       "pgbouncer-t/pgbouncer-t": $pgbouncer,
       "photomnemonic/photomnemonic": $photomnemonic,
-      "pgsql/pgsql": $postgres,
+      ("pgsql/" + $pgsql_container): $postgres,
       "reticulum/postgrest": $postgrest,
       "reticulum/reticulum": $reticulum,
       "spoke/spoke": $spoke
@@ -430,7 +501,7 @@ if [[ "$VALUES_PARSE_OK" == true ]]; then
   if [[ "$CHECKPOINT_VALID" == true && "$CORE_IMAGES_VALID" == true ]]; then
     if [[ "$ALL_IMAGES_VALID" == true ]] &&
        recovery_deployment_inventory_is_acceptable \
-         "$BACKUP_DIR/deployment-images.json" "$checkpoint_namespace" \
+         "$CHECKPOINT_INVENTORY_PATH" "$checkpoint_namespace" \
          "$checkpoint_namespace_uid" "$EXPECTED_IMAGES_JSON" "$bot_runner_image"; then
       pass "Inventario ligado a 13 Deployments y a runtime runner legacy o digest exacto"
     else
@@ -485,6 +556,40 @@ if [[ "$CLUSTER_EXISTS" == true ]]; then
 fi
 
 if [[ "$KUBE_TARGET_VERIFIED" == true ]]; then
+  if [[ "$CHECKPOINT_VALID" == true && "$VALUES_PARSE_OK" == true ]]; then
+    # Consumed dynamically by recovery_require_checkpoint_generation_matches_live.
+    # shellcheck disable=SC2034
+    RECOVERY_CHECKPOINT_RUNNER_GENERATION="$checkpoint_generation"
+    if recovery_require_pvc_identity ret-pvc &&
+       [[ "$RECOVERY_PVC_UID" == "$checkpoint_pvc_uid" ]]; then
+      pass "Checkpoint ligado al UID exacto de ret-pvc"
+    else
+      fail "El checkpoint no pertenece al ret-pvc exacto del destino"
+    fi
+    if recovery_require_checkpoint_generation_matches_live \
+         "$CHECKPOINT_INVENTORY_PATH" "$VALUES_FILE"; then
+      pass "Generacion runner del checkpoint y del destino coinciden exactamente ($checkpoint_generation)"
+    else
+      fail "Cruce o deriva de generacion runner entre checkpoint y destino"
+    fi
+    if [[ "$checkpoint_generation" == durable-v2 ]]; then
+      if [[ "$RUNNER_EVIDENCE_INPUTS_VALID" != true ]]; then
+        fail "No hay inputs privados para verificar la evidencia durable live"
+      elif recovery_verify_runner_cutover_evidence_live \
+        "$VALUES_FILE" "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY" \
+        "$CHECKPOINT_INVENTORY_PATH" dormant "" active-source; then
+        pass "Evidencia durable, journal, RBAC y fences coinciden con el origen live"
+      else
+        fail "La evidencia durable live no coincide con el checkpoint"
+      fi
+    fi
+    if recovery_require_live_images_match_checkpoint \
+         "$CHECKPOINT_INVENTORY_PATH"; then
+      pass "Imagenes live coinciden exactamente con el checkpoint"
+    else
+      fail "Las imagenes live no coinciden con el checkpoint"
+    fi
+  fi
   reticulum_deployment_json=""
   reticulum_deployment_uid=""
   reticulum_hpas_json=""
@@ -559,13 +664,135 @@ fi
 
 if [[ "$VALUES_PARSE_OK" == true ]]; then
   while IFS=$'\t' read -r image_pair image_reference; do
-    if [[ "$image_pair" == "bot-orchestrator/bot-orchestrator" ]]; then
+    # Durable verification already authenticates both bot digests with the
+    # exact kubelet pull config. Legacy has no runner image, so its
+    # bot-orchestrator digest must still pass the normal registry probe here.
+    if [[ "$checkpoint_generation" == durable-v2 &&
+          "$image_pair" == "bot-orchestrator/bot-orchestrator" ]]; then
       continue
     fi
     check_registry_image "$image_pair" "$image_reference" "$github_token"
   done < <(jq -r 'to_entries[] | [.key,.value] | @tsv' <<<"$EXPECTED_IMAGES_JSON")
 fi
 unset github_token value
+
+if [[ "$CHECKPOINT_VALID" == true ]]; then
+  final_now_epoch="$(date -u '+%s')"
+  final_checkpoint_age=$((final_now_epoch - checkpoint_epoch))
+  if reactivation_checkpoint_age_is_acceptable \
+    "$checkpoint_epoch" "$final_now_epoch" "$MAX_CHECKPOINT_AGE_SECONDS"; then
+    pass "Checkpoint sigue fresco al cerrar el preflight (edad=${final_checkpoint_age}s)"
+  else
+    CHECKPOINT_VALID=false
+    fail "El checkpoint expiró durante el preflight (edad=${final_checkpoint_age}s limite=${MAX_CHECKPOINT_AGE_SECONDS}s)"
+  fi
+fi
+if [[ "$CHECKPOINT_VALID" == true ]]; then
+  materialized_checkpoint_dir="$(dirname "$RECOVERY_CHECKPOINT_METADATA_COPY")"
+  if recovery_verify_checkpoint_directory \
+       "$materialized_checkpoint_dir" "$RECOVERY_CHECKPOINT_STAMP" &&
+     "$SCRIPT_DIR/validate-checkpoint.sh" \
+       "$RECOVERY_DUMP_COPY" "$RECOVERY_STORAGE_COPY" >/dev/null; then
+    pass "Snapshot privado del checkpoint permanece byte-invariante"
+  else
+    CHECKPOINT_VALID=false
+    fail "El snapshot privado del checkpoint cambió durante el preflight"
+  fi
+fi
+FINAL_LIVE_CONTRACT_VALID=false
+FINAL_RETICULUM_VALID=false
+if [[ "$CHECKPOINT_VALID" == true && "$KUBE_TARGET_VERIFIED" == true &&
+      "$VALUES_PARSE_OK" == true ]]; then
+  if recovery_require_cluster_identity &&
+     recovery_require_pvc_identity ret-pvc &&
+     [[ "$RECOVERY_PVC_UID" == "$checkpoint_pvc_uid" ]] &&
+     recovery_require_checkpoint_generation_matches_live \
+       "$CHECKPOINT_INVENTORY_PATH" "$VALUES_FILE" &&
+     recovery_require_live_images_match_checkpoint \
+       "$CHECKPOINT_INVENTORY_PATH"; then
+    if [[ "$checkpoint_generation" != durable-v2 ]] ||
+       { [[ "$RUNNER_EVIDENCE_INPUTS_VALID" == true ]] &&
+         recovery_verify_runner_cutover_evidence_live \
+           "$VALUES_FILE" "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY" \
+           "$CHECKPOINT_INVENTORY_PATH" dormant "" active-source; }; then
+      FINAL_LIVE_CONTRACT_VALID=true
+    else
+      fail "La evidencia durable cambió durante el preflight"
+    fi
+  else
+    fail "El destino live cambió durante el preflight"
+  fi
+
+  final_reticulum_deployment_json=""
+  final_reticulum_hpas_json=""
+  final_reticulum_pods_json=""
+  final_reticulum_pod_json=""
+  final_reticulum_pod_info=""
+  final_reticulum_pod=""
+  final_reticulum_pod_uid=""
+  final_reticulum_deployment_uid=""
+  if final_reticulum_deployment_json="$(
+       recovery_kubectl get deployment reticulum -n "$NAMESPACE" -o json
+     )" &&
+     reactivation_reticulum_deployment_is_singleton \
+       "$final_reticulum_deployment_json" &&
+     final_reticulum_deployment_uid="$(
+       jq -er '.metadata.uid' <<<"$final_reticulum_deployment_json"
+     )" &&
+     [[ -n "${reticulum_deployment_uid:-}" &&
+        "$final_reticulum_deployment_uid" == "$reticulum_deployment_uid" ]] &&
+     final_reticulum_hpas_json="$(
+       recovery_kubectl get horizontalpodautoscaler -n "$NAMESPACE" -o json
+     )" &&
+     reactivation_hpas_do_not_target_reticulum "$final_reticulum_hpas_json" &&
+     final_reticulum_pods_json="$(
+       recovery_kubectl get pod -n "$NAMESPACE" -l app=reticulum -o json
+     )" &&
+     final_reticulum_pod_info="$(
+       recovery_exact_ready_pod_info "$final_reticulum_pods_json" reticulum
+     )"; then
+    IFS=$'\t' read -r final_reticulum_pod final_reticulum_pod_uid \
+      <<<"$final_reticulum_pod_info"
+    final_reticulum_pod_json="$(
+      jq -ce '.items[0]' <<<"$final_reticulum_pods_json"
+    )"
+    if [[ -n "${reticulum_pod:-}" && -n "${reticulum_pod_uid:-}" &&
+          "$final_reticulum_pod" == "$reticulum_pod" &&
+          "$final_reticulum_pod_uid" == "$reticulum_pod_uid" ]] &&
+       recovery_require_pod_deployment_ownership \
+         "$final_reticulum_pod_json" reticulum \
+         "$final_reticulum_deployment_uid" &&
+       recovery_require_pod_identity \
+         "$final_reticulum_pod" "$final_reticulum_pod_uid"; then
+      FINAL_RETICULUM_VALID=true
+      pass "Reticulum conserva al final Deployment, HPA y Pod Ready con los mismos UID/owner"
+    else
+      fail "Reticulum cambio de Pod o autoridad durante la revalidacion final"
+    fi
+  else
+    fail "Reticulum no conserva su contrato singleton/Recreate/HPA/Ready al final"
+  fi
+fi
+
+# The private and live revalidation above can involve multiple API reads. The
+# checkpoint must still be inside its TTL after those reads, immediately before
+# the final decision, rather than merely when the closing sequence began.
+if [[ "$CHECKPOINT_VALID" == true ]]; then
+  final_now_epoch="$(date -u '+%s')"
+  final_checkpoint_age=$((final_now_epoch - checkpoint_epoch))
+  if reactivation_checkpoint_age_is_acceptable \
+    "$checkpoint_epoch" "$final_now_epoch" "$MAX_CHECKPOINT_AGE_SECONDS"; then
+    pass "Checkpoint sigue fresco tras la revalidacion final (edad=${final_checkpoint_age}s)"
+  else
+    CHECKPOINT_VALID=false
+    fail "El checkpoint expiro durante la revalidacion final (edad=${final_checkpoint_age}s limite=${MAX_CHECKPOINT_AGE_SECONDS}s)"
+  fi
+fi
+
+if [[ "$CHECKPOINT_VALID" == true && "$FINAL_LIVE_CONTRACT_VALID" == true &&
+      "$FINAL_RETICULUM_VALID" == true && "$failures" == 0 ]]; then
+  pass "Contrato final live sigue ligado al checkpoint privado"
+fi
 
 if [[ "$CHECKPOINT_VALID" != true ]]; then
   fail "No hay checkpoint valido seleccionado para el rollout"

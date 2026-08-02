@@ -530,6 +530,8 @@ function fixture(t, suffix = "fixture") {
       checkpointDumpSha256: "1".repeat(64),
       checkpointStorageSha256: "2".repeat(64),
       checkpointInventorySha256: "3".repeat(64),
+      checkpointRunnerEvidenceSha256: "4".repeat(64),
+      checkpointRuntimeGeneration: "legacy-absent",
       profileId: profile.profile_id,
       profileSha256: sha256(Buffer.from(canonicalJson(profile), "utf8"))
     }

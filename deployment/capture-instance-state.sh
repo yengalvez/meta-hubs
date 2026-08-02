@@ -49,30 +49,34 @@ yaml_value() {
 capture_namespaced_resource_identity() {
   local resource="$1" expected_api_version="$2" expected_kind="$3"
   local resource_namespace="$4" expected_name="$5"
-  local identity api_version kind namespace name uid extra
+  local identity api_version kind namespace name uid resource_version extra
   identity="$(recovery_kubectl get "$resource" "$expected_name" \
     -n "$resource_namespace" \
-    -o 'jsonpath={.apiVersion}{"\t"}{.kind}{"\t"}{.metadata.namespace}{"\t"}{.metadata.name}{"\t"}{.metadata.uid}')" || return 1
-  IFS=$'\t' read -r api_version kind namespace name uid extra <<<"$identity"
+    -o 'jsonpath={.apiVersion}{"\t"}{.kind}{"\t"}{.metadata.namespace}{"\t"}{.metadata.name}{"\t"}{.metadata.uid}{"\t"}{.metadata.resourceVersion}')" || return 1
+  IFS=$'\t' read -r api_version kind namespace name uid resource_version extra <<<"$identity"
   [[ -z "${extra:-}" && "$api_version" == "$expected_api_version" &&
      "$kind" == "$expected_kind" && "$namespace" == "$resource_namespace" &&
-     "$name" == "$expected_name" && -n "$uid" ]] || return 1
+     "$name" == "$expected_name" && -n "$uid" && -n "$resource_version" ]] || return 1
   jq -cn --arg api_version "$api_version" --arg kind "$kind" \
     --arg namespace "$namespace" --arg name "$name" --arg uid "$uid" \
-    '{api_version:$api_version,kind:$kind,namespace:$namespace,name:$name,uid:$uid}'
+    --arg resource_version "$resource_version" \
+    '{api_version:$api_version,kind:$kind,namespace:$namespace,name:$name,
+      uid:$uid,resource_version:$resource_version}'
 }
 
 capture_cluster_resource_identity() {
   local resource="$1" expected_api_version="$2" expected_kind="$3" expected_name="$4"
-  local identity api_version kind name uid extra
+  local identity api_version kind name uid resource_version extra
   identity="$(recovery_kubectl get "$resource" "$expected_name" \
-    -o 'jsonpath={.apiVersion}{"\t"}{.kind}{"\t"}{.metadata.name}{"\t"}{.metadata.uid}')" || return 1
-  IFS=$'\t' read -r api_version kind name uid extra <<<"$identity"
+    -o 'jsonpath={.apiVersion}{"\t"}{.kind}{"\t"}{.metadata.name}{"\t"}{.metadata.uid}{"\t"}{.metadata.resourceVersion}')" || return 1
+  IFS=$'\t' read -r api_version kind name uid resource_version extra <<<"$identity"
   [[ -z "${extra:-}" && "$api_version" == "$expected_api_version" &&
-     "$kind" == "$expected_kind" && "$name" == "$expected_name" && -n "$uid" ]] || return 1
+     "$kind" == "$expected_kind" && "$name" == "$expected_name" &&
+     -n "$uid" && -n "$resource_version" ]] || return 1
   jq -cn --arg api_version "$api_version" --arg kind "$kind" \
-    --arg name "$name" --arg uid "$uid" \
-    '{api_version:$api_version,kind:$kind,name:$name,uid:$uid}'
+    --arg name "$name" --arg uid "$uid" --arg resource_version "$resource_version" \
+    '{api_version:$api_version,kind:$kind,name:$name,uid:$uid,
+      resource_version:$resource_version}'
 }
 HUBS_IMAGE="$(yaml_value OVERRIDE_HUBS_IMAGE)"
 RETICULUM_IMAGE="$(yaml_value OVERRIDE_RETICULUM_IMAGE)"
@@ -148,7 +152,8 @@ for output_file in \
   git-state.txt deployment-images.json k8s-hcce-structure.json \
   k8s-configmaps-redacted.json \
   digitalocean-cluster.json digitalocean-load-balancers.json \
-  digitalocean-volumes.json configured-value-keys.txt; do
+  digitalocean-volumes.json configured-value-keys.txt \
+  runner-cutover-evidence.json; do
   if [[ -e "$OUTPUT_DIR/$output_file" ]]; then
     printf 'Refusing to overwrite state artifact: %s\n' "$OUTPUT_DIR/$output_file" >&2
     exit 1
@@ -236,7 +241,7 @@ if [[ "$runtime_bot_runner_count" == "0" ]]; then
     printf 'Process-local inventory capture requires the exact accepted legacy runtime boundary.\n' >&2
     exit 1
   fi
-  bot_runner_runtime='{"mode":"process-local","image":null}'
+  bot_runner_runtime='{"generation":"legacy-absent","mode":"process-local","image":null}'
   bot_runner_control_plane='{"state":"legacy-absent"}'
 elif [[ "$runtime_bot_runner_count" == "1" ]]; then
   if [[ "$checkpoint_runner_mode" != kubernetes-pod ]]; then
@@ -255,12 +260,19 @@ elif [[ "$runtime_bot_runner_count" == "1" ]]; then
     exit 1
   fi
   bot_runner_runtime="$(jq -cn --arg image "$runtime_bot_runner_image" \
-    '{mode:"kubernetes-pod",image:$image}')"
+    '{generation:"durable-v2",mode:"kubernetes-pod",image:$image}')"
   runner_namespace="hcce-bot-runners"
-  runner_namespaces="$(jq -cn --arg namespace "$NAMESPACE" \
-    --arg namespace_uid "$RECOVERY_NAMESPACE_UID" '
-    [{api_version:"v1",kind:"Namespace",name:$namespace,uid:$namespace_uid}]
-  ')"
+  parent_namespace_identity="$(capture_cluster_resource_identity \
+    namespace v1 Namespace "$NAMESPACE")" || {
+    printf 'The parent Namespace identity is missing or invalid.\n' >&2
+    exit 1
+  }
+  if [[ "$(jq -er '.uid' <<<"$parent_namespace_identity")" != \
+        "$RECOVERY_NAMESPACE_UID" ]]; then
+    printf 'The parent Namespace identity changed during capture.\n' >&2
+    exit 1
+  fi
+  runner_namespaces="$(jq -cn --argjson item "$parent_namespace_identity" '[$item]')"
   runner_namespace_identity="$(capture_cluster_resource_identity \
     namespace v1 Namespace "$runner_namespace")" || {
     printf 'The dedicated runner Namespace identity is missing or invalid.\n' >&2
@@ -269,23 +281,29 @@ elif [[ "$runtime_bot_runner_count" == "1" ]]; then
   runner_namespaces="$(jq -cn --argjson current "$runner_namespaces" \
     --argjson item "$runner_namespace_identity" '$current + [$item] | sort_by(.name)')"
   runner_namespaced_resources='[]'
-  while IFS=$'\t' read -r resource api_version kind name; do
+  while IFS=$'\t' read -r resource api_version kind resource_namespace name; do
     identity="$(capture_namespaced_resource_identity \
-      "$resource" "$api_version" "$kind" "$runner_namespace" "$name")" || {
+      "$resource" "$api_version" "$kind" "$resource_namespace" "$name")" || {
       printf 'A required redacted runner control-plane identity is missing or invalid.\n' >&2
       exit 1
     }
     runner_namespaced_resources="$(jq -cn \
       --argjson current "$runner_namespaced_resources" --argjson item "$identity" \
       '$current + [$item] | sort_by(.kind, .name)')"
-  done <<'RUNNER_RESOURCES'
-secret	v1	Secret	bot-images-pull
-serviceaccount	v1	ServiceAccount	bot-runner
-resourcequota	v1	ResourceQuota	bot-runner-capacity
-role	rbac.authorization.k8s.io/v1	Role	bot-orchestrator-runner-pods
-rolebinding	rbac.authorization.k8s.io/v1	RoleBinding	bot-orchestrator-runner-pods
-networkpolicy	networking.k8s.io/v1	NetworkPolicy	bot-runner-default-deny
-networkpolicy	networking.k8s.io/v1	NetworkPolicy	bot-runner-egress
+  done <<RUNNER_RESOURCES
+serviceaccount	v1	ServiceAccount	$NAMESPACE	bot-orchestrator
+role	rbac.authorization.k8s.io/v1	Role	$NAMESPACE	bot-orchestrator-runner-pods
+rolebinding	rbac.authorization.k8s.io/v1	RoleBinding	$NAMESPACE	bot-orchestrator-runner-pods
+configmap	v1	ConfigMap	$NAMESPACE	yenhubs-runner-cutover-v2
+secret	v1	Secret	hcce-bot-runners	bot-images-pull
+serviceaccount	v1	ServiceAccount	hcce-bot-runners	bot-runner
+serviceaccount	v1	ServiceAccount	hcce-bot-runners	bot-runner-guard
+resourcequota	v1	ResourceQuota	hcce-bot-runners	bot-runner-capacity
+resourcequota	v1	ResourceQuota	hcce-bot-runners	bot-runner-guard-capacity
+role	rbac.authorization.k8s.io/v1	Role	hcce-bot-runners	bot-orchestrator-runner-pods
+rolebinding	rbac.authorization.k8s.io/v1	RoleBinding	hcce-bot-runners	bot-orchestrator-runner-pods
+networkpolicy	networking.k8s.io/v1	NetworkPolicy	hcce-bot-runners	bot-runner-default-deny
+networkpolicy	networking.k8s.io/v1	NetworkPolicy	hcce-bot-runners	bot-runner-egress
 RUNNER_RESOURCES
   runner_cluster_resources='[]'
   while IFS=$'\t' read -r resource api_version kind name; do
@@ -300,6 +318,14 @@ RUNNER_RESOURCES
   done <<'RUNNER_CLUSTER_RESOURCES'
 validatingadmissionpolicy	admissionregistration.k8s.io/v1	ValidatingAdmissionPolicy	bot-runner-pods.yenhubs.org
 validatingadmissionpolicybinding	admissionregistration.k8s.io/v1	ValidatingAdmissionPolicyBinding	bot-runner-pods.yenhubs.org
+validatingadmissionpolicy	admissionregistration.k8s.io/v1	ValidatingAdmissionPolicy	bot-runner-durable-protocol.yenhubs.org
+validatingadmissionpolicybinding	admissionregistration.k8s.io/v1	ValidatingAdmissionPolicyBinding	bot-runner-durable-protocol.yenhubs.org
+validatingadmissionpolicy	admissionregistration.k8s.io/v1	ValidatingAdmissionPolicy	yenhubs-runner-cutover-journal-v2
+validatingadmissionpolicybinding	admissionregistration.k8s.io/v1	ValidatingAdmissionPolicyBinding	yenhubs-runner-cutover-journal-v2
+validatingadmissionpolicy	admissionregistration.k8s.io/v1	ValidatingAdmissionPolicy	bot-orchestrator-fence-protocol.yenhubs.org
+validatingadmissionpolicybinding	admissionregistration.k8s.io/v1	ValidatingAdmissionPolicyBinding	bot-orchestrator-fence-protocol.yenhubs.org
+validatingadmissionpolicy	admissionregistration.k8s.io/v1	ValidatingAdmissionPolicy	recovery-operation-pod-fence.yenhubs.org
+validatingadmissionpolicybinding	admissionregistration.k8s.io/v1	ValidatingAdmissionPolicyBinding	recovery-operation-pod-fence.yenhubs.org
 RUNNER_CLUSTER_RESOURCES
   bot_runner_control_plane="$(jq -cn \
     --argjson namespaces "$runner_namespaces" \
@@ -330,7 +356,7 @@ printf '%s' "$deployments_json" | jq \
   --arg namespace_uid "$RECOVERY_NAMESPACE_UID" \
   --argjson bot_runner_runtime "$bot_runner_runtime" '
   {
-    schema_version: 3,
+    schema_version: 4,
     namespace: $namespace,
     namespace_uid: $namespace_uid,
     bot_runner_runtime: $bot_runner_runtime,

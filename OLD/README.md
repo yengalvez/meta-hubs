@@ -18,6 +18,7 @@ desplegar, actualizar ni implementar features.
 | `OLD/patches/third-person/` | diffs antiguos ya integrados | `features/third-person/doc-thirdperson.md` |
 | `OLD/research/bit_ecs_research.md` | investigacion historica | codigo y auditoria vigentes |
 | `OLD/research/third-person-analysis.md` | referencias previas a la implementacion | `features/third-person/doc-thirdperson.md` |
+| `OLD/deployment/backup-ret-storage.sh` | stream standalone de ret-pvc retirado porque no podia producir un checkpoint valido junto con PostgreSQL | `deployment/create-checkpoint.sh` |
 
 ## Regla
 

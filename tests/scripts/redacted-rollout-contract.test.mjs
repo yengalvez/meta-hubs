@@ -54,7 +54,9 @@ const checkpoint = Object.freeze({
   stamp: "20260718-170405",
   dumpSha256: "6".repeat(64),
   storageSha256: "7".repeat(64),
-  inventorySha256: "8".repeat(64)
+  inventorySha256: "8".repeat(64),
+  runnerEvidenceSha256: "9".repeat(64),
+  runtimeGeneration: "legacy-absent"
 });
 
 function sha256(value) {
@@ -444,6 +446,8 @@ function buildOperationIntent({ original, oldValues, newValues }) {
     checkpointDumpSha256: checkpoint.dumpSha256,
     checkpointStorageSha256: checkpoint.storageSha256,
     checkpointInventorySha256: checkpoint.inventorySha256,
+    checkpointRunnerEvidenceSha256: checkpoint.runnerEvidenceSha256,
+    checkpointRuntimeGeneration: checkpoint.runtimeGeneration,
     profileId: profile.profile_id,
     profileSha256: sha256(Buffer.from(canonicalJson(profile), "utf8")),
     originalBaselineSha256: sha256(artifact(resourceList(original))),
@@ -1230,6 +1234,16 @@ test("operation intent binds its own key and canonical original/old/new sources"
   newDrift.operationIntent.newSnapshotSha256 = "3".repeat(64);
   newDrift.operationIntent = resign(newDrift.operationIntent);
   expectCode(newDrift, "operation_intent_invalid");
+
+  const runnerEvidenceDrift = buildFixture();
+  runnerEvidenceDrift.operationIntent.checkpointRunnerEvidenceSha256 = "A".repeat(64);
+  runnerEvidenceDrift.operationIntent = resign(runnerEvidenceDrift.operationIntent);
+  expectCode(runnerEvidenceDrift, "operation_intent_invalid");
+
+  const runtimeGenerationDrift = buildFixture();
+  runtimeGenerationDrift.operationIntent.checkpointRuntimeGeneration = "durable-v2";
+  runtimeGenerationDrift.operationIntent = resign(runtimeGenerationDrift.operationIntent);
+  expectCode(runtimeGenerationDrift, "operation_intent_invalid");
 });
 
 test("operational attestation binds context, namespace/PVC UIDs, checkpoint, lock and bundle", () => {
@@ -1695,6 +1709,9 @@ function cliFixture() {
       checkpointDumpSha256: input.operationIntent.checkpointDumpSha256,
       checkpointStorageSha256: input.operationIntent.checkpointStorageSha256,
       checkpointInventorySha256: input.operationIntent.checkpointInventorySha256,
+      checkpointRunnerEvidenceSha256:
+        input.operationIntent.checkpointRunnerEvidenceSha256,
+      checkpointRuntimeGeneration: input.operationIntent.checkpointRuntimeGeneration,
       profileId: input.operationIntent.profileId,
       profileSha256: input.operationIntent.profileSha256
     }

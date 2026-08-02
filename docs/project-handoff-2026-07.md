@@ -2,7 +2,7 @@
 
 Este es el punto de entrada para continuar el proyecto sin depender de una conversacion anterior.
 
-> **Addendum activo — 19 de julio de 2026:** los hashes e imágenes de este
+> **Addendum activo — 21 de julio de 2026:** los hashes e imágenes de este
 > documento siguen describiendo producción el 16 de julio. El código para
 > reservas autoritativas de sitting, autenticación/readiness de bots, carga GLB
 > neutral a proveedor, arnés de capacidad y gate de Spoke ya está integrado en
@@ -12,14 +12,24 @@ Este es el punto de entrada para continuar el proyecto sin depender de una conve
 > candidatos se publicaron después en ramas y PR separados. No volver a abrir ni
 > imprimir el manifiesto ignorado para inventariar valores. `AUD-075` ya está
 > integrado en Cloud `5392495b0772`: separa el parent y un Pod runner por
-> sala/generación y endurece su activación y recuperación. El orden vigente es:
-> fusionar el tooling de secuencia; integrar `AUD-078`; integrar en PR separados
-> el productor Cloud de procedencia/recibos y su consumidor raíz; construir sin
-> desplegar Reticulum, parent y runner en un único run; verificar el recibo y
-> cuatro bundles contra el gitlink Cloud integrado; checkpoint1; completar
-> OLD/NEW y rotar; checkpoint2; candidata bootstrap; recibos
-> `bootstrap -> admission -> active`; aceptación live/cold; y promoción. El
-> rollout público y la certificación de capacidad siguen bloqueados.
+> sala/generación y endurece su activación y recuperación. `AUD-078` ya está
+> tuvo su primer corte fusionado en Cloud: PR `#13` en
+> `development=0a21634688445eeb2ad2935627ad1c2f7a233f72` y PR `#14` en
+> `master=1cf95ca8719b40aa94adc8ffa987cce835316066`, ambos con CI verde. Los PR
+> `#15/#16` cerraron después el relevo causal de watches y `#17/#18` añadieron el
+> fence de operación; el head Cloud actual es `master=24d09706c2d9`, con CI
+> post-merge verde. Hubs está ahora en `master=ce8390a8905f` tras cerrar sin
+> allowlist los advisories de Immutable.js. El worktree raíz contiene la
+> compatibilidad durable de checkpoint/restore y los gitlinks candidatos;
+> recovery 861/861 y el gate normal final pasan, pero full, revisión, PR/CI y
+> merge aún están pendientes. Después vendrán
+> los PR separados de procedencia/recibos Cloud y consumidor raíz, los builds
+> Actions sin deploy de las cuatro imágenes, checkpoint1, OLD/NEW y rotación,
+> checkpoint2, staging Reticulum-first/Hubs-second, candidata
+> `bootstrap-server -> bootstrap-client -> admission -> active`, aceptación
+> live/cold, checkpoint3 durable y promoción. No hubo build, checkpoint, apply, despliegue
+> ni mutación de producción; el rollout público y la certificación de capacidad
+> siguen bloqueados.
 
 ## Estado ejecutivo
 
@@ -48,16 +58,17 @@ Sala de aceptacion: <https://meta-hubs.org/VJopCY3/inicio>
 
 | Ruta | Rama base | Fuente candidata auditada | Fuente del runtime live |
 | --- | --- | --- | --- |
-| Root | `main` | `9f4ada1` (PR raíz `#5` fusionado) | `a0a2b59cad80e0b07f9b2a2f82c2020781163570` |
-| `hubs/` | `master` | `674ece41169117a1a842af9cf5d256a10cc43df0` | `a7214eb882d19c98b2c8516489e0ed1fb7401c75` |
-| `hubs-cloud/` | `master` | `5392495b077249edcedfb3092551201645f648f1` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
+| Root | `main` | Base `ed8c9d13fbb`; Fase 3B y gitlink Cloud `24d0970` pendientes de PR raíz | `a0a2b59cad80e0b07f9b2a2f82c2020781163570` |
+| `hubs/` | `master` | `ce8390a8905fa38fa0acdb10d5f94290981477ec` | `a7214eb882d19c98b2c8516489e0ed1fb7401c75` |
+| `hubs-cloud/` | `master` | `24d09706c2d9302888ce5192de562005c155bd67` | `5a82de5387d7296cd01470d5136b2c07c2d5c7ac` |
 
-Hubs `674ece411691` y Cloud `5392495b0772` son los heads finales integrados en
-sus ramas `master`; root `main=9f4ada1` fija ambos tras fusionar el PR `#5` con
-CI verde. Pasan 128/128 pruebas del orquestador, 30/30 del generador, 430
-pruebas Reticulum + 5 properties y los gates raíz normal y `--full`. Ningún
-cambio de fuente modifica el runtime hasta construir imágenes por Actions y
-desplegarlas por digest.
+Hubs `ce8390a8905f` y Cloud `24d09706c2d9` son los heads actuales de sus ramas
+`master`. Root `main=ed8c9d13fbb` todavía fija Cloud `5392495b0772`; solo el
+worktree `codex/aud078-root-integration` apunta a los candidatos Hubs
+`ce8390a89` y Cloud `24d0970`. Recovery 861/861 y el gate raíz normal final
+pasan sobre esos bytes; falta una ejecución `--full`, revisión y PR raíz.
+Ningún cambio de fuente modifica el runtime hasta construir
+imágenes por Actions y desplegarlas por digest.
 
 Estado de publicación comprobado el 18 de julio:
 
@@ -68,6 +79,9 @@ Estado de publicación comprobado el 18 de julio:
   Services, Spoke y Reticulum PostgreSQL 12/14 verdes.
 - Hubs PR `#4`: fusionado en `master` como `674ece411691`; 97/97 pruebas,
   Security, Admin build y Storybook verdes.
+- Hubs PR `#5`: corrección Immutable.js fusionada en `master` como
+  `ce8390a8905f`; audit de producción 0, 100/100 pruebas, TypeScript, build y
+  los tres checks GitHub verdes.
 - Hubs Cloud PR `#3`: fusionado en `development` como `43753e8aea49`; PR `#4`
   `development -> master`: fusionado como `cc70e4023622`, con guard, Security,
   release build y Reticulum PostgreSQL 12/14 verdes.
@@ -85,19 +99,34 @@ Estado de publicación comprobado el 18 de julio:
   de generaciones, fencing de recuperación y verificación live ligada al
   manifiesto generado; Security, Services, Spoke, PostgreSQL 12/14 y release
   quedaron verdes.
+- Hubs Cloud PR `#13`: `AUD-078` fusionado en `development` como
+  `0a2163468844`; PR `#14` `development -> master`: fusionado como
+  `1cf95ca8719b`, con CI verde. La outbox durable ordena config/stop y una parada
+  terminal exige la ausencia observada del nombre+UID y cero Pods gestionados
+  de la sala.
+- Hubs Cloud PR `#15`: relevo causal fusionado en `development=1a370dd6e48d`;
+  PR `#16` lo promovió a `master=4c0f7be4a479`, con CI y runs post-merge verdes.
+- Hubs Cloud PR `#17`: fence de operación fusionado en `development=2813cc83fb27`;
+  PR `#18` lo promovió a `master=24d09706c2d9`. Pasó 30/30 del generador,
+  110/110 de apply, dos E2E Kubernetes 1.34.8 y CI post-merge verde.
 - Meta-hubs PR minimo `#2`, `codex/gitleaks-policy-bootstrap -> main`: fusionado
   como `f79175d`. La politica ya procede de la base y no de la rama candidata.
 - Meta-hubs PR `#1`, `codex/final-audit-readiness -> main`: fusionado como
   `4481e9628b76` después de corregir SC2119, SC2015 y portabilidad GNU/BSD.
 - Meta-hubs PR `#5`, `codex/aud075-integration -> main`: fusionado como
   `9f4ada1`; fija Hubs `674ece411691` y Cloud `5392495b0772` sin build ni deploy.
+- Meta-hubs PR `#13`: fusionado como `main=ed8c9d13fbb`; registra el cierre del
+  tooling AUD-065. Todavía no incluye el gitlink Cloud `24d0970` ni la Fase 3B.
 
-La integración de los subrepositorios y la raíz está cerrada en Git sobre Hubs
-`674ece411691`, Hubs Cloud `5392495b0772` y root `main=9f4ada1`. Ninguno de esos
-resultados sustituye los valores live de la tabla. No se han construido las dos imágenes
-candidatas de `AUD-075`, ni existe checkpoint nuevo o aceptación de staging,
-capacidad o producción. No actualizar digests live hasta completar el flujo
-publicado de seguridad, build y rollout.
+La integración Cloud de `AUD-078` está cerrada en su fork, pero la integración
+del superproyecto no: root `main=ed8c9d13fbb` fija Hubs `674ece411691` y todavía
+Cloud `5392495b0772`; Hubs `ce8390a89`, Cloud `24d0970` y la compatibilidad de
+recuperación son candidatos sin PR raíz. Recovery 861/861 y el gate normal
+final pasan; full, revisión y PR/CI siguen pendientes. Ninguno de esos resultados sustituye los valores
+live de la tabla. No se han construido las imágenes candidatas, no existe un
+checkpoint nuevo y no hubo aceptación de staging, capacidad o producción. No
+actualizar digests live hasta completar el flujo publicado de seguridad, build
+y rollout.
 
 El candidato de bots añade cuatro contratos que tampoco forman parte del runtime
 live de la tabla:
@@ -182,12 +211,56 @@ el preflight actual no la selecciona: cada rollout debe pasar `BACKUP_DIR`
 explicitamente y crear un checkpoint fresco con el layout vigente. Mantener una segunda copia cifrada fuera
 del Mac antes de retirar infraestructura.
 
-El layout vigente añade `deployment-images.json` schema 3 con
-`bot_runner_runtime`: `{mode:"process-local",image:null}` para el rollback
-legacy o `{mode:"kubernetes-pod",image:"...@sha256:..."}` para el runner
-aislado. Checkpoint y restore deben mantener y monitorizar cero Pods dinámicos
-gestionados durante toda la quiescencia; el checkpoint histórico anterior no
-prueba ese contrato y no sirve para el próximo rollout.
+El checkpoint listado arriba es evidencia histórica anterior al layout actual
+y no sirve como checkpoint del próximo rollout. El tooling vigente publica
+`checkpoint-metadata.json` schema 3, `deployment-images.json` schema 4 y
+`runner-cutover-evidence.json` schema 3. `bot_runner_runtime` distingue
+`legacy-absent` del runtime `durable-v2` y no permite cruzar generaciones. En
+legacy la quiescencia exige ausencia completa de runners y residuos; en durable
+exige cero runners ejecutables, cero intents y preserva el conjunto exacto de
+fences permanentes ligado al journal firmado. La evidencia durable fija los
+contratos normalizados de 2 Namespace, 13 recursos namespaced y cinco pares
+policy/binding —10 recursos cluster—; el Secret de pull se liga sólo mediante
+HMAC con la clave privada. Schema 3 registra además
+`recovery_operation_fence_state` exacto (`dormant` o `active`). Legacy no exige
+el quinto par, nunca lo activa y sólo admite semántica `dormant`.
+
+Durante DB, storage, validación y el rehash completo del directorio todavía
+marcado como incompleto, dos monitores causales conservan a la vez los cinco
+writers a cero y la frontera runner durable. Ambos publican una autoridad JSON
+checksummed ligada a PID/start, paths/hashes, operación, lock y Lease; el
+`operation_owner` exacto es `checkpoint-backup` o `checkpoint-restore` según el
+driver. Sus `READY`, progreso y `FINAL` están tokenizados. Un hijo durable valida
+las capabilities del writer padre y del monitor durable padre, además de su
+guard local. Un evento transitorio, stream perdido, replay o deriva falla
+cerrado; al cerrar se exige `FINAL` durable antes de `FINAL` writer.
+
+Los streams largos de restauración DB/PVC y del backup de storage de sólo
+lectura tienen además un supervisor propio. Antes de cada stream exige una
+vuelta completa del monitor estrictamente posterior al contador observado;
+durante la transferencia acepta sólo progreso monotónico publicado mediante
+rename atómico, con frescura máxima productiva de 10 s y sondeo fijo de 1 s. La
+Lease se revalida por una lectura con timeout máximo de 5 s, reducido a 1 s
+cuando el presupuesto de frescura restante sea de 5 s o menos. Fallo, deriva,
+estancamiento, pérdida de Lease o sustitución de PID cancela y recolecta el
+grupo exacto usando PID más identidad de arranque. Los overrides de tiempos son
+exclusivos de fixtures locales atestadas. Este contrato está implementado en la
+fuente Fase 3B, pero sus regresiones finales y gates raíz siguen pendientes.
+
+En un checkpoint durable normal, root cambia por CAS el fence de operación
+`dormant -> active` después de probar los cinco writers a cero y lo devuelve a
+`dormant` justo antes de reanudar. En restore, PREFLIGHT y PREPARE exigen
+`dormant`; el apply Cloud `restore-fence` escala/reconcilia, activa por CAS y
+prueba las denegaciones; EXECUTE adopta esa identidad `active` durante streams,
+validación y el lock awaiting-reactivation. El apply Cloud `active` vuelve a
+`dormant` por CAS y prueba permisos positivos inmediatamente antes de devolver
+autoridad; FINALIZE verifica `dormant`. Desde que se arma la escritura PVC hasta
+completar su validación exacta, un fallo de stream, validación o reentrada
+conserva el helper Pod exacto, su NetworkPolicy deny-all y el lock; también se
+retienen ante un `owned` no vacío o inseguro. Sólo el éxito completamente
+validado limpia automáticamente helper y policy. `clear-stale` exige un quinto
+fence ya dormido; uno activo requiere una recuperación Cloud separada y
+revisada.
 
 El checkpoint vigente liga antes del downtime snapshots privados `0600` de sus
 inputs y consume solo esas copias. Tanto checkpoint como restore reservan la
@@ -244,9 +317,11 @@ La exposición accidental del manifiesto local al registro de esta tarea se
 trata como compromiso potencial aunque el fichero estuviera ignorado y el
 registro no sea público. Antes de desplegar el siguiente candidato:
 
-1. integrar `AUD-078` y los PR Cloud/root de procedencia y recibos;
-2. permitir únicamente el build no-deploy conjunto de Reticulum, parent y
-   runner, y verificar sus cinco ficheros de evidencia;
+1. terminar pruebas, gates, PR/CI y merge raíz de Fase 3B, fijando Cloud
+   `24d09706c2d9`, y después integrar los PR Cloud/root de procedencia y recibos;
+2. permitir únicamente los builds no-deploy de Reticulum, parent y runner en un
+   run Cloud conjunto, más Hubs en su workflow aprobado, y verificar los cinco
+   ficheros Cloud junto con run/commit/digest Hubs;
 3. crear checkpoint1 DB+storage antes de completar OLD;
 4. completar OLD/NEW y rotar mediante los runbooks vigentes todos los secretos
    que pudieran figurar en el manifiesto generado, sin copiar valores a tickets,
@@ -259,7 +334,10 @@ registro no sea público. Antes de desplegar el siguiente candidato:
 
 ## Bloqueos y residuales del candidato de bots
 
-`AUD-075` está integrado en Cloud `5392495b0772`: un Pod endurecido por
+`AUD-075` está integrado desde Cloud `5392495b0772`; el hito histórico
+`1cf95ca8719` añadió la outbox de `AUD-078` y el head Cloud actual
+`24d09706c2d9` incorpora además los relevos causales y el fence de operación: un
+Pod endurecido por
 sala/generación, imagen y cgroup propios, runner sin provider/master/Kubernetes
 credentials, canal autenticado con token v1 y fencing PostgreSQL obligatorio.
 El control-plane abarca los namespaces `hcce` y `hcce-bot-runners`, cuota,
@@ -270,9 +348,11 @@ conserva OpenAI y la credencial de orquestación. La probe del Deployment usa
 `/ready`.
 
 Eso elimina el residual de implementación, pero no acredita el runtime. Faltan
-el run conjunto de tres imágenes/digests desde el mismo commit integrado, el
-recibo y cuatro bundles verificados, el Secret privado generado, rollout
-Reticulum-first, prueba de un Pod exacto por sala y aceptación live. El runtime
+el run conjunto Cloud de tres imágenes/digests, el build trazable Hubs desde su
+gitlink, el recibo y cuatro bundles Cloud más el run/commit/digest Hubs, el Secret
+privado generado, staging y rollout Reticulum-first/Hubs-second, publicación
+Spoke de `Can be occupied` con identidad estable, prueba de un Pod exacto por
+sala y aceptación live. El runtime
 `process-local` es el último baseline live aceptado. Si un
 rollout candidato vuelve a él como rollback, debe mantener los bots públicos
 deshabilitados y no reabrirse ni declararse aceptado de nuevo hasta superar el
@@ -285,8 +365,9 @@ La evidencia local de fuente no levanta los siguientes bloqueos:
   checkpoint fresco de DB+storage y rotar coordinadamente todos los secretos
   potencialmente expuestos, verificándolos solo por presencia o huella. La
   ruta candidata es `deployment/rotate-process-local-credentials.sh` y su
-  contrato completo está en `deployment/README.md`; todavía no está fusionada
-  ni ejecutada live y no debe sustituirse por un apply o parche manual;
+  contrato completo está en `deployment/README.md`; el tooling ya pertenece a
+  root `main`, pero todavía no se ejecutó live y no debe sustituirse por un
+  apply o parche manual;
 - aislamiento y fencing están integrados y probados en fuente, pero no
   desplegados ni atestados; el baseline live aceptado sigue siendo
   `process-local`, y un rollback a él no puede reabrirse después sin repetir los
@@ -294,8 +375,10 @@ La evidencia local de fuente no levanta los siguientes bloqueos:
 - la aprobación/cuarentena ya está integrada pero no desplegada: la migración
   debe producir el inventario redactado y cada configuración válida necesita
   una aprobación individual antes de permitir autostart;
-- `room_stop` es best-effort: DB y snapshots terminan convergiendo, pero un fallo
-  de la llamada no garantiza detener inmediatamente el runner;
+- el baseline live todavía trata `room_stop` como best-effort. La fuente Cloud
+  `1cf95ca` lo sustituye por outbox transaccional, `runtime_revision`, claims
+  recuperables y ACK terminal tras ausencia nombre+UID y cero Pods, pero esa
+  corrección no será operativa hasta integrar el PR raíz, construir y desplegar;
 - no se ejecutó carga física ni aceptación staging/live. No hay capacidad
   medida ni autorización de rollout público.
 
@@ -329,8 +412,10 @@ La evidencia local de fuente no levanta los siguientes bloqueos:
 
 ## Auditoria y pruebas realizadas
 
-El cierre integra Hubs `674ece411691` y Hubs Cloud `5392495b0772` en root
-`main=9f4ada1`, con CI de fuentes verde. Las cifras y
+El último cierre raíz integrado usa Hubs `674ece411691` y Hubs Cloud
+`5392495b0772`; root `main` avanzó después hasta `ed8c9d13fbb`. El candidato
+usa Hubs `ce8390a8905f` y Cloud `24d09706c2d9`; ya pasa recovery 861/861 y el
+gate normal final, pero el full, el gitlink y Fase 3B siguen sin PR raíz. Las cifras y
 verificaciones live históricas pertenecen al baseline de producción del 16 de
 julio y no prueban el nuevo runtime.
 
@@ -352,7 +437,12 @@ julio y no prueban el nuevo runtime.
   deliberadamente bloqueada y sin certificación.
 - Gitleaks, Actionlint, ShellCheck, SBOM y Trivy.
 - GitHub Actions de Cloud: Security, Services, Spoke, Reticulum PostgreSQL
-  12/14 y release build verdes tras las promociones `#11` y `#12`.
+  12/14 y release build verdes tras las promociones `#11`/`#12`; los PR
+  `#13`/`#14` de `AUD-078` también quedaron fusionados con CI verde y el foco
+  de aplicación pasó 79/79. Los PR `#15/#16` cerraron el watch causal y
+  `#17/#18` promovieron el fence a `master=24d09706c2d9`; este último corte pasó
+  30/30 del generador, 110/110 de apply, dos E2E Kubernetes 1.34.8 y CI
+  post-merge verde. Esto no valida todavía la Fase 3B raíz.
 - Baseline live histórico: navegador real desktop/móvil sin errores JS/HTTP,
   escena lista y cinco bots; 12 deployments Ready, TLS/DNS/DB/storage/assets/CSP
   y ghost runner con 0 fallos/avisos. No acredita el candidato actual.
@@ -382,25 +472,25 @@ No desplegar `upstream/master`. Seguir `docs/development-workflow.md` y preserva
 
 ## Deploy correcto
 
-1. finalizar gates, PR/CI y merge de la corrección de secuencia, el completador
-   atómico de OLD y el preparador `create`/`verify` de candidata bootstrap;
+1. terminar el gate full, una revisión, PR/CI y merge raíz de Fase 3B, fijando
+   Hubs `ce8390a8905f` y Cloud `24d09706c2d9`; no crear aún checkpoint;
 2. conservar las credenciales NEW en Keychain y todas las OLD válidas;
-3. en una rama Cloud separada, implementar, validar y fusionar `AUD-078` sin
-   mezclar dependencias ni upstream, y actualizar después el gitlink raíz;
-4. integrar en un PR Cloud distinto la procedencia conjunta de tres imágenes,
-   la igualdad exacta values/manifiesto y los recibos de fase bajo Lease; después
-   integrar en otro PR raíz su consumidor, que mantendrá bloqueados
-   `advance`/`promote` sin la cadena autenticada;
+3. integrar en un PR Cloud distinto la procedencia conjunta de tres imágenes,
+   la igualdad values/manifiesto y los recibos
+   `bootstrap-server/bootstrap-client/admission/active`; después integrar en
+   otro PR raíz el gitlink Cloud y su consumidor fail-closed, conservando el
+   gitlink Hubs ya fijado por Fase 3B;
+4. como esos inputs son nuevos, repetir una vez ambos gates raíz y una revisión
+   antes del PR/CI/merge; no repetirlos de nuevo sin otra deriva material;
 5. justo antes del build, actualizar ambos `REGISTRY_PASSWORD` de Actions desde
    el ítem NEW mediante el supervisor trackeado, sin revocar OLD;
-6. GitHub Actions: construir Reticulum, parent y runner en un único run desde el
-   commit Cloud final derivado del gitlink de un root `main=origin/main` limpio;
-   exigir exactamente cinco ficheros distintos —recibo JSON, bundle del recibo
-   y bundles OCI Reticulum/parent/runner— y no generar ni aplicar manifiesto. La
-   verificación usa un `DOCKER_CONFIG` efímero `0700`, `config.json` `0600`,
-   creado desde pull auth privado y eliminado incluso ante error;
+6. GitHub Actions: construir Reticulum, parent y runner en un único run Cloud y
+   Hubs en su workflow aprobado desde los commits derivados de un root
+   `main=origin/main` limpio; exigir cinco ficheros Cloud distintos y el
+   run/commit/digest Hubs. No generar ni aplicar manifiesto. La
+   verificación usa un `DOCKER_CONFIG` efímero `0700`, `config.json` `0600`;
 7. crear y validar el primer checkpoint conjunto DB+storage;
-8. antes del primer `kubectl`, congelar los cinco artefactos ya ligados en un
+8. antes del primer `kubectl`, congelar los cinco artefactos Cloud ya ligados en un
    snapshot privado owner-only y consumir exclusivamente esa copia; completar
    OLD bajo el Lease global por CAS desde el `Secret/ghcr-pull` live, el
    `ServiceAccount/default` y el `Deployment/bot-orchestrator` ligado por
@@ -415,29 +505,37 @@ No desplegar `upstream/master`. Seguir `docs/development-workflow.md` y preserva
    `aud065_rotation_verified`, reconciliar Actions y cerrar las revocaciones;
    el verificador global 0/0 se reserva para el candidato completo;
 10. crear y validar un segundo checkpoint conjunto fresco y ligarlo a la
-    operación candidata privada;
+   operación candidata privada;
 11. crear/verificar desde la fuente rotada una copia candidata separada,
-    derivando del mismo recibo+bundles Reticulum/parent/runner finales, pull NEW
-    y `bootstrap`, sin overrides manuales;
-12. generar el manifiesto completo de 58 recursos con
-   `BOT_RUNNER_ACTIVATION_PHASE=bootstrap`, revisar el diff por la vía redactada
-   y ejecutar `npm run apply` con `KUBECTL_CONTEXT` fijado;
-13. consumir el recibo bootstrap para avanzar la copia a `admission`, regenerar, revisar el diff y
-   ejecutar de nuevo
-   `npm run apply`; el wrapper mantiene el parent parado, comprueba la
-   ValidatingAdmissionPolicy, atesta RBAC efectivo y exige que el probe no
-   autorizado sea denegado antes de conceder autoridad;
-14. consumir el recibo admission para avanzar después a `active`, regenerar, revisar el diff y ejecutar
-   `npm run apply`; solo esta transición puede levantar el parent después de
-   verificar Lease global, ausencia estable de runners y control-plane exacto;
-15. no sustituir esas tres transiciones por un `kubectl apply` directo: ante
+    derivando Hubs y Reticulum/parent/runner de sus evidencias, pull NEW y
+    `bootstrap-server`, sin overrides manuales;
+12. preparar staging sin coste DigitalOcean adicional —o detenerse en el cost
+    gate—, publicar desde Spoke asientos con `Can be occupied` e identidad
+    estable, aplicar Reticulum protocol 2 con Hubs anterior y después Hubs
+    candidato, y exigir exactamente un ganador en la carrera de dos navegadores;
+13. promover los mismos digests a producción: generar/aplicar
+    `bootstrap-server` conservando el Hubs live y, tras su recibo, aplicar
+    `bootstrap-client` con Hubs candidato y reiniciar Reticulum para renovar los
+    assets cacheados;
+14. revisar el inventario AUD-077 y aprobar/rechazar individualmente cada
+    fingerprint; consumir el recibo `bootstrap-client` para avanzar a
+    `admission`, regenerar/diff/apply y exigir policy, RBAC efectivo y probe
+    negativo con el parent parado;
+15. consumir el recibo admission para avanzar después a `active`, regenerar,
+    revisar el diff y ejecutar `npm run apply`; solo esta transición puede
+    levantar el parent después de verificar Lease, ausencia estable de runners
+    y control-plane exacto;
+16. no sustituir esas transiciones por un `kubectl apply` directo: ante
    error o deriva el wrapper falla cerrado y vuelve a cercar la autoridad;
-16. verificar los dos namespaces, cuota, ValidatingAdmissionPolicy+binding,
+17. verificar los dos namespaces, cuota, ValidatingAdmissionPolicy+binding,
     RBAC efectivo, ocho NetworkPolicies, `/transport-ready`, `/ready` y
     exactamente un Pod runner por sala;
-17. si cambia Hubs, reiniciar Reticulum;
-18. carga fria real desktop/mobile, consola y red sin errores ni warnings;
-19. `deployment/verify-live-reactivation.sh` con 0/0 y solo entonces, con los
+18. carga fría real desktop/mobile, magic link, español, cámaras, avatares,
+    sitting, bots, chat, audio, Admin y Spoke sin errores ni warnings;
+19. `deployment/verify-live-reactivation.sh` con 0/0;
+20. crear y validar un tercer checkpoint conjunto `durable-v2`, con DB,
+    `ret-pvc`, journal/HMAC y una segunda copia cifrada;
+21. solo entonces, con los
     recibos active/live/cold encadenados, promover por CAS la copia candidata
     `active` a la fuente canónica.
 

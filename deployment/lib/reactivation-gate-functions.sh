@@ -13,10 +13,19 @@ reactivation_register_temp_path() {
 }
 
 reactivation_cleanup_temp_paths() {
-  local path
+  local path index
   if ((${#REACTIVATION_TEMP_PATHS[@]} > 0)); then
-    for path in "${REACTIVATION_TEMP_PATHS[@]}"; do
-      [[ -n "$path" ]] && rm -f -- "$path"
+    # Snapshot files are registered after their private parent directory. Walk
+    # backwards so files disappear before an exact, empty rmdir. Never recurse
+    # through a path registered by a read-only gate.
+    for ((index = ${#REACTIVATION_TEMP_PATHS[@]} - 1; index >= 0; index--)); do
+      path="${REACTIVATION_TEMP_PATHS[$index]}"
+      [[ -n "$path" ]] || continue
+      if [[ -f "$path" || -L "$path" ]]; then
+        rm -f -- "$path"
+      elif [[ -d "$path" ]]; then
+        rmdir -- "$path" 2>/dev/null || :
+      fi
     done
   fi
   REACTIVATION_TEMP_PATHS=()
@@ -62,12 +71,22 @@ reactivation_values_file_is_private() {
 reactivation_snapshot_private_file() {
   local destination_variable="$1"
   local source_path="$2"
-  local snapshot_path snapshot_dir helper_dir
-  [[ -n "$destination_variable" && -f "$source_path" && ! -L "$source_path" ]] || return 1
+  local label="${3:-values}"
+  local snapshot_path snapshot_dir snapshot_root helper_dir
+  [[ -n "$destination_variable" && "$label" =~ ^[a-z][a-z0-9-]{0,31}$ &&
+     -f "$source_path" && ! -L "$source_path" ]] || return 1
   reactivation_values_file_is_private "$source_path" || return 1
   helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)" || return 1
-  snapshot_dir="$(cd "${TMPDIR:-/tmp}" && pwd -P)" || return 1
-  snapshot_path="$(mktemp "$snapshot_dir/yenhubs-values-snapshot.XXXXXX")" || return 1
+  snapshot_root="$(cd "${TMPDIR:-/tmp}" && pwd -P)" || return 1
+  snapshot_dir="$(mktemp -d "$snapshot_root/yenhubs-$label-snapshot.XXXXXX")" ||
+    return 1
+  chmod 700 "$snapshot_dir" || {
+    rmdir "$snapshot_dir" 2>/dev/null || :
+    return 1
+  }
+  reactivation_register_temp_path "$snapshot_dir"
+  snapshot_path="$(mktemp "$snapshot_dir/input.XXXXXX")" || return 1
+  chmod 600 "$snapshot_path" || return 1
   reactivation_register_temp_path "$snapshot_path"
   if ! node "$helper_dir/snapshot-private-file.mjs" "$source_path" "$snapshot_path"; then
     return 1
@@ -169,7 +188,7 @@ reactivation_image_for_pair_is_trusted() {
     photomnemonic/photomnemonic)
       [[ "$repository" == ghcr.io/yengalvez/photomnemonic ]]
       ;;
-    pgsql/pgsql)
+    pgsql/pgsql | pgsql/postgresql)
       [[ "$repository" == ghcr.io/yengalvez/postgres ||
          "$repository" == docker.io/library/postgres || "$repository" == postgres ]]
       ;;
@@ -192,10 +211,15 @@ reactivation_image_for_pair_is_trusted() {
 
 reactivation_image_map_is_trusted() {
   local images_json="$1"
-  local pair image
+  local pair image postgres_pair
   local expected_pairs
-  expected_pairs=$'bot-orchestrator/bot-orchestrator\ncoturn/coturn\ndialog/dialog\nhaproxy/haproxy\nhubs/hubs\nnearspark/nearspark\npgbouncer/pgbouncer\npgbouncer-t/pgbouncer-t\nphotomnemonic/photomnemonic\npgsql/pgsql\nreticulum/postgrest\nreticulum/reticulum\nspoke/spoke'
+  expected_pairs=$'bot-orchestrator/bot-orchestrator\ncoturn/coturn\ndialog/dialog\nhaproxy/haproxy\nhubs/hubs\nnearspark/nearspark\npgbouncer/pgbouncer\npgbouncer-t/pgbouncer-t\nphotomnemonic/photomnemonic\nreticulum/postgrest\nreticulum/reticulum\nspoke/spoke'
   jq -e 'type == "object" and length == 13' >/dev/null <<<"$images_json" || return 1
+  postgres_pair="$(jq -er '
+    [keys[] | select(. == "pgsql/pgsql" or . == "pgsql/postgresql")] |
+    select(length == 1) | .[0]
+  ' <<<"$images_json")" || return 1
+  expected_pairs="${expected_pairs}"$'\n'"$postgres_pair"
   [[ "$(jq -r 'keys[]' <<<"$images_json" | LC_ALL=C sort)" == \
      "$(printf '%s\n' "$expected_pairs" | LC_ALL=C sort)" ]] || return 1
   while IFS=$'\t' read -r pair image; do
@@ -480,7 +504,7 @@ reactivation_network_policies_are_exact() {
   ' >/dev/null 2>&1 <<<"$payload"
 }
 
-reactivation_bot_readiness_is_acceptable() {
+reactivation_bot_readiness_payload_is_well_formed() {
   local payload="${1:-}"
   [[ -n "$payload" ]] || return 1
   jq -e '
@@ -498,6 +522,7 @@ reactivation_bot_readiness_is_acceptable() {
       "ok",
       "process_hubs",
       "runner_bots",
+      "runner_guard_capacity",
       "runner_health_ttl_ms",
       "snapshot_age_ms",
       "snapshot_reason",
@@ -525,6 +550,44 @@ reactivation_bot_readiness_is_acceptable() {
     ($root.max_active_rooms | floor) == $root.max_active_rooms and
     ($root.max_active_rooms >= 1 and $root.max_active_rooms <= 10) and
     $root.configured_room_count <= $root.max_active_rooms and
+    ($root.runner_guard_capacity | type == "object") and
+    (($root.runner_guard_capacity | keys | sort) == [
+      "fences",
+      "intents",
+      "observed",
+      "quota",
+      "reserve",
+      "start_limit",
+      "total",
+      "warning",
+      "warning_threshold"
+    ]) and
+    ($root.runner_guard_capacity.observed | type == "boolean") and
+    ($root.runner_guard_capacity.intents | type == "number") and
+    ($root.runner_guard_capacity.intents | floor) == $root.runner_guard_capacity.intents and
+    $root.runner_guard_capacity.intents >= 0 and
+    ($root.runner_guard_capacity.fences | type == "number") and
+    ($root.runner_guard_capacity.fences | floor) == $root.runner_guard_capacity.fences and
+    $root.runner_guard_capacity.fences >= 0 and
+    ($root.runner_guard_capacity.total | type == "number") and
+    ($root.runner_guard_capacity.total | floor) == $root.runner_guard_capacity.total and
+    $root.runner_guard_capacity.total ==
+      ($root.runner_guard_capacity.intents + $root.runner_guard_capacity.fences) and
+    ($root.runner_guard_capacity.warning | type == "boolean") and
+    $root.runner_guard_capacity.warning == ($root.runner_guard_capacity.total >= 60) and
+    $root.runner_guard_capacity.warning_threshold == 60 and
+    $root.runner_guard_capacity.start_limit == 80 and
+    $root.runner_guard_capacity.reserve == 20 and
+    $root.runner_guard_capacity.quota == 100 and
+    $root.runner_guard_capacity.start_limit + $root.runner_guard_capacity.reserve ==
+      $root.runner_guard_capacity.quota and
+    $root.runner_guard_capacity.total <= $root.runner_guard_capacity.quota and
+    (if $root.runner_guard_capacity.observed then true else
+      $root.runner_guard_capacity.intents == 0 and
+      $root.runner_guard_capacity.fences == 0 and
+      $root.runner_guard_capacity.total == 0 and
+      $root.runner_guard_capacity.warning == false
+    end) and
     all($root.expected_hubs[]; type == "string" and length > 0) and
     (($root.expected_hubs | unique | length) == ($root.expected_hubs | length)) and
     ($root.unready_hubs | type == "array" and length == 0) and
@@ -565,5 +628,15 @@ reactivation_bot_readiness_is_acceptable() {
       ($root.runner_bots[$hub].desired | floor) == $root.runner_bots[$hub].desired and
       ($root.runner_bots[$hub].active | floor) == $root.runner_bots[$hub].active and
       $root.runner_bots[$hub].active == $root.runner_bots[$hub].desired)
+  ' >/dev/null 2>&1 <<<"$payload"
+}
+
+reactivation_bot_readiness_is_acceptable() {
+  local payload="${1:-}"
+  reactivation_bot_readiness_payload_is_well_formed "$payload" || return 1
+  jq -e '
+    .runner_guard_capacity.observed == true and
+    .runner_guard_capacity.warning == false and
+    .runner_guard_capacity.total < .runner_guard_capacity.warning_threshold
   ' >/dev/null 2>&1 <<<"$payload"
 }

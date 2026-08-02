@@ -53,6 +53,8 @@ const metadata = Object.freeze({
   checkpointDumpSha256: "1".repeat(64),
   checkpointStorageSha256: "2".repeat(64),
   checkpointInventorySha256: "3".repeat(64),
+  checkpointRunnerEvidenceSha256: "5".repeat(64),
+  checkpointRuntimeGeneration: "legacy-absent",
   profileId: "yenhubs-process-local-credential-rotation-v1",
   profileSha256: "4".repeat(64)
 });

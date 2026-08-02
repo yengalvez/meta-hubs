@@ -12,7 +12,7 @@ Hubs Community Edition 2.1.0 on DigitalOcean Kubernetes with automated SSL via c
 > the only active deployment runbook and
 > `deployment/client-instance-lifecycle.md` for create/freeze/restore/retire.
 
-> **Current rollout block — 19 July 2026:** an ignored generated manifest with
+> **Current rollout block — 21 July 2026:** an ignored generated manifest with
 > real local values was displayed to the task log during candidate
 > diagnostics. It was neither committed nor applied and production was not
 > changed. Do not deploy the next candidate until every potentially included
@@ -20,9 +20,14 @@ Hubs Community Edition 2.1.0 on DigitalOcean Kubernetes with automated SSL via c
 > Verify only by hashes, configured-key presence and redacted reports; never
 > reopen/print the ignored manifest to inventory values. The historical OLD
 > source predates `bot-runner`, while the rotation gate deliberately requires an
-> official runner digest. Therefore the only pre-rotation build exception is:
-> merge the sequencing tooling, integrate `AUD-078`, then integrate the separate
-> Cloud provenance/phase-receipt producer and its root receipt consumer. From the
+> official runner digest. The first `AUD-078` line was merged as the historical
+> `master=1cf95ca8719`; the causal watch and admission-fence follow-ups are now
+> also merged through Cloud PR `#18`, at `master=24d09706c2d9`. Hubs
+> `master=ce8390a8905f` contains the audited Immutable.js fix. The root candidate
+> passes recovery 861/861 and its normal final gate; its `--full` gate, review
+> and root PR remain pending. Therefore the only pre-rotation build exception is: first merge that
+> root change, then integrate the separate Cloud provenance/phase-receipt
+> producer and its root receipt consumer. From the
 > final Cloud gitlink fixed by a clean root `main=origin/main`, build Reticulum,
 > parent and runner in one approved GitHub Actions run **without generating or
 > applying a manifest**. Verify its receipt plus four bundles, create the first
@@ -105,6 +110,19 @@ staging/live rollout or live attestation is claimed here.
 The subrepository heads and root gitlinks were integrated through root PR `#5`
 at `main=9f4ada1`. No candidate image, checkpoint, deployment or live acceptance
 is implied by that source integration.
+
+The first `AUD-078` cut was merged in Cloud through PR `#13` at
+`development=0a21634688445eeb2ad2935627ad1c2f7a233f72` and PR `#14` at
+`master=1cf95ca8719b40aa94adc8ffa987cce835316066`, with CI green. Hubs is now
+`ce8390a8905fa38fa0acdb10d5f94290981477ec` after its audited dependency fix. Follow-up PR `#15/#16`
+closed the causal watch boundary and PR `#17/#18` added the recovery-operation
+admission fence; the current Cloud head is
+`master=24d09706c2d9302888ce5192de562005c155bd67`, with post-merge CI green. Root
+`main=ed8c9d13fbbd2336417c36e54663d09e032193ba` still pins the historical Cloud
+`5392495`; the current worktree proposes Hubs `ce8390a89`, Cloud `24d0970` and
+Fase 3B source. Recovery 861/861 and the normal final gate pass; full, review,
+commit, PR/CI and merge remain pending. No image build, checkpoint, apply, deployment or live mutation
+is claimed.
 
 The isolated AUD-065 coordinator is now integrated through root PR `#6`:
 head `4ac252b875e8b53cadc4e231129d89ac2478729b`, merge
@@ -287,6 +305,12 @@ BACKUP_DIR=/absolute/path/to/checkpoint-YYYYMMDD-HHMMSS \
   MAX_CHECKPOINT_AGE_SECONDS=86400 \
   ./deployment/preflight-reactivation.sh
 ```
+
+Para un checkpoint `durable-v2`, añadir también
+`PROCESS_LOCAL_CUTOVER_KEY_PATH=/ruta/privada/clave-cutover`; el preflight crea
+snapshots privados `0700/0600` tanto de esa clave como de los valores y nunca
+consume después los ficheros mutables originales. Un checkpoint legacy no usa
+esa clave.
 
 `BACKUP_DIR` is mandatory and is never inferred from an older directory or a
 "latest" pointer. The timestamp must be non-future and no older than the
@@ -509,7 +533,7 @@ validating and deriving the public key.
 
 ### Rotate the four internal credentials safely for the later AUD-075 rollout
 
-This subsection belongs only to the later 58-resource candidate rollout after
+This subsection belongs only to the later 68-resource candidate rollout after
 AUD-065 and AUD-078 are integrated. Do not generate or apply that manifest to
 rotate the current `process-local` baseline; use the AUD-065 coordinator below.
 
@@ -543,6 +567,14 @@ digests unchanged. These two auxiliary objects are not added to the historical
 generated inventory. The coordinator does not generate or apply the AUD-075
 manifest and must not be combined with an upstream update, image change or
 dependency upgrade.
+
+The accepted checkpoint for this coordinator is the generation-aware format:
+`checkpoint-metadata.json` schema 3, `deployment-images.json` schema 4 and the
+canonical `runner-cutover-evidence.json`. Because AUD-065 runs on the unchanged
+`process-local` baseline, that evidence must say `legacy-absent`. Its SHA-256
+and runtime generation are part of the private operation intent, its HMAC and
+the immutable global lock; replacing the evidence or relabelling the generation
+therefore fails before credential or Kubernetes mutation.
 
 The private new-values copy must retain every invariant field and rotate all of
 `BOT_ACCESS_KEY`, `BOT_RUNNER_ACCESS_KEY`, `BOT_ORCHESTRATOR_ACCESS_KEY`,
@@ -928,8 +960,9 @@ only the narrow functional smokes for credential rotation. Record only rotated
 key names, operation state and safe verdicts; never record the operation ID,
 HMACs, private baselines or credential material.
 
-After `AUD-078`, the separate Cloud provenance/receipt PR and its root gitlink/
-consumer PR are merged, and the resulting exact Cloud commit is frozen by a
+After the root Fase 3B PR has integrated `AUD-078`, the separate Cloud
+provenance/receipt PR and its root gitlink/consumer PR are merged, and the
+resulting exact Cloud commit is frozen by a
 clean `main=origin/main`, but immediately before the required pre-rotation
 Actions build, update both GitHub Actions
 `REGISTRY_PASSWORD` secrets from the same NEW Keychain item. This changes only
@@ -1000,8 +1033,9 @@ Verify: `ls -lh hcce.yaml` should be 50-250KB.
 ### Step 8: Verify the generated manifest
 
 `npm run gen-hcce` now runs `verify-generated-manifest.js` automatically. The
-final `AUD-075` source generates exactly 58 resources and fails unless all of
-these
+historical `AUD-075` cut generated 58 resources; current Cloud
+`24d09706c2d9` generates exactly 68 after adding the five permanent
+policy/binding pairs. It fails unless all of these
 invariants hold:
 
 - `ret`, `dialog` and `nearspark` use cert-manager and per-ingress SSL redirect;
@@ -1056,7 +1090,7 @@ invariants hold:
   destinations;
 - HAProxy RBAC contains CRD and Gateway API permissions;
 - no obsolete self-signed bootstrap secret or unresolved placeholder remains;
-- exactly one `LoadBalancer` service, two 10 GiB DigitalOcean PVCs and 58 total
+- exactly one `LoadBalancer` service, two 10 GiB DigitalOcean PVCs and 68 total
   resources are generated.
 
 Do not edit `hcce.yaml` manually. Fix the tracked template or input values and regenerate it.
@@ -1265,6 +1299,9 @@ Bot-orchestrator security gate before promotion:
   configuration is pending; `/health=200` alone is not acceptance.
 - For the isolated runtime, require `/transport-ready=200` only as the parent
   bootstrap probe, then prove `/ready=200` separately. The live verifier must
+  require the exact runner-guard capacity contract with a completed inventory
+  (`observed=true`), no warning and a total below the fixed warning threshold;
+  an unobserved or capacity-warning snapshot is not production acceptance. It must also
   observe one stable Ready Pod per configured room, the exact runner digest,
   parent-Pod UID ownership, generation/room-HMAC labels, the tokenless
   `bot-runner` ServiceAccount and zero stale/terminal/unknown managed Pods.
@@ -1364,14 +1401,14 @@ hand-edit, split or hotpatch `hcce.yaml`:
    then verify and seal its exact bytes.
    Run the final preflight. Do not edit the sealed AUD-065 sources or promote the
    candidate yet.
-9. Generate the complete 58-resource manifest with
+9. Generate the complete 68-resource manifest with
    `BOT_RUNNER_ACTIVATION_PHASE=bootstrap`. Review the context-pinned,
    redacted `kubectl diff`, then apply it exclusively with
    `KUBECTL_CONTEXT="$EXPECTED_KUBE_CONTEXT" npm run apply`. Reticulum and its
    migrations become compatible while the parent and runner authority remain
    fenced.
 10. Consume the authenticated bootstrap receipt to advance the candidate copy
-   `bootstrap -> admission`. Regenerate the complete 58-resource inventory, verify it,
+   `bootstrap -> admission`. Regenerate the complete 68-resource inventory, verify it,
    review the diff and run the same wrapper. Require the admission policy,
    effective RBAC checks and the negative unauthorized-Pod probe before
    granting runner authority.
@@ -1630,7 +1667,7 @@ The durable rollout order for this campaign is: merged sequencing tooling;
 integrated `AUD-078`; integrated Cloud provenance/phase receipts plus root
 consumer; one-run no-deploy Actions build of Reticulum, parent and runner;
 receipt+four-bundle verification; checkpoint1; OLD/NEW completion; coordinated
-rotation; checkpoint2; then three complete 58-resource generations
+rotation; checkpoint2; then three complete 68-resource generations
 (`bootstrap` -> `admission` -> `active`) and final live/cold acceptance before
 promotion. Every phase uses the context-pinned `npm run apply` driver. Local
 Docker builds, direct `kubectl apply -f hcce.yaml`, in-cluster builds and
@@ -1650,7 +1687,7 @@ under its earlier procedure. Treat that state as inventory only: do not repeat
 manual `kubectl create secret` or ServiceAccount patches for the candidate.
 
 The candidate uses the generated dedicated `bot-images-pull` contract. The
-58-resource generator creates that Secret and binds it explicitly to
+68-resource generator creates that Secret and binds it explicitly to
 `bot-orchestrator` and `bot-runner` ServiceAccounts. For the current AUD-065
 campaign, populate its private source only through the tracked Keychain-backed
 candidate preparer; the NEW token is never accepted through argv/environment.
@@ -1803,23 +1840,25 @@ ALLOW_CHECKPOINT_DOWNTIME=1 ./deployment/create-checkpoint.sh
 
 La opción de downtime es obligatoria: el comando toma un lock global
 inmutable, captura el contrato post-lock y lleva Reticulum, ambos Pgbouncers,
-bot-orchestrator y Coturn exactamente a cero mediante CAS antes de leer DB o
-PVC. Además espera y monitoriza cero Pods dinámicos gestionados de `bot-runner`
-durante toda la quiescencia; si reaparece uno, falla cerrado y no reanuda
-escritores. Si no puede reanudar bajo las mismas
-UID/resourceVersion/plantillas, retiene el lock y deja los escritores a cero
-para revisión.
+bot-orchestrator y Coturn exactamente a cero mediante CAS del Deployment
+completo antes de leer DB o PVC. No usa el subrecurso `deployments/scale`.
+Además exige quiescencia del runtime runner durante toda la captura. En una
+generación `legacy-absent` eso significa ausencia completa de Pods runner y de
+cualquier residuo AUD-078. En `durable-v2` significa cero runners ejecutables,
+cero intents y cero objetos desconocidos, conservando los fences permanentes
+exactos por nombre y UID. Si reaparece autoridad ejecutable, cambia un fence o
+no puede reanudar bajo las mismas UID/resourceVersion/plantillas, falla cerrado,
+retiene el lock y deja los escritores a cero para revisión.
 
 Antes de la primera mutación, `create-checkpoint.sh` clasifica y liga una de dos
-fronteras exactas. El baseline histórico `process-local` solo es admisible con
-su Deployment legacy completo, token de ServiceAccount desactivado, sin
-bindings ni anotaciones del runner aislado y sin el namespace
-`hcce-bot-runners`. El modo `kubernetes-pod` exige el manifiesto `active`,
-admission, Role y RBAC efectivo exactos. Cualquier mezcla, fase parcial o
-namespace residual selecciona el gate aislado y falla: nunca cae al camino
-legacy. El modo capturado se vuelve a comprobar mientras los writers están a
-cero y justo antes de reanudar el parent; si cambia, conserva el lock y la
-autoridad del parent permanece parada.
+generaciones exactas. El baseline histórico `legacy-absent` solo es admisible
+con su Deployment `process-local` completo, token de ServiceAccount
+desactivado, sin bindings, anotaciones, journal ni namespace del runner
+aislado. `durable-v2` exige el mismo Namespace UID, el journal canónico y su
+HMAC, manifiesto `active`, admission, Role, RBAC efectivo, Deployment padre y
+fences exactos. Cualquier mezcla o fase parcial falla; nunca cae al camino
+legacy. La generación capturada se vuelve a comprobar mientras los writers
+están a cero y justo antes de reanudar el parent.
 
 Antes de cualquier mutación del clúster, el driver liga los valores locales a
 una copia privada `0600`, inmutable para esa ejecución. En modo
@@ -1845,9 +1884,10 @@ crear `SHA256SUMS`, `validate-checkpoint.sh` vuelve a extraer los UUID activos
 del dump SQL, exige al menos una sala y un UUID activo, y los compara offline
 con ambos miembros de cada par del tar. `SHA256SUMS` contiene un nombre exacto,
 sin prefijo, para cada artefacto permitido y ninguna entrada adicional. El
-checkpoint incluye `database-contract.json`, `checkpoint-metadata.json`,
-`deployment-images.json` y `k8s-hcce-structure.json`. El contrato de base de
-datos fija de forma checksummed los schemas, todas las relaciones, las versiones
+checkpoint actual incluye `database-contract.json`,
+`checkpoint-metadata.json` schema 3, `deployment-images.json` schema 4,
+`runner-cutover-evidence.json` schema 3 y `k8s-hcce-structure.json`. El contrato
+de base de datos fija de forma checksummed los schemas, todas las relaciones, las versiones
 exactas de migracion, los SID de salas, todos los UUID/estados de `owned_files`
 y los conteos criticos; se captura antes y despues de
 `pg_dump` y debe coincidir exactamente con el DDL/COPY del dump. La captura
@@ -1855,23 +1895,76 @@ Kubernetes es solo estructural: omite
 valores de entorno, comandos, argumentos y valores de anotaciones; de los
 ConfigMap conserva solo los nombres de claves. El inventario exige los 12
 Deployments, 13 pares Deployment/contenedor, ningun `initContainer` ni
-contenedor efimero. `deployment-images.json` usa schema 3 y añade
-`bot_runner_runtime`: el rollback legacy es exactamente
-`{mode:"process-local",image:null}`; el runtime aislado es
-`{mode:"kubernetes-pod",image:"...@sha256:..."}`, ligado al override privado
-exacto de `bot-runner`. Todos los digests y la paridad con los overrides se
+contenedor efimero. En schema 4, `deployment-images.json` añade un
+`bot_runner_runtime` de cinco claves exactas: `control_plane`, `generation`,
+`image`, `mode` y `recovery_epoch`. El rollback legacy usa
+`generation:"legacy-absent"`, `mode:"process-local"`, `image:null` y estados
+`legacy-absent` para las otras dos claves; el runtime aislado usa
+`generation:"durable-v2"`, `mode:"kubernetes-pod"`, un digest `bot-runner`
+exacto y los contratos ligados del control plane y del recovery epoch. Todos
+los digests y la paridad con los overrides se
 capturan desde una copia
 temporal `0600`. Todos los artefactos se crean con `umask 077` y permisos
-`0600`. El directorio final aparece mediante un unico `mv` solo despues de
-validar contenido y checksums; una colision o fallo elimina unicamente el
-staging privado de esa ejecucion y nunca publica un checkpoint parcial.
+`0600`. La publicación reclama de forma exclusiva el directorio final y lo
+mantiene deliberadamente inválido mediante `.yenhubs-incomplete` mientras mueve
+y revalida cada byte. Ese marcador sólo desaparece después del cierre verificado
+del monitor; una colisión o fallo conserva el marcador y elimina únicamente el
+claim/staging propiedad de esa ejecución, por lo que nunca queda visible un
+checkpoint parcial aceptable.
 
-Solo se acepta para restauración destructiva un
-`checkpoint-metadata.json` schema 2 generado localmente por este flujo, con
-`external_import=false` y la misma evidencia de quiescencia/lock. Los SHA-256
-detectan deriva de bytes —incluido cualquier DDL SQL no inventariado—, pero no
-autentican un artefacto externo: copiarlo y recalcular sus checksums no lo
-convierte en un checkpoint autorizado.
+El artefacto runner liga la generación, operación de captura, Namespace UID,
+hashes de manifiesto y targets, journal firmado, políticas, bindings,
+Deployment padre y fences observados. Schema 3 añade
+`recovery_operation_fence_state`, que solo admite `dormant` o `active`. En
+`durable-v2` registra además el contrato normalizado y la identidad exacta de 2
+Namespace, 13 recursos namespaced y cinco pares policy/binding exactos —10
+recursos cluster—, incluido el fence de operación. Sólo el Secret
+`bot-images-pull` usa un HMAC SHA-256 con la clave privada del cutover, por lo
+que ni sus datos ni un hash sin clave quedan archivados. Source A exige los UID
+y contratos históricos; target B permite únicamente el manifiesto B exacto
+conservando los UID de A. Legacy no exige el quinto par, nunca activa ese fence
+y sólo acepta semántica `dormant`. Su SHA-256 y generación también quedan
+ligados al metadata, a las operaciones privadas y a los locks de recuperación.
+Los hashes autenticados del journal siguen describiendo el primer `bootstrap`;
+el manifiesto `active` live se valida por separado, de modo que una actualización
+compatible no reescribe ni invalida esa evidencia histórica. La clave HMAC
+nunca se archiva ni se imprime.
+
+Después de reducir a cero los cinco writers fijos, un checkpoint `durable-v2`
+comprueba el binding dormido, lo cambia por CAS a `active` y demuestra la
+propagación con GET exacto más dry-runs server-side negativos. Desde entonces
+mantiene dos monitores causales durante el dump, la copia de `ret-pvc`, la
+validación y el rehash completo dentro del claim todavía incompleto. El primero
+vigila writers; el segundo liga esa frontera y los objetos runner. Cada uno
+publica una autoridad JSON checksummed que liga PID/identidad de arranque,
+paths/hashes, operación, lock y Lease; `operation_owner` es exactamente
+`checkpoint-backup`. Los handshakes `READY`, progreso y `FINAL` están
+tokenizados. Un hijo durable debe validar simultáneamente las capabilities del
+writer padre y del monitor durable padre, además de su guard local del stream.
+
+El baseline liga los 12 Deployments permitidos, sus ReplicaSets y Pods por UID,
+owner y template; rechaza Pods directos/debug. La única creación directa
+admitida es el helper propio `ret-storage-backup-<operation>` con imagen
+Reticulum exacta, red cerrada, sin credenciales y montaje `ret-pvc` de sólo
+lectura. Un evento transitorio `0 -> 1 -> 0`, pérdida del stream, sustitución de
+capability o deriva del Lease/lock/fences hace fallar el checkpoint, conserva
+los writers detenidos y evita publicar evidencia válida. Al cerrar se exige el
+`FINAL` durable antes del `FINAL` de writers. Después, todavía bajo Lease, lock
+y marcador de propiedad, se repite el manifiesto local de hashes y sólo
+entonces se elimina `.yenhubs-incomplete`. Antes de reanudar, el driver vuelve
+por CAS el fence `active -> dormant`, prueba dry-runs server-side positivos y
+revalida la identidad exacta. Cada reanudación usa el `resourceVersion` terminal
+como precondición CAS y añade en el mismo PATCH un recibo de operación; una
+respuesta perdida no se confunde con una escala externa. Legacy omite por
+completo la activación del quinto par.
+
+Los checkpoints actuales schema 3 se restauran solo dentro de su misma
+generación. Los checkpoints históricos `checkpoint-metadata.json` schema 2 se
+mantienen legibles exclusivamente para una restauración `legacy-absent`
+in-place y exigen su inventario schema 3; no pueden adoptar ni crear el control
+plane durable. Los SHA-256 detectan deriva de bytes —incluido cualquier DDL SQL
+no inventariado—, pero no autentican un artefacto externo: copiarlo y recalcular
+sus checksums no lo convierte en un checkpoint autorizado.
 
 El checkpoint siguiente es evidencia historica anterior al contrato actual de
 layout exacto y frescura. No usarlo para otro rollout: crear uno nuevo con el
@@ -2024,44 +2117,123 @@ rehashes and jointly validates those copies, then has both restore children
 consume only their own independently revalidated copies:
 
 ```bash
-# Combined read-only preflight; it does not execute or rehearse either restore.
+# Legacy read-only preflight; it does not execute or rehearse the restore.
 export EXPECTED_RET_PVC_UID="$(kubectl --context "$EXPECTED_KUBE_CONTEXT" \
   get pvc ret-pvc -n "$NAMESPACE" -o jsonpath='{.metadata.uid}')"
 RESTORE_CHECKPOINT_PREFLIGHT=1 ./deployment/restore-checkpoint.sh \
   /absolute/path/to/checkpoint
 
-# Resolve confirmation fields by exact filename equality.
-STAMP=YYYYMMDD-HHMMSS
-DUMP_SHA="$(awk -v f="retdb-$STAMP.sql.gz" 'substr($0,67)==f {print substr($0,1,64)}' \
-  /absolute/path/to/checkpoint/SHA256SUMS)"
-STORAGE_SHA="$(awk -v f="ret-storage-$STAMP.tar.gz" 'substr($0,67)==f {print substr($0,1,64)}' \
-  /absolute/path/to/checkpoint/SHA256SUMS)"
+# Legacy checkpoints use the explicit one-shot in-place path. First omit the
+# confirmation to obtain the exact value; that refusal occurs before the Lease
+# or any cluster mutation. Review it, then rerun with that complete value.
+RESTORE_CHECKPOINT_LEGACY_IN_PLACE=1 \
+  ./deployment/restore-checkpoint.sh /absolute/path/to/checkpoint
+RESTORE_CHECKPOINT_LEGACY_IN_PLACE=1 \
+CONFIRM_LEGACY_IN_PLACE_RESTORE='<exact legacy-in-place value printed above>' \
+  ./deployment/restore-checkpoint.sh /absolute/path/to/checkpoint
 
-# Destructive restore into a fresh/empty ret-pvc. The only accepted
-# confirmation binds the cluster, namespace, complete checkpoint and PVC UID.
-CONFIRM_RESTORE_CHECKPOINT="checkpoint:${EXPECTED_KUBE_CONTEXT}:${NAMESPACE}:${EXPECTED_NAMESPACE_UID}:${STAMP}:${DUMP_SHA}:${STORAGE_SHA}:${EXPECTED_RET_PVC_UID}" \
+# A durable-v2 checkpoint instead uses one read-only preflight followed by
+# three explicit operations. Supply the private HMAC key path and the generated
+# target values/manifest on every call, including preflight.
+export VALUES_FILE='/private/path/to/target-input-values.yaml'
+export HCCE_MANIFEST_PATH='/private/path/to/generated-hcce.yaml'
+export PROCESS_LOCAL_CUTOVER_KEY_PATH='/private/path/to/cutover-key'
+RESTORE_CHECKPOINT_PREFLIGHT=1 ./deployment/restore-checkpoint.sh \
+  /absolute/path/to/checkpoint
+
+# The first prepare refusal can print its exact confirmation before any Lease
+# or mutation.
+RESTORE_CHECKPOINT_PREPARE_FENCE=1 \
+  ./deployment/restore-checkpoint.sh /absolute/path/to/checkpoint
+RESTORE_CHECKPOINT_PREPARE_FENCE=1 \
+CONFIRM_PREPARE_RESTORE_FENCE='<exact prepare-fence value printed above>' \
+  ./deployment/restore-checkpoint.sh /absolute/path/to/checkpoint
+
+# Apply the regenerated and verified standard Cloud manifest in
+# BOT_RUNNER_RECOVERY_PHASE=restore-fence using the target epoch printed by the
+# prepare step. Then execute with the exact confirmation printed there.
+RESTORE_CHECKPOINT_EXECUTE_FENCED=1 \
+CONFIRM_EXECUTE_RESTORE_FENCE='<exact execute-fenced value printed by prepare>' \
+  ./deployment/restore-checkpoint.sh /absolute/path/to/checkpoint
+
+# Regenerate and apply the verified standard Cloud manifest in phase active
+# with the same target epoch; run the live gate; then finalize with the exact
+# value printed by execute-fenced.
+RESTORE_CHECKPOINT_FINALIZE_REACTIVATION=1 \
+CONFIRM_FINALIZE_RESTORE_REACTIVATION='<exact value printed by execute-fenced>' \
   ./deployment/restore-checkpoint.sh /absolute/path/to/checkpoint
 ```
 
 Standalone destructive calls to `restore-retdb.sh` and
 `restore-ret-storage.sh` are rejected; those scripts remain directly callable
-only in their read-only `*_PREFLIGHT=1` modes. The driver records the original
-replicas and keeps Reticulum, both Pgbouncers, bot-orchestrator and Coturn at
-zero continuously from before the DB drop until the DB contract, exact active
-UUID set, restored PVC pairs and live target identities have all passed. There
-must also be zero managed dynamic `bot-runner` Pods throughout quiesce and
-restore; their reappearance aborts the operation and preserves the fail-closed
-state. There is no intermediate DB-only scale-up. The storage child independently holds all
-five consumers at zero and rechecks both the checksummed DB contract and the
-exact active UUID set immediately before creating its restore pod. Before the
-first DB mutation, the driver creates an immutable, create-only ConfigMap lock
-bound to the exact context, namespace UID, PVC UID, checkpoint stamp and both
-artifact hashes. A contender cannot adopt or delete that lock and exits before
-scaling or dropping anything. The driver revalidates its UID, private token and
-exact metadata at every destructive phase; it deletes the lock only after the
-complete ordered resume succeeds. It resumes Pgbouncer first, then Reticulum
-and only after Reticulum is Ready starts Coturn and bot-orchestrator, whose
-readiness depends on an authoritative Reticulum snapshot.
+only in their read-only `*_PREFLIGHT=1` modes. Esos preflights también
+materializan values y, para `durable-v2`, la clave indicada por
+`PROCESS_LOCAL_CUTOVER_KEY_PATH` dentro de directorios privados antes de
+verificar la evidencia live. `RESTORE_TARGET_MODE=cold-rebind`
+is rejected before materialization, Lease acquisition or mutation: replacing a
+Namespace/PVC identity requires a separately designed authenticated
+`namespace-epoch` campaign.
+
+The legacy operation records the original replicas and keeps Reticulum, both
+Pgbouncers, bot-orchestrator and Coturn at zero continuously from before the DB
+drop until the DB contract, exact active UUID set, restored PVC pairs and live
+target identities have passed. It also requires zero runner Pods and zero
+AUD-078 residue throughout. It resumes the proxies first, then Reticulum, and
+only after Reticulum is Ready starts Coturn and the parent.
+
+The durable path deliberately spans two generated-manifest applies and uses the
+following exact fence state machine. `dormant` and `active` describe the
+`recovery-operation-pod-fence.yenhubs.org` binding, not whether the normal bot
+runtime is deployed:
+
+| Stage | Required operation fence | Authority and result |
+| --- | --- | --- |
+| `PREFLIGHT` | `dormant` | Read-only validation; no Lease, scale, fence transition or byte write. |
+| `PREPARE` | `dormant` | Binds the exact source, checkpoint, journal and immutable recovery lock; it does not activate the operation fence. |
+| Cloud `restore-fence` apply | `dormant -> active` | Under the same lock/Lease, full-object-CAS scales the five consumers to zero, reconciles runner fences, changes the binding by UID/resourceVersion CAS and proves propagation with exact GETs plus negative server-side dry-runs. |
+| Root `EXECUTE` | `active` | Adopts that exact active-fence identity and keeps it through DB/PVC streams, validation and the transition of the lock to `restore-complete-awaiting-reactivation`. |
+| Cloud `active` apply | `active -> dormant` | Preserves the target epoch, revalidates the fenced result, then changes the binding by exact CAS and proves positive dry-runs immediately before returning authority to workloads. |
+| `FINALIZE` | `dormant` | Verifies the dormant binding, `active-target` and the live gate before releasing the lock. |
+
+Any phase/state mismatch fails closed. The operation fence is not made dormant
+as cleanup after a failed destructive execute: the exact active identity and
+lock remain evidence for manual recovery. Its error path full-object-CAS fences
+consumers back to zero, turns the captured runner Role inert before
+reconciliation and proves `quiesced-active-target` rather than inventing
+success.
+
+Every recovery lock binds the exact context, namespace UID, PVC UID, checkpoint
+stamp, DB/storage/inventory hashes, runner-evidence SHA-256 and runtime
+generation. Durable locks also bind distinct pre-fence and target epochs. A
+contender cannot relabel a legacy checkpoint, adopt a durable lock from another
+journal or delete an unowned lock. Each phase rematerializes private checkpoint
+bytes, revalidates lock UID/resourceVersion and checks the exact source or
+target contract before continuing. There is no intermediate DB-only scale-up.
+
+Every long DB import, PVC extraction and read-only storage archive is wrapped by
+the fail-closed stream supervisor and, in `durable-v2`, by both causal parent
+monitors. Their checksummed authority JSON binds PID/start identity, all
+contract and baseline paths/hashes, operation ID, exact
+`operation_owner=checkpoint-restore`, operation lock and Lease. `READY`,
+progress and `FINAL` carry their own tokens. Before opening each stream, the
+child validates the parent writer capability, the parent durable capability and
+its own local DB/PVC guard; a generic live PID or replayed/swapped capability
+cannot satisfy this contract.
+
+Immediately before opening each stream, every guard must publish a complete
+successful sweep with a monotonic counter strictly newer than the value just
+observed. Progress is written through an owner-only temporary file and atomic
+rename, then must remain fresh within the fixed production budget of 10
+seconds. Production polling is fixed at one second. The Lease read used only
+inside stream supervision has a maximum five-second request timeout; it is
+reduced to one second when the remaining freshness budget is at most five
+seconds so cancellation and exact process-group reaping still fit within that
+budget. Timing overrides are accepted only under local fixture attestation.
+Guard failure,
+stale/non-monotonic progress, Lease loss, caller death, timeout or PID reuse
+aborts and reaps the exact isolated process group using its PID plus start
+identity. At normal closure the durable monitor must deliver an acceptable
+`FINAL` before the writer monitor may deliver its own `FINAL`.
 
 El fail-close del restore también tiene un único propietario: solo el driver
 principal puede volver a cercar consumidores, retener el lock o completar la
@@ -2084,20 +2256,31 @@ destination and a Reticulum image not pinned by an exact digest. Complete
 deferred pairs are restored with the active set so Reticulum can finish its
 normal grace-period cleanup. A timeout or remaining Reticulum pod blocks
 creation of the tokenless, non-root (`UID/GID/fsGroup 1000`), read-only-root
-restore pod and any PVC write. That pod is also create-only and is accepted
-only after its admitted UID, unpredictable owner token, sole container, exact
-digest, command, hardening and direct `ret-pvc` -> `/storage` mount (without
-`subPath`) match; a same-name replacement is neither used nor deleted. The PVC
-UID and pod ownership are rechecked and every consumer is polled throughout
-extraction; only that exact restore pod may mount `ret-pvc`. On a failure after
-quiescing, every DB consumer is forced back to zero and the global lock is
-retained for inspection.
+restore pod and any PVC write. The restore helper is accepted only after its
+admitted UID, same-operation owner token, sole container, exact digest,
+command, hardening and direct `ret-pvc` -> `/storage` mount (without `subPath`)
+match. An unowned or drifted same-name Pod or NetworkPolicy is neither used nor
+deleted; only exact objects bound to the retained operation may be adopted on
+re-entry. The PVC UID and object ownership are rechecked and every consumer is
+polled throughout extraction; only that exact restore pod may mount `ret-pvc`.
+From immediately before the mutable PVC stream until restored paths and runner
+quiescence have been fully validated, any stream or validation failure retains
+the exact helper Pod, its deny-all NetworkPolicy and the operation lock. The
+same fail-closed retention applies when an adopted re-entry later fails or
+`/storage/owned` is non-empty or unsafe. Normal automatic cleanup of the helper
+and policy occurs only after complete validation; otherwise inspect the
+retained state and do not resume or clear the lock merely because the process
+exited.
 
-After reviewing and correcting the failure, clear a retained lock only while
-all five consumers remain at zero. The clearance mode is deliberately
-clear-only: it revalidates the exact checkpoint, cluster, namespace, PVC, lock
-UID/token and absence of PVC consumers, requires exact confirmation, deletes
-only the owned lock and never resumes a workload:
+After reviewing the failure, stale-lock clearance is allowed only while all
+five fixed consumers remain at zero and, for `durable-v2`, the exact fifth
+fence is already `dormant`. If that fence is `active`, the command refuses
+before mutating the helper, recovery lock or fence and requires a separate
+reviewed Cloud-owned recovery procedure; root stale-lock clearance never
+performs `active -> dormant`. With an exact dormant fence, the sole permitted
+PVC consumer is the exact retained helper. After exact confirmation, clearance
+deletes the owned helper Pod, its exact deny-all NetworkPolicy and then the
+owned lock; it never resumes a workload or transitions the fifth fence:
 
 ```bash
 RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1 \

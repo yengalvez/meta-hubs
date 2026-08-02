@@ -86,6 +86,8 @@ const OPERATION_INTENT_KEYS = Object.freeze([
   "checkpointDumpSha256",
   "checkpointStorageSha256",
   "checkpointInventorySha256",
+  "checkpointRunnerEvidenceSha256",
+  "checkpointRuntimeGeneration",
   "profileId",
   "profileSha256",
   "originalBaselineSha256",
@@ -409,6 +411,8 @@ function verifyOperationIntent(intent, input, profile, fingerprintKey, sourceHas
       !HEX_SHA256.test(intent.checkpointDumpSha256 || "") ||
       !HEX_SHA256.test(intent.checkpointStorageSha256 || "") ||
       !HEX_SHA256.test(intent.checkpointInventorySha256 || "") ||
+      !HEX_SHA256.test(intent.checkpointRunnerEvidenceSha256 || "") ||
+      intent.checkpointRuntimeGeneration !== "legacy-absent" ||
       intent.profileId !== profile.profile_id ||
       intent.profileSha256 !== profileDigest(profile) ||
       intent.originalBaselineSha256 !== sourceHashes.originalBaselineSha256 ||

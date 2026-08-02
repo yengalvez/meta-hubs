@@ -2,9 +2,20 @@
 
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyRunnerPodInputs } from "../../deployment/verify-bot-runner-pods.mjs";
+import {
+  canonicalDurableFenceInventory,
+  captureInitialDurableRunnerWatch,
+  durableInventoryFromPodList,
+  durableRunnerListRawPath,
+  durableRunnerWatchRawPath,
+  prepareDurableRunnerWatchHandoff
+} from "../../deployment/watch-bot-runner-pods.mjs";
 import {
   deploymentConfiguration,
   fixtureDeployment,
@@ -164,6 +175,8 @@ function rejected(mutator) {
 }
 
 rejected(value => { value.podsBefore.items[0].metadata.labels["yenhubs.org/room-key"] = "0".repeat(20); });
+rejected(value => { value.podsBefore.items[0].metadata.labels["yenhubs.org/runner-protocol"] = "legacy"; });
+rejected(value => { delete value.podsBefore.items[0].metadata.labels["yenhubs.org/runner-protocol"]; });
 rejected(value => { value.podsBefore.items[0].metadata.generateName = "bot-runner-"; });
 rejected(value => { value.podsBefore.items[0].metadata.finalizers = ["attacker.example/finalizer"]; });
 rejected(value => { value.podsBefore.items[0].metadata.deletionTimestamp = "2033-05-18T03:34:00Z"; });
@@ -283,3 +296,308 @@ rejected(value => { value.readiness.expected_hubs = [`room-${"0".repeat(24)}`]; 
 rejected(value => { value.podsAfter.items.push(structuredClone(value.podsAfter.items[0])); });
 
 process.stdout.write("Bot runner Pod verifier: 45/45 passed\n");
+
+const runnerNamespace = deploymentConfiguration.runnerNamespace;
+const durableRoot = fs.mkdtempSync(path.join(os.tmpdir(), "yenhubs-durable-runner-watch."));
+fs.chmodSync(durableRoot, 0o700);
+
+function exactFence(hub, processGeneration, uid, resourceVersion) {
+  const fence = manager.guardPodDocument(manager.identity(hub, processGeneration), "fence");
+  fence.metadata.uid = uid;
+  fence.metadata.resourceVersion = resourceVersion;
+  return fence;
+}
+
+function exactIntent(hub, processGeneration, uid, resourceVersion) {
+  const intent = manager.guardPodDocument(manager.identity(hub, processGeneration), "intent");
+  intent.metadata.uid = uid;
+  intent.metadata.resourceVersion = resourceVersion;
+  return intent;
+}
+
+function exactRunner(hub, processGeneration, uid, resourceVersion) {
+  const runner = manager.podDocument(manager.identity(hub, processGeneration));
+  runner.metadata.uid = uid;
+  runner.metadata.resourceVersion = resourceVersion;
+  return runner;
+}
+
+function podList(resourceVersion, items, { omitItemTypeMeta = false } = {}) {
+  const clonedItems = structuredClone(items);
+  if (omitItemTypeMeta) {
+    for (const item of clonedItems) {
+      delete item.apiVersion;
+      delete item.kind;
+    }
+  }
+  return {
+    apiVersion: "v1",
+    kind: "PodList",
+    metadata: { resourceVersion },
+    items: clonedItems
+  };
+}
+
+function emptyPrivateFile(name) {
+  const filePath = path.join(durableRoot, name);
+  fs.writeFileSync(filePath, "", { encoding: "utf8", flag: "wx", mode: 0o600 });
+  fs.chmodSync(filePath, 0o600);
+  return filePath;
+}
+
+function podEvent(type, value, resourceVersion) {
+  const eventPod = structuredClone(value);
+  eventPod.metadata.resourceVersion = resourceVersion;
+  return { type, object: eventPod };
+}
+
+const generationB = "22222222-2222-4222-8222-222222222222";
+const generationC = "33333333-3333-4333-8333-333333333333";
+const fenceA = exactFence(hubSid, generation, "fence-a-uid", "fence-a-rv");
+const fenceB = exactFence("Room_2", generationB, "fence-b-uid", "fence-b-rv");
+const initialList = podList("opaque/list:initial", [fenceA], { omitItemTypeMeta: true });
+const baselinePath = emptyPrivateFile("fences.json");
+
+try {
+  const initial = captureInitialDurableRunnerWatch({
+    podList: initialList,
+    namespace: runnerNamespace,
+    baselinePath
+  });
+  const expectedFence = {
+    name: fenceA.metadata.name,
+    uid: fenceA.metadata.uid,
+    room_key: fenceA.metadata.labels["yenhubs.org/room-key"],
+    process_generation: generation,
+    state: "fenced"
+  };
+  const expectedBaseline = JSON.stringify([expectedFence]);
+  assert.equal(fs.readFileSync(baselinePath, "utf8"), expectedBaseline);
+  assert.equal(
+    initial.baselineSha256,
+    crypto.createHash("sha256").update(expectedBaseline).digest("hex")
+  );
+  assert.equal(initial.resourceVersion, "opaque/list:initial");
+  assert.equal(initial.bookmarkBaseline, 0);
+  assert.equal(initial.evidence.lastResourceVersion, "opaque/list:initial");
+  assert.match(
+    initial.watchRawPath,
+    /watch=true&allowWatchBookmarks=true&resourceVersion=opaque%2Flist%3Ainitial&timeoutSeconds=600$/
+  );
+
+  const unordered = canonicalDurableFenceInventory([
+    {
+      name: fenceB.metadata.name,
+      uid: fenceB.metadata.uid,
+      room_key: fenceB.metadata.labels["yenhubs.org/room-key"],
+      process_generation: generationB,
+      state: "fenced"
+    },
+    expectedFence
+  ]);
+  assert.deepEqual(JSON.parse(unordered).map(value => value.name),
+    [fenceA.metadata.name, fenceB.metadata.name].sort());
+  assert.throws(() => canonicalDurableFenceInventory([expectedFence, expectedFence]),
+    /durable_fence_baseline_contract/);
+
+  const beforeHandoff = fs.statSync(baselinePath, { bigint: true });
+  const handoffFence = structuredClone(fenceA);
+  handoffFence.metadata.resourceVersion = "fence/status:next";
+  handoffFence.status = { phase: "Pending" };
+  const handoff = prepareDurableRunnerWatchHandoff({
+    podList: podList("opaque/handoff:rv", [handoffFence], { omitItemTypeMeta: true }),
+    namespace: runnerNamespace,
+    baselinePath,
+    baselineSha256: initial.baselineSha256
+  });
+  const afterHandoff = fs.statSync(baselinePath, { bigint: true });
+  assert.equal(afterHandoff.ino, beforeHandoff.ino);
+  assert.equal(afterHandoff.mtimeNs, beforeHandoff.mtimeNs);
+  assert.equal(fs.readFileSync(baselinePath, "utf8"), expectedBaseline);
+  assert.equal(handoff.resourceVersion, "opaque/handoff:rv");
+
+  assert.throws(() => prepareDurableRunnerWatchHandoff({
+    podList: initialList,
+    namespace: runnerNamespace,
+    baselinePath,
+    baselineSha256: "0".repeat(64)
+  }), /durable_fence_baseline_digest/);
+  const replacedFence = structuredClone(fenceA);
+  replacedFence.metadata.uid = "replacement-fence-uid";
+  assert.throws(() => prepareDurableRunnerWatchHandoff({
+    podList: podList("replacement-list-rv", [replacedFence]),
+    namespace: runnerNamespace,
+    baselinePath,
+    baselineSha256: initial.baselineSha256
+  }), /durable_fence_inventory_changed/);
+  assert.throws(() => prepareDurableRunnerWatchHandoff({
+    podList: podList("added-list-rv", [fenceA, fenceB]),
+    namespace: runnerNamespace,
+    baselinePath,
+    baselineSha256: initial.baselineSha256
+  }), /durable_fence_inventory_changed/);
+  assert.equal(fs.readFileSync(baselinePath, "utf8"), expectedBaseline);
+
+  const nonemptyPath = path.join(durableRoot, "nonempty.json");
+  fs.writeFileSync(nonemptyPath, "[]", { encoding: "utf8", flag: "wx", mode: 0o600 });
+  assert.throws(() => captureInitialDurableRunnerWatch({
+    podList: initialList,
+    namespace: runnerNamespace,
+    baselinePath: nonemptyPath
+  }), /durable_fence_baseline_file_contract/);
+  const permissivePath = emptyPrivateFile("permissive.json");
+  fs.chmodSync(permissivePath, 0o644);
+  assert.throws(() => captureInitialDurableRunnerWatch({
+    podList: initialList,
+    namespace: runnerNamespace,
+    baselinePath: permissivePath
+  }), /durable_fence_baseline_file_contract/);
+  const wrongNamespacePath = emptyPrivateFile("wrong-namespace.json");
+  assert.throws(() => captureInitialDurableRunnerWatch({
+    podList: podList("wrong-namespace-rv", []),
+    namespace: "other-runners",
+    baselinePath: wrongNamespacePath
+  }), /durable_runner_list_contract/);
+  assert.equal(fs.statSync(wrongNamespacePath).size, 0);
+
+  const runner = exactRunner("Room_3", generationC, "runner-c-uid", "runner-c-rv");
+  const intent = exactIntent("Room_3", generationC, "intent-c-uid", "intent-c-rv");
+  assert.throws(() => durableInventoryFromPodList(
+    podList("runner-list-rv", [runner]), runnerNamespace
+  ), /durable_runner_namespace_not_quiescent/);
+  assert.throws(() => durableInventoryFromPodList(
+    podList("intent-list-rv", [intent]), runnerNamespace
+  ), /durable_runner_namespace_not_quiescent/);
+  const unknown = {
+    apiVersion: "v1",
+    kind: "Pod",
+    metadata: {
+      name: "unknown",
+      namespace: runnerNamespace,
+      uid: "unknown-uid",
+      resourceVersion: "unknown-rv",
+      labels: {}
+    },
+    spec: {}
+  };
+  assert.throws(() => durableInventoryFromPodList(
+    podList("unknown-list-rv", [unknown]), runnerNamespace
+  ), /durable_runner_namespace_contract/);
+  const malformedFence = structuredClone(fenceA);
+  malformedFence.metadata.annotations = { "attacker.example/change": "true" };
+  assert.throws(() => durableInventoryFromPodList(
+    podList("malformed-list-rv", [malformedFence]), runnerNamespace
+  ), /durable_runner_namespace_contract/);
+  assert.throws(() => durableInventoryFromPodList(
+    { ...initialList, metadata: { resourceVersion: "0" } }, runnerNamespace
+  ), /durable_runner_list_contract/);
+
+  const allowed = prepareDurableRunnerWatchHandoff({
+    podList: initialList,
+    namespace: runnerNamespace,
+    baselinePath,
+    baselineSha256: initial.baselineSha256
+  }).evidence;
+  const allowedFence = structuredClone(fenceA);
+  allowedFence.status = { phase: "Pending", conditions: [{ type: "PodScheduled", status: "False" }] };
+  allowed.ingest(podEvent("MODIFIED", allowedFence, "opaque/event:lower"));
+  assert.equal(allowed.violation, false);
+  assert.equal(allowed.error, null);
+  assert.equal(allowed.lastResourceVersion, "opaque/event:lower");
+  const bookmarkBaseline = allowed.bookmarkSequence;
+  allowed.ingest({
+    type: "BOOKMARK",
+    object: { metadata: { resourceVersion: "opaque/event:lower" } }
+  });
+  assert.equal(allowed.hasCausalBookmarkAfter(bookmarkBaseline), true);
+  assert.equal(allowed.lastBookmarkResourceVersion, "opaque/event:lower");
+
+  for (const type of ["ADDED", "DELETED"]) {
+    const evidence = prepareDurableRunnerWatchHandoff({
+      podList: initialList,
+      namespace: runnerNamespace,
+      baselinePath,
+      baselineSha256: initial.baselineSha256
+    }).evidence;
+    evidence.ingest(podEvent(type, fenceA, `${type.toLowerCase()}-rv`));
+    assert.equal(evidence.violation, true);
+  }
+
+  const replacedEvidence = prepareDurableRunnerWatchHandoff({
+    podList: initialList,
+    namespace: runnerNamespace,
+    baselinePath,
+    baselineSha256: initial.baselineSha256
+  }).evidence;
+  replacedEvidence.ingest(podEvent("MODIFIED", replacedFence, "replacement-event-rv"));
+  assert.equal(replacedEvidence.violation, true);
+
+  for (const managedPod of [runner, intent]) {
+    const evidence = prepareDurableRunnerWatchHandoff({
+      podList: initialList,
+      namespace: runnerNamespace,
+      baselinePath,
+      baselineSha256: initial.baselineSha256
+    }).evidence;
+    evidence.ingest(podEvent("MODIFIED", managedPod, "managed-modified-rv"));
+    assert.equal(evidence.violation, true);
+  }
+
+  const unknownEvidence = prepareDurableRunnerWatchHandoff({
+    podList: initialList,
+    namespace: runnerNamespace,
+    baselinePath,
+    baselineSha256: initial.baselineSha256
+  }).evidence;
+  unknownEvidence.ingest(podEvent("MODIFIED", unknown, "unknown-event-rv"));
+  assert.equal(unknownEvidence.error, "durable_runner_watch_unknown_object");
+
+  const missingTypeMeta = prepareDurableRunnerWatchHandoff({
+    podList: initialList,
+    namespace: runnerNamespace,
+    baselinePath,
+    baselineSha256: initial.baselineSha256
+  }).evidence;
+  const noTypeMetaFence = structuredClone(fenceA);
+  delete noTypeMetaFence.apiVersion;
+  delete noTypeMetaFence.kind;
+  missingTypeMeta.ingest(podEvent("MODIFIED", noTypeMetaFence, "no-type-meta-rv"));
+  assert.equal(missingTypeMeta.error, "durable_runner_watch_object_contract");
+
+  const expired = prepareDurableRunnerWatchHandoff({
+    podList: initialList,
+    namespace: runnerNamespace,
+    baselinePath,
+    baselineSha256: initial.baselineSha256
+  }).evidence;
+  expired.ingest({ type: "ERROR", object: { code: 410 } });
+  assert.equal(expired.error, "durable_runner_watch_resource_version_expired");
+
+  const invalidBookmark = prepareDurableRunnerWatchHandoff({
+    podList: initialList,
+    namespace: runnerNamespace,
+    baselinePath,
+    baselineSha256: initial.baselineSha256
+  }).evidence;
+  invalidBookmark.ingest({ type: "BOOKMARK", object: { metadata: { resourceVersion: "0" } } });
+  assert.equal(invalidBookmark.error, "durable_runner_watch_bookmark_contract");
+  assert.equal(invalidBookmark.hasCausalBookmarkAfter(0), false);
+
+  assert.equal(
+    durableRunnerListRawPath(runnerNamespace),
+    `/api/v1/namespaces/${runnerNamespace}/pods`
+  );
+  assert.equal(
+    durableRunnerWatchRawPath(runnerNamespace, "z/10:opaque", 17),
+    `/api/v1/namespaces/${runnerNamespace}/pods?` +
+      "watch=true&allowWatchBookmarks=true&resourceVersion=z%2F10%3Aopaque&timeoutSeconds=17"
+  );
+  assert.throws(() => durableRunnerWatchRawPath(runnerNamespace, "0"),
+    /durable_runner_watch_path/);
+  assert.throws(() => durableRunnerListRawPath("other-runners"),
+    /durable_runner_list_path/);
+
+  process.stdout.write("Durable runner/fence causal watcher core: passed\n");
+} finally {
+  fs.rmSync(durableRoot, { force: true, recursive: true });
+}

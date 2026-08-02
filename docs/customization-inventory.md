@@ -30,6 +30,13 @@ para el rollout vigente: el commit final será el que integre después `AUD-078`
 el productor de procedencia/recibos y su gitlink/consumidor raíz, antes del build
 conjunto.
 
+El candidato activo de cierre usa Hubs `ce8390a8905f` y Cloud `24d09706c2d9`.
+El primero añade el pin Immutable.js 4.3.9 y su compatibilidad Draft.js
+fail-closed; el segundo contiene `AUD-078`, sus relevos causales y el fence de
+operación. Recovery 861/861 y el gate raíz normal final pasan sobre ambos; queda
+`--full`, revisión y PR/CI raíz. La auditoría upstream confirma 0 releases
+estables pendientes y divergencias de 91 commits Hubs y 114 Cloud.
+
 ## Cliente Hubs
 
 | Area | Contrato propio | Archivos de mayor riesgo |
@@ -40,7 +47,7 @@ conjunto.
 | Avatar upload | import local Admin, preview y GLB privado no listado neutral a proveedor | `admin/src/react-components/import-content.js`, `src/react-components/avatar-editor.js`, `src/react-components/media-browser.js`, `src/react-components/room/PrivateGlbHelpModal.js` |
 | Bots | entidad NAF con namespace/ACK autoritativos, `bot-path`, chat privado con capacidad exacta por canal, settings 0..10 y Admin de aprobación redactada | `src/components/bot-*.js`, `src/network-schemas.js`, `src/systems/bot-runner-system.js`, `src/react-components/room/BotChatPanel*`, `src/react-components/room/RoomSettingsSidebar*`, `admin/src/react-components/bot-config-approvals.js`, `src/utils/bot-chat-lifecycle.js` |
 | UI/i18n | Obsidian Aurora, espanol forzado, responsive y badge | `src/react-components/**`, `src/assets/locales/es.json`, `src/utils/i18n.js` |
-| Estabilidad | guards de transform, cookie parsing, assets runtime | `src/components/*transform*`, `src/utils/identity.js`, `webpack.config.js`, `RetPageOriginDockerfile` |
+| Estabilidad | guards de transform, cookie parsing, assets runtime y compatibilidad Draft.js 0.11.7/Immutable.js 4.3.9 fail-closed | `src/components/*transform*`, `src/utils/identity.js`, `webpack.config.js`, `RetPageOriginDockerfile`, `scripts/patch-draft-js-immutable-4.js`, `test/unit/utils/draft-js-immutable-4-compat.test.js` |
 
 Assets propios que deben sobrevivir:
 

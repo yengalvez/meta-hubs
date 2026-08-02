@@ -10,17 +10,28 @@ RECOVERY_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 RECOVERY_MATERIALIZED_DIR=""
 RECOVERY_MATERIALIZED_PARENT=""
 RECOVERY_MATERIALIZED_MARKER=""
+RECOVERY_MATERIALIZED_PRIVATE_TOKEN=""
 RECOVERY_MATERIALIZED_OWNED=0
+RECOVERY_MATERIALIZED_CLEANUP_ATTEMPTED=0
+RECOVERY_MATERIALIZED_RETIRED=0
+RECOVERY_MATERIALIZED_ALLOWED_PATHS=()
 RECOVERY_DUMP_COPY=""
 RECOVERY_STORAGE_COPY=""
 RECOVERY_DATABASE_CONTRACT_COPY=""
 RECOVERY_DEPLOYMENT_INVENTORY_COPY=""
+RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY=""
+RECOVERY_CHECKPOINT_METADATA_COPY=""
 RECOVERY_CHECKPOINT_STAMP=""
 RECOVERY_DUMP_SHA256=""
 RECOVERY_STORAGE_SHA256=""
 RECOVERY_DEPLOYMENT_INVENTORY_SHA256=""
+RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256=""
 RECOVERY_CHECKPOINT_NAMESPACE_UID=""
 RECOVERY_CHECKPOINT_PVC_UID=""
+RECOVERY_CHECKPOINT_METADATA_SCHEMA=""
+RECOVERY_CHECKPOINT_RUNNER_GENERATION=""
+RECOVERY_RUNNER_RUNTIME_GENERATION=""
+RECOVERY_CHECKPOINT_OPERATION_ID=""
 RECOVERY_FENCE_PRE_EPOCH="${RECOVERY_FENCE_PRE_EPOCH:-}"
 RECOVERY_FENCE_TARGET_EPOCH="${RECOVERY_FENCE_TARGET_EPOCH:-}"
 RECOVERY_OPERATION_STATE="${RECOVERY_OPERATION_STATE:-}"
@@ -31,6 +42,7 @@ RECOVERY_OPERATION_BINDING_SHA256="${RECOVERY_OPERATION_BINDING_SHA256:-}"
 RECOVERY_OPERATION_IDENTITY_PREBOUND=0
 RECOVERY_OPERATION_LOCK_GLOBAL_NAME="yenhubs-recovery-operation-lock"
 RECOVERY_SERIALIZATION_LEASE_NAME="yenhubs-operation-serialization"
+RECOVERY_OPERATION_FENCE_POLICY_NAME="recovery-operation-pod-fence.yenhubs.org"
 # Lease ownership and heartbeat paths/PIDs are process-local capabilities.
 # Never honor inherited values: an environment value must not let cleanup
 # signal a foreign PID or overwrite/remove an arbitrary path.
@@ -38,6 +50,7 @@ RECOVERY_SERIALIZATION_LEASE_HOLDER=""
 RECOVERY_SERIALIZATION_LEASE_UID=""
 RECOVERY_SERIALIZATION_LEASE_REQUIRED=0
 RECOVERY_SERIALIZATION_HEARTBEAT_PID=""
+RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY=""
 RECOVERY_SERIALIZATION_HEARTBEAT_STOP=""
 RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE=""
 RECOVERY_SERIALIZATION_PARENT_PID=""
@@ -60,10 +73,120 @@ recovery_kubectl() {
 recovery_process_start_identity() {
   local pid="$1" identity
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 2
-  identity="$(command ps -o lstart= -p "$pid" 2>/dev/null)" || return 1
-  identity="$(awk '{$1=$1; print}' <<<"$identity")"
+  command -v python3 >/dev/null 2>&1 || return 127
+  identity="$(command python3 -I - "$pid" <<'PY'
+import ctypes
+import os
+import pathlib
+import sys
+
+
+def linux_identity(pid):
+    stat = pathlib.Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+    closing = stat.rfind(")")
+    if closing < 0:
+        raise RuntimeError("invalid_proc_stat")
+    # The suffix begins at field 3 (state); starttime is field 22.
+    fields = stat[closing + 2 :].split()
+    if len(fields) < 20 or not fields[19].isdigit():
+        raise RuntimeError("invalid_proc_start")
+    boot_id = pathlib.Path("/proc/sys/kernel/random/boot_id").read_text(
+        encoding="ascii"
+    ).strip()
+    if not boot_id:
+        raise RuntimeError("missing_boot_id")
+    return f"linux:{boot_id}:{fields[19]}"
+
+
+class ProcBsdInfo(ctypes.Structure):
+    _fields_ = [
+        ("pbi_flags", ctypes.c_uint32),
+        ("pbi_status", ctypes.c_uint32),
+        ("pbi_xstatus", ctypes.c_uint32),
+        ("pbi_pid", ctypes.c_uint32),
+        ("pbi_ppid", ctypes.c_uint32),
+        ("pbi_uid", ctypes.c_uint32),
+        ("pbi_gid", ctypes.c_uint32),
+        ("pbi_ruid", ctypes.c_uint32),
+        ("pbi_rgid", ctypes.c_uint32),
+        ("pbi_svuid", ctypes.c_uint32),
+        ("pbi_svgid", ctypes.c_uint32),
+        ("rfu_1", ctypes.c_uint32),
+        ("pbi_comm", ctypes.c_char * 16),
+        ("pbi_name", ctypes.c_char * 32),
+        ("pbi_nfiles", ctypes.c_uint32),
+        ("pbi_pgid", ctypes.c_uint32),
+        ("pbi_pjobc", ctypes.c_uint32),
+        ("e_tdev", ctypes.c_uint32),
+        ("e_tpgid", ctypes.c_uint32),
+        ("pbi_nice", ctypes.c_int32),
+        ("pbi_start_tvsec", ctypes.c_uint64),
+        ("pbi_start_tvusec", ctypes.c_uint64),
+    ]
+
+
+def darwin_identity(pid):
+    libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    libproc.proc_pidinfo.argtypes = [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_uint64,
+        ctypes.c_void_p,
+        ctypes.c_int,
+    ]
+    libproc.proc_pidinfo.restype = ctypes.c_int
+    info = ProcBsdInfo()
+    result = libproc.proc_pidinfo(
+        pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)
+    )
+    if result != ctypes.sizeof(info) or info.pbi_pid != pid:
+        raise RuntimeError("proc_pidinfo_failed")
+    if info.pbi_start_tvsec <= 0 or info.pbi_start_tvusec >= 1_000_000:
+        raise RuntimeError("invalid_proc_start")
+    return f"darwin:{info.pbi_start_tvsec}:{info.pbi_start_tvusec}"
+
+
+try:
+    requested_pid = int(sys.argv[1])
+    if requested_pid <= 0:
+        raise ValueError("pid")
+    if sys.platform.startswith("linux"):
+        identity = linux_identity(requested_pid)
+    elif sys.platform == "darwin":
+        identity = darwin_identity(requested_pid)
+    else:
+        raise RuntimeError("unsupported_platform")
+    print(identity)
+except (OSError, RuntimeError, ValueError):
+    raise SystemExit(1)
+PY
+  )" || return 1
   [[ -n "$identity" ]] || return 1
   printf '%s\n' "$identity"
+}
+
+recovery_monotonic_milliseconds() {
+  command -v python3 >/dev/null 2>&1 || return 127
+  command python3 -I - <<'PY'
+import ctypes
+import sys
+
+
+class Timespec(ctypes.Structure):
+    _fields_ = [("seconds", ctypes.c_long), ("nanoseconds", ctypes.c_long)]
+
+
+clock_id = 1 if sys.platform.startswith("linux") else 6 if sys.platform == "darwin" else -1
+if clock_id < 0:
+    raise SystemExit(1)
+libc = ctypes.CDLL(None, use_errno=True)
+libc.clock_gettime.argtypes = [ctypes.c_int, ctypes.POINTER(Timespec)]
+libc.clock_gettime.restype = ctypes.c_int
+value = Timespec()
+if libc.clock_gettime(clock_id, ctypes.byref(value)) != 0:
+    raise SystemExit(1)
+print(value.seconds * 1000 + value.nanoseconds // 1_000_000)
+PY
 }
 
 recovery_process_identity_is_live() {
@@ -75,8 +198,11 @@ recovery_process_identity_is_live() {
 }
 
 recovery_stop_process_group() {
-  local leader_pid="$1" group_created=0
+  local leader_pid="$1" expected_start="${2:-}" group_created=0
   [[ "$leader_pid" =~ ^[1-9][0-9]*$ ]] || return 2
+  if [[ -n "$expected_start" ]]; then
+    recovery_process_identity_is_live "$leader_pid" "$expected_start" || return 1
+  fi
   if kill -TERM -- "-$leader_pid" 2>/dev/null; then
     group_created=1
   else
@@ -97,10 +223,298 @@ recovery_stop_process_group() {
     # kill -0 check can stop observing the PGID once its leader exits even
     # while an orphaned descendant that ignored TERM is still in that group.
     kill -KILL -- "-$leader_pid" 2>/dev/null || :
+  elif [[ "$group_created" == 0 && -n "$expected_start" ]]; then
+    if recovery_process_identity_is_live "$leader_pid" "$expected_start"; then
+      kill -KILL "$leader_pid" 2>/dev/null || :
+    fi
   elif [[ "$group_created" == 0 ]] && kill -0 "$leader_pid" 2>/dev/null; then
     kill -KILL "$leader_pid" 2>/dev/null || :
   fi
   wait "$leader_pid" 2>/dev/null || :
+}
+
+recovery_revoke_process_group_immediate() {
+  local leader_pid="$1" expected_start="$2" group_created=0
+  [[ "$leader_pid" =~ ^[1-9][0-9]*$ && -n "$expected_start" ]] || return 2
+  recovery_process_identity_is_live "$leader_pid" "$expected_start" || return 1
+  if kill -TERM -- "-$leader_pid" 2>/dev/null; then
+    group_created=1
+  else
+    # Cover the launcher-to-setsid race without ever signalling a PID whose
+    # high-resolution start identity no longer matches.
+    kill -TERM "$leader_pid" 2>/dev/null || :
+  fi
+  # Guard loss revokes a destructive stream, so this path gets only a very
+  # small cooperative grace period.  The ordinary watcher shutdown path above
+  # retains its longer two-second grace period.
+  for _ in {1..5}; do
+    if [[ "$group_created" == 1 ]]; then
+      kill -0 -- "-$leader_pid" 2>/dev/null || break
+    else
+      recovery_process_identity_is_live "$leader_pid" "$expected_start" || break
+    fi
+    sleep 0.05
+  done
+  if [[ "$group_created" == 1 ]]; then
+    kill -KILL -- "-$leader_pid" 2>/dev/null || :
+  elif recovery_process_identity_is_live "$leader_pid" "$expected_start"; then
+    kill -KILL "$leader_pid" 2>/dev/null || :
+  fi
+  wait "$leader_pid" 2>/dev/null || :
+}
+
+recovery_revoke_owned_child_process_group_immediate() {
+  local leader_pid="$1" group_created=0
+  [[ "$leader_pid" =~ ^[1-9][0-9]*$ ]] || return 2
+  # This variant is intentionally valid only after the current Bash shell has
+  # proved the PID is still one of its running jobs. That parent/child fact is
+  # stronger than a transiently unavailable start-time probe and prevents PID
+  # reuse while allowing fail-closed revocation of the isolated stream group.
+  if kill -TERM -- "-$leader_pid" 2>/dev/null; then
+    group_created=1
+  else
+    kill -TERM "$leader_pid" 2>/dev/null || :
+  fi
+  for _ in {1..5}; do
+    if [[ "$group_created" == 1 ]]; then
+      kill -0 -- "-$leader_pid" 2>/dev/null || break
+    else
+      kill -0 "$leader_pid" 2>/dev/null || break
+    fi
+    sleep 0.05
+  done
+  if [[ "$group_created" == 1 ]]; then
+    kill -KILL -- "-$leader_pid" 2>/dev/null || :
+  else
+    kill -KILL "$leader_pid" 2>/dev/null || :
+  fi
+  wait "$leader_pid" 2>/dev/null || :
+  recovery_stop_reaped_isolated_process_group "$leader_pid"
+}
+
+recovery_stop_reaped_isolated_process_group() {
+  local group_id="$1"
+  [[ "$group_id" =~ ^[1-9][0-9]*$ ]] || return 2
+  # The isolated leader has already been waited/reaped. Never fall back to its
+  # positive PID here because that PID could now belong to a different process;
+  # only revoke descendants that still retain the watcher's original PGID.
+  kill -TERM -- "-$group_id" 2>/dev/null || :
+  for _ in {1..20}; do
+    kill -0 -- "-$group_id" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill -KILL -- "-$group_id" 2>/dev/null || :
+}
+
+recovery_watcher_join_timeout_seconds() {
+  local requested="${RECOVERY_TEST_WATCHER_JOIN_TIMEOUT_SECONDS:-}"
+  if [[ -z "$requested" ]]; then
+    printf '300\n'
+    return 0
+  fi
+  recovery_require_local_fixture_attestation || return 1
+  [[ "$requested" =~ ^([1-9]|[12][0-9]|30)$ ]] || return 2
+  printf '%s\n' "$requested"
+}
+
+recovery_wait_isolated_process_bounded() {
+  local target_pid="$1" target_identity="$2" stop_path="$3"
+  local timeout_seconds watchdog_pid="" watchdog_start_identity=""
+  local watchdog_marker=""
+  local wait_status=0 wait_retry=0 attempt=0 expired=0
+  [[ "$target_pid" =~ ^[1-9][0-9]*$ && -n "$target_identity" ]] || return 2
+  recovery_runner_watch_marker_is_exact "$stop_path" || return 1
+  [[ -s "$stop_path" ]] || return 1
+  timeout_seconds="$(recovery_watcher_join_timeout_seconds)" || return 1
+  # The identity is captured immediately after spawn and threaded through the
+  # whole watcher capability. Never adopt a process that merely reused the
+  # stored PID before this late join/cleanup boundary.
+  if ! recovery_process_identity_is_live "$target_pid" "$target_identity"; then
+    # The exact 0600 non-empty stop marker proves that the caller prevalidated
+    # this identity and linearized the stop before entering. A fast child may
+    # already have exited and been reaped by Bash; recover its cached status
+    # once, but never wait or signal if the numeric PID is currently occupied.
+    kill -0 "$target_pid" 2>/dev/null && return 1
+    if wait "$target_pid" 2>/dev/null; then wait_status=0; else wait_status=$?; fi
+    [[ "$wait_status" != 127 ]] || return 1
+    kill -0 "$target_pid" 2>/dev/null && return 1
+    if [[ "$wait_status" != 0 ]]; then
+      recovery_stop_reaped_isolated_process_group "$target_pid"
+      return 1
+    fi
+    return 0
+  fi
+  command -v python3 >/dev/null 2>&1 || {
+    recovery_stop_process_group "$target_pid" "$target_identity"
+    return 127
+  }
+  watchdog_marker="$(mktemp \
+    "${TMPDIR:-/tmp}/yenhubs-watcher-deadline.XXXXXX")" || {
+    recovery_stop_process_group "$target_pid" "$target_identity"
+    return 1
+  }
+  chmod 600 "$watchdog_marker" || {
+    rm -f -- "$watchdog_marker"
+    recovery_stop_process_group "$target_pid" "$target_identity"
+    return 1
+  }
+  command python3 -I -c '
+import ctypes
+import os
+import pathlib
+import signal
+import sys
+import time
+
+target = int(sys.argv[1])
+identity = sys.argv[2]
+timeout = int(sys.argv[3])
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+os.write(9, b"ready\n")
+os.fsync(9)
+time.sleep(timeout)
+os.write(9, b"expired\n")
+os.fsync(9)
+
+class ProcBsdInfo(ctypes.Structure):
+    _fields_ = [
+        ("pbi_flags", ctypes.c_uint32), ("pbi_status", ctypes.c_uint32),
+        ("pbi_xstatus", ctypes.c_uint32), ("pbi_pid", ctypes.c_uint32),
+        ("pbi_ppid", ctypes.c_uint32), ("pbi_uid", ctypes.c_uint32),
+        ("pbi_gid", ctypes.c_uint32), ("pbi_ruid", ctypes.c_uint32),
+        ("pbi_rgid", ctypes.c_uint32), ("pbi_svuid", ctypes.c_uint32),
+        ("pbi_svgid", ctypes.c_uint32), ("rfu_1", ctypes.c_uint32),
+        ("pbi_comm", ctypes.c_char * 16), ("pbi_name", ctypes.c_char * 32),
+        ("pbi_nfiles", ctypes.c_uint32), ("pbi_pgid", ctypes.c_uint32),
+        ("pbi_pjobc", ctypes.c_uint32), ("e_tdev", ctypes.c_uint32),
+        ("e_tpgid", ctypes.c_uint32), ("pbi_nice", ctypes.c_int32),
+        ("pbi_start_tvsec", ctypes.c_uint64),
+        ("pbi_start_tvusec", ctypes.c_uint64),
+    ]
+
+
+def current_identity():
+    try:
+        if sys.platform.startswith("linux"):
+            stat = pathlib.Path(f"/proc/{target}/stat").read_text(encoding="ascii")
+            closing = stat.rfind(")")
+            fields = stat[closing + 2 :].split()
+            boot_id = pathlib.Path("/proc/sys/kernel/random/boot_id").read_text(
+                encoding="ascii"
+            ).strip()
+            if closing < 0 or len(fields) < 20 or not fields[19].isdigit() or not boot_id:
+                return ""
+            return f"linux:{boot_id}:{fields[19]}"
+        if sys.platform == "darwin":
+            libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            libproc.proc_pidinfo.argtypes = [
+                ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                ctypes.c_void_p, ctypes.c_int,
+            ]
+            libproc.proc_pidinfo.restype = ctypes.c_int
+            info = ProcBsdInfo()
+            result = libproc.proc_pidinfo(
+                target, 3, 0, ctypes.byref(info), ctypes.sizeof(info)
+            )
+            if result != ctypes.sizeof(info) or info.pbi_pid != target:
+                return ""
+            if info.pbi_start_tvsec <= 0 or info.pbi_start_tvusec >= 1_000_000:
+                return ""
+            return f"darwin:{info.pbi_start_tvsec}:{info.pbi_start_tvusec}"
+    except (OSError, ValueError):
+        return ""
+    return ""
+
+if current_identity() == identity:
+    try:
+        os.killpg(target, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    time.sleep(2)
+    if current_identity() == identity:
+        try:
+            os.killpg(target, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+' "$target_pid" "$target_identity" "$timeout_seconds" 9>"$watchdog_marker" &
+  watchdog_pid=$!
+  if ! watchdog_start_identity="$(
+    recovery_process_start_identity "$watchdog_pid"
+  )"; then
+    # Without the start identity the numeric PID is not a signal/wait
+    # capability. Reap only an already-dead child whose number is absent; a
+    # live watchdog is bounded and will find the target identity revoked below.
+    if ! kill -0 "$watchdog_pid" 2>/dev/null; then
+      wait "$watchdog_pid" 2>/dev/null || :
+    fi
+    rm -f -- "$watchdog_marker"
+    recovery_stop_process_group "$target_pid" "$target_identity"
+    return 1
+  fi
+  while [[ "$attempt" -lt 40 ]]; do
+    if grep -qx ready "$watchdog_marker" 2>/dev/null; then break; fi
+    if ! recovery_process_identity_is_live \
+        "$watchdog_pid" "$watchdog_start_identity"; then
+      # If the exact child exited, its cached status is safe to reap only while
+      # no process currently owns that numeric PID.
+      if ! kill -0 "$watchdog_pid" 2>/dev/null; then
+        wait "$watchdog_pid" 2>/dev/null || :
+      fi
+      rm -f -- "$watchdog_marker"
+      recovery_stop_process_group "$target_pid" "$target_identity"
+      return 1
+    fi
+    sleep 0.05
+    attempt=$((attempt + 1))
+  done
+  if ! grep -qx ready "$watchdog_marker" 2>/dev/null; then
+    if recovery_process_identity_is_live \
+        "$watchdog_pid" "$watchdog_start_identity"; then
+      kill -KILL "$watchdog_pid" 2>/dev/null || :
+    fi
+    if recovery_process_identity_is_live \
+        "$watchdog_pid" "$watchdog_start_identity"; then
+      wait "$watchdog_pid" 2>/dev/null || :
+    elif ! kill -0 "$watchdog_pid" 2>/dev/null; then
+      wait "$watchdog_pid" 2>/dev/null || :
+    fi
+    rm -f -- "$watchdog_marker"
+    recovery_stop_process_group "$target_pid" "$target_identity"
+    return 1
+  fi
+  while :; do
+    if wait "$target_pid"; then wait_status=0; else wait_status=$?; fi
+    # Bash reports both an interrupted wait and a child exit status such as
+    # 143 as values greater than 128. Retry only while the exact child is still
+    # live; a second wait after that child was already reaped can block forever.
+    if [[ "$wait_status" -gt 128 && "$wait_retry" == 0 ]] &&
+       recovery_process_identity_is_live "$target_pid" "$target_identity"; then
+      wait_retry=1
+      continue
+    fi
+    break
+  done
+  grep -q '^expired$' "$watchdog_marker" 2>/dev/null && expired=1
+  if recovery_process_identity_is_live \
+      "$watchdog_pid" "$watchdog_start_identity"; then
+    kill -KILL "$watchdog_pid" 2>/dev/null || :
+  fi
+  if recovery_process_identity_is_live \
+      "$watchdog_pid" "$watchdog_start_identity"; then
+    wait "$watchdog_pid" 2>/dev/null || :
+  elif ! kill -0 "$watchdog_pid" 2>/dev/null; then
+    wait "$watchdog_pid" 2>/dev/null || :
+  fi
+  rm -f -- "$watchdog_marker"
+  if [[ "$expired" != 0 || "$wait_status" != 0 ]]; then
+    # The leader may have exited non-zero while a kubectl descendant remains in
+    # its isolated process group. Treat the whole session as the capability and
+    # revoke it before reporting a failed join.
+    recovery_stop_reaped_isolated_process_group "$target_pid"
+    return 1
+  fi
+  return 0
 }
 
 recovery_kubectl_mutate() {
@@ -115,41 +529,812 @@ recovery_kubectl_mutate() {
   [[ "$mutation_status" == 0 ]] || return "$mutation_status"
 }
 
+recovery_monitor_authority_path() {
+  local ready_path="$1"
+  [[ "$ready_path" == /* ]] || return 2
+  printf '%s.authority.json\n' "$ready_path"
+}
+
+recovery_read_private_file_once() {
+  local file_path="$1" maximum_bytes="$2" expected_sha256="${3:-}"
+  [[ "$file_path" == /* && "$maximum_bytes" =~ ^[1-9][0-9]*$ ]] || return 2
+  [[ -z "$expected_sha256" || "$expected_sha256" =~ ^[a-f0-9]{64}$ ]] || return 2
+  ! recovery_path_has_symlink_component "$file_path" || return 1
+  command -v node >/dev/null 2>&1 || return 127
+  # Hash and return the bytes read from one O_NOFOLLOW descriptor. Keeping the
+  # descriptor open through both reads prevents a pathname replacement from
+  # turning the hash check and the caller's JSON/marker parse into two
+  # different capabilities.
+  # shellcheck disable=SC2016 # Positional arguments are consumed by Node.
+  command node -e '
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const [filePath, maximumText, expectedSha256] = process.argv.slice(1);
+const maximum = Number(maximumText);
+let descriptor;
+try {
+  if (!Number.isSafeInteger(maximum) || maximum < 1 ||
+      (expectedSha256 && !/^[a-f0-9]{64}$/.test(expectedSha256))) {
+    process.exit(2);
+  }
+  descriptor = fs.openSync(
+    filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+  );
+  const before = fs.fstatSync(descriptor);
+  if (!before.isFile() || (before.mode & 0o777) !== 0o600 ||
+      before.size < 1 || before.size > maximum ||
+      (typeof process.getuid === "function" && before.uid !== process.getuid())) {
+    process.exit(1);
+  }
+  const first = Buffer.alloc(before.size);
+  const second = Buffer.alloc(before.size);
+  if (fs.readSync(descriptor, first, 0, first.length, 0) !== first.length ||
+      fs.readSync(descriptor, second, 0, second.length, 0) !== second.length ||
+      !first.equals(second)) {
+    process.exit(1);
+  }
+  const after = fs.fstatSync(descriptor);
+  if (after.dev !== before.dev || after.ino !== before.ino ||
+      after.size !== before.size || after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs || (after.mode & 0o777) !== 0o600 ||
+      (typeof process.getuid === "function" && after.uid !== process.getuid())) {
+    process.exit(1);
+  }
+  if (expectedSha256 &&
+      crypto.createHash("sha256").update(first).digest("hex") !== expectedSha256) {
+    process.exit(1);
+  }
+  process.stdout.write(first);
+} catch {
+  process.exit(1);
+} finally {
+  if (descriptor !== undefined) {
+    try { fs.closeSync(descriptor); } catch {}
+  }
+}
+' "$file_path" "$maximum_bytes" "$expected_sha256"
+}
+
+recovery_publish_monitor_authority() {
+  local authority_path="$1" authority_json="$2" digest_variable="$3"
+  # Do not reuse a likely caller variable name here: Bash uses dynamic scope,
+  # so `printf -v authority_sha256` would otherwise update this local instead
+  # of the output variable owned by recovery_start_*.
+  local published_sha256=""
+  [[ "$authority_path" == /* &&
+     "$digest_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     ! -e "$authority_path" && ! -L "$authority_path" ]] || return 2
+  # noclobber is the portable Bash 3.2 primitive which makes an attacker-owned
+  # leaf fail closed instead of following or truncating it between checks.
+  if ! (set -C; umask 077; printf '%s\n' "$authority_json" >"$authority_path") \
+      2>/dev/null; then
+    return 1
+  fi
+  chmod 600 "$authority_path" || {
+    rm -f -- "$authority_path"
+    return 1
+  }
+  published_sha256="$(recovery_sha256_digest "$authority_path")" || {
+    rm -f -- "$authority_path"
+    return 1
+  }
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$authority_path" "$published_sha256" 65536 || {
+    rm -f -- "$authority_path"
+    return 1
+  }
+  printf -v "$digest_variable" '%s' "$published_sha256"
+}
+
+recovery_monitor_authority_common_is_exact() {
+  local authority_path="$1" authority_sha256="$2" expected_kind="$3"
+  local guard_pid="$4" guard_start_identity="$5" failure_marker="$6"
+  local ready_marker="$7" progress_marker="$8"
+  local authority_json ready_value expected_ready baseline_path baseline_sha256
+  [[ "$expected_kind" == checkpoint-writer-monitor ||
+     "$expected_kind" == durable-runner-quiescence-monitor ]] || return 2
+  [[ "$guard_pid" =~ ^[1-9][0-9]*$ && -n "$guard_start_identity" &&
+     "$authority_sha256" =~ ^[a-f0-9]{64}$ ]] || return 2
+  authority_json="$(recovery_read_private_file_once \
+    "$authority_path" 65536 "$authority_sha256")" || return 1
+  jq -e \
+    --arg kind "$expected_kind" --argjson pid "$guard_pid" \
+    --arg start_identity "$guard_start_identity" \
+    --arg context "$EXPECTED_KUBE_CONTEXT" --arg namespace "$NAMESPACE" \
+    --arg namespace_uid "${RECOVERY_NAMESPACE_UID:-}" \
+    --arg operation_id "${RECOVERY_OPERATION_ID:-}" \
+    --arg operation_owner "${RECOVERY_OPERATION_OWNER:-}" \
+    --arg lock_name "${RECOVERY_OPERATION_LOCK_NAME:-}" \
+    --arg lock_uid "${RECOVERY_OPERATION_LOCK_UID:-}" \
+    --arg lock_rv "${RECOVERY_OPERATION_LOCK_RESOURCE_VERSION:-}" \
+    --arg lease_name "${RECOVERY_SERIALIZATION_LEASE_NAME:-}" \
+    --arg lease_uid "${RECOVERY_SERIALIZATION_LEASE_UID:-}" \
+    --arg lease_holder "${RECOVERY_SERIALIZATION_LEASE_HOLDER:-}" \
+    --arg authority "$authority_path" \
+    --arg failure "$failure_marker" --arg ready "$ready_marker" \
+    --arg progress "$progress_marker" '
+    (keys | sort) == ["context","hashes","kind","lease","namespace",
+      "namespace_uid","operation_id","operation_lock","operation_owner",
+      "paths","pid","runtime_generation","schema_version",
+      "start_identity"] and
+    .schema_version == 1 and .kind == $kind and .pid == $pid and
+    .start_identity == $start_identity and .context == $context and
+    .namespace == $namespace and .namespace_uid == $namespace_uid and
+    .operation_id == $operation_id and .operation_owner == $operation_owner and
+    .operation_lock == {name:$lock_name,uid:$lock_uid,resource_version:$lock_rv} and
+    .lease == {name:$lease_name,uid:$lease_uid,holder:$lease_holder} and
+    .paths.authority == $authority and
+    .paths.failure == $failure and .paths.ready == $ready and
+    .paths.progress == $progress and
+    (if $kind == "checkpoint-writer-monitor" then
+      .runtime_generation == "durable-v2" or
+        .runtime_generation == "legacy-absent"
+    else
+      .runtime_generation == "durable-v2"
+    end) and
+    (if $kind == "checkpoint-writer-monitor" then
+      (.paths | keys | sort) == ["authority","baseline","contract","failure",
+        "final","progress","ready","stop"] and
+      (.hashes | keys) == ["contract_sha256"]
+    else
+      (.paths | keys | sort) == ["authority","control_baseline",
+        "durable_baseline","failure","final","progress","ready","stop"] and
+      (.hashes | keys | sort) == ["control_baseline_sha256",
+        "control_capability_sha256","durable_baseline_sha256"]
+    end) and
+    all(.paths[]; type == "string" and startswith("/")) and
+    ([.paths[]] | unique | length) == ([.paths[]] | length) and
+    all(.hashes[]; type == "string" and test("^[a-f0-9]{64}$"))
+  ' >/dev/null <<<"$authority_json" || return 1
+  ready_value="$(recovery_read_private_file_once "$ready_marker" 2048)" || return 1
+  if [[ "$expected_kind" == checkpoint-writer-monitor ]]; then
+    baseline_path="$(jq -er '.paths.baseline' <<<"$authority_json")" || return 1
+    [[ "$ready_value" =~ ^ready:([a-f0-9]{64}):([a-f0-9]{64})$ ]] || return 1
+    baseline_sha256="${BASH_REMATCH[1]}"
+    [[ "${BASH_REMATCH[2]}" == "$authority_sha256" ]] || return 1
+    recovery_read_private_file_once \
+      "$baseline_path" 2097152 "$baseline_sha256" >/dev/null || return 1
+    expected_ready="ready:$baseline_sha256:$authority_sha256"
+  else
+    expected_ready="$(jq -er --arg authority_sha256 "$authority_sha256" '
+      "ready:" + .hashes.durable_baseline_sha256 + ":" +
+        .hashes.control_baseline_sha256 + ":" +
+        .hashes.control_capability_sha256 + ":" + $authority_sha256
+    ' <<<"$authority_json")" || return 1
+  fi
+  [[ "$ready_value" == "$expected_ready" ]] || return 1
+  recovery_process_identity_is_live "$guard_pid" "$guard_start_identity"
+}
+
+recovery_stream_guard_process_is_healthy() {
+  local guard_pid="$1" guard_start_identity="$2" failure_marker="$3"
+  local ready_marker="${4:-}" progress_marker="${5:-}"
+  local authority_path="${6:-}" authority_sha256="${7:-}"
+  local authority_kind="${8:-}"
+  [[ "$guard_pid" =~ ^[1-9][0-9]*$ && -n "$guard_start_identity" ]] || return 2
+  recovery_runner_watch_marker_is_exact "$failure_marker" || return 1
+  [[ ! -s "$failure_marker" ]] || return 1
+  # A numeric legacy guard legitimately supplies only FAILURE + PROGRESS.
+  # READY and the authority tuple distinguish the causal capability form;
+  # PROGRESS alone must not accidentally opt the legacy form into it.
+  if [[ -n "$authority_path" || -n "$authority_sha256" ||
+        -n "$authority_kind" || -n "$ready_marker" ]]; then
+    [[ -n "$authority_path" && -n "$authority_sha256" &&
+       -n "$authority_kind" && -n "$ready_marker" &&
+       -n "$progress_marker" ]] || return 2
+    recovery_monitor_authority_common_is_exact \
+      "$authority_path" "$authority_sha256" "$authority_kind" \
+      "$guard_pid" "$guard_start_identity" "$failure_marker" \
+      "$ready_marker" "$progress_marker" || return 1
+  fi
+  recovery_process_identity_is_live "$guard_pid" "$guard_start_identity"
+}
+
+recovery_stream_guard_progress_value() {
+  local progress_marker="$1" expected_authority_sha256="${2:-}"
+  local progress_value parsed_authority_sha256 parsed_counter
+  recovery_runner_watch_marker_is_exact "$progress_marker" || return 1
+  [[ -s "$progress_marker" ]] || return 1
+  progress_value="$(<"$progress_marker")"
+  if [[ -n "$expected_authority_sha256" ]]; then
+    [[ "$expected_authority_sha256" =~ ^[a-f0-9]{64}$ &&
+       "$progress_value" =~ ^([a-f0-9]{64}):([1-9][0-9]{0,17})$ ]] || return 1
+    parsed_authority_sha256="${BASH_REMATCH[1]}"
+    parsed_counter="${BASH_REMATCH[2]}"
+    [[ "$parsed_authority_sha256" == "$expected_authority_sha256" ]] || return 1
+    printf '%s\n' "$parsed_counter"
+    return 0
+  fi
+  [[ "$progress_value" =~ ^[1-9][0-9]{0,17}$ ]] || return 1
+  printf '%s\n' "$progress_value"
+}
+
+recovery_write_stream_guard_progress() {
+  local progress_marker="$1" progress_value="$2"
+  local authority_sha256="${3:-}" published_value
+  local next_marker="${progress_marker}.next"
+  recovery_runner_watch_marker_is_exact "$progress_marker" || return 1
+  [[ "$progress_value" =~ ^[1-9][0-9]{0,17}$ ]] || return 2
+  if [[ -n "$authority_sha256" ]]; then
+    [[ "$authority_sha256" =~ ^[a-f0-9]{64}$ ]] || return 2
+    published_value="$authority_sha256:$progress_value"
+  else
+    published_value="$progress_value"
+  fi
+  [[ ! -e "$next_marker" && ! -L "$next_marker" ]] || return 1
+  (umask 077; printf '%s\n' "$published_value" >"$next_marker") || {
+    rm -f -- "$next_marker"
+    return 1
+  }
+  chmod 600 "$next_marker" || {
+    rm -f -- "$next_marker"
+    return 1
+  }
+  mv -f -- "$next_marker" "$progress_marker" || {
+    rm -f -- "$next_marker"
+    return 1
+  }
+}
+
+recovery_stream_poll_seconds() {
+  local requested="${RECOVERY_STREAM_POLL_SECONDS:-}"
+  if [[ -z "$requested" ]]; then
+    printf '1\n'
+    return 0
+  fi
+  recovery_require_local_fixture_attestation || return 1
+  [[ "$requested" == 1 || "$requested" =~ ^0\.[0-9]*[1-9][0-9]*$ ]] || return 2
+  printf '%s\n' "$requested"
+}
+
+recovery_stream_guard_max_stale_seconds() {
+  local requested="${RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS:-}"
+  if [[ -z "$requested" ]]; then
+    # A healthy sweep normally completes in a few seconds. Ten seconds is
+    # deliberately below kubectl's 45-second request timeout, so a live but
+    # wedged monitor cannot authorize a destructive stream until that timeout.
+    printf '10\n'
+    return 0
+  fi
+  recovery_require_local_fixture_attestation || return 1
+  [[ "$requested" =~ ^([1-9]|10)$ ]] || return 2
+  printf '%s\n' "$requested"
+}
+
+recovery_stream_guard_initial_deadline_seconds() {
+  local requested="${RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS:-}"
+  if [[ -z "$requested" ]]; then
+    # This is only the startup allowance before any destructive stream can
+    # begin. Once a complete sweep exists, the independent production
+    # staleness budget remains capped at ten seconds.
+    printf '10\n'
+    return 0
+  fi
+  recovery_require_local_fixture_attestation || return 1
+  [[ "$requested" =~ ^([1-9]|[1-9][0-9]|1[01][0-9]|120)$ ]] || return 2
+  printf '%s\n' "$requested"
+}
+
+recovery_wait_for_stream_guard_initial_progress() {
+  local guard_pid="$1" guard_start_identity="$2" failure_marker="$3"
+  local progress_marker="$4" maximum_seconds="$5"
+  local poll_seconds started_milliseconds current_milliseconds
+  [[ "$maximum_seconds" =~ ^([1-9]|[1-9][0-9]|1[01][0-9]|120)$ ]] || return 2
+  poll_seconds="$(recovery_stream_poll_seconds)" || return 1
+  started_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+  recovery_runner_watch_marker_is_exact "$progress_marker" || return 1
+  while :; do
+    recovery_stream_guard_process_is_healthy \
+      "$guard_pid" "$guard_start_identity" "$failure_marker" || return 1
+    if [[ -s "$progress_marker" ]]; then
+      recovery_stream_guard_progress_value "$progress_marker" >/dev/null || return 1
+      return 0
+    fi
+    current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+    ((current_milliseconds - started_milliseconds < maximum_seconds * 1000)) || return 1
+    sleep "$poll_seconds"
+  done
+}
+
+recovery_wait_for_stream_guard_progress_after() {
+  local guard_pid="$1" guard_start_identity="$2" failure_marker="$3"
+  local progress_marker="$4" baseline_progress="$5" maximum_seconds="$6"
+  local authority_sha256="${7:-}" authority_path="${8:-}"
+  local authority_kind="${9:-}" ready_marker="${10:-}"
+  local poll_seconds current_progress started_milliseconds current_milliseconds
+  [[ "$baseline_progress" =~ ^[1-9][0-9]{0,17}$ &&
+     "$maximum_seconds" =~ ^([1-9]|[1-9][0-9])$ ]] || return 2
+  poll_seconds="$(recovery_stream_poll_seconds)" || return 1
+  started_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+  while :; do
+    recovery_stream_guard_process_is_healthy \
+      "$guard_pid" "$guard_start_identity" "$failure_marker" \
+      "$ready_marker" "$progress_marker" "$authority_path" \
+      "$authority_sha256" "$authority_kind" || return 1
+    current_progress="$(recovery_stream_guard_progress_value \
+      "$progress_marker" "$authority_sha256")" || return 1
+    ((current_progress >= baseline_progress)) || return 1
+    if ((current_progress > baseline_progress)); then
+      printf '%s\n' "$current_progress"
+      return 0
+    fi
+    current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+    ((current_milliseconds - started_milliseconds < maximum_seconds * 1000)) || return 1
+    sleep "$poll_seconds"
+  done
+}
+
 recovery_kubectl_stream_supervised() {
   local require_lease="$1" maximum_seconds="$2"
   shift 2
-  local poll_seconds="${RECOVERY_STREAM_POLL_SECONDS:-1}" caller_pid="$$"
-  local caller_start_identity
+  local poll_seconds caller_pid="$$"
+  local caller_start_identity guard_pid guard_start_identity failure_marker
+  local ready_marker progress_marker maximum_stale_seconds index authority_kind
+  local authority_path authority_sha256 existing_index
+  local current_progress previous_progress observation_milliseconds
+  local previous_observation_milliseconds current_milliseconds
+  local all_guards_fresh
+  local -a guard_pids=() guard_start_identities=() guard_failure_markers=()
+  local -a guard_ready_markers=() guard_authority_paths=()
+  local -a guard_authority_sha256s=() guard_authority_kinds=()
+  local -a guard_progress_markers=() guard_maximum_stale_seconds=()
+  local -a guard_baseline_progress=() guard_fresh_progress=()
+  local -a guard_baseline_observation_milliseconds=()
+  local -a guard_fresh_progress_milliseconds=()
+  local -a guard_fresh_observation_milliseconds=()
+  local -a guard_fresh_advanced=()
   [[ "$require_lease" == 0 || "$require_lease" == 1 ]] || return 2
-  [[ "$maximum_seconds" =~ ^[1-9][0-9]*$ &&
-     "$poll_seconds" =~ ^(0\.[0-9]+|[1-9][0-9]*)$ && "$#" -gt 0 ]] || return 2
+  # Optional guards precede `--` and are repeatable:
+  # --guard-process PID START_IDENTITY FAILURE_MARKER PROGRESS_MARKER MAX_STALE_SECONDS
+  # --guard-process-capability KIND PID START_IDENTITY FAILURE_MARKER
+  #   READY_MARKER PROGRESS_MARKER AUTHORITY_PATH AUTHORITY_SHA256 MAX_STALE_SECONDS
+  while [[ "${1:-}" == --guard-process ||
+           "${1:-}" == --guard-process-capability ]]; do
+    authority_kind=""
+    ready_marker=""
+    authority_path=""
+    authority_sha256=""
+    if [[ "$1" == --guard-process ]]; then
+      [[ "$#" -ge 6 ]] || return 2
+      guard_pid="$2"
+      guard_start_identity="$3"
+      failure_marker="$4"
+      progress_marker="$5"
+      maximum_stale_seconds="$6"
+      shift 6
+    else
+      [[ "$#" -ge 10 ]] || return 2
+      authority_kind="$2"
+      guard_pid="$3"
+      guard_start_identity="$4"
+      failure_marker="$5"
+      ready_marker="$6"
+      progress_marker="$7"
+      authority_path="$8"
+      authority_sha256="$9"
+      maximum_stale_seconds="${10}"
+      [[ "$authority_kind" == checkpoint-writer-monitor ||
+         "$authority_kind" == durable-runner-quiescence-monitor ]] || return 2
+      [[ "$ready_marker" == /* && "$authority_path" == /* &&
+         "$authority_sha256" =~ ^[a-f0-9]{64}$ ]] || return 2
+      shift 10
+    fi
+    [[ "$guard_pid" =~ ^[1-9][0-9]*$ && -n "$guard_start_identity" &&
+       "$failure_marker" == /* && "$progress_marker" == /* &&
+       "$maximum_stale_seconds" =~ ^([1-9]|[1-9][0-9])$ ]] || return 2
+    for existing_index in "${!guard_pids[@]}"; do
+      [[ "${guard_pids[$existing_index]}" != "$guard_pid" ]] || return 2
+    done
+    guard_pids+=("$guard_pid")
+    guard_start_identities+=("$guard_start_identity")
+    guard_failure_markers+=("$failure_marker")
+    guard_ready_markers+=("$ready_marker")
+    guard_progress_markers+=("$progress_marker")
+    guard_authority_paths+=("$authority_path")
+    guard_authority_sha256s+=("$authority_sha256")
+    guard_authority_kinds+=("$authority_kind")
+    guard_maximum_stale_seconds+=("$maximum_stale_seconds")
+  done
+  if [[ "${1:-}" == -- ]]; then
+    shift
+  fi
+  [[ "$maximum_seconds" =~ ^[1-9][0-9]*$ && "$#" -gt 0 ]] || return 2
+  poll_seconds="$(recovery_stream_poll_seconds)" || return 1
+  for index in "${!guard_pids[@]}"; do
+    recovery_stream_guard_process_is_healthy \
+      "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
+      "${guard_failure_markers[$index]}" "${guard_ready_markers[$index]}" \
+      "${guard_progress_markers[$index]}" \
+      "${guard_authority_paths[$index]}" \
+      "${guard_authority_sha256s[$index]}" \
+      "${guard_authority_kinds[$index]}" || return 1
+    guard_baseline_observation_milliseconds[index]="$(
+      recovery_monotonic_milliseconds
+    )" || return 1
+    guard_baseline_progress[index]="$(recovery_stream_guard_progress_value \
+      "${guard_progress_markers[$index]}" \
+      "${guard_authority_sha256s[$index]}")" || return 1
+    guard_fresh_progress[index]="${guard_baseline_progress[$index]}"
+    guard_fresh_observation_milliseconds[index]="${guard_baseline_observation_milliseconds[$index]}"
+    guard_fresh_progress_milliseconds[index]=""
+    guard_fresh_advanced[index]=0
+  done
+  # Never reset freshness on a counter that may have been stale while the
+  # caller performed earlier gates. Every guarded process must publish one new
+  # complete successful sweep immediately before this particular stream.
+  # Observe every unfinished capability in one foreground round-robin. Waiting
+  # for each guard serially can consume the sum of otherwise healthy periods;
+  # it can also misdate an increment that occurred while another guard was
+  # blocking. A progress increase is credited only to the previous observation
+  # that still saw the older counter, never to the later poll that discovers it.
+  while [[ "${#guard_pids[@]}" -gt 0 ]]; do
+    for index in "${!guard_pids[@]}"; do
+      recovery_stream_guard_process_is_healthy \
+        "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
+        "${guard_failure_markers[$index]}" "${guard_ready_markers[$index]}" \
+        "${guard_progress_markers[$index]}" \
+        "${guard_authority_paths[$index]}" \
+        "${guard_authority_sha256s[$index]}" \
+        "${guard_authority_kinds[$index]}" || return 1
+      previous_observation_milliseconds="${guard_fresh_observation_milliseconds[$index]}"
+      observation_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+      current_progress="$(recovery_stream_guard_progress_value \
+        "${guard_progress_markers[$index]}" \
+        "${guard_authority_sha256s[$index]}")" || return 1
+      previous_progress="${guard_fresh_progress[$index]}"
+      ((current_progress >= previous_progress)) || return 1
+      if ((current_progress > previous_progress)); then
+        guard_fresh_progress[index]="$current_progress"
+        guard_fresh_progress_milliseconds[index]="$previous_observation_milliseconds"
+        guard_fresh_advanced[index]=1
+      fi
+      guard_fresh_observation_milliseconds[index]="$observation_milliseconds"
+    done
+    current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+    all_guards_fresh=true
+    for index in "${!guard_pids[@]}"; do
+      if [[ "${guard_fresh_advanced[$index]}" != 1 ]]; then
+        all_guards_fresh=false
+        ((current_milliseconds - guard_baseline_observation_milliseconds[index] <
+          guard_maximum_stale_seconds[index] * 1000)) || return 1
+      elif ((current_milliseconds - guard_fresh_progress_milliseconds[index] >=
+        guard_maximum_stale_seconds[index] * 1000)); then
+        return 1
+      fi
+    done
+    [[ "$all_guards_fresh" != true ]] || break
+    sleep "$poll_seconds"
+  done
   caller_start_identity="$(recovery_process_start_identity "$caller_pid")" || return 1
   command -v python3 >/dev/null 2>&1 || return 127
   (
-    local stream_pid="" stream_status=0 started="$SECONDS"
+    local stream_pid="" stream_start_identity="" stream_gate=""
+    local stream_status=0 stream_started_milliseconds index
+    local current_progress previous_progress observation_milliseconds
+    local previous_observation_milliseconds current_milliseconds
+    local remaining_milliseconds lease_budget_milliseconds lease_timeout_seconds
+    local guard_cancel_reserve_milliseconds=2000
+    local -a guard_last_progress=() guard_last_progress_milliseconds=()
+    local -a guard_last_observation_milliseconds=()
+    initialize_supervised_stream_guards() {
+      for index in "${!guard_pids[@]}"; do
+        recovery_stream_guard_process_is_healthy \
+          "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
+          "${guard_failure_markers[$index]}" "${guard_ready_markers[$index]}" \
+          "${guard_progress_markers[$index]}" \
+          "${guard_authority_paths[$index]}" \
+          "${guard_authority_sha256s[$index]}" \
+          "${guard_authority_kinds[$index]}" || return 1
+        previous_observation_milliseconds="${guard_fresh_observation_milliseconds[$index]}"
+        observation_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+        current_progress="$(recovery_stream_guard_progress_value \
+          "${guard_progress_markers[$index]}" \
+          "${guard_authority_sha256s[$index]}")" || return 1
+        ((current_progress >= guard_fresh_progress[index])) || return 1
+        guard_last_progress[index]="$current_progress"
+        if ((current_progress > guard_fresh_progress[index])); then
+          # This increase happened after the outer round's last observation,
+          # but may have happened immediately after it. Preserve that causal
+          # lower bound instead of dating it at this later observation.
+          guard_last_progress_milliseconds[index]="$previous_observation_milliseconds"
+        else
+          guard_last_progress_milliseconds[index]="${guard_fresh_progress_milliseconds[index]}"
+        fi
+        guard_last_observation_milliseconds[index]="$observation_milliseconds"
+        current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+        ((current_milliseconds - guard_last_progress_milliseconds[index] <
+          guard_maximum_stale_seconds[index] * 1000)) || return 1
+      done
+    }
+    refresh_supervised_stream_guards_for_launch() {
+      local all_refresh_guards_fresh
+      local -a refresh_baseline_progress=()
+      local -a refresh_baseline_observation_milliseconds=()
+      local -a refresh_advanced=()
+      # Capture one current baseline for every guard before waiting for any of
+      # them. An increment observed here may have happened after the prior
+      # observation, so update its lower bound causally, but it does not satisfy
+      # this second pre-launch sweep.
+      for index in "${!guard_pids[@]}"; do
+        recovery_stream_guard_process_is_healthy \
+          "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
+          "${guard_failure_markers[$index]}" "${guard_ready_markers[$index]}" \
+          "${guard_progress_markers[$index]}" \
+          "${guard_authority_paths[$index]}" \
+          "${guard_authority_sha256s[$index]}" \
+          "${guard_authority_kinds[$index]}" || return 1
+        previous_observation_milliseconds="${guard_last_observation_milliseconds[$index]}"
+        observation_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+        current_progress="$(recovery_stream_guard_progress_value \
+          "${guard_progress_markers[$index]}" \
+          "${guard_authority_sha256s[$index]}")" || return 1
+        previous_progress="${guard_last_progress[$index]}"
+        ((current_progress >= previous_progress)) || return 1
+        if ((current_progress > previous_progress)); then
+          guard_last_progress_milliseconds[index]="$previous_observation_milliseconds"
+        fi
+        guard_last_progress[index]="$current_progress"
+        guard_last_observation_milliseconds[index]="$observation_milliseconds"
+        refresh_baseline_progress[index]="$current_progress"
+        refresh_baseline_observation_milliseconds[index]="$observation_milliseconds"
+        refresh_advanced[index]=0
+      done
+      # Require another causally observed increment from every guard, while
+      # continuing to observe fast guards so their lower bounds can remain
+      # simultaneously fresh as the slowest healthy guard completes a sweep.
+      while [[ "${#guard_pids[@]}" -gt 0 ]]; do
+        for index in "${!guard_pids[@]}"; do
+          recovery_stream_guard_process_is_healthy \
+            "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
+            "${guard_failure_markers[$index]}" "${guard_ready_markers[$index]}" \
+            "${guard_progress_markers[$index]}" \
+            "${guard_authority_paths[$index]}" \
+            "${guard_authority_sha256s[$index]}" \
+            "${guard_authority_kinds[$index]}" || return 1
+          previous_observation_milliseconds="${guard_last_observation_milliseconds[$index]}"
+          observation_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+          current_progress="$(recovery_stream_guard_progress_value \
+            "${guard_progress_markers[$index]}" \
+            "${guard_authority_sha256s[$index]}")" || return 1
+          previous_progress="${guard_last_progress[$index]}"
+          ((current_progress >= previous_progress)) || return 1
+          if ((current_progress > previous_progress)); then
+            guard_last_progress[index]="$current_progress"
+            guard_last_progress_milliseconds[index]="$previous_observation_milliseconds"
+            if ((current_progress > refresh_baseline_progress[index])); then
+              refresh_advanced[index]=1
+            fi
+          fi
+          guard_last_observation_milliseconds[index]="$observation_milliseconds"
+        done
+        current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+        all_refresh_guards_fresh=true
+        for index in "${!guard_pids[@]}"; do
+          if [[ "${refresh_advanced[$index]}" != 1 ]]; then
+            all_refresh_guards_fresh=false
+            ((current_milliseconds - refresh_baseline_observation_milliseconds[index] <
+              guard_maximum_stale_seconds[index] * 1000)) || return 1
+          elif ((current_milliseconds - guard_last_progress_milliseconds[index] >=
+            guard_maximum_stale_seconds[index] * 1000)); then
+            return 1
+          fi
+        done
+        [[ "$all_refresh_guards_fresh" != true ]] || break
+        sleep "$poll_seconds"
+      done
+      supervised_stream_guards_are_healthy
+    }
+    supervised_stream_guards_are_healthy() {
+      for index in "${!guard_pids[@]}"; do
+        recovery_stream_guard_process_is_healthy \
+          "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
+          "${guard_failure_markers[$index]}" "${guard_ready_markers[$index]}" \
+          "${guard_progress_markers[$index]}" \
+          "${guard_authority_paths[$index]}" \
+          "${guard_authority_sha256s[$index]}" \
+          "${guard_authority_kinds[$index]}" || return 1
+        previous_observation_milliseconds="${guard_last_observation_milliseconds[$index]}"
+        observation_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+        current_progress="$(recovery_stream_guard_progress_value \
+          "${guard_progress_markers[$index]}" \
+          "${guard_authority_sha256s[$index]}")" || return 1
+        previous_progress="${guard_last_progress[$index]}"
+        if ((current_progress < previous_progress)); then
+          return 1
+        elif ((current_progress > previous_progress)); then
+          guard_last_progress[index]="$current_progress"
+          # The publication happened after the previous observation, but may
+          # have happened immediately after it. Use that lower bound, not the
+          # time of this observation after a possibly five-second Lease GET.
+          guard_last_progress_milliseconds[index]="$previous_observation_milliseconds"
+        fi
+        guard_last_observation_milliseconds[index]="$observation_milliseconds"
+        current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+        if ((current_milliseconds - guard_last_progress_milliseconds[index] >=
+          guard_maximum_stale_seconds[index] * 1000)); then
+          return 1
+        fi
+      done
+    }
+    supervised_stream_guard_remaining_milliseconds() {
+      local minimum_remaining="" guard_deadline
+      if [[ "${#guard_pids[@]}" == 0 ]]; then
+        printf '2147483647\n'
+        return 0
+      fi
+      current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+      for index in "${!guard_pids[@]}"; do
+        guard_deadline=$((
+          guard_last_progress_milliseconds[index] +
+          guard_maximum_stale_seconds[index] * 1000
+        ))
+        remaining_milliseconds=$((guard_deadline - current_milliseconds))
+        if [[ -z "$minimum_remaining" ]] ||
+           ((remaining_milliseconds < minimum_remaining)); then
+          minimum_remaining="$remaining_milliseconds"
+        fi
+      done
+      printf '%s\n' "$minimum_remaining"
+    }
+    supervised_stream_require_lease_within_guard_budget() {
+      local cancellation_reserve_milliseconds="${1:-$guard_cancel_reserve_milliseconds}"
+      [[ "$cancellation_reserve_milliseconds" =~ ^[0-9]+$ ]] || return 2
+      [[ "$require_lease" == 1 ]] || return 0
+      remaining_milliseconds="$(
+        supervised_stream_guard_remaining_milliseconds
+      )" || return 1
+      if [[ "${#guard_pids[@]}" == 0 ]]; then
+        lease_timeout_seconds=5
+      else
+        lease_budget_milliseconds=$((
+          remaining_milliseconds - cancellation_reserve_milliseconds
+        ))
+        # kubectl accepts a whole-second request timeout. Refuse to start a
+        # Lease GET unless at least one complete second remains after reserving
+        # enough time to detect the outcome, revoke the stream and reap it.
+        ((lease_budget_milliseconds >= 1000)) || return 1
+        lease_timeout_seconds=$((lease_budget_milliseconds / 1000))
+        ((lease_timeout_seconds <= 5)) || lease_timeout_seconds=5
+        # A deliberately short (five-second or smaller) guard needs room for
+        # another observation and local process-group revocation. A two-second
+        # GET can otherwise occur twice and consume the complete deadline once
+        # scheduling overhead is included. Production ten-second guards retain
+        # the normal bounded five-second API allowance.
+        if ((remaining_milliseconds <= 5000 && lease_timeout_seconds > 1)); then
+          lease_timeout_seconds=1
+        fi
+      fi
+      recovery_require_operation_serialization_stream "$lease_timeout_seconds"
+    }
+    supervised_stream_guard_has_cancellation_reserve() {
+      [[ "${#guard_pids[@]}" != 0 ]] || return 0
+      remaining_milliseconds="$(
+        supervised_stream_guard_remaining_milliseconds
+      )" || return 1
+      ((remaining_milliseconds > guard_cancel_reserve_milliseconds))
+    }
+    supervised_stream_child_is_running() {
+      local running_pid
+      while IFS= read -r running_pid; do
+        [[ "$running_pid" == "$stream_pid" ]] && return 0
+      done < <(jobs -r -p)
+      return 1
+    }
     supervised_stream_cleanup() {
       if [[ "$stream_pid" =~ ^[1-9][0-9]*$ ]]; then
-        recovery_stop_process_group "$stream_pid"
+        if [[ -n "$stream_start_identity" ]] &&
+           recovery_process_identity_is_live \
+             "$stream_pid" "$stream_start_identity"; then
+          recovery_revoke_process_group_immediate \
+            "$stream_pid" "$stream_start_identity" || :
+        elif [[ -n "$stream_start_identity" ]] &&
+             supervised_stream_child_is_running; then
+          # The high-resolution identity reader can fail transiently. Bash's
+          # own running-job table still proves this PID is our unreaped child,
+          # so revoke and reap it instead of dropping the only local handle to
+          # a destructive kubectl stream.
+          recovery_revoke_owned_child_process_group_immediate \
+            "$stream_pid" || :
+        elif [[ -z "$stream_start_identity" && -n "$stream_gate" ]]; then
+          # The launcher cannot exec kubectl until its exact start identity is
+          # captured. Revoking the private gate is therefore sufficient here
+          # and avoids signalling a numeric PID without an identity capability.
+          printf 'abort\n' >"$stream_gate" 2>/dev/null || :
+          wait "$stream_pid" 2>/dev/null || :
+        elif ! kill -0 "$stream_pid" 2>/dev/null; then
+          # The exact child has already exited. Reap its cached status before
+          # revoking only descendants that retain its isolated process group.
+          wait "$stream_pid" 2>/dev/null || :
+          kill -0 "$stream_pid" 2>/dev/null ||
+            recovery_stop_reaped_isolated_process_group "$stream_pid"
+        fi
+        stream_pid=""
+        stream_start_identity=""
       fi
+      [[ -z "$stream_gate" ]] || rm -f -- "$stream_gate"
+      stream_gate=""
     }
     trap 'supervised_stream_cleanup; exit 130' INT TERM
     recovery_process_identity_is_live "$caller_pid" "$caller_start_identity" || return 1
-    if [[ "$require_lease" == 1 ]]; then
-      recovery_require_operation_serialization || return 1
-    fi
+    initialize_supervised_stream_guards || return 1
+    # A multi-guard stream must not inherit most of its ten-second budget from
+    # sequential startup waits. Obtain another complete sweep from every guard
+    # while no destructive child exists, then authorize the gated launch.
+    refresh_supervised_stream_guards_for_launch || return 1
+    stream_gate="$(mktemp "${TMPDIR:-/tmp}/yenhubs-stream-gate.XXXXXX")" || return 1
+    chmod 600 "$stream_gate" || {
+      rm -f -- "$stream_gate"
+      stream_gate=""
+      return 1
+    }
     # Python creates a new session and then execs kubectl. The resulting PID is
     # also the process-group leader, so a parent-death or Lease-loss watchdog
-    # can terminate kubectl and every local descendant as one unit.
+    # can terminate kubectl and every local descendant as one unit. The private
+    # gate prevents kubectl from starting before the leader's exact PID/start
+    # identity capability has been captured by this supervising shell.
     command python3 -I -c '
 import os
 import sys
+import time
 os.setsid()
-os.execvp(sys.argv[1], sys.argv[1:])
-' kubectl --context "$EXPECTED_KUBE_CONTEXT" \
+gate_path = sys.argv[1]
+deadline = time.monotonic() + 5
+while True:
+    try:
+        with open(gate_path, "rb") as gate:
+            decision = gate.read(16)
+    except OSError:
+        sys.exit(1)
+    if decision == b"go\n":
+        break
+    if decision not in (b"",):
+        sys.exit(1)
+    if time.monotonic() >= deadline:
+        sys.exit(1)
+    time.sleep(0.01)
+os.execvp(sys.argv[2], sys.argv[2:])
+' "$stream_gate" kubectl --context "$EXPECTED_KUBE_CONTEXT" \
         --request-timeout="${maximum_seconds}s" "$@" <&0 &
     stream_pid=$!
-    while kill -0 "$stream_pid" 2>/dev/null; do
-      if ((SECONDS - started >= maximum_seconds)); then
+    if ! stream_start_identity="$(recovery_process_start_identity "$stream_pid")"; then
+      supervised_stream_cleanup
+      return 1
+    fi
+    if ! recovery_process_identity_is_live "$caller_pid" "$caller_start_identity" ||
+       ! supervised_stream_guards_are_healthy ||
+       ! supervised_stream_require_lease_within_guard_budget ||
+       ! supervised_stream_guards_are_healthy ||
+       ! supervised_stream_guard_has_cancellation_reserve; then
+      supervised_stream_cleanup
+      return 1
+    fi
+    printf 'go\n' >"$stream_gate" || {
+      supervised_stream_cleanup
+      return 1
+    }
+    stream_started_milliseconds="$(recovery_monotonic_milliseconds)" || {
+      supervised_stream_cleanup
+      return 1
+    }
+    while :; do
+      if ! recovery_process_identity_is_live \
+          "$stream_pid" "$stream_start_identity"; then
+        # A short kubectl may exit naturally between the prior observation and
+        # the high-resolution identity read. Bash's own job table distinguishes
+        # that completed child from a still-running process whose numeric PID no
+        # longer matches; only the latter is an identity failure.
+        if supervised_stream_child_is_running; then
+          supervised_stream_cleanup
+          return 1
+        fi
+        break
+      fi
+      current_milliseconds="$(recovery_monotonic_milliseconds)" || {
+        supervised_stream_cleanup
+        return 1
+      }
+      if ((current_milliseconds - stream_started_milliseconds >=
+        maximum_seconds * 1000)); then
         supervised_stream_cleanup
         return 1
       fi
@@ -157,19 +1342,33 @@ os.execvp(sys.argv[1], sys.argv[1:])
         supervised_stream_cleanup
         return 1
       fi
-      if [[ "$require_lease" == 1 ]] &&
-         ! recovery_require_operation_serialization; then
+      if ! supervised_stream_guards_are_healthy; then
+        supervised_stream_cleanup
+        return 1
+      fi
+      if ! supervised_stream_require_lease_within_guard_budget ||
+         ! supervised_stream_guards_are_healthy ||
+         ! supervised_stream_guard_has_cancellation_reserve; then
         supervised_stream_cleanup
         return 1
       fi
       sleep "$poll_seconds"
     done
     if wait "$stream_pid"; then stream_status=0; else stream_status=$?; fi
-    stream_pid=""
-    recovery_process_identity_is_live "$caller_pid" "$caller_start_identity" || return 1
-    if [[ "$require_lease" == 1 ]]; then
-      recovery_require_operation_serialization || return 1
+    if [[ "$stream_status" != 0 ]]; then
+      recovery_stop_reaped_isolated_process_group "$stream_pid"
     fi
+    stream_pid=""
+    stream_start_identity=""
+    rm -f -- "$stream_gate"
+    stream_gate=""
+    recovery_process_identity_is_live "$caller_pid" "$caller_start_identity" || return 1
+    supervised_stream_guards_are_healthy || return 1
+    # The local stream group has already been waited and reaped. The final
+    # Lease/guard audit still fails closed, but no cancellation reserve is
+    # needed once there is no destructive capability left to revoke.
+    supervised_stream_require_lease_within_guard_budget 0 || return 1
+    supervised_stream_guards_are_healthy || return 1
     return "$stream_status"
   )
 }
@@ -222,6 +1421,8 @@ recovery_file_size_bytes() {
 }
 
 recovery_checkpoint_snapshot_artifacts() {
+  local metadata_schema="${1:-3}"
+  [[ "$metadata_schema" == 2 || "$metadata_schema" == 3 ]] || return 2
   printf '%s\n' \
     checkpoint-metadata.json \
     configured-value-keys.txt \
@@ -233,6 +1434,18 @@ recovery_checkpoint_snapshot_artifacts() {
     git-state.txt \
     k8s-configmaps-redacted.json \
     k8s-hcce-structure.json
+  if [[ "$metadata_schema" == 3 ]]; then
+    printf '%s\n' runner-cutover-evidence.json
+  fi
+}
+
+recovery_checkpoint_metadata_schema() {
+  local directory="$1" metadata_path schema
+  metadata_path="$directory/checkpoint-metadata.json"
+  recovery_require_regular_direct_file "$metadata_path" || return 1
+  schema="$(jq -er '.schema_version | select(. == 2 or . == 3)' \
+    "$metadata_path")" || return 1
+  printf '%s\n' "$schema"
 }
 
 recovery_path_has_symlink_component() {
@@ -255,6 +1468,504 @@ recovery_path_has_symlink_component() {
   return 1
 }
 
+# Capture and later retire one process-local private directory without ever
+# trusting its pathname as deletion authority. The opaque token binds the
+# canonical parent plus the parent/root dev:ino identities. Cleanup accepts a
+# closed allowlist of optional relative entries encoded as d:path or f:path;
+# every entry that actually exists must be present in that allowlist and must
+# satisfy the private 0700/0600 ownership contract before any byte is removed.
+#
+# POSIX exposes no unlink/rmdir-by-inode compare-and-swap. Holding dirfds,
+# rejecting links, and rechecking lstat/fstat immediately before each unlink or
+# rmdir closes cooperative replacement races. A hostile same-UID process can
+# still win the nanorace after that final check; callers therefore must keep
+# these roots 0700 and process-local. Any observed conflict preserves the
+# replacement (or an exact empty orphan) and fails without pathname fallback.
+recovery_private_directory_tool() {
+  command -v python3 >/dev/null 2>&1 || return 127
+  command python3 -I - "$@" <<'PY'
+import base64
+import json
+import os
+import posixpath
+import stat
+import sys
+
+
+def require(condition, reason):
+    if not condition:
+        raise RuntimeError(reason)
+
+
+require(hasattr(os, "O_NOFOLLOW"), "no_o_nofollow")
+require(hasattr(os, "O_DIRECTORY"), "no_o_directory")
+for operation in (os.open, os.stat, os.unlink, os.rmdir):
+    require(operation in os.supports_dir_fd, "no_dirfd_support")
+
+DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW
+CURRENT_UID = os.getuid()
+
+
+def same_file(left, right):
+    return (
+        left.st_dev == right.st_dev
+        and left.st_ino == right.st_ino
+        and left.st_uid == right.st_uid
+        and left.st_gid == right.st_gid
+        and left.st_mode == right.st_mode
+        and left.st_nlink == right.st_nlink
+        and left.st_size == right.st_size
+        and left.st_mtime_ns == right.st_mtime_ns
+        and left.st_ctime_ns == right.st_ctime_ns
+    )
+
+
+def same_directory(left, right):
+    return (
+        stat.S_ISDIR(left.st_mode)
+        and stat.S_ISDIR(right.st_mode)
+        and left.st_dev == right.st_dev
+        and left.st_ino == right.st_ino
+        and left.st_uid == right.st_uid
+        and left.st_gid == right.st_gid
+        and stat.S_IMODE(left.st_mode) == stat.S_IMODE(right.st_mode)
+    )
+
+
+def exact_private_directory(value, device):
+    return (
+        stat.S_ISDIR(value.st_mode)
+        and value.st_dev == device
+        and value.st_uid == CURRENT_UID
+        and stat.S_IMODE(value.st_mode) == 0o700
+    )
+
+
+def exact_private_file(value, device):
+    return (
+        stat.S_ISREG(value.st_mode)
+        and value.st_dev == device
+        and value.st_uid == CURRENT_UID
+        and stat.S_IMODE(value.st_mode) == 0o600
+        and value.st_nlink == 1
+    )
+
+
+def open_canonical_directory(path):
+    require(path.startswith("/"), "parent_not_absolute")
+    require(posixpath.normpath(path) == path, "parent_not_normalized")
+    require(os.path.realpath(path) == path, "parent_not_canonical")
+    descriptor = os.open("/", DIRECTORY_FLAGS)
+    try:
+        for component in path.split("/"):
+            if not component:
+                continue
+            before = os.stat(
+                component, dir_fd=descriptor, follow_symlinks=False
+            )
+            require(stat.S_ISDIR(before.st_mode), "linked_parent_component")
+            child = os.open(component, DIRECTORY_FLAGS, dir_fd=descriptor)
+            after = os.fstat(child)
+            if not same_directory(before, after):
+                os.close(child)
+                raise RuntimeError("parent_component_changed")
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def encode_token(parent, name, parent_value, directory_value):
+    payload = {
+        "directory_dev": directory_value.st_dev,
+        "directory_ino": directory_value.st_ino,
+        "name": name,
+        "parent": parent,
+        "path": parent.rstrip("/") + "/" + name,
+        "parent_dev": parent_value.st_dev,
+        "parent_ino": parent_value.st_ino,
+        "uid": CURRENT_UID,
+        "version": 1,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def decode_token(encoded):
+    require(encoded and all(value.isalnum() or value in "-_" for value in encoded),
+            "invalid_token_encoding")
+    padding = "=" * ((4 - len(encoded) % 4) % 4)
+    raw = base64.b64decode(
+        encoded + padding, altchars=b"-_", validate=True
+    )
+    require(
+        base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=") == encoded,
+        "noncanonical_token_encoding",
+    )
+    payload = json.loads(raw.decode("utf-8"))
+    require(
+        isinstance(payload, dict)
+        and set(payload) == {
+            "directory_dev",
+            "directory_ino",
+            "name",
+            "parent",
+            "path",
+            "parent_dev",
+            "parent_ino",
+            "uid",
+            "version",
+        },
+        "invalid_token_shape",
+    )
+    require(payload["version"] == 1, "invalid_token_version")
+    require(payload["uid"] == CURRENT_UID, "token_owner_changed")
+    for key in ("directory_dev", "directory_ino", "parent_dev", "parent_ino"):
+        require(isinstance(payload[key], int) and payload[key] >= 0,
+                "invalid_token_identity")
+    require(
+        isinstance(payload["parent"], str)
+        and payload["parent"].startswith("/")
+        and posixpath.normpath(payload["parent"]) == payload["parent"],
+        "invalid_token_parent",
+    )
+    require(
+        isinstance(payload["name"], str)
+        and payload["name"] not in ("", ".", "..")
+        and "/" not in payload["name"],
+        "invalid_token_name",
+    )
+    require(
+        isinstance(payload["path"], str)
+        and payload["path"]
+        == payload["parent"].rstrip("/") + "/" + payload["name"],
+        "invalid_token_path",
+    )
+    return payload
+
+
+def capture(parent, name):
+    require(name not in ("", ".", "..") and "/" not in name,
+            "invalid_directory_name")
+    parent_fd = open_canonical_directory(parent)
+    directory_fd = None
+    try:
+        parent_value = os.fstat(parent_fd)
+        path_value = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        require(
+            exact_private_directory(path_value, parent_value.st_dev),
+            "directory_not_private",
+        )
+        directory_fd = os.open(name, DIRECTORY_FLAGS, dir_fd=parent_fd)
+        opened_value = os.fstat(directory_fd)
+        require(same_directory(path_value, opened_value),
+                "directory_changed_during_capture")
+        print(encode_token(parent, name, parent_value, opened_value))
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
+        os.close(parent_fd)
+
+
+def parse_allowlist(specifications):
+    allowed = {}
+    children = {"": {}}
+    for specification in specifications:
+        require(len(specification) >= 3 and specification[1] == ":",
+                "invalid_allowlist_entry")
+        expected_type = specification[0]
+        relative = specification[2:]
+        require(expected_type in ("d", "f"), "invalid_allowlist_type")
+        require(
+            relative
+            and not relative.startswith("/")
+            and posixpath.normpath(relative) == relative,
+            "invalid_allowlist_path",
+        )
+        components = relative.split("/")
+        require(
+            all(
+                component not in ("", ".", "..")
+                and "\x00" not in component
+                for component in components
+            ),
+            "invalid_allowlist_component",
+        )
+        require(relative not in allowed, "duplicate_allowlist_entry")
+        allowed[relative] = expected_type
+        parent = posixpath.dirname(relative)
+        name = posixpath.basename(relative)
+        children.setdefault(parent, {})[name] = expected_type
+        if expected_type == "d":
+            children.setdefault(relative, {})
+    for relative in allowed:
+        parent = posixpath.dirname(relative)
+        if parent:
+            require(allowed.get(parent) == "d", "missing_allowlisted_parent")
+    return allowed, children
+
+
+def cleanup(encoded, marker_relative, marker_value, specifications):
+    token = decode_token(encoded)
+    allowed, children = parse_allowlist(specifications)
+    if marker_relative:
+        require(allowed.get(marker_relative) == "f", "marker_not_allowlisted")
+        require("\n" not in marker_value and "\x00" not in marker_value,
+                "invalid_marker_value")
+        expected_marker = (marker_value + "\n").encode("utf-8")
+        require(len(expected_marker) <= 4096, "marker_too_large")
+    else:
+        require(marker_value == "", "marker_value_without_path")
+        expected_marker = None
+
+    parent_fd = open_canonical_directory(token["parent"])
+    directory_fds = {}
+    snapshots = {}
+    try:
+        parent_value = os.fstat(parent_fd)
+        require(
+            parent_value.st_dev == token["parent_dev"]
+            and parent_value.st_ino == token["parent_ino"],
+            "parent_identity_changed",
+        )
+        try:
+            root_path_value = os.stat(
+                token["name"], dir_fd=parent_fd, follow_symlinks=False
+            )
+        except FileNotFoundError:
+            return
+        require(
+            exact_private_directory(root_path_value, token["directory_dev"])
+            and root_path_value.st_ino == token["directory_ino"],
+            "root_identity_changed",
+        )
+        root_fd = os.open(token["name"], DIRECTORY_FLAGS, dir_fd=parent_fd)
+        directory_fds[""] = root_fd
+        root_opened = os.fstat(root_fd)
+        require(same_directory(root_path_value, root_opened),
+                "opened_root_identity_changed")
+        snapshots[""] = root_opened
+
+        pending = [""]
+        while pending:
+            relative_directory = pending.pop()
+            directory_fd = directory_fds[relative_directory]
+            permitted_children = children.get(relative_directory, {})
+            actual_names = sorted(os.listdir(directory_fd))
+            require(
+                all(name in permitted_children for name in actual_names),
+                "unexpected_private_directory_entry",
+            )
+            for name in actual_names:
+                relative = (
+                    name
+                    if not relative_directory
+                    else relative_directory + "/" + name
+                )
+                expected_type = permitted_children[name]
+                value = os.stat(name, dir_fd=directory_fd,
+                                follow_symlinks=False)
+                if expected_type == "f":
+                    require(
+                        exact_private_file(value, token["directory_dev"]),
+                        "unsafe_private_file",
+                    )
+                    snapshots[relative] = value
+                else:
+                    require(
+                        exact_private_directory(value, token["directory_dev"]),
+                        "unsafe_private_subdirectory",
+                    )
+                    child_fd = os.open(name, DIRECTORY_FLAGS,
+                                       dir_fd=directory_fd)
+                    opened = os.fstat(child_fd)
+                    if not same_directory(value, opened):
+                        os.close(child_fd)
+                        raise RuntimeError("private_subdirectory_changed")
+                    directory_fds[relative] = child_fd
+                    snapshots[relative] = opened
+                    pending.append(relative)
+
+        def verify_directory_binding(relative):
+            if not relative:
+                current = os.stat(token["name"], dir_fd=parent_fd,
+                                  follow_symlinks=False)
+                opened = os.fstat(directory_fds[""])
+                require(same_directory(current, snapshots[""])
+                        and same_directory(opened, snapshots[""]),
+                        "root_binding_changed")
+                return
+            parent = posixpath.dirname(relative)
+            name = posixpath.basename(relative)
+            verify_directory_binding(parent)
+            current = os.stat(name, dir_fd=directory_fds[parent],
+                              follow_symlinks=False)
+            opened = os.fstat(directory_fds[relative])
+            require(same_directory(current, snapshots[relative])
+                    and same_directory(opened, snapshots[relative]),
+                    "subdirectory_binding_changed")
+
+        if expected_marker is not None:
+            marker_parent = posixpath.dirname(marker_relative)
+            marker_name = posixpath.basename(marker_relative)
+            require(marker_relative in snapshots, "required_marker_missing")
+            verify_directory_binding(marker_parent)
+            marker_fd = os.open(marker_name, FILE_FLAGS,
+                                dir_fd=directory_fds[marker_parent])
+            try:
+                before = os.fstat(marker_fd)
+                require(same_file(before, snapshots[marker_relative]),
+                        "marker_changed_before_read")
+                marker_bytes = os.read(marker_fd, len(expected_marker) + 1)
+                after = os.fstat(marker_fd)
+                require(same_file(before, after), "marker_changed_during_read")
+                require(marker_bytes == expected_marker, "marker_value_changed")
+                current = os.stat(marker_name,
+                                  dir_fd=directory_fds[marker_parent],
+                                  follow_symlinks=False)
+                require(same_file(current, after), "marker_link_changed")
+            finally:
+                os.close(marker_fd)
+
+        file_paths = sorted(
+            (relative for relative, value in snapshots.items()
+             if relative and stat.S_ISREG(value.st_mode)),
+            key=lambda value: (value.count("/"), value),
+            reverse=True,
+        )
+        for relative in file_paths:
+            parent = posixpath.dirname(relative)
+            name = posixpath.basename(relative)
+            verify_directory_binding(parent)
+            before = os.stat(name, dir_fd=directory_fds[parent],
+                             follow_symlinks=False)
+            require(same_file(before, snapshots[relative]),
+                    "private_file_changed_before_unlink")
+            descriptor = os.open(name, FILE_FLAGS, dir_fd=directory_fds[parent])
+            try:
+                opened = os.fstat(descriptor)
+                require(same_file(before, opened),
+                        "opened_private_file_changed")
+                current = os.stat(name, dir_fd=directory_fds[parent],
+                                  follow_symlinks=False)
+                require(same_file(current, opened),
+                        "private_file_link_changed")
+                verify_directory_binding(parent)
+                current = os.stat(name, dir_fd=directory_fds[parent],
+                                  follow_symlinks=False)
+                require(same_file(current, opened),
+                        "private_file_changed_at_unlink")
+                # Keep the exact O_NOFOLLOW descriptor live across unlink and
+                # the parent fsync. POSIX still has no inode-CAS unlink, but no
+                # additional pathname work widens the final checked boundary.
+                os.unlink(name, dir_fd=directory_fds[parent])
+                os.fsync(directory_fds[parent])
+                try:
+                    os.stat(name, dir_fd=directory_fds[parent],
+                            follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise RuntimeError("private_file_name_reappeared")
+            finally:
+                os.close(descriptor)
+
+        directory_paths = sorted(
+            (relative for relative, value in snapshots.items() if relative
+             and stat.S_ISDIR(value.st_mode)),
+            key=lambda value: (value.count("/"), value),
+            reverse=True,
+        )
+        for relative in directory_paths:
+            parent = posixpath.dirname(relative)
+            name = posixpath.basename(relative)
+            require(not os.listdir(directory_fds[relative]),
+                    "private_subdirectory_repopulated")
+            verify_directory_binding(relative)
+            os.rmdir(name, dir_fd=directory_fds[parent])
+            os.fsync(directory_fds[parent])
+            try:
+                os.stat(name, dir_fd=directory_fds[parent],
+                        follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise RuntimeError("private_subdirectory_name_reappeared")
+
+        require(not os.listdir(directory_fds[""]),
+                "private_root_repopulated")
+        verify_directory_binding("")
+        # There is no portable rmdir-by-inode. The still-open root fd plus the
+        # immediately preceding parent lstat/fstat comparison are the strongest
+        # portable cooperative proof. If rmdir fails, preserve the empty orphan.
+        os.rmdir(token["name"], dir_fd=parent_fd)
+        os.fsync(parent_fd)
+        try:
+            os.stat(token["name"], dir_fd=parent_fd,
+                    follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        raise RuntimeError("private_root_name_reappeared")
+    finally:
+        for relative in sorted(directory_fds, key=lambda value: value.count("/"),
+                               reverse=True):
+            try:
+                os.close(directory_fds[relative])
+            except OSError:
+                pass
+        os.close(parent_fd)
+
+
+def main():
+    require(len(sys.argv) >= 2, "missing_mode")
+    mode = sys.argv[1]
+    if mode == "capture":
+        require(len(sys.argv) == 4, "invalid_capture_arguments")
+        capture(sys.argv[2], sys.argv[3])
+    elif mode == "cleanup":
+        require(len(sys.argv) >= 5, "invalid_cleanup_arguments")
+        cleanup(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+    else:
+        raise RuntimeError("invalid_mode")
+
+
+try:
+    main()
+except BaseException as error:
+    print(f"private directory operation failed closed: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+recovery_capture_private_directory_token() {
+  local directory="$1" parent base canonical_parent
+  [[ "$directory" == /* ]] || return 2
+  parent="$(dirname "$directory")"
+  base="$(basename "$directory")"
+  [[ "$base" != "." && "$base" != ".." && "$base" != */* ]] || return 2
+  # Resolve macOS' stable /var -> /private/var alias before rejecting links.
+  canonical_parent="$(cd "$parent" 2>/dev/null && pwd -P)" || return 1
+  recovery_private_directory_tool capture "$canonical_parent" "$base"
+}
+
+recovery_cleanup_private_directory() {
+  local token="$1"
+  shift
+  [[ -n "$token" ]] || return 2
+  recovery_private_directory_tool cleanup "$token" "" "" "$@"
+}
+
+recovery_cleanup_marked_private_directory() {
+  local token="$1" marker_relative="$2" marker_value="$3"
+  shift 3
+  [[ -n "$token" && -n "$marker_relative" ]] || return 2
+  recovery_private_directory_tool cleanup \
+    "$token" "$marker_relative" "$marker_value" "$@"
+}
+
 recovery_require_regular_direct_file() {
   local path="$1"
   [[ -f "$path" && ! -L "$path" && -s "$path" ]] || return 1
@@ -263,8 +1974,9 @@ recovery_require_regular_direct_file() {
 
 recovery_checkpoint_artifacts() {
   local stamp="$1"
+  local metadata_schema="${2:-3}"
   [[ "$stamp" =~ ^[0-9]{8}-[0-9]{6}$ ]] || return 2
-  recovery_checkpoint_snapshot_artifacts
+  recovery_checkpoint_snapshot_artifacts "$metadata_schema"
   printf 'retdb-%s.sql.gz\nret-storage-%s.tar.gz\n' "$stamp" "$stamp"
 }
 
@@ -283,13 +1995,23 @@ recovery_checkpoint_stamp_from_artifact() {
 recovery_validate_checkpoint_layout() {
   local directory="$1"
   local stamp="$2"
+  local metadata_schema="${3:-}"
   local expected_names actual_names artifact
   if [[ ! -d "$directory" || -L "$directory" ]] ||
      recovery_path_has_symlink_component "$directory"; then
     printf 'Checkpoint directory is missing, linked or not a directory.\n' >&2
     return 1
   fi
-  if ! expected_names="$({ recovery_checkpoint_artifacts "$stamp"; printf 'SHA256SUMS\n'; } | LC_ALL=C sort)"; then
+  if [[ -z "$metadata_schema" ]]; then
+    metadata_schema="$(recovery_checkpoint_metadata_schema "$directory")" || {
+      printf 'Checkpoint metadata schema is missing or unsupported.\n' >&2
+      return 1
+    }
+  elif [[ "$metadata_schema" != 2 && "$metadata_schema" != 3 ]]; then
+    printf 'Checkpoint metadata schema is missing or unsupported.\n' >&2
+    return 1
+  fi
+  if ! expected_names="$({ recovery_checkpoint_artifacts "$stamp" "$metadata_schema"; printf 'SHA256SUMS\n'; } | LC_ALL=C sort)"; then
     printf 'Checkpoint stamp is invalid.\n' >&2
     return 1
   fi
@@ -316,13 +2038,23 @@ recovery_validate_checkpoint_layout() {
 recovery_validate_sha256_manifest() {
   local directory="$1"
   local stamp="$2"
+  local metadata_schema="${3:-}"
   local manifest="$directory/SHA256SUMS"
   local expected_names manifest_names line expected_digest artifact actual_digest
   recovery_require_regular_direct_file "$manifest" || {
     printf 'A regular non-empty SHA256SUMS manifest is required.\n' >&2
     return 1
   }
-  if ! expected_names="$(recovery_checkpoint_artifacts "$stamp" | LC_ALL=C sort)"; then
+  if [[ -z "$metadata_schema" ]]; then
+    metadata_schema="$(recovery_checkpoint_metadata_schema "$directory")" || {
+      printf 'Checkpoint metadata schema is missing or unsupported.\n' >&2
+      return 1
+    }
+  elif [[ "$metadata_schema" != 2 && "$metadata_schema" != 3 ]]; then
+    printf 'Checkpoint metadata schema is missing or unsupported.\n' >&2
+    return 1
+  fi
+  if ! expected_names="$(recovery_checkpoint_artifacts "$stamp" "$metadata_schema" | LC_ALL=C sort)"; then
     printf 'Checkpoint stamp is invalid.\n' >&2
     return 1
   fi
@@ -377,16 +2109,33 @@ recovery_checkpoint_metadata_is_acceptable() {
   recovery_require_regular_direct_file "$metadata_path" || return 1
   jq -e --arg stamp "$expected_stamp" '
     type == "object" and
-    (keys | sort) == [
-      "created_at_epoch", "created_at_utc", "kube_context", "namespace",
-      "namespace_uid", "operation_id", "provenance", "ret_pvc_uid",
-      "schema_version", "stamp", "writer_quiescence"
-    ] and
-    .schema_version == 2 and .stamp == $stamp and
-    .provenance == {
-      generator:"yenhubs-local-coordinated-checkpoint-v2",
-      external_import:false
-    } and
+    .schema_version as $schema |
+    (($schema == 2 and
+      (keys | sort) == [
+        "created_at_epoch", "created_at_utc", "kube_context", "namespace",
+        "namespace_uid", "operation_id", "provenance", "ret_pvc_uid",
+        "schema_version", "stamp", "writer_quiescence"
+      ] and
+      .provenance == {
+        generator:"yenhubs-local-coordinated-checkpoint-v2",
+        external_import:false
+      }) or
+     ($schema == 3 and
+      (keys | sort) == [
+        "created_at_epoch", "created_at_utc", "kube_context", "namespace",
+        "namespace_uid", "operation_id", "provenance", "ret_pvc_uid",
+        "runner_cutover_evidence_sha256", "runtime_generation",
+        "schema_version", "stamp", "writer_quiescence"
+      ] and
+      .provenance == {
+        generator:"yenhubs-local-coordinated-checkpoint-v3",
+        external_import:false
+      } and
+      (.runtime_generation == "legacy-absent" or
+       .runtime_generation == "durable-v2") and
+      (.runner_cutover_evidence_sha256 | type == "string" and
+       test("^[a-fA-F0-9]{64}$")))) and
+    .stamp == $stamp and
     (.created_at_utc | type == "string" and
       test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
     (.created_at_epoch | type == "number" and floor == . and . > 0) and
@@ -406,13 +2155,221 @@ recovery_checkpoint_metadata_is_acceptable() {
   ' "$metadata_path" >/dev/null
 }
 
+recovery_runner_cutover_evidence_is_acceptable() {
+  local evidence_path="$1" helper
+  recovery_require_regular_direct_file "$evidence_path" || return 1
+  jq -e '
+    type == "object" and
+    (keys | sort) == [
+      "admission", "capture_window", "checkpoint_operation_id", "cluster",
+      "control_plane", "journal", "namespaces", "parent_deployment", "quiescence",
+      "recovery_operation_fence_state", "runner_role", "runner_role_binding",
+      "runtime_generation", "schema_version"
+    ] and
+    .schema_version == 3 and
+    (.checkpoint_operation_id | type == "string" and test("^[a-f0-9]{32}$")) and
+    (.runtime_generation == "legacy-absent" or .runtime_generation == "durable-v2") and
+    (.recovery_operation_fence_state == "dormant" or
+      .recovery_operation_fence_state == "active") and
+    (.capture_window | type == "object" and
+      (keys | sort) == ["completed_at_utc", "started_at_utc"] and
+      all(.started_at_utc, .completed_at_utc;
+        type == "string" and
+        test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{3})?Z$")) and
+      .completed_at_utc >= .started_at_utc) and
+    (.cluster | type == "object" and
+      (keys | sort) == ["anchor", "kube_context"] and
+      (.kube_context | type == "string" and length > 0) and
+      (.anchor | type == "object" and
+       (keys | sort) == ["api_version", "kind", "name", "uid"] and
+       .api_version == "v1" and .kind == "Namespace" and
+       .name == "kube-system" and (.uid | type == "string" and length > 0))) and
+    (.namespaces | type == "object" and
+      (keys | sort) == ["parent", "runner"] and
+      (.parent | type == "object" and
+       (keys | sort) == [
+         "api_version", "kind", "name", "resource_version", "terminating", "uid"
+       ] and
+       .api_version == "v1" and .kind == "Namespace" and
+       (.name | type == "string" and length > 0) and
+       (.uid | type == "string" and length > 0) and
+       (.resource_version | type == "string" and length > 0) and
+       .terminating == false)) and
+    (.parent_deployment | type == "object" and
+      (.uid | type == "string" and length > 0) and
+      (.resource_version | type == "string" and length > 0) and
+      (.replicas | type == "number" and floor == . and . >= 0) and
+      (.spec_sha256 | type == "string" and test("^[a-f0-9]{64}$"))) and
+    (.quiescence | type == "object" and
+      (keys | sort) == ["fences", "intents", "runners"] and
+      .runners == 0 and .intents == 0 and (.fences | type == "array")) and
+    if .runtime_generation == "legacy-absent" then
+      .recovery_operation_fence_state == "dormant" and
+      .namespaces.runner == null and
+      .runner_role == null and .runner_role_binding == null and
+      .control_plane == {state:"legacy-absent"} and
+      .journal.state == "absent" and .journal.absence_verified == true and
+      .admission.state == "absent" and .quiescence.fences == []
+    else
+      (.namespaces.runner as $runner |
+       ($runner | type) == "object" and
+       $runner.api_version == "v1" and
+       $runner.kind == "Namespace" and
+       $runner.name == "hcce-bot-runners" and
+       ($runner.uid | type == "string" and length > 0) and
+       ($runner.resource_version | type == "string" and length > 0) and
+       $runner.terminating == false) and
+      (.runner_role | type == "object" and
+       (keys | sort) == [
+         "api_version", "contract_sha256", "inert_contract_sha256", "kind",
+         "name", "namespace", "resource_version", "terminating", "uid"
+       ] and
+       .api_version == "rbac.authorization.k8s.io/v1" and
+       .kind == "Role" and .name == "bot-orchestrator-runner-pods" and
+       .namespace == "hcce-bot-runners" and
+       (.uid | type == "string" and length > 0) and
+       (.resource_version | type == "string" and length > 0) and
+       (.contract_sha256 | type == "string" and test("^[a-f0-9]{64}$")) and
+       (.inert_contract_sha256 | type == "string" and test("^[a-f0-9]{64}$")) and
+       .terminating == false) and
+      (.runner_role_binding | type == "object" and
+       (keys | sort) == [
+         "api_version", "contract_sha256", "kind", "name", "namespace",
+         "resource_version", "terminating", "uid"
+       ] and
+       .api_version == "rbac.authorization.k8s.io/v1" and
+       .kind == "RoleBinding" and
+       .name == "bot-orchestrator-runner-pods" and
+       .namespace == "hcce-bot-runners" and
+       (.uid | type == "string" and length > 0) and
+       (.resource_version | type == "string" and length > 0) and
+       (.contract_sha256 | type == "string" and test("^[a-f0-9]{64}$")) and
+       .terminating == false) and
+      (.control_plane | type == "object" and
+       (keys | sort) == [
+         "cluster_resources", "namespaced_resources", "namespaces", "state"
+       ] and .state == "present" and
+       (.namespaces | type == "array" and length == 2 and
+        all(.[];
+          (keys | sort) == [
+            "api_version", "contract_sha256", "kind", "name",
+            "resource_version", "terminating", "uid"
+          ] and
+          (.api_version | type == "string" and length > 0) and
+          (.kind | type == "string" and length > 0) and
+          (.name | type == "string" and length > 0) and
+          (.uid | type == "string" and length > 0) and
+          (.resource_version | type == "string" and length > 0) and
+          (.contract_sha256 | type == "string" and test("^[a-f0-9]{64}$")) and
+          .terminating == false)) and
+       (.namespaced_resources | type == "array" and length == 13 and
+        all(.[];
+          if .api_version == "v1" and .kind == "Secret" and
+             .namespace == "hcce-bot-runners" and .name == "bot-images-pull"
+          then
+            (keys | sort) == [
+              "api_version", "contract_hmac_sha256", "kind", "name", "namespace",
+              "resource_version", "terminating", "uid"
+            ] and
+            (.contract_hmac_sha256 | type == "string" and test("^[a-f0-9]{64}$"))
+          else
+            (keys | sort) == [
+              "api_version", "contract_sha256", "kind", "name", "namespace",
+              "resource_version", "terminating", "uid"
+            ] and
+            (.contract_sha256 | type == "string" and test("^[a-f0-9]{64}$"))
+          end and
+          (.api_version | type == "string" and length > 0) and
+          (.kind | type == "string" and length > 0) and
+          (.name | type == "string" and length > 0) and
+          (.namespace | type == "string" and length > 0) and
+          (.uid | type == "string" and length > 0) and
+          (.resource_version | type == "string" and length > 0) and
+          .terminating == false)) and
+       (.cluster_resources | type == "array" and length == 10 and
+        all(.[];
+          (keys | sort) == [
+            "api_version", "contract_sha256", "kind", "name",
+            "resource_version", "terminating", "uid"
+          ] and
+          (.api_version | type == "string" and length > 0) and
+          (.kind | type == "string" and length > 0) and
+          (.name | type == "string" and length > 0) and
+          (.uid | type == "string" and length > 0) and
+          (.resource_version | type == "string" and length > 0) and
+          (.contract_sha256 | type == "string" and test("^[a-f0-9]{64}$")) and
+          .terminating == false))) and
+      .journal.state == "present" and
+      (.journal.canonical_json | type == "string" and length > 0) and
+      (.journal.canonical_sha256 | type == "string" and test("^[a-f0-9]{64}$")) and
+      .journal.hmac_verification == "verified-owner-key" and
+      .admission.state == "present"
+    end
+  ' "$evidence_path" >/dev/null || return 1
+  # The Node envelope validator is the canonical exact-contract authority. It
+  # additionally enforces the unique, sorted 2/13/10 identity sets, the single
+  # HMAC-protected pull Secret, all admission/journal links and the exact
+  # legacy envelope. Keep this evidence-only entry point independent of the
+  # deployment inventory so callers cannot accidentally rely on shape alone.
+  helper="$(recovery_runner_checkpoint_helper_path)" || return 1
+  command node "$helper" validate-evidence --evidence "$evidence_path"
+}
+
+recovery_checkpoint_generation_is_acceptable() {
+  local directory="$1" metadata_schema metadata_path inventory_path evidence_path
+  local evidence_digest
+  metadata_path="$directory/checkpoint-metadata.json"
+  inventory_path="$directory/deployment-images.json"
+  evidence_path="$directory/runner-cutover-evidence.json"
+  metadata_schema="$(recovery_checkpoint_metadata_schema "$directory")" || return 1
+  recovery_checkpoint_deployment_inventory_is_acceptable \
+    "$inventory_path" "$(jq -er '.namespace' "$metadata_path")" || return 1
+  if [[ "$metadata_schema" == 2 ]]; then
+    jq -e '
+      .schema_version == 3 and
+      .bot_runner_runtime.mode == "process-local" and
+      .bot_runner_runtime.control_plane == {state:"legacy-absent"} and
+      .bot_runner_runtime.recovery_epoch == {state:"legacy-absent"}
+    ' "$inventory_path" >/dev/null || return 1
+    [[ ! -e "$evidence_path" && ! -L "$evidence_path" ]]
+    return
+  fi
+  recovery_runner_cutover_evidence_is_acceptable "$evidence_path" || return 1
+  recovery_validate_runner_cutover_evidence_offline \
+    "$evidence_path" "$inventory_path" || return 1
+  evidence_digest="$(recovery_sha256_digest "$evidence_path")" || return 1
+  jq -e --arg digest "$evidence_digest" \
+    --slurpfile inventory "$inventory_path" --slurpfile evidence "$evidence_path" '
+    .schema_version == 3 and
+    .runner_cutover_evidence_sha256 == $digest and
+    ($inventory | length) == 1 and ($evidence | length) == 1 and
+    $inventory[0].schema_version == 4 and
+    .runtime_generation == $inventory[0].bot_runner_runtime.generation and
+    .runtime_generation == $evidence[0].runtime_generation and
+    .operation_id == $evidence[0].checkpoint_operation_id and
+    .kube_context == $evidence[0].cluster.kube_context and
+    .namespace == $evidence[0].namespaces.parent.name and
+    .namespace_uid == $evidence[0].namespaces.parent.uid and
+    .namespace_uid == $inventory[0].namespace_uid and
+    .namespace == $inventory[0].namespace and
+    ([ $inventory[0].deployments[] |
+       select(.name == "bot-orchestrator") | .uid ] ==
+     [$evidence[0].parent_deployment.uid]) and
+    ((.runtime_generation == "legacy-absent" and
+      $inventory[0].bot_runner_runtime.mode == "process-local") or
+     (.runtime_generation == "durable-v2" and
+      $inventory[0].bot_runner_runtime.mode == "kubernetes-pod"))
+  ' "$metadata_path" >/dev/null
+}
+
 recovery_verify_checkpoint_directory() {
   local directory="$1"
   local stamp="$2"
   recovery_validate_checkpoint_layout "$directory" "$stamp" &&
     recovery_validate_sha256_manifest "$directory" "$stamp" &&
     recovery_checkpoint_metadata_is_acceptable \
-      "$directory/checkpoint-metadata.json" "$stamp"
+      "$directory/checkpoint-metadata.json" "$stamp" &&
+    recovery_checkpoint_generation_is_acceptable "$directory"
 }
 
 recovery_checkpoint_digest_for() {
@@ -661,13 +2618,17 @@ recovery_deployment_inventory_is_acceptable() {
       elif $pair == "reticulum/reticulum" then $repository == "ghcr.io/yengalvez/reticulum"
       elif $pair == "spoke/spoke" then $repository == "ghcr.io/yengalvez/spoke"
       else false end;
+    .schema_version as $inventory_schema |
     (keys | sort) ==
       ["bot_runner_runtime", "deployments", "namespace", "namespace_uid", "schema_version"] and
-    .schema_version == 3 and
+    (.schema_version == 3 or .schema_version == 4) and
     .namespace == $namespace and
     .namespace_uid == $namespace_uid and
     (.bot_runner_runtime | type == "object" and
-      (keys | sort) == ["control_plane", "image", "mode", "recovery_epoch"]) and
+      (if $inventory_schema == 3
+       then (keys | sort) == ["control_plane", "image", "mode", "recovery_epoch"]
+       else (keys | sort) == ["control_plane", "generation", "image", "mode", "recovery_epoch"]
+       end)) and
     ((.bot_runner_runtime.recovery_epoch == {state:"legacy-absent"}) or
       (.bot_runner_runtime.recovery_epoch | type == "object" and
        (keys | sort) == ["state", "value"] and .state == "bound" and
@@ -675,9 +2636,11 @@ recovery_deployment_inventory_is_acceptable() {
         test("^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$")))) and
     ((.bot_runner_runtime.mode == "process-local" and
        .bot_runner_runtime.image == null and
+       ($inventory_schema == 3 or .bot_runner_runtime.generation == "legacy-absent") and
        .bot_runner_runtime.recovery_epoch == {state:"legacy-absent"} and
        .bot_runner_runtime.control_plane == {state:"legacy-absent"}) or
       (.bot_runner_runtime.mode == "kubernetes-pod" and
+       ($inventory_schema == 3 or .bot_runner_runtime.generation == "durable-v2") and
        .bot_runner_runtime.recovery_epoch.state == "bound" and
        (.bot_runner_runtime.image | type == "string" and
         test("^ghcr\\.io/yengalvez/bot-runner@sha256:[a-fA-F0-9]{64}$")) and
@@ -689,32 +2652,81 @@ recovery_deployment_inventory_is_acceptable() {
         ([.namespaces[].name] | sort) == ([$namespace, "hcce-bot-runners"] | sort) and
         ([.namespaces[].name] | unique | length) == 2 and
         all(.namespaces[];
-          (keys | sort) == ["api_version", "kind", "name", "uid"] and
+          (if $inventory_schema == 3
+           then (keys | sort) == ["api_version", "kind", "name", "uid"]
+           else (keys | sort) == ["api_version", "kind", "name", "resource_version", "uid"] and
+             (.resource_version | type == "string" and length > 0)
+           end) and
           .api_version == "v1" and .kind == "Namespace" and
           (.uid | type == "string" and length > 0)) and
         ([.namespaces[] | select(.name == $namespace) | .uid] == [$namespace_uid]) and
-        (.namespaced_resources | type == "array" and length == 7) and
-        ([.namespaced_resources[] |
-          [.api_version, .kind, .namespace, .name]] | sort) == ([
-            ["v1", "Secret", "hcce-bot-runners", "bot-images-pull"],
-            ["v1", "ServiceAccount", "hcce-bot-runners", "bot-runner"],
-            ["v1", "ResourceQuota", "hcce-bot-runners", "bot-runner-capacity"],
-            ["rbac.authorization.k8s.io/v1", "Role", "hcce-bot-runners", "bot-orchestrator-runner-pods"],
-            ["rbac.authorization.k8s.io/v1", "RoleBinding", "hcce-bot-runners", "bot-orchestrator-runner-pods"],
-            ["networking.k8s.io/v1", "NetworkPolicy", "hcce-bot-runners", "bot-runner-default-deny"],
-            ["networking.k8s.io/v1", "NetworkPolicy", "hcce-bot-runners", "bot-runner-egress"]
+        (if $inventory_schema == 3 then
+          (.namespaced_resources | type == "array" and length == 7) and
+          ([.namespaced_resources[] |
+            [.api_version, .kind, .namespace, .name]] | sort) == ([
+              ["v1", "Secret", "hcce-bot-runners", "bot-images-pull"],
+              ["v1", "ServiceAccount", "hcce-bot-runners", "bot-runner"],
+              ["v1", "ResourceQuota", "hcce-bot-runners", "bot-runner-capacity"],
+              ["rbac.authorization.k8s.io/v1", "Role", "hcce-bot-runners", "bot-orchestrator-runner-pods"],
+              ["rbac.authorization.k8s.io/v1", "RoleBinding", "hcce-bot-runners", "bot-orchestrator-runner-pods"],
+              ["networking.k8s.io/v1", "NetworkPolicy", "hcce-bot-runners", "bot-runner-default-deny"],
+              ["networking.k8s.io/v1", "NetworkPolicy", "hcce-bot-runners", "bot-runner-egress"]
+            ] | sort) and
+          all(.namespaced_resources[];
+            (keys | sort) == ["api_version", "kind", "name", "namespace", "uid"] and
+            (.uid | type == "string" and length > 0)) and
+          (.cluster_resources | type == "array" and length == 2) and
+          ([.cluster_resources[] | [.api_version, .kind, .name]] | sort) == ([
+            ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicy", "bot-runner-pods.yenhubs.org"],
+            ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicyBinding", "bot-runner-pods.yenhubs.org"]
           ] | sort) and
-        all(.namespaced_resources[];
-          (keys | sort) == ["api_version", "kind", "name", "namespace", "uid"] and
-          (.uid | type == "string" and length > 0)) and
-        (.cluster_resources | type == "array" and length == 2) and
-        ([.cluster_resources[] | [.api_version, .kind, .name]] | sort) == ([
-          ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicy", "bot-runner-pods.yenhubs.org"],
-          ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicyBinding", "bot-runner-pods.yenhubs.org"]
-        ] | sort) and
-        all(.cluster_resources[];
-          (keys | sort) == ["api_version", "kind", "name", "uid"] and
-          (.uid | type == "string" and length > 0))))) and
+          all(.cluster_resources[];
+            (keys | sort) == ["api_version", "kind", "name", "uid"] and
+            (.uid | type == "string" and length > 0))
+        else
+          (.namespaces | type == "array" and length == 2) and
+          all(.namespaces[];
+            (keys | sort) == ["api_version", "kind", "name", "resource_version", "uid"] and
+            (.resource_version | type == "string" and length > 0)) and
+          (.namespaced_resources | type == "array" and length == 13) and
+          ([.namespaced_resources[] |
+            [.api_version, .kind, .namespace, .name]] | sort) == ([
+              ["v1", "ServiceAccount", $namespace, "bot-orchestrator"],
+              ["rbac.authorization.k8s.io/v1", "Role", $namespace, "bot-orchestrator-runner-pods"],
+              ["rbac.authorization.k8s.io/v1", "RoleBinding", $namespace, "bot-orchestrator-runner-pods"],
+              ["v1", "ConfigMap", $namespace, "yenhubs-runner-cutover-v2"],
+              ["v1", "Secret", "hcce-bot-runners", "bot-images-pull"],
+              ["v1", "ServiceAccount", "hcce-bot-runners", "bot-runner"],
+              ["v1", "ServiceAccount", "hcce-bot-runners", "bot-runner-guard"],
+              ["v1", "ResourceQuota", "hcce-bot-runners", "bot-runner-capacity"],
+              ["v1", "ResourceQuota", "hcce-bot-runners", "bot-runner-guard-capacity"],
+              ["rbac.authorization.k8s.io/v1", "Role", "hcce-bot-runners", "bot-orchestrator-runner-pods"],
+              ["rbac.authorization.k8s.io/v1", "RoleBinding", "hcce-bot-runners", "bot-orchestrator-runner-pods"],
+              ["networking.k8s.io/v1", "NetworkPolicy", "hcce-bot-runners", "bot-runner-default-deny"],
+              ["networking.k8s.io/v1", "NetworkPolicy", "hcce-bot-runners", "bot-runner-egress"]
+            ] | sort) and
+          all(.namespaced_resources[];
+            (keys | sort) == ["api_version", "kind", "name", "namespace", "resource_version", "uid"] and
+            (.uid | type == "string" and length > 0) and
+            (.resource_version | type == "string" and length > 0)) and
+          (.cluster_resources | type == "array" and length == 10) and
+          ([.cluster_resources[] | [.api_version, .kind, .name]] | sort) == ([
+            ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicy", "bot-runner-pods.yenhubs.org"],
+            ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicyBinding", "bot-runner-pods.yenhubs.org"],
+            ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicy", "bot-runner-durable-protocol.yenhubs.org"],
+            ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicyBinding", "bot-runner-durable-protocol.yenhubs.org"],
+            ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicy", "yenhubs-runner-cutover-journal-v2"],
+            ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicyBinding", "yenhubs-runner-cutover-journal-v2"],
+            ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicy", "bot-orchestrator-fence-protocol.yenhubs.org"],
+            ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicyBinding", "bot-orchestrator-fence-protocol.yenhubs.org"],
+            ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicy", "recovery-operation-pod-fence.yenhubs.org"],
+            ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicyBinding", "recovery-operation-pod-fence.yenhubs.org"]
+          ] | sort) and
+          all(.cluster_resources[];
+            (keys | sort) == ["api_version", "kind", "name", "resource_version", "uid"] and
+            (.uid | type == "string" and length > 0) and
+            (.resource_version | type == "string" and length > 0))
+        end)))) and
     ($expected_runner == "" or
       .bot_runner_runtime.mode == "process-local" or
       .bot_runner_runtime.image == $expected_runner) and
@@ -844,6 +2856,58 @@ recovery_require_restore_epoch_candidate() {
   fi
 }
 
+recovery_require_durable_checkpoint_source_matches_live() {
+  local inventory_path="$1" mode checkpoint_epoch live_epoch
+  recovery_checkpoint_deployment_inventory_is_acceptable \
+    "$inventory_path" "$NAMESPACE" || return 1
+  [[ "${RECOVERY_CHECKPOINT_RUNNER_GENERATION:-}" == durable-v2 &&
+     "$(jq -er '.schema_version' "$inventory_path")" == 4 ]] || return 1
+  mode="$(jq -er '.bot_runner_runtime.mode' "$inventory_path")" || return 1
+  [[ "$mode" == kubernetes-pod ]] || return 1
+  recovery_require_live_runner_control_plane_matches_checkpoint \
+    "$inventory_path" || return 1
+  checkpoint_epoch="$(jq -er '
+    .bot_runner_runtime.recovery_epoch |
+    select(.state == "bound") |
+    .value | select(type == "string" and
+      test("^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$"))
+  ' "$inventory_path")" || return 1
+  live_epoch="$(recovery_live_runner_epoch)" || return 1
+  [[ "$live_epoch" == "$checkpoint_epoch" ]] || {
+    printf 'Live durable runner epoch does not match the checkpoint pre-fence epoch.\n' >&2
+    return 1
+  }
+}
+
+recovery_require_restore_target_manifest_candidate() {
+  local values_path="$1" expected_phase="$2" activation_phase recovery_phase
+  local manifest_path="${HCCE_MANIFEST_PATH:-$RECOVERY_SAFETY_DIR/../../hubs-cloud/community-edition/hcce.yaml}"
+  local manifest_verifier="$RECOVERY_SAFETY_DIR/../../hubs-cloud/community-edition/generate_script/verify-generated-manifest.js"
+  local parser_path="$RECOVERY_SAFETY_DIR/../parse-local-values.mjs"
+  [[ "$expected_phase" == active || "$expected_phase" == restore-fence ]] || return 2
+  if [[ -n "${YENHUBS_RECOVERY_GENERATED_MANIFEST_VERIFIER:-}" ]]; then
+    recovery_require_local_fixture_attestation || return 1
+    manifest_verifier="$YENHUBS_RECOVERY_GENERATED_MANIFEST_VERIFIER"
+  fi
+  recovery_private_values_file_is_acceptable "$values_path" || return 1
+  recovery_require_regular_direct_file "$manifest_path" || return 1
+  recovery_require_regular_direct_file "$manifest_verifier" || return 1
+  activation_phase="$(command node "$parser_path" "$values_path" \
+    --get BOT_RUNNER_ACTIVATION_PHASE)" || return 1
+  recovery_phase="$(command node "$parser_path" "$values_path" \
+    --get BOT_RUNNER_RECOVERY_PHASE)" || return 1
+  [[ "$activation_phase" == active && "$recovery_phase" == "$expected_phase" ]] || {
+    printf 'The target values are not bound to the required runner recovery phase.\n' >&2
+    return 1
+  }
+  recovery_runner_epoch_from_values "$values_path" >/dev/null || return 1
+  HCCE_INPUT_VALUES_PATH="$values_path" HCCE_MANIFEST_PATH="$manifest_path" \
+    command node "$manifest_verifier" >/dev/null || {
+    printf 'The target generated manifest is invalid or does not match its values.\n' >&2
+    return 1
+  }
+}
+
 recovery_require_live_restore_fence_epoch() {
   local values_path="$1" pre_fence_epoch="$2" candidate_epoch live_epoch
   candidate_epoch="$(recovery_runner_epoch_from_values "$values_path")" || return 1
@@ -853,6 +2917,29 @@ recovery_require_live_restore_fence_epoch() {
     printf 'The live restore-fence epoch is not the exact new candidate.\n' >&2
     return 1
   }
+}
+
+recovery_live_runner_recovery_phase() {
+  local deployment deployment_json phase expected_phase="" first=1
+  for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn pgsql; do
+    deployment_json="$(
+      recovery_kubectl get deployment "$deployment" -n "$NAMESPACE" -o json
+    )" || return 1
+    phase="$(jq -er --arg namespace "$NAMESPACE" --arg name "$deployment" '
+      select(.apiVersion == "apps/v1" and .kind == "Deployment" and
+        .metadata.namespace == $namespace and .metadata.name == $name) |
+      ((.metadata.annotations // {})[
+        "yenhubs.org/bot-runner-recovery-phase"
+      ] // "") | select(. == "active" or . == "restore-fence")
+    ' <<<"$deployment_json")" || return 1
+    if [[ "$first" == 1 ]]; then
+      expected_phase="$phase"
+      first=0
+    elif [[ "$phase" != "$expected_phase" ]]; then
+      return 1
+    fi
+  done
+  printf '%s\n' "$expected_phase"
 }
 
 recovery_require_live_runner_recovery_phase() {
@@ -991,11 +3078,28 @@ recovery_runner_isolation_residual_state() {
   done <<EOF
 namespace	hcce-bot-runners	cluster
 serviceaccount	bot-orchestrator	$NAMESPACE
-secret	bot-images-pull	$NAMESPACE
 role	bot-orchestrator-runner-pods	$NAMESPACE
 rolebinding	bot-orchestrator-runner-pods	$NAMESPACE
+configmap	yenhubs-runner-cutover-v2	$NAMESPACE
+secret	bot-images-pull	hcce-bot-runners
+serviceaccount	bot-runner	hcce-bot-runners
+serviceaccount	bot-runner-guard	hcce-bot-runners
+resourcequota	bot-runner-capacity	hcce-bot-runners
+resourcequota	bot-runner-guard-capacity	hcce-bot-runners
+role	bot-orchestrator-runner-pods	hcce-bot-runners
+rolebinding	bot-orchestrator-runner-pods	hcce-bot-runners
+networkpolicy	bot-runner-default-deny	hcce-bot-runners
+networkpolicy	bot-runner-egress	hcce-bot-runners
 validatingadmissionpolicy	bot-runner-pods.yenhubs.org	cluster
 validatingadmissionpolicybinding	bot-runner-pods.yenhubs.org	cluster
+validatingadmissionpolicy	bot-runner-durable-protocol.yenhubs.org	cluster
+validatingadmissionpolicybinding	bot-runner-durable-protocol.yenhubs.org	cluster
+validatingadmissionpolicy	yenhubs-runner-cutover-journal-v2	cluster
+validatingadmissionpolicybinding	yenhubs-runner-cutover-journal-v2	cluster
+validatingadmissionpolicy	bot-orchestrator-fence-protocol.yenhubs.org	cluster
+validatingadmissionpolicybinding	bot-orchestrator-fence-protocol.yenhubs.org	cluster
+validatingadmissionpolicy	recovery-operation-pod-fence.yenhubs.org	cluster
+validatingadmissionpolicybinding	recovery-operation-pod-fence.yenhubs.org	cluster
 EOF
   if [[ "$residual" == 0 ]]; then
     printf 'absent\n'
@@ -1279,12 +3383,13 @@ recovery_resource_identity_tsv() {
 
 recovery_require_live_runner_control_plane_matches_checkpoint() {
   local inventory_path="$1" mode target_mode="${RESTORE_TARGET_MODE:-in-place}" expected_uid identity
-  local api_version kind namespace name uid extra
+  local api_version kind namespace name uid extra expected_namespace
   recovery_checkpoint_deployment_inventory_is_acceptable \
     "$inventory_path" "$NAMESPACE" || return 1
   mode="$(jq -er '.bot_runner_runtime.mode' "$inventory_path")" || return 1
   [[ "$mode" == kubernetes-pod ]] || return 0
-  [[ "$target_mode" == in-place || "$target_mode" == cold-rebind ]] || return 2
+  [[ "$(jq -er '.schema_version' "$inventory_path")" == 4 ]] || return 1
+  [[ "$target_mode" == in-place ]] || return 1
 
   expected_uid="$(jq -er '
     [.bot_runner_runtime.control_plane.namespaces[] |
@@ -1294,31 +3399,36 @@ recovery_require_live_runner_control_plane_matches_checkpoint() {
   identity="$(recovery_resource_identity_tsv cluster namespace hcce-bot-runners)" || return 1
   IFS=$'\t' read -r api_version kind name uid extra <<<"$identity"
   [[ -z "${extra:-}" && "$api_version" == v1 && "$kind" == Namespace &&
-     "$name" == hcce-bot-runners &&
-     ( "$target_mode" == cold-rebind || "$uid" == "$expected_uid" ) ]] || return 1
+     "$name" == hcce-bot-runners && "$uid" == "$expected_uid" ]] || return 1
 
-  while IFS='|' read -r resource expected_api expected_kind expected_name; do
+  while IFS='|' read -r resource expected_api expected_kind expected_namespace expected_name; do
     expected_uid="$(jq -er --arg api "$expected_api" --arg kind "$expected_kind" \
-      --arg name "$expected_name" '
+      --arg namespace "$expected_namespace" --arg name "$expected_name" '
       [.bot_runner_runtime.control_plane.namespaced_resources[] |
-        select(.api_version == $api and .kind == $kind and .name == $name) | .uid] |
+        select(.api_version == $api and .kind == $kind and
+          .namespace == $namespace and .name == $name) | .uid] |
       select(length == 1) | .[0]
     ' "$inventory_path")" || return 1
     identity="$(recovery_resource_identity_tsv namespaced "$resource" \
-      "$expected_name" hcce-bot-runners)" || return 1
+      "$expected_name" "$expected_namespace")" || return 1
     IFS=$'\t' read -r api_version kind namespace name uid extra <<<"$identity"
     [[ -z "${extra:-}" && "$api_version" == "$expected_api" &&
-       "$kind" == "$expected_kind" && "$namespace" == hcce-bot-runners &&
-       "$name" == "$expected_name" &&
-       ( "$target_mode" == cold-rebind || "$uid" == "$expected_uid" ) ]] || return 1
-  done <<'RUNNER_RESOURCES'
-secret|v1|Secret|bot-images-pull
-serviceaccount|v1|ServiceAccount|bot-runner
-resourcequota|v1|ResourceQuota|bot-runner-capacity
-role|rbac.authorization.k8s.io/v1|Role|bot-orchestrator-runner-pods
-rolebinding|rbac.authorization.k8s.io/v1|RoleBinding|bot-orchestrator-runner-pods
-networkpolicy|networking.k8s.io/v1|NetworkPolicy|bot-runner-default-deny
-networkpolicy|networking.k8s.io/v1|NetworkPolicy|bot-runner-egress
+       "$kind" == "$expected_kind" && "$namespace" == "$expected_namespace" &&
+       "$name" == "$expected_name" && "$uid" == "$expected_uid" ]] || return 1
+  done <<RUNNER_RESOURCES
+serviceaccount|v1|ServiceAccount|$NAMESPACE|bot-orchestrator
+role|rbac.authorization.k8s.io/v1|Role|$NAMESPACE|bot-orchestrator-runner-pods
+rolebinding|rbac.authorization.k8s.io/v1|RoleBinding|$NAMESPACE|bot-orchestrator-runner-pods
+configmap|v1|ConfigMap|$NAMESPACE|yenhubs-runner-cutover-v2
+secret|v1|Secret|hcce-bot-runners|bot-images-pull
+serviceaccount|v1|ServiceAccount|hcce-bot-runners|bot-runner
+serviceaccount|v1|ServiceAccount|hcce-bot-runners|bot-runner-guard
+resourcequota|v1|ResourceQuota|hcce-bot-runners|bot-runner-capacity
+resourcequota|v1|ResourceQuota|hcce-bot-runners|bot-runner-guard-capacity
+role|rbac.authorization.k8s.io/v1|Role|hcce-bot-runners|bot-orchestrator-runner-pods
+rolebinding|rbac.authorization.k8s.io/v1|RoleBinding|hcce-bot-runners|bot-orchestrator-runner-pods
+networkpolicy|networking.k8s.io/v1|NetworkPolicy|hcce-bot-runners|bot-runner-default-deny
+networkpolicy|networking.k8s.io/v1|NetworkPolicy|hcce-bot-runners|bot-runner-egress
 RUNNER_RESOURCES
   while IFS='|' read -r resource expected_api expected_kind expected_name; do
     expected_uid="$(jq -er --arg api "$expected_api" --arg kind "$expected_kind" \
@@ -1331,11 +3441,56 @@ RUNNER_RESOURCES
     IFS=$'\t' read -r api_version kind name uid extra <<<"$identity"
     [[ -z "${extra:-}" && "$api_version" == "$expected_api" &&
        "$kind" == "$expected_kind" && "$name" == "$expected_name" &&
-       ( "$target_mode" == cold-rebind || "$uid" == "$expected_uid" ) ]] || return 1
+       "$uid" == "$expected_uid" ]] || return 1
   done <<'RUNNER_CLUSTER_RESOURCES'
 validatingadmissionpolicy|admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy|bot-runner-pods.yenhubs.org
 validatingadmissionpolicybinding|admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding|bot-runner-pods.yenhubs.org
+validatingadmissionpolicy|admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy|bot-runner-durable-protocol.yenhubs.org
+validatingadmissionpolicybinding|admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding|bot-runner-durable-protocol.yenhubs.org
+validatingadmissionpolicy|admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy|yenhubs-runner-cutover-journal-v2
+validatingadmissionpolicybinding|admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding|yenhubs-runner-cutover-journal-v2
+validatingadmissionpolicy|admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy|bot-orchestrator-fence-protocol.yenhubs.org
+validatingadmissionpolicybinding|admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding|bot-orchestrator-fence-protocol.yenhubs.org
+validatingadmissionpolicy|admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy|recovery-operation-pod-fence.yenhubs.org
+validatingadmissionpolicybinding|admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding|recovery-operation-pod-fence.yenhubs.org
 RUNNER_CLUSTER_RESOURCES
+}
+
+recovery_require_checkpoint_generation_matches_live() {
+  local inventory_path="$1" values_path="$2" expected_generation mode
+  local checkpoint_epoch live_epoch
+  expected_generation="${RECOVERY_CHECKPOINT_RUNNER_GENERATION:-$(jq -er '
+    if .schema_version == 3 then "legacy-absent"
+    else .bot_runner_runtime.generation end
+  ' "$inventory_path")}" || return 1
+  mode="$(jq -er '.bot_runner_runtime.mode' "$inventory_path")" || return 1
+  case "$expected_generation" in
+    legacy-absent)
+      [[ "$mode" == process-local ]] || return 1
+      recovery_require_live_process_local_runner_exact "$values_path"
+      ;;
+    durable-v2)
+      [[ "$mode" == kubernetes-pod ]] || return 1
+      [[ "$(recovery_require_checkpoint_runner_mode_exact \
+        "$values_path" kubernetes-pod)" == kubernetes-pod ]] || return 1
+      recovery_require_live_runner_control_plane_matches_checkpoint \
+        "$inventory_path" || return 1
+      checkpoint_epoch="$(jq -er '
+        .bot_runner_runtime.recovery_epoch |
+        select(.state == "bound") |
+        .value | select(type == "string" and
+          test("^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$"))
+      ' "$inventory_path")" || return 1
+      live_epoch="$(recovery_live_runner_epoch)" || return 1
+      [[ "$live_epoch" == "$checkpoint_epoch" ]] || {
+        printf 'Live durable runner epoch does not match the checkpoint pre-fence epoch.\n' >&2
+        return 1
+      }
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 recovery_require_live_images_match_checkpoint() {
@@ -1381,13 +3536,36 @@ recovery_checkpoint_image_for_pair() {
   printf '%s\n' "$image"
 }
 
+recovery_set_materialized_checkpoint_cleanup_allowlist() {
+  local stamp="$1" metadata_schema="$2" artifact
+  local -a cleanup_paths=(
+    "f:.yenhubs-recovery-owner"
+    "d:checkpoint"
+    "f:checkpoint/SHA256SUMS"
+  )
+  [[ "$stamp" =~ ^[0-9]{8}-[0-9]{6}$ &&
+     ( "$metadata_schema" == 2 || "$metadata_schema" == 3 ) ]] || return 2
+  while IFS= read -r artifact; do
+    cleanup_paths+=("f:checkpoint/$artifact")
+  done < <(recovery_checkpoint_artifacts "$stamp" "$metadata_schema")
+  RECOVERY_MATERIALIZED_ALLOWED_PATHS=("${cleanup_paths[@]}")
+}
+
 recovery_materialize_checkpoint() {
   local input_artifact="$1"
   local validator="$2"
-  local directory stamp dump_name storage_name contract_name inventory_name
-  local dump_digest storage_digest contract_digest inventory_digest materialized_dir materialized_parent materialized_base
-  local copied_dump_digest copied_storage_digest copied_contract_digest copied_inventory_digest
-  recovery_cleanup_materialized_checkpoint
+  local directory stamp dump_name storage_name contract_name inventory_name evidence_name artifact
+  local metadata_schema runner_generation evidence_digest=""
+  local dump_digest storage_digest inventory_digest
+  local materialized_dir materialized_parent materialized_base checkpoint_copy_dir
+  local materialized_private_token="" materialized_setup_status=0
+  local materialized_pending_signal_status=0
+  local saved_int_trap saved_term_trap
+  local metadata_copy_digest manifest_copy_digest source_metadata_digest source_manifest_digest
+  if ! recovery_cleanup_materialized_checkpoint; then
+    printf 'A previous private checkpoint snapshot could not be retired exactly.\n' >&2
+    return 1
+  fi
   if ! recovery_require_regular_direct_file "$input_artifact"; then
     printf 'Restore artifacts must be regular files, not links.\n' >&2
     return 1
@@ -1401,116 +3579,252 @@ recovery_materialize_checkpoint() {
   storage_name="ret-storage-$stamp.tar.gz"
   contract_name="database-contract.json"
   inventory_name="deployment-images.json"
-  recovery_verify_checkpoint_directory "$directory" "$stamp" || return 1
-  if ! dump_digest="$(recovery_checkpoint_digest_for "$directory" "$dump_name")" ||
-     ! storage_digest="$(recovery_checkpoint_digest_for "$directory" "$storage_name")" ||
-     ! contract_digest="$(recovery_checkpoint_digest_for "$directory" "$contract_name")" ||
-     ! inventory_digest="$(recovery_checkpoint_digest_for "$directory" "$inventory_name")"; then
+  evidence_name="runner-cutover-evidence.json"
+  saved_int_trap="$(trap -p INT)"
+  saved_term_trap="$(trap -p TERM)"
+  # Record the first cooperative interruption in the parent while each child
+  # ignores it across mktemp, token capture and marker publication. Ownership
+  # becomes usable before the original caller trap receives the deferred
+  # signal; SIGKILL can still leave an unavoidable private orphan.
+  trap 'if [[ "$materialized_pending_signal_status" == 0 ]]; then materialized_pending_signal_status=130; trap "" INT TERM; fi' INT
+  trap 'if [[ "$materialized_pending_signal_status" == 0 ]]; then materialized_pending_signal_status=143; trap "" INT TERM; fi' TERM
+  if ! materialized_dir="$(
+      trap '' INT TERM
+      mktemp -d "${TMPDIR:-/tmp}/yenhubs-restore-$stamp.XXXXXX"
+    )"; then
+    materialized_setup_status=1
+  elif ! materialized_parent="$(
+      trap '' INT TERM
+      cd "$(dirname "$materialized_dir")" && pwd -P
+    )"; then
+    materialized_setup_status=1
+  else
+    materialized_base="$(basename "$materialized_dir")"
+    if [[ ! "$materialized_base" =~ ^yenhubs-restore-[0-9]{8}-[0-9]{6}\.[A-Za-z0-9]{6}$ ]]; then
+      materialized_setup_status=1
+    else
+      materialized_dir="$materialized_parent/$materialized_base"
+      if ! materialized_private_token="$(
+          trap '' INT TERM
+          recovery_capture_private_directory_token "$materialized_dir"
+        )"; then
+        materialized_setup_status=1
+      elif ! (trap '' INT TERM; umask 077; set -C; printf '%s\n' \
+          yenhubs-recovery-materialized-v1 \
+          >"$materialized_dir/.yenhubs-recovery-owner") 2>/dev/null; then
+        materialized_setup_status=1
+      else
+        RECOVERY_MATERIALIZED_DIR="$materialized_dir"
+        RECOVERY_MATERIALIZED_PARENT="$materialized_parent"
+        RECOVERY_MATERIALIZED_MARKER="$materialized_dir/.yenhubs-recovery-owner"
+        RECOVERY_MATERIALIZED_PRIVATE_TOKEN="$materialized_private_token"
+        RECOVERY_MATERIALIZED_ALLOWED_PATHS=(
+          "f:.yenhubs-recovery-owner"
+          "d:checkpoint"
+          "f:checkpoint/checkpoint-metadata.json"
+          "f:checkpoint/SHA256SUMS"
+        )
+        RECOVERY_MATERIALIZED_CLEANUP_ATTEMPTED=0
+        RECOVERY_MATERIALIZED_RETIRED=0
+        RECOVERY_MATERIALIZED_OWNED=1
+      fi
+    fi
+  fi
+  # trap -p emits shell-owned syntax; restoring that exact trusted output is
+  # the only Bash 3.2-compatible way to preserve an arbitrary caller handler.
+  # shellcheck disable=SC2294
+  if [[ -n "$saved_int_trap" ]]; then eval "$saved_int_trap"; else trap - INT; fi
+  # shellcheck disable=SC2294
+  if [[ -n "$saved_term_trap" ]]; then eval "$saved_term_trap"; else trap - TERM; fi
+  if [[ "$materialized_pending_signal_status" == 130 ]]; then
+    kill -INT "${BASHPID:-$$}"
+    return 130
+  elif [[ "$materialized_pending_signal_status" == 143 ]]; then
+    kill -TERM "${BASHPID:-$$}"
+    return 143
+  fi
+  if [[ "$materialized_setup_status" != 0 ]]; then
+    printf 'Could not bind the private checkpoint directory identity and marker; any empty orphan was preserved.\n' >&2
+    return 1
+  fi
+  checkpoint_copy_dir="$materialized_dir/checkpoint"
+  if ! (umask 077; mkdir -- "$checkpoint_copy_dir"); then
+    recovery_cleanup_materialized_checkpoint || :
+    printf 'Could not create the private checkpoint snapshot directory.\n' >&2
+    return 1
+  fi
+
+  # The metadata and digest manifest define one immutable checkpoint view. Copy
+  # them first and never derive restore authority from the mutable source again.
+  for artifact in checkpoint-metadata.json SHA256SUMS; do
+    if ! recovery_require_regular_direct_file "$directory/$artifact" ||
+       ! COPYFILE_DISABLE=1 command cp "$directory/$artifact" \
+         "$checkpoint_copy_dir/$artifact" ||
+       ! chmod 600 "$checkpoint_copy_dir/$artifact"; then
+      recovery_cleanup_materialized_checkpoint || :
+      printf 'Could not materialize private checkpoint metadata.\n' >&2
+      return 1
+    fi
+  done
+  metadata_schema="$(recovery_checkpoint_metadata_schema "$checkpoint_copy_dir")" || {
+    recovery_cleanup_materialized_checkpoint || :
+    printf 'Checkpoint metadata schema is missing or unsupported.\n' >&2
+    return 1
+  }
+  if ! recovery_set_materialized_checkpoint_cleanup_allowlist \
+      "$stamp" "$metadata_schema"; then
+    recovery_cleanup_materialized_checkpoint || :
+    printf 'Could not bind the materialized checkpoint cleanup contract.\n' >&2
+    return 1
+  fi
+  if ! recovery_validate_checkpoint_layout "$directory" "$stamp" "$metadata_schema"; then
+    recovery_cleanup_materialized_checkpoint || :
+    return 1
+  fi
+  while IFS= read -r artifact; do
+    [[ "$artifact" != checkpoint-metadata.json ]] || continue
+    if ! recovery_require_regular_direct_file "$directory/$artifact" ||
+       ! COPYFILE_DISABLE=1 command cp "$directory/$artifact" \
+         "$checkpoint_copy_dir/$artifact" ||
+       ! chmod 600 "$checkpoint_copy_dir/$artifact"; then
+      recovery_cleanup_materialized_checkpoint || :
+      printf 'Could not materialize the checkpoint artifacts.\n' >&2
+      return 1
+    fi
+  done < <(recovery_checkpoint_artifacts "$stamp" "$metadata_schema")
+
+  if ! recovery_verify_checkpoint_directory "$checkpoint_copy_dir" "$stamp"; then
+    recovery_cleanup_materialized_checkpoint || :
+    printf 'Private checkpoint snapshot failed integrity validation.\n' >&2
+    return 1
+  fi
+  if ! dump_digest="$(recovery_checkpoint_digest_for "$checkpoint_copy_dir" "$dump_name")" ||
+     ! storage_digest="$(recovery_checkpoint_digest_for "$checkpoint_copy_dir" "$storage_name")" ||
+     ! inventory_digest="$(recovery_checkpoint_digest_for "$checkpoint_copy_dir" "$inventory_name")"; then
+    recovery_cleanup_materialized_checkpoint || :
     printf 'Could not resolve exact checkpoint artifact digests.\n' >&2
     return 1
   fi
-  materialized_dir="$(mktemp -d "${TMPDIR:-/tmp}/yenhubs-restore-$stamp.XXXXXX")" || return 1
-  if ! materialized_parent="$(cd "$(dirname "$materialized_dir")" && pwd -P)"; then
-    rmdir "$materialized_dir" 2>/dev/null
+  if [[ "$metadata_schema" == 3 ]] &&
+     ! evidence_digest="$(recovery_checkpoint_digest_for \
+       "$checkpoint_copy_dir" "$evidence_name")"; then
+    recovery_cleanup_materialized_checkpoint || :
+    printf 'Could not resolve the runner cutover evidence digest.\n' >&2
     return 1
   fi
-  materialized_base="$(basename "$materialized_dir")"
-  [[ "$materialized_base" =~ ^yenhubs-restore-[0-9]{8}-[0-9]{6}\.[A-Za-z0-9]{6}$ ]] || {
-    rmdir "$materialized_dir" 2>/dev/null
-    return 1
-  }
-  materialized_dir="$materialized_parent/$materialized_base"
-  if ! chmod 700 "$materialized_dir"; then
-    rmdir "$materialized_dir" 2>/dev/null
-    return 1
-  fi
-  RECOVERY_MATERIALIZED_DIR="$materialized_dir"
-  RECOVERY_MATERIALIZED_PARENT="$materialized_parent"
-  RECOVERY_MATERIALIZED_MARKER="$materialized_dir/.yenhubs-recovery-owner"
-  if ! printf 'yenhubs-recovery-materialized-v1\n' >"$RECOVERY_MATERIALIZED_MARKER" ||
-     ! chmod 600 "$RECOVERY_MATERIALIZED_MARKER"; then
-    rm -f -- "$RECOVERY_MATERIALIZED_MARKER"
-    rmdir "$materialized_dir" 2>/dev/null
-    RECOVERY_MATERIALIZED_DIR=""
-    RECOVERY_MATERIALIZED_PARENT=""
-    RECOVERY_MATERIALIZED_MARKER=""
-    return 1
-  fi
-  RECOVERY_MATERIALIZED_OWNED=1
-  if ! COPYFILE_DISABLE=1 command cp "$directory/$dump_name" "$materialized_dir/$dump_name" ||
-     ! COPYFILE_DISABLE=1 command cp "$directory/$storage_name" "$materialized_dir/$storage_name" ||
-     ! COPYFILE_DISABLE=1 command cp "$directory/$contract_name" "$materialized_dir/$contract_name" ||
-     ! COPYFILE_DISABLE=1 command cp "$directory/$inventory_name" "$materialized_dir/$inventory_name"; then
-    recovery_cleanup_materialized_checkpoint
-    printf 'Could not materialize the checkpoint artifacts.\n' >&2
-    return 1
-  fi
-  chmod 600 "$materialized_dir/$dump_name" "$materialized_dir/$storage_name" \
-    "$materialized_dir/$contract_name" "$materialized_dir/$inventory_name"
-  if ! copied_dump_digest="$(recovery_sha256_digest "$materialized_dir/$dump_name")" ||
-     ! copied_storage_digest="$(recovery_sha256_digest "$materialized_dir/$storage_name")" ||
-     ! copied_contract_digest="$(recovery_sha256_digest "$materialized_dir/$contract_name")" ||
-     ! copied_inventory_digest="$(recovery_sha256_digest "$materialized_dir/$inventory_name")" ||
-     [[ "$copied_dump_digest" != "$dump_digest" ||
-        "$copied_storage_digest" != "$storage_digest" ||
-        "$copied_contract_digest" != "$contract_digest" ||
-        "$copied_inventory_digest" != "$inventory_digest" ]]; then
-    recovery_cleanup_materialized_checkpoint
-    printf 'Materialized checkpoint artifacts do not match SHA256SUMS.\n' >&2
-    return 1
-  fi
-  if ! "$validator" "$materialized_dir/$dump_name" "$materialized_dir/$storage_name" >/dev/null; then
-    recovery_cleanup_materialized_checkpoint
+  if ! "$validator" "$checkpoint_copy_dir/$dump_name" \
+    "$checkpoint_copy_dir/$storage_name" >/dev/null; then
+    recovery_cleanup_materialized_checkpoint || :
     printf 'Materialized checkpoint pair failed joint validation.\n' >&2
     return 1
   fi
+
+  # A concurrent publication or directory replacement must not silently turn
+  # the private view into an A/B mixture. Revalidate the source and require its
+  # defining metadata and manifest to remain byte-identical to the private view.
+  if ! recovery_validate_checkpoint_layout "$directory" "$stamp" "$metadata_schema" ||
+     ! recovery_validate_sha256_manifest "$directory" "$stamp" "$metadata_schema" ||
+     ! metadata_copy_digest="$(recovery_sha256_digest \
+       "$checkpoint_copy_dir/checkpoint-metadata.json")" ||
+     ! manifest_copy_digest="$(recovery_sha256_digest \
+       "$checkpoint_copy_dir/SHA256SUMS")" ||
+     ! source_metadata_digest="$(recovery_sha256_digest \
+       "$directory/checkpoint-metadata.json")" ||
+     ! source_manifest_digest="$(recovery_sha256_digest "$directory/SHA256SUMS")" ||
+     [[ "$source_metadata_digest" != "$metadata_copy_digest" ||
+        "$source_manifest_digest" != "$manifest_copy_digest" ]]; then
+    recovery_cleanup_materialized_checkpoint || :
+    printf 'Checkpoint source changed while it was being materialized.\n' >&2
+    return 1
+  fi
+
   RECOVERY_CHECKPOINT_STAMP="$stamp"
   RECOVERY_DUMP_SHA256="$dump_digest"
   RECOVERY_STORAGE_SHA256="$storage_digest"
-  RECOVERY_DUMP_COPY="$materialized_dir/$dump_name"
-  RECOVERY_STORAGE_COPY="$materialized_dir/$storage_name"
-  RECOVERY_DATABASE_CONTRACT_COPY="$materialized_dir/$contract_name"
-  RECOVERY_DEPLOYMENT_INVENTORY_COPY="$materialized_dir/$inventory_name"
+  RECOVERY_DUMP_COPY="$checkpoint_copy_dir/$dump_name"
+  RECOVERY_STORAGE_COPY="$checkpoint_copy_dir/$storage_name"
+  RECOVERY_DATABASE_CONTRACT_COPY="$checkpoint_copy_dir/$contract_name"
+  RECOVERY_DEPLOYMENT_INVENTORY_COPY="$checkpoint_copy_dir/$inventory_name"
+  RECOVERY_CHECKPOINT_METADATA_COPY="$checkpoint_copy_dir/checkpoint-metadata.json"
   RECOVERY_DEPLOYMENT_INVENTORY_SHA256="$inventory_digest"
+  RECOVERY_CHECKPOINT_METADATA_SCHEMA="$metadata_schema"
+  RECOVERY_CHECKPOINT_OPERATION_ID="$(jq -er '
+    .operation_id | select(type == "string" and test("^[a-f0-9]{32}$"))
+  ' "$RECOVERY_CHECKPOINT_METADATA_COPY")" || {
+    recovery_cleanup_materialized_checkpoint || :
+    return 1
+  }
+  if [[ "$metadata_schema" == 3 ]]; then
+    runner_generation="$(jq -er '
+      .runtime_generation | select(. == "legacy-absent" or . == "durable-v2")
+    ' "$RECOVERY_CHECKPOINT_METADATA_COPY")" || {
+      recovery_cleanup_materialized_checkpoint || :
+      return 1
+    }
+    RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY="$checkpoint_copy_dir/$evidence_name"
+    RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256="$evidence_digest"
+    RECOVERY_CHECKPOINT_RUNNER_GENERATION="$runner_generation"
+    RECOVERY_RUNNER_RUNTIME_GENERATION="$runner_generation"
+  else
+    RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY=""
+    # Historical schema-2 checkpoints predate the standalone evidence file.
+    # Their checksummed schema-3 deployment inventory is the exact legacy
+    # absence proof, so its digest is the lock binding for this generation.
+    RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256="$inventory_digest"
+    RECOVERY_CHECKPOINT_RUNNER_GENERATION=legacy-absent
+    RECOVERY_RUNNER_RUNTIME_GENERATION=legacy-absent
+  fi
   RECOVERY_CHECKPOINT_NAMESPACE_UID="$(jq -er \
     '.namespace_uid | select(type == "string" and length > 0)' \
-    "$directory/checkpoint-metadata.json")" || {
-    recovery_cleanup_materialized_checkpoint
+    "$RECOVERY_CHECKPOINT_METADATA_COPY")" || {
+    recovery_cleanup_materialized_checkpoint || :
     return 1
   }
   RECOVERY_CHECKPOINT_PVC_UID="$(jq -er \
     '.ret_pvc_uid | select(type == "string" and length > 0)' \
-    "$directory/checkpoint-metadata.json")" || {
-    recovery_cleanup_materialized_checkpoint
+    "$RECOVERY_CHECKPOINT_METADATA_COPY")" || {
+    recovery_cleanup_materialized_checkpoint || :
     return 1
   }
 }
 
 recovery_cleanup_materialized_checkpoint() {
-  local canonical_parent base marker_value
-  if [[ "${RECOVERY_MATERIALIZED_OWNED:-0}" == "1" &&
-        -n "${RECOVERY_MATERIALIZED_DIR:-}" &&
-        -n "${RECOVERY_MATERIALIZED_PARENT:-}" &&
-        -n "${RECOVERY_MATERIALIZED_MARKER:-}" &&
-        -d "$RECOVERY_MATERIALIZED_DIR" && ! -L "$RECOVERY_MATERIALIZED_DIR" ]]; then
-    canonical_parent="$(cd "$(dirname "$RECOVERY_MATERIALIZED_DIR")" 2>/dev/null && pwd -P)" || canonical_parent=""
-    base="$(basename "$RECOVERY_MATERIALIZED_DIR")"
-    marker_value=""
-    if [[ "$canonical_parent" == "$RECOVERY_MATERIALIZED_PARENT" &&
-          "$RECOVERY_MATERIALIZED_DIR" == "$canonical_parent/$base" &&
-          "$base" =~ ^yenhubs-restore-[0-9]{8}-[0-9]{6}\.[A-Za-z0-9]{6}$ &&
-          "$RECOVERY_MATERIALIZED_MARKER" == "$RECOVERY_MATERIALIZED_DIR/.yenhubs-recovery-owner" &&
-          -f "$RECOVERY_MATERIALIZED_MARKER" && ! -L "$RECOVERY_MATERIALIZED_MARKER" ]]; then
-      marker_value="$(<"$RECOVERY_MATERIALIZED_MARKER")"
-      if [[ "$marker_value" == "yenhubs-recovery-materialized-v1" ]]; then
-        rm -rf -- "$RECOVERY_MATERIALIZED_DIR"
-      fi
+  if [[ "${RECOVERY_MATERIALIZED_OWNED:-0}" == 1 ]]; then
+    if [[ "${RECOVERY_MATERIALIZED_RETIRED:-0}" == 1 ||
+          -z "${RECOVERY_MATERIALIZED_DIR:-}" ||
+          -z "${RECOVERY_MATERIALIZED_PARENT:-}" ||
+          "${RECOVERY_MATERIALIZED_DIR:-}" != \
+            "${RECOVERY_MATERIALIZED_PARENT:-}/"* ||
+          "${RECOVERY_MATERIALIZED_MARKER:-}" != \
+            "${RECOVERY_MATERIALIZED_DIR:-}/.yenhubs-recovery-owner" ]]; then
+      RECOVERY_MATERIALIZED_CLEANUP_ATTEMPTED=1
+      printf 'Private materialized checkpoint ownership state is inconsistent; refusing cleanup or reuse.\n' >&2
+      return 1
     fi
+    if [[ "${RECOVERY_MATERIALIZED_CLEANUP_ATTEMPTED:-0}" == 1 ]]; then
+      printf 'Private materialized checkpoint cleanup is latched failed; refusing to reuse this process.\n' >&2
+      return 1
+    fi
+    RECOVERY_MATERIALIZED_CLEANUP_ATTEMPTED=1
+    if ! recovery_cleanup_marked_private_directory \
+        "${RECOVERY_MATERIALIZED_PRIVATE_TOKEN:-}" \
+        .yenhubs-recovery-owner yenhubs-recovery-materialized-v1 \
+        "${RECOVERY_MATERIALIZED_ALLOWED_PATHS[@]}"; then
+      # Retain every capability and OWNED=1 as a terminal latch. A second
+      # materialization in this process must observe the failed retirement and
+      # cannot silently replace the state with a new private snapshot.
+      printf 'Private materialized checkpoint cleanup failed closed; any exact empty orphan or replacement was preserved.\n' >&2
+      return 1
+    fi
+    RECOVERY_MATERIALIZED_RETIRED=1
+    RECOVERY_MATERIALIZED_OWNED=0
   fi
   RECOVERY_MATERIALIZED_DIR=""
   RECOVERY_MATERIALIZED_PARENT=""
   RECOVERY_MATERIALIZED_MARKER=""
+  RECOVERY_MATERIALIZED_PRIVATE_TOKEN=""
   RECOVERY_MATERIALIZED_OWNED=0
+  RECOVERY_MATERIALIZED_ALLOWED_PATHS=()
   # shellcheck disable=SC2034
   RECOVERY_DUMP_COPY=""
   # shellcheck disable=SC2034
@@ -1519,13 +3833,24 @@ recovery_cleanup_materialized_checkpoint() {
   RECOVERY_DATABASE_CONTRACT_COPY=""
   # shellcheck disable=SC2034
   RECOVERY_DEPLOYMENT_INVENTORY_COPY=""
+  # shellcheck disable=SC2034
+  RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY=""
+  # shellcheck disable=SC2034
+  RECOVERY_CHECKPOINT_METADATA_COPY=""
   RECOVERY_CHECKPOINT_STAMP=""
   RECOVERY_DUMP_SHA256=""
   RECOVERY_STORAGE_SHA256=""
   # shellcheck disable=SC2034
   RECOVERY_DEPLOYMENT_INVENTORY_SHA256=""
+  RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256=""
+  # shellcheck disable=SC2034
+  RECOVERY_CHECKPOINT_METADATA_SCHEMA=""
+  RECOVERY_CHECKPOINT_RUNNER_GENERATION=""
+  RECOVERY_RUNNER_RUNTIME_GENERATION=""
+  RECOVERY_CHECKPOINT_OPERATION_ID=""
   RECOVERY_CHECKPOINT_NAMESPACE_UID=""
   RECOVERY_CHECKPOINT_PVC_UID=""
+  return 0
 }
 
 recovery_dump_copy_row_count() {
@@ -2120,10 +4445,400 @@ recovery_require_deployment_contract() {
      "$selector" == "$expected_selector" && "$fingerprint" == "$expected_fingerprint" ]]
 }
 
-# Scale one previously captured Deployment with server-side compare-and-set
-# guards. The global operation lock and the immutable part of the Deployment
-# are revalidated immediately before and after the mutation. The new
-# resourceVersion is printed so callers can chain further exact mutations.
+recovery_capture_checkpoint_resume_receipt_contract() {
+  local deployment_name="$1" expected_uid="$2" expected_replicas="$3"
+  local expected_selector="$4" expected_fingerprint="$5" operation_id="$6"
+  local deployment_json
+  [[ "$expected_replicas" =~ ^[0-9]+$ &&
+     "$operation_id" =~ ^[a-f0-9]{32}$ ]] || return 2
+  deployment_json="$(
+    recovery_kubectl get deployment "$deployment_name" -n "$NAMESPACE" -o json
+  )" || return 1
+  jq -er --arg name "$deployment_name" --arg namespace "$NAMESPACE" \
+    --arg uid "$expected_uid" --argjson replicas "$expected_replicas" \
+    --arg selector "$expected_selector" --arg fingerprint "$expected_fingerprint" \
+    --arg operation_id "$operation_id" '
+    select(.apiVersion == "apps/v1" and .kind == "Deployment") |
+    select(.metadata.name == $name and .metadata.namespace == $namespace) |
+    select(.metadata.uid == $uid and
+      (.metadata.deletionTimestamp // null) == null) |
+    select(.metadata.resourceVersion | type == "string" and length > 0) |
+    select(.spec.replicas == $replicas) |
+    select(.spec.selector.matchLabels.app == $selector) |
+    select(.spec.template.metadata.labels.app == $selector) |
+    select(({selector:.spec.selector,strategy:(.spec.strategy // {}),
+      template:.spec.template} | @base64) == $fingerprint) |
+    select(.metadata.annotations["yenhubs.org/checkpoint-resume-operation"] ==
+      $operation_id) |
+    .metadata.resourceVersion
+  ' <<<"$deployment_json"
+}
+
+recovery_capture_checkpoint_resume_receipt_absent_contract() {
+  local deployment_name="$1" expected_uid="$2" expected_replicas="$3"
+  local expected_selector="$4" expected_fingerprint="$5" deployment_json
+  [[ "$expected_replicas" =~ ^[0-9]+$ ]] || return 2
+  deployment_json="$(
+    recovery_kubectl get deployment "$deployment_name" -n "$NAMESPACE" -o json
+  )" || return 1
+  jq -er --arg name "$deployment_name" --arg namespace "$NAMESPACE" \
+    --arg uid "$expected_uid" --argjson replicas "$expected_replicas" \
+    --arg selector "$expected_selector" --arg fingerprint "$expected_fingerprint" '
+    select(.apiVersion == "apps/v1" and .kind == "Deployment") |
+    select(.metadata.name == $name and .metadata.namespace == $namespace) |
+    select(.metadata.uid == $uid and
+      (.metadata.deletionTimestamp // null) == null) |
+    select(.metadata.resourceVersion | type == "string" and length > 0) |
+    select(.spec.replicas == $replicas) |
+    select(.spec.selector.matchLabels.app == $selector) |
+    select(.spec.template.metadata.labels.app == $selector) |
+    select(({selector:.spec.selector,strategy:(.spec.strategy // {}),
+      template:.spec.template} | @base64) == $fingerprint) |
+    select(((.metadata.annotations // {}) |
+      has("yenhubs.org/checkpoint-resume-operation") | not)) |
+    .metadata.resourceVersion
+  ' <<<"$deployment_json"
+}
+
+# Capture one exact legacy resume-receipt state from a single Deployment GET.
+# The only accepted metadata states are absence or the current operation ID;
+# an unknown value is not collapsed into "present" because stale-lock cleanup
+# must fail without mutation when ownership cannot be proven exactly.
+recovery_capture_checkpoint_resume_receipt_state_exact() {
+  local deployment_name="$1" expected_uid="$2" expected_replicas="$3"
+  local expected_selector="$4" expected_fingerprint="$5" operation_id="$6"
+  local deployment_json
+  [[ "$expected_replicas" =~ ^[01]$ &&
+     "$operation_id" =~ ^[a-f0-9]{32}$ ]] || return 2
+  deployment_json="$(
+    recovery_kubectl get deployment "$deployment_name" -n "$NAMESPACE" -o json
+  )" || return 1
+  jq -er --arg name "$deployment_name" --arg namespace "$NAMESPACE" \
+    --arg uid "$expected_uid" --argjson replicas "$expected_replicas" \
+    --arg selector "$expected_selector" --arg fingerprint "$expected_fingerprint" \
+    --arg operation_id "$operation_id" '
+    select(.apiVersion == "apps/v1" and .kind == "Deployment") |
+    select(.metadata.name == $name and .metadata.namespace == $namespace) |
+    select(.metadata.uid == $uid and
+      (.metadata.deletionTimestamp // null) == null) |
+    select(.metadata.resourceVersion | type == "string" and length > 0) |
+    select(.metadata.generation | type == "number" and floor == . and . >= 1) |
+    select(.spec.replicas == $replicas) |
+    select(.spec.selector.matchLabels.app == $selector) |
+    select(.spec.template.metadata.labels.app == $selector) |
+    select(({selector:.spec.selector,strategy:(.spec.strategy // {}),
+      template:.spec.template} | @base64) == $fingerprint) |
+    ((.metadata.annotations // {}) | select(type == "object")) as $annotations |
+    if ($annotations | has("yenhubs.org/checkpoint-resume-operation") | not) then
+      ["absent", .metadata.resourceVersion] | @tsv
+    elif $annotations["yenhubs.org/checkpoint-resume-operation"] == $operation_id then
+      ["exact", .metadata.resourceVersion] | @tsv
+    else
+      error("unknown_checkpoint_resume_receipt")
+    end
+  ' <<<"$deployment_json"
+}
+
+recovery_require_legacy_checkpoint_receipt_mutation_context() {
+  local deployment_name="$1"
+  [[ "$deployment_name" == reticulum &&
+     "${RECOVERY_OPERATION_OWNER:-}" == checkpoint-restore &&
+     "${RECOVERY_OPERATION_STATE:-}" == legacy-in-place &&
+     "${RECOVERY_CHECKPOINT_RUNNER_GENERATION:-}" == legacy-absent &&
+     "${RECOVERY_RUNNER_RUNTIME_GENERATION:-}" == legacy-absent &&
+     "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ ]]
+}
+
+# Publish the legacy restore authority-transfer receipt without changing the
+# Deployment spec or generation. A failed/ambiguous PATCH response is never
+# reconciled into success; the caller leaves all five writers at zero and the
+# operation lock retained for explicit stale cleanup.
+recovery_publish_checkpoint_resume_receipt_exact() {
+  local deployment_name="$1" expected_uid="$2" expected_resource_version="$3"
+  local expected_selector="$4" expected_fingerprint="$5" operation_id="$6"
+  local live_json patch response annotations_json generation response_generation
+  [[ -n "$expected_resource_version" &&
+     "$operation_id" =~ ^[a-f0-9]{32}$ ]] || return 2
+  recovery_require_legacy_checkpoint_receipt_mutation_context \
+    "$deployment_name" || return 1
+  [[ "$operation_id" == "$RECOVERY_OPERATION_ID" ]] || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  live_json="$(recovery_kubectl get deployment "$deployment_name" \
+    -n "$NAMESPACE" -o json)" || return 1
+  generation="$(jq -er --arg name "$deployment_name" --arg namespace "$NAMESPACE" \
+    --arg uid "$expected_uid" --arg rv "$expected_resource_version" \
+    --arg selector "$expected_selector" --arg fingerprint "$expected_fingerprint" '
+    select(.apiVersion == "apps/v1" and .kind == "Deployment") |
+    select(.metadata.name == $name and .metadata.namespace == $namespace) |
+    select(.metadata.uid == $uid and .metadata.resourceVersion == $rv and
+      (.metadata.deletionTimestamp // null) == null) |
+    select(.metadata.generation | type == "number" and floor == . and . >= 1) |
+    select(.spec.replicas == 0 and
+      .spec.selector.matchLabels.app == $selector and
+      .spec.template.metadata.labels.app == $selector) |
+    select(({selector:.spec.selector,strategy:(.spec.strategy // {}),
+      template:.spec.template} | @base64) == $fingerprint) |
+    select(((.metadata.annotations // {}) |
+      has("yenhubs.org/checkpoint-resume-operation") | not)) |
+    .metadata.generation
+  ' <<<"$live_json")" || return 1
+  annotations_json="$(jq -c '.metadata.annotations // null' <<<"$live_json")" || return 1
+  patch="$(jq -cn --arg uid "$expected_uid" \
+    --arg resource_version "$expected_resource_version" \
+    --arg operation_id "$operation_id" --argjson annotations "$annotations_json" '
+    ([
+      {op:"test",path:"/metadata/uid",value:$uid},
+      {op:"test",path:"/metadata/resourceVersion",value:$resource_version},
+      {op:"test",path:"/spec/replicas",value:0}
+    ] + [if $annotations == null then
+      {op:"add",path:"/metadata/annotations",
+        value:{"yenhubs.org/checkpoint-resume-operation":$operation_id}}
+    else
+      {op:"add",path:"/metadata/annotations/yenhubs.org~1checkpoint-resume-operation",
+        value:$operation_id}
+    end])
+  ')" || return 1
+  response="$(recovery_kubectl_mutate patch deployment "$deployment_name" \
+    -n "$NAMESPACE" --type=json --patch="$patch" -o json)" || return 1
+  response_generation="$(jq -er --arg name "$deployment_name" \
+    --arg namespace "$NAMESPACE" --arg uid "$expected_uid" \
+    --arg old_rv "$expected_resource_version" --arg selector "$expected_selector" \
+    --arg fingerprint "$expected_fingerprint" --arg operation_id "$operation_id" '
+    select(.apiVersion == "apps/v1" and .kind == "Deployment") |
+    select(.metadata.name == $name and .metadata.namespace == $namespace) |
+    select(.metadata.uid == $uid and (.metadata.deletionTimestamp // null) == null) |
+    select(.metadata.resourceVersion | type == "string" and length > 0 and . != $old_rv) |
+    select(.metadata.generation | type == "number" and floor == . and . >= 1) |
+    select(.spec.replicas == 0 and
+      .spec.selector.matchLabels.app == $selector and
+      .spec.template.metadata.labels.app == $selector) |
+    select(({selector:.spec.selector,strategy:(.spec.strategy // {}),
+      template:.spec.template} | @base64) == $fingerprint) |
+    select(.metadata.annotations["yenhubs.org/checkpoint-resume-operation"] ==
+      $operation_id) |
+    .metadata.generation
+  ' <<<"$response")" || return 1
+  [[ "$response_generation" == "$generation" ]] || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  jq -er '.metadata.resourceVersion' <<<"$response"
+}
+
+# The first post-ACK resume CAS must consume the exact receipt and terminal RV;
+# it cannot use the generic scaler, which intentionally ignores metadata.
+recovery_scale_deployment_with_checkpoint_receipt_exact() {
+  local deployment_name="$1" expected_uid="$2" expected_resource_version="$3"
+  local expected_selector="$4" expected_fingerprint="$5" operation_id="$6"
+  local live_json patch response generation expected_generation
+  [[ -n "$expected_resource_version" &&
+     "$operation_id" =~ ^[a-f0-9]{32}$ ]] || return 2
+  recovery_require_legacy_checkpoint_receipt_mutation_context \
+    "$deployment_name" || return 1
+  [[ "$operation_id" == "$RECOVERY_OPERATION_ID" ]] || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  live_json="$(recovery_kubectl get deployment "$deployment_name" \
+    -n "$NAMESPACE" -o json)" || return 1
+  generation="$(jq -er --arg name "$deployment_name" --arg namespace "$NAMESPACE" \
+    --arg uid "$expected_uid" --arg rv "$expected_resource_version" \
+    --arg selector "$expected_selector" --arg fingerprint "$expected_fingerprint" \
+    --arg operation_id "$operation_id" '
+    select(.apiVersion == "apps/v1" and .kind == "Deployment") |
+    select(.metadata.name == $name and .metadata.namespace == $namespace) |
+    select(.metadata.uid == $uid and .metadata.resourceVersion == $rv and
+      (.metadata.deletionTimestamp // null) == null) |
+    select(.metadata.generation | type == "number" and floor == . and . >= 1) |
+    select(.spec.replicas == 0 and
+      .spec.selector.matchLabels.app == $selector and
+      .spec.template.metadata.labels.app == $selector) |
+    select(({selector:.spec.selector,strategy:(.spec.strategy // {}),
+      template:.spec.template} | @base64) == $fingerprint) |
+    select(.metadata.annotations["yenhubs.org/checkpoint-resume-operation"] ==
+      $operation_id) |
+    .metadata.generation
+  ' <<<"$live_json")" || return 1
+  patch="$(jq -cn --arg uid "$expected_uid" \
+    --arg resource_version "$expected_resource_version" \
+    --arg operation_id "$operation_id" '
+    [
+      {op:"test",path:"/metadata/uid",value:$uid},
+      {op:"test",path:"/metadata/resourceVersion",value:$resource_version},
+      {op:"test",path:"/spec/replicas",value:0},
+      {op:"test",path:"/metadata/annotations/yenhubs.org~1checkpoint-resume-operation",
+        value:$operation_id},
+      {op:"replace",path:"/spec/replicas",value:1}
+    ]
+  ')" || return 1
+  response="$(recovery_kubectl_mutate patch deployment "$deployment_name" \
+    -n "$NAMESPACE" --type=json --patch="$patch" -o json)" || return 1
+  expected_generation=$((generation + 1))
+  jq -e --arg name "$deployment_name" --arg namespace "$NAMESPACE" \
+    --arg uid "$expected_uid" --arg old_rv "$expected_resource_version" \
+    --arg selector "$expected_selector" --arg fingerprint "$expected_fingerprint" \
+    --arg operation_id "$operation_id" --argjson generation "$expected_generation" '
+    .apiVersion == "apps/v1" and .kind == "Deployment" and
+    .metadata.name == $name and .metadata.namespace == $namespace and
+    .metadata.uid == $uid and (.metadata.deletionTimestamp // null) == null and
+    (.metadata.resourceVersion | type == "string" and length > 0 and . != $old_rv) and
+    .metadata.generation == $generation and .spec.replicas == 1 and
+    .spec.selector.matchLabels.app == $selector and
+    .spec.template.metadata.labels.app == $selector and
+    ({selector:.spec.selector,strategy:(.spec.strategy // {}),
+      template:.spec.template} | @base64) == $fingerprint and
+    .metadata.annotations["yenhubs.org/checkpoint-resume-operation"] ==
+      $operation_id
+  ' >/dev/null <<<"$response" || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  jq -er '.metadata.resourceVersion' <<<"$response"
+}
+
+recovery_clear_checkpoint_resume_receipt_exact() {
+  local deployment_name="$1" expected_uid="$2" expected_resource_version="$3"
+  local expected_replicas="$4" expected_selector="$5" expected_fingerprint="$6"
+  local operation_id="$7" live_json patch response generation
+  [[ "$expected_replicas" =~ ^[01]$ && -n "$expected_resource_version" &&
+     "$operation_id" =~ ^[a-f0-9]{32}$ ]] || return 2
+  recovery_require_legacy_checkpoint_receipt_mutation_context \
+    "$deployment_name" || return 1
+  [[ "$operation_id" == "$RECOVERY_OPERATION_ID" ]] || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  live_json="$(recovery_kubectl get deployment "$deployment_name" \
+    -n "$NAMESPACE" -o json)" || return 1
+  generation="$(jq -er --arg name "$deployment_name" --arg namespace "$NAMESPACE" \
+    --arg uid "$expected_uid" --arg rv "$expected_resource_version" \
+    --argjson replicas "$expected_replicas" --arg selector "$expected_selector" \
+    --arg fingerprint "$expected_fingerprint" --arg operation_id "$operation_id" '
+    select(.apiVersion == "apps/v1" and .kind == "Deployment") |
+    select(.metadata.name == $name and .metadata.namespace == $namespace) |
+    select(.metadata.uid == $uid and .metadata.resourceVersion == $rv and
+      (.metadata.deletionTimestamp // null) == null) |
+    select(.metadata.generation | type == "number" and floor == . and . >= 1) |
+    select(.spec.replicas == $replicas and
+      .spec.selector.matchLabels.app == $selector and
+      .spec.template.metadata.labels.app == $selector) |
+    select(({selector:.spec.selector,strategy:(.spec.strategy // {}),
+      template:.spec.template} | @base64) == $fingerprint) |
+    select(.metadata.annotations["yenhubs.org/checkpoint-resume-operation"] ==
+      $operation_id) |
+    .metadata.generation
+  ' <<<"$live_json")" || return 1
+  patch="$(jq -cn --arg uid "$expected_uid" \
+    --arg resource_version "$expected_resource_version" \
+    --argjson replicas "$expected_replicas" --arg operation_id "$operation_id" '
+    [
+      {op:"test",path:"/metadata/uid",value:$uid},
+      {op:"test",path:"/metadata/resourceVersion",value:$resource_version},
+      {op:"test",path:"/spec/replicas",value:$replicas},
+      {op:"test",path:"/metadata/annotations/yenhubs.org~1checkpoint-resume-operation",
+        value:$operation_id},
+      {op:"remove",path:"/metadata/annotations/yenhubs.org~1checkpoint-resume-operation"}
+    ]
+  ')" || return 1
+  response="$(recovery_kubectl_mutate patch deployment "$deployment_name" \
+    -n "$NAMESPACE" --type=json --patch="$patch" -o json)" || return 1
+  jq -e --arg name "$deployment_name" --arg namespace "$NAMESPACE" \
+    --arg uid "$expected_uid" --arg old_rv "$expected_resource_version" \
+    --argjson replicas "$expected_replicas" --arg selector "$expected_selector" \
+    --arg fingerprint "$expected_fingerprint" --argjson generation "$generation" '
+    .apiVersion == "apps/v1" and .kind == "Deployment" and
+    .metadata.name == $name and .metadata.namespace == $namespace and
+    .metadata.uid == $uid and (.metadata.deletionTimestamp // null) == null and
+    (.metadata.resourceVersion | type == "string" and length > 0 and . != $old_rv) and
+    .metadata.generation == $generation and .spec.replicas == $replicas and
+    .spec.selector.matchLabels.app == $selector and
+    .spec.template.metadata.labels.app == $selector and
+    ({selector:.spec.selector,strategy:(.spec.strategy // {}),
+      template:.spec.template} | @base64) == $fingerprint and
+    (((.metadata.annotations // {}) |
+      has("yenhubs.org/checkpoint-resume-operation")) | not)
+  ' >/dev/null <<<"$response" || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  jq -er '.metadata.resourceVersion' <<<"$response"
+}
+
+recovery_clear_checkpoint_resume_receipt() {
+  local deployment_name="$1" expected_uid="$2" expected_resource_version="$3"
+  local expected_replicas="$4" expected_selector="$5" expected_fingerprint="$6"
+  local operation_id="$7" deployment_json current_resource_version patch response
+  [[ "$expected_replicas" =~ ^[0-9]+$ &&
+     -n "$expected_resource_version" &&
+     "$operation_id" =~ ^[a-f0-9]{32}$ ]] || return 2
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  current_resource_version="$(recovery_capture_checkpoint_resume_receipt_contract \
+    "$deployment_name" "$expected_uid" "$expected_replicas" \
+    "$expected_selector" "$expected_fingerprint" "$operation_id")" || return 1
+  [[ "$current_resource_version" == "$expected_resource_version" ]] || return 1
+  patch="$(jq -cn --arg uid "$expected_uid" \
+    --arg resource_version "$expected_resource_version" \
+    --argjson replicas "$expected_replicas" --arg operation_id "$operation_id" '
+    [
+      {op:"test",path:"/metadata/uid",value:$uid},
+      {op:"test",path:"/metadata/resourceVersion",value:$resource_version},
+      {op:"test",path:"/spec/replicas",value:$replicas},
+      {op:"test",path:"/metadata/annotations/yenhubs.org~1checkpoint-resume-operation",
+        value:$operation_id},
+      {op:"remove",path:"/metadata/annotations/yenhubs.org~1checkpoint-resume-operation"}
+    ]
+  ')" || return 1
+  response="$(recovery_kubectl_mutate patch deployment "$deployment_name" \
+    -n "$NAMESPACE" --type=json --patch="$patch" -o json)" || {
+    # An interrupted response may follow a committed remove. Reconcile only
+    # exact absence on the unchanged desired replica/template contract.
+    deployment_json="$(recovery_kubectl get deployment "$deployment_name" \
+      -n "$NAMESPACE" -o json)" || return 1
+    jq -e --arg name "$deployment_name" --arg namespace "$NAMESPACE" \
+      --arg uid "$expected_uid" --argjson replicas "$expected_replicas" \
+      --arg selector "$expected_selector" --arg fingerprint "$expected_fingerprint" '
+      .apiVersion == "apps/v1" and .kind == "Deployment" and
+      .metadata.name == $name and .metadata.namespace == $namespace and
+      .metadata.uid == $uid and (.metadata.deletionTimestamp // null) == null and
+      (.metadata.resourceVersion | type == "string" and length > 0) and
+      .spec.replicas == $replicas and
+      .spec.selector.matchLabels.app == $selector and
+      .spec.template.metadata.labels.app == $selector and
+      ({selector:.spec.selector,strategy:(.spec.strategy // {}),
+        template:.spec.template} | @base64) == $fingerprint and
+      ((.metadata.annotations // {}) |
+        has("yenhubs.org/checkpoint-resume-operation") | not)
+    ' >/dev/null <<<"$deployment_json" || return 1
+    recovery_require_operation_serialization || return 1
+    recovery_require_operation_lock || return 1
+    jq -er '.metadata.resourceVersion' <<<"$deployment_json"
+    return
+  }
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  jq -er --arg name "$deployment_name" --arg namespace "$NAMESPACE" \
+    --arg uid "$expected_uid" --argjson replicas "$expected_replicas" \
+    --arg selector "$expected_selector" --arg fingerprint "$expected_fingerprint" '
+    select(.apiVersion == "apps/v1" and .kind == "Deployment") |
+    select(.metadata.name == $name and .metadata.namespace == $namespace) |
+    select(.metadata.uid == $uid and
+      (.metadata.deletionTimestamp // null) == null) |
+    select(.metadata.resourceVersion | type == "string" and length > 0) |
+    select(.spec.replicas == $replicas and
+      .spec.selector.matchLabels.app == $selector and
+      .spec.template.metadata.labels.app == $selector) |
+    select(({selector:.spec.selector,strategy:(.spec.strategy // {}),
+      template:.spec.template} | @base64) == $fingerprint) |
+    select(((.metadata.annotations // {}) |
+      has("yenhubs.org/checkpoint-resume-operation") | not)) |
+    .metadata.resourceVersion
+  ' <<<"$response"
+}
+
+# Change the replica count of one previously captured Deployment through the
+# full Deployment endpoint with server-side compare-and-set guards.  Never use
+# deployments/scale here: AUD078 permanently denies that subresource because
+# it cannot carry the durable parent-fence contract.  The global operation lock
+# and the immutable part of the Deployment are revalidated immediately before
+# and after the mutation. The new resourceVersion is printed so callers can
+# chain further exact mutations.
 recovery_scale_deployment_exact() {
   local deployment_name="$1"
   local expected_uid="$2"
@@ -2132,10 +4847,14 @@ recovery_scale_deployment_exact() {
   local desired_replicas="$5"
   local expected_selector="$6"
   local expected_fingerprint="$7"
+  local resume_operation_id="${8:-}"
   local before_contract uid resource_version replicas selector fingerprint
   local after_contract after_uid after_resource_version after_replicas after_selector after_fingerprint
+  local patch receipt_operation patched_json live_json annotations_json
   [[ "$expected_replicas" =~ ^[0-9]+$ && "$desired_replicas" =~ ^[0-9]+$ &&
-     -n "$expected_resource_version" ]] || return 2
+     -n "$expected_resource_version" &&
+     ( -z "$resume_operation_id" || "$resume_operation_id" =~ ^[a-f0-9]{32}$ ) ]] || return 2
+  recovery_require_operation_serialization || return 1
   recovery_require_operation_lock || return 1
   before_contract="$(recovery_capture_deployment_contract "$deployment_name")" || return 1
   IFS=$'\t' read -r uid resource_version replicas selector fingerprint <<<"$before_contract"
@@ -2145,20 +4864,82 @@ recovery_scale_deployment_exact() {
     printf 'Deployment contract changed before scaling %s.\n' "$deployment_name" >&2
     return 1
   }
-  recovery_kubectl_mutate scale deployment "$deployment_name" -n "$NAMESPACE" \
-    --current-replicas="$expected_replicas" \
-    --resource-version="$expected_resource_version" \
-    --replicas="$desired_replicas" >/dev/null || return 1
+  receipt_operation='null'
+  if [[ -n "$resume_operation_id" ]]; then
+    live_json="$(recovery_kubectl get deployment "$deployment_name" \
+      -n "$NAMESPACE" -o json)" || return 1
+    jq -e --arg uid "$expected_uid" --arg rv "$expected_resource_version" \
+      --argjson replicas "$expected_replicas" '
+      .metadata.uid == $uid and .metadata.resourceVersion == $rv and
+      .spec.replicas == $replicas and
+      (((.metadata.annotations // {}) |
+        has("yenhubs.org/checkpoint-resume-operation")) | not)
+    ' >/dev/null <<<"$live_json" || return 1
+    annotations_json="$(jq -c '.metadata.annotations // null' <<<"$live_json")" || return 1
+    receipt_operation="$(jq -cn --argjson annotations "$annotations_json" \
+      --arg operation_id "$resume_operation_id" '
+      if $annotations == null then
+        {op:"add",path:"/metadata/annotations",
+          value:{"yenhubs.org/checkpoint-resume-operation":$operation_id}}
+      else
+        {op:"add",path:"/metadata/annotations/yenhubs.org~1checkpoint-resume-operation",
+          value:$operation_id}
+      end
+    ')" || return 1
+  fi
+  patch="$(jq -cn \
+    --arg uid "$expected_uid" \
+    --arg resource_version "$expected_resource_version" \
+    --argjson expected_replicas "$expected_replicas" \
+    --argjson desired_replicas "$desired_replicas" \
+    --argjson receipt_operation "$receipt_operation" '
+    ([
+      {op:"test",path:"/metadata/uid",value:$uid},
+      {op:"test",path:"/metadata/resourceVersion",value:$resource_version},
+      {op:"test",path:"/spec/replicas",value:$expected_replicas}
+    ] + (if $receipt_operation == null then [] else [$receipt_operation] end) + [
+      {op:"replace",path:"/spec/replicas",value:$desired_replicas}
+    ])
+  ')" || return 1
+  patched_json="$(recovery_kubectl_mutate patch deployment "$deployment_name" \
+    -n "$NAMESPACE" --type=json --patch="$patch" -o json)" || return 1
+  jq -e --arg name "$deployment_name" --arg namespace "$NAMESPACE" \
+    --arg uid "$expected_uid" --arg old_rv "$expected_resource_version" \
+    --argjson replicas "$desired_replicas" --arg selector "$expected_selector" \
+    --arg fingerprint "$expected_fingerprint" --arg receipt "$resume_operation_id" '
+    .apiVersion == "apps/v1" and .kind == "Deployment" and
+    .metadata.name == $name and .metadata.namespace == $namespace and
+    .metadata.uid == $uid and (.metadata.deletionTimestamp // null) == null and
+    (.metadata.resourceVersion | type == "string" and length > 0 and . != $old_rv) and
+    .spec.replicas == $replicas and
+    .spec.selector.matchLabels.app == $selector and
+    .spec.template.metadata.labels.app == $selector and
+    ({selector:.spec.selector,strategy:(.spec.strategy // {}),
+      template:.spec.template} | @base64) == $fingerprint and
+    (if $receipt == "" then true else
+      .metadata.annotations["yenhubs.org/checkpoint-resume-operation"] == $receipt
+    end)
+  ' >/dev/null <<<"$patched_json" || return 1
+  recovery_require_operation_serialization || return 1
   recovery_require_operation_lock || return 1
   after_contract="$(recovery_capture_deployment_contract "$deployment_name")" || return 1
   IFS=$'\t' read -r after_uid after_resource_version after_replicas after_selector after_fingerprint \
     <<<"$after_contract"
-  [[ "$after_uid" == "$expected_uid" && "$after_replicas" == "$desired_replicas" &&
+  [[ "$after_uid" == "$expected_uid" &&
+     -n "$after_resource_version" &&
+     "$after_resource_version" != "$expected_resource_version" &&
+     "$after_replicas" == "$desired_replicas" &&
      "$after_selector" == "$expected_selector" &&
      "$after_fingerprint" == "$expected_fingerprint" ]] || {
     printf 'Deployment contract changed while scaling %s.\n' "$deployment_name" >&2
     return 1
   }
+  if [[ -n "$resume_operation_id" ]]; then
+    recovery_capture_checkpoint_resume_receipt_contract \
+      "$deployment_name" "$expected_uid" "$desired_replicas" \
+      "$expected_selector" "$expected_fingerprint" "$resume_operation_id" \
+      >/dev/null || return 1
+  fi
   printf '%s\n' "$after_resource_version"
 }
 
@@ -2385,6 +5166,7 @@ recovery_renew_operation_serialization() {
 
 recovery_start_operation_serialization_heartbeat() {
   local interval="${RECOVERY_LEASE_HEARTBEAT_SECONDS:-20}" sleeper_pid=""
+  local sleeper_start_identity="" heartbeat_start_identity=""
   [[ "$interval" =~ ^([1-9]|[12][0-9]|30)$ ]] || return 2
   RECOVERY_SERIALIZATION_HEARTBEAT_STOP="$(mktemp \
     "${TMPDIR:-/tmp}/yenhubs-lease-stop.XXXXXX")" || return 1
@@ -2399,9 +5181,13 @@ recovery_start_operation_serialization_heartbeat() {
   (
     # shellcheck disable=SC2317,SC2329 # Invoked indirectly by the TERM/INT trap.
     heartbeat_stop() {
-      [[ "$sleeper_pid" =~ ^[1-9][0-9]*$ ]] || exit 0
-      kill -TERM "$sleeper_pid" 2>/dev/null || :
-      wait "$sleeper_pid" 2>/dev/null || :
+      if [[ "$sleeper_pid" =~ ^[1-9][0-9]*$ &&
+            -n "$sleeper_start_identity" ]] &&
+         recovery_process_identity_is_live \
+           "$sleeper_pid" "$sleeper_start_identity"; then
+        kill -TERM "$sleeper_pid" 2>/dev/null || :
+        wait "$sleeper_pid" 2>/dev/null || :
+      fi
       exit 0
     }
     trap heartbeat_stop TERM INT
@@ -2410,22 +5196,46 @@ recovery_start_operation_serialization_heartbeat() {
         "$RECOVERY_SERIALIZATION_PARENT_START_IDENTITY" || exit 0
       sleep "$interval" &
       sleeper_pid=$!
+      sleeper_start_identity="$(
+        recovery_process_start_identity "$sleeper_pid"
+      )" || {
+        wait "$sleeper_pid" 2>/dev/null || :
+        exit 1
+      }
       wait "$sleeper_pid" || exit 1
       sleeper_pid=""
+      sleeper_start_identity=""
       [[ ! -s "$RECOVERY_SERIALIZATION_HEARTBEAT_STOP" ]] || exit 0
       recovery_process_identity_is_live "$RECOVERY_SERIALIZATION_PARENT_PID" \
         "$RECOVERY_SERIALIZATION_PARENT_START_IDENTITY" || exit 0
       if ! recovery_renew_operation_serialization; then
         printf 'lease_lost\n' >"$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE"
-        kill -TERM "$RECOVERY_SERIALIZATION_PARENT_PID" 2>/dev/null || :
+        # Renewal may block long enough for the numeric parent PID to be
+        # reused. Revalidate its start identity immediately next to TERM.
+        if recovery_process_identity_is_live \
+          "$RECOVERY_SERIALIZATION_PARENT_PID" \
+          "$RECOVERY_SERIALIZATION_PARENT_START_IDENTITY"; then
+          kill -TERM "$RECOVERY_SERIALIZATION_PARENT_PID" 2>/dev/null || :
+        fi
         exit 1
       fi
     done
   ) &
   RECOVERY_SERIALIZATION_HEARTBEAT_PID=$!
+  if ! heartbeat_start_identity="$(recovery_process_start_identity \
+      "$RECOVERY_SERIALIZATION_HEARTBEAT_PID")"; then
+    # Without an identity capability the child may not be signalled safely.
+    # Ask it to stop cooperatively and reap it before reporting failure.
+    printf 'stop\n' >"$RECOVERY_SERIALIZATION_HEARTBEAT_STOP"
+    wait "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" 2>/dev/null || :
+    RECOVERY_SERIALIZATION_HEARTBEAT_PID=""
+    return 1
+  fi
+  RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY="$heartbeat_start_identity"
   export RECOVERY_SERIALIZATION_HEARTBEAT_STOP \
     RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE \
-    RECOVERY_SERIALIZATION_HEARTBEAT_PID
+    RECOVERY_SERIALIZATION_HEARTBEAT_PID \
+    RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY
 }
 
 recovery_adopt_parent_operation_serialization() {
@@ -2454,20 +5264,39 @@ recovery_adopt_parent_operation_serialization() {
   fi
 }
 
-recovery_require_operation_serialization() {
-  local lease_json
+recovery_require_operation_serialization_local_capability() {
   [[ "$RECOVERY_SERIALIZATION_LEASE_REQUIRED" == 1 ]] || return 1
   if [[ "$RECOVERY_SERIALIZATION_ADOPTED" == 0 ]]; then
     [[ "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" =~ ^[1-9][0-9]*$ &&
+       -n "$RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY" &&
        -f "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE" &&
        ! -s "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE" ]] || return 1
-    kill -0 "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" 2>/dev/null || return 1
+    recovery_process_identity_is_live \
+      "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" \
+      "$RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY" || return 1
   else
     recovery_process_identity_is_live \
       "$RECOVERY_SERIALIZATION_ADOPTED_PARENT_PID" \
       "$RECOVERY_SERIALIZATION_ADOPTED_PARENT_START_IDENTITY" || return 1
   fi
+}
+
+recovery_require_operation_serialization() {
+  local lease_json
+  recovery_require_operation_serialization_local_capability || return 1
   lease_json="$(recovery_kubectl get lease "$RECOVERY_SERIALIZATION_LEASE_NAME" \
+    -n "$NAMESPACE" -o json)" || return 1
+  recovery_owned_serialization_lease_json_is_exact "$lease_json"
+}
+
+recovery_require_operation_serialization_stream() {
+  local request_timeout_seconds="${1:-5}" lease_json
+  [[ "$request_timeout_seconds" =~ ^[1-5]$ ]] || return 2
+  recovery_require_operation_serialization_local_capability || return 1
+  [[ -n "${EXPECTED_KUBE_CONTEXT:-}" ]] || return 1
+  lease_json="$(command kubectl --context "$EXPECTED_KUBE_CONTEXT" \
+    --request-timeout="${request_timeout_seconds}s" \
+    get lease "$RECOVERY_SERIALIZATION_LEASE_NAME" \
     -n "$NAMESPACE" -o json)" || return 1
   recovery_owned_serialization_lease_json_is_exact "$lease_json"
 }
@@ -2478,10 +5307,20 @@ recovery_release_operation_serialization() {
   [[ "$RECOVERY_SERIALIZATION_ADOPTED" == 0 ]] || return 2
   if [[ "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" =~ ^[1-9][0-9]*$ ]]; then
     printf 'stop\n' >"$RECOVERY_SERIALIZATION_HEARTBEAT_STOP"
-    kill -TERM "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" 2>/dev/null || :
-    if ! wait "$RECOVERY_SERIALIZATION_HEARTBEAT_PID"; then release_status=1; fi
+    if recovery_process_identity_is_live \
+      "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" \
+      "$RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY"; then
+      kill -TERM "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" 2>/dev/null || :
+      if ! wait "$RECOVERY_SERIALIZATION_HEARTBEAT_PID"; then release_status=1; fi
+    elif kill -0 "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" 2>/dev/null; then
+      # The PID belongs to another process. Never signal or wait on it.
+      release_status=1
+    elif ! wait "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" 2>/dev/null; then
+      release_status=1
+    fi
   fi
   RECOVERY_SERIALIZATION_HEARTBEAT_PID=""
+  RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY=""
   lease_json="$(recovery_kubectl get lease "$RECOVERY_SERIALIZATION_LEASE_NAME" \
     -n "$NAMESPACE" -o json)" || return 1
   recovery_owned_serialization_lease_json_is_exact "$lease_json" || return 1
@@ -2508,8 +5347,137 @@ recovery_release_operation_serialization() {
   RECOVERY_SERIALIZATION_ADOPTED_PARENT_PID=""
   RECOVERY_SERIALIZATION_ADOPTED_PARENT_START_IDENTITY=""
   export RECOVERY_SERIALIZATION_LEASE_REQUIRED \
-    RECOVERY_SERIALIZATION_LEASE_HOLDER RECOVERY_SERIALIZATION_LEASE_UID
+    RECOVERY_SERIALIZATION_LEASE_HOLDER RECOVERY_SERIALIZATION_LEASE_UID \
+    RECOVERY_SERIALIZATION_HEARTBEAT_PID \
+    RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY
   [[ "$release_status" == 0 ]]
+}
+
+recovery_materialized_legacy_runner_binding_is_valid() {
+  local metadata_path="${RECOVERY_CHECKPOINT_METADATA_COPY:-}"
+  local inventory_path="${RECOVERY_DEPLOYMENT_INVENTORY_COPY:-}"
+  local inventory_digest
+  recovery_require_regular_direct_file "$metadata_path" || return 1
+  recovery_require_regular_direct_file "$inventory_path" || return 1
+  [[ "$(recovery_checkpoint_metadata_schema "$(dirname "$metadata_path")")" == 2 ]] ||
+    return 1
+  recovery_checkpoint_metadata_is_acceptable \
+    "$metadata_path" "$RECOVERY_CHECKPOINT_STAMP" || return 1
+  recovery_checkpoint_deployment_inventory_is_acceptable \
+    "$inventory_path" "$NAMESPACE" || return 1
+  inventory_digest="$(recovery_sha256_digest "$inventory_path")" || return 1
+  [[ "$inventory_digest" == "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256" &&
+     "$inventory_digest" == "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" ]] ||
+    return 1
+  jq -e --slurpfile inventory "$inventory_path" '
+    .schema_version == 2 and
+    ($inventory | length) == 1 and
+    $inventory[0].schema_version == 3 and
+    $inventory[0].bot_runner_runtime.mode == "process-local" and
+    $inventory[0].bot_runner_runtime.control_plane == {state:"legacy-absent"} and
+    $inventory[0].bot_runner_runtime.recovery_epoch == {state:"legacy-absent"} and
+    .namespace == $inventory[0].namespace and
+    .namespace_uid == $inventory[0].namespace_uid
+  ' "$metadata_path" >/dev/null
+}
+
+recovery_materialized_schema3_runner_binding_is_valid() {
+  local expected_generation="$1"
+  local metadata_path="${RECOVERY_CHECKPOINT_METADATA_COPY:-}"
+  local inventory_path="${RECOVERY_DEPLOYMENT_INVENTORY_COPY:-}"
+  local evidence_path="${RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY:-}"
+  local inventory_digest evidence_digest
+  [[ "$expected_generation" == legacy-absent ||
+     "$expected_generation" == durable-v2 ]] || return 2
+  recovery_require_regular_direct_file "$metadata_path" || return 1
+  recovery_require_regular_direct_file "$inventory_path" || return 1
+  recovery_require_regular_direct_file "$evidence_path" || return 1
+  recovery_checkpoint_metadata_is_acceptable \
+    "$metadata_path" "$RECOVERY_CHECKPOINT_STAMP" || return 1
+  recovery_checkpoint_deployment_inventory_is_acceptable \
+    "$inventory_path" "$NAMESPACE" || return 1
+  recovery_validate_runner_cutover_evidence_offline \
+    "$evidence_path" "$inventory_path" >/dev/null || return 1
+  inventory_digest="$(recovery_sha256_digest "$inventory_path")" || return 1
+  evidence_digest="$(recovery_sha256_digest "$evidence_path")" || return 1
+  [[ "$inventory_digest" == "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256" &&
+     "$evidence_digest" == "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" ]] ||
+    return 1
+  jq -e --arg generation "$expected_generation" \
+    --arg evidence_sha "$evidence_digest" \
+    --slurpfile inventory "$inventory_path" --slurpfile evidence "$evidence_path" '
+    .schema_version == 3 and .runtime_generation == $generation and
+    .runner_cutover_evidence_sha256 == $evidence_sha and
+    ($inventory | length) == 1 and ($evidence | length) == 1 and
+    $inventory[0].schema_version == 4 and
+    $inventory[0].bot_runner_runtime.generation == $generation and
+    $evidence[0].runtime_generation == $generation and
+    .operation_id == $evidence[0].checkpoint_operation_id and
+    .namespace == $inventory[0].namespace and
+    .namespace_uid == $inventory[0].namespace_uid and
+    .namespace_uid == $evidence[0].namespaces.parent.uid
+  ' "$metadata_path" >/dev/null
+}
+
+recovery_operation_runner_contract_is_valid() {
+  local owner="$1"
+  case "$owner" in
+    checkpoint-backup)
+      [[ -z "${RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256:-}" &&
+         -z "${RECOVERY_RUNNER_RUNTIME_GENERATION:-}" &&
+         -z "${RECOVERY_DEPLOYMENT_INVENTORY_SHA256:-}" &&
+         -z "${RECOVERY_OPERATION_STATE:-}" &&
+         -z "${RECOVERY_FENCE_PRE_EPOCH:-}" &&
+         -z "${RECOVERY_FENCE_TARGET_EPOCH:-}" ]]
+      ;;
+    aud065-rotation)
+      [[ "${RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256:-}" =~ ^[a-f0-9]{64}$ &&
+         "${RECOVERY_RUNNER_RUNTIME_GENERATION:-}" == legacy-absent &&
+         "${RECOVERY_DEPLOYMENT_INVENTORY_SHA256:-}" =~ ^[a-f0-9]{64}$ &&
+         -z "${RECOVERY_FENCE_PRE_EPOCH:-}" &&
+         -z "${RECOVERY_FENCE_TARGET_EPOCH:-}" ]] || return 1
+      if [[ -n "${RECOVERY_CHECKPOINT_METADATA_COPY:-}" ||
+            -n "${RECOVERY_DEPLOYMENT_INVENTORY_COPY:-}" ||
+            -n "${RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY:-}" ]]; then
+        recovery_materialized_schema3_runner_binding_is_valid legacy-absent
+      fi
+      ;;
+    checkpoint-restore)
+      [[ "${RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256:-}" =~ ^[a-f0-9]{64}$ &&
+         "${RECOVERY_DEPLOYMENT_INVENTORY_SHA256:-}" =~ ^[a-f0-9]{64}$ ]] ||
+        return 1
+      case "${RECOVERY_CHECKPOINT_METADATA_SCHEMA:-}" in
+        2)
+          [[ "${RECOVERY_RUNNER_RUNTIME_GENERATION:-}" == legacy-absent &&
+             -z "${RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY:-}" &&
+             "${RECOVERY_DEPLOYMENT_INVENTORY_SHA256:-}" =~ ^[a-f0-9]{64}$ &&
+             "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" == "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256" ]] || return 1
+          recovery_materialized_legacy_runner_binding_is_valid || return 1
+          ;;
+        3)
+          recovery_materialized_schema3_runner_binding_is_valid \
+            "$RECOVERY_RUNNER_RUNTIME_GENERATION" || return 1
+          ;;
+        *) return 1 ;;
+      esac
+      case "${RECOVERY_RUNNER_RUNTIME_GENERATION:-}" in
+        legacy-absent)
+          [[ "${RECOVERY_OPERATION_STATE:-}" == legacy-in-place &&
+             -z "${RECOVERY_FENCE_PRE_EPOCH:-}" &&
+             -z "${RECOVERY_FENCE_TARGET_EPOCH:-}" ]]
+          ;;
+        durable-v2)
+          [[ "${RECOVERY_OPERATION_STATE:-}" =~ ^(restore-fence-prepared|restore-complete-awaiting-reactivation)$ &&
+             "${RECOVERY_FENCE_PRE_EPOCH:-}" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ &&
+             "${RECOVERY_FENCE_TARGET_EPOCH:-}" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ &&
+             "$RECOVERY_FENCE_PRE_EPOCH" != "$RECOVERY_FENCE_TARGET_EPOCH" &&
+             "${RECOVERY_DEPLOYMENT_INVENTORY_SHA256:-}" =~ ^[a-f0-9]{64}$ ]]
+          ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 recovery_operation_lock_json_is_exact() {
@@ -2519,7 +5487,7 @@ recovery_operation_lock_json_is_exact() {
      -n "${RECOVERY_OPERATION_LOCK_RESOURCE_VERSION:-}" &&
      "${RECOVERY_OPERATION_TOKEN:-}" =~ ^[a-f0-9]{32}$ &&
      "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ &&
-     "${RECOVERY_OPERATION_OWNER:-}" =~ ^[A-Za-z0-9._-]+$ &&
+     "${RECOVERY_OPERATION_OWNER:-}" =~ ^(checkpoint-backup|checkpoint-restore|aud065-rotation)$ &&
      -n "${RECOVERY_NAMESPACE_UID:-}" && -n "${RECOVERY_PVC_UID:-}" &&
      "${RECOVERY_CHECKPOINT_STAMP:-}" =~ ^[0-9]{8}-[0-9]{6}$ &&
      "${RECOVERY_DUMP_SHA256:-}" =~ ^[a-fA-F0-9]{64}$ &&
@@ -2530,6 +5498,8 @@ recovery_operation_lock_json_is_exact() {
   else
     [[ -z "$RECOVERY_OPERATION_BINDING_SHA256" ]] || return 1
   fi
+  recovery_operation_runner_contract_is_valid \
+    "$RECOVERY_OPERATION_OWNER" || return 1
   jq -e \
     --arg name "$RECOVERY_OPERATION_LOCK_NAME" \
     --arg namespace "$NAMESPACE" \
@@ -2547,13 +5517,19 @@ recovery_operation_lock_json_is_exact() {
     --arg pre_epoch "${RECOVERY_FENCE_PRE_EPOCH:-}" \
     --arg target_epoch "${RECOVERY_FENCE_TARGET_EPOCH:-}" \
     --arg operation_state "${RECOVERY_OPERATION_STATE:-}" \
-    --arg operation_binding_sha256 "${RECOVERY_OPERATION_BINDING_SHA256:-}" '
+    --arg operation_binding_sha256 "${RECOVERY_OPERATION_BINDING_SHA256:-}" \
+    --arg runner_evidence_sha256 "${RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256:-}" \
+    --arg runner_generation "${RECOVERY_RUNNER_RUNTIME_GENERATION:-}" '
     .apiVersion == "v1" and
     .kind == "ConfigMap" and
     .metadata.name == $name and
     .metadata.namespace == $namespace and
     .metadata.uid == $uid and
     .metadata.resourceVersion == $resource_version and
+    (.metadata | has("deletionTimestamp") | not) and
+    (.metadata | has("deletionGracePeriodSeconds") | not) and
+    (((.metadata | has("finalizers") | not) or .metadata.finalizers == [])) and
+    (((.metadata | has("ownerReferences") | not) or .metadata.ownerReferences == [])) and
     (.metadata.labels // {}) == {"yenhubs.org/recovery-owner":$owner} and
     (.metadata.annotations // {}) == ({
       "yenhubs.org/operation-id": $operation_id,
@@ -2563,14 +5539,18 @@ recovery_operation_lock_json_is_exact() {
       "yenhubs.org/checkpoint-stamp": $stamp,
       "yenhubs.org/dump-sha256": $dump_sha,
       "yenhubs.org/storage-sha256": $storage_sha
-    } + if $pre_epoch == "" and $target_epoch == "" then {} else {
-      "yenhubs.org/pre-fence-epoch":$pre_epoch,
-      "yenhubs.org/restore-fence-epoch":$target_epoch,
+    } + if $inventory_sha == "" then {} else {
       "yenhubs.org/deployment-inventory-sha256":$inventory_sha
+    } end + if $pre_epoch == "" and $target_epoch == "" then {} else {
+      "yenhubs.org/pre-fence-epoch":$pre_epoch,
+      "yenhubs.org/restore-fence-epoch":$target_epoch
     } end + if $operation_state == "" then {} else {
       "yenhubs.org/recovery-state":$operation_state
     } end + if $operation_binding_sha256 == "" then {} else {
       "yenhubs.org/operation-binding-sha256":$operation_binding_sha256
+    } end + if $runner_evidence_sha256 == "" and $runner_generation == "" then {} else {
+      "yenhubs.org/runner-cutover-evidence-sha256":$runner_evidence_sha256,
+      "yenhubs.org/runner-runtime-generation":$runner_generation
     } end) and
     .immutable == true and
     (.data // {}) == {} and
@@ -2601,10 +5581,405 @@ recovery_require_operation_lock() {
   fi
 }
 
+# The recovery byte-stream fence is generated and validated by the Hubs CE
+# control plane.  Keep the root transition code bound to those exact exported
+# predicates instead of maintaining a second, subtly different CEL contract.
+recovery_operation_fence_cloud_helper_path() {
+  local repository_root helper
+  repository_root="$(cd "$RECOVERY_SAFETY_DIR/../.." && pwd -P)" || return 1
+  helper="$repository_root/hubs-cloud/community-edition/apply/runner-activation.js"
+  recovery_require_regular_direct_file "$helper" || return 1
+  printf '%s\n' "$helper"
+}
+
+recovery_operation_fence_pair_is_exact() {
+  local state="$1" policy_json="$2" binding_json="$3" helper payload
+  [[ "$state" == dormant || "$state" == active ]] || return 2
+  [[ -n "${NAMESPACE:-}" && -n "$policy_json" && -n "$binding_json" ]] ||
+    return 2
+  helper="$(recovery_operation_fence_cloud_helper_path)" || return 1
+  payload="$(jq -cn --argjson policy "$policy_json" \
+    --argjson binding "$binding_json" '{policy:$policy,binding:$binding}')" ||
+    return 1
+  printf '%s' "$payload" | command node -e '
+const fs = require("node:fs");
+const helperPath = process.argv[1];
+const namespace = process.argv[2];
+const state = process.argv[3];
+const {
+  RECOVERY_OPERATION_FENCE_POLICY_NAME,
+  admissionPolicyIsObserved,
+  exactRecoveryOperationFenceBinding,
+  exactRecoveryOperationFencePolicy
+} = require(helperPath);
+let pair;
+try {
+  pair = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch {
+  process.exit(1);
+}
+const allowedMetadata = new Set([
+  "annotations", "creationTimestamp", "generation", "managedFields",
+  "name", "resourceVersion", "uid"
+]);
+function transitionableMetadata(resource) {
+  const metadata = resource?.metadata;
+  const annotations = metadata?.annotations || {};
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata) &&
+    Object.keys(metadata).every(key => allowedMetadata.has(key)) &&
+    Object.keys(annotations).every(key =>
+      key === "kubectl.kubernetes.io/last-applied-configuration"
+    ) &&
+    (metadata.labels === undefined || Object.keys(metadata.labels).length === 0) &&
+    metadata.deletionTimestamp === undefined &&
+    metadata.deletionGracePeriodSeconds === undefined &&
+    metadata.finalizers === undefined && metadata.ownerReferences === undefined &&
+    metadata.name === RECOVERY_OPERATION_FENCE_POLICY_NAME &&
+    typeof metadata.uid === "string" && metadata.uid.length > 0 &&
+    typeof metadata.resourceVersion === "string" &&
+      metadata.resourceVersion.length > 0;
+}
+if (
+  !pair || typeof pair !== "object" || Array.isArray(pair) ||
+  Object.keys(pair).sort().join("\n") !== "binding\npolicy" ||
+  !transitionableMetadata(pair.policy) ||
+  !transitionableMetadata(pair.binding) ||
+  !admissionPolicyIsObserved(pair.policy) ||
+  !exactRecoveryOperationFencePolicy(pair.policy, namespace) ||
+  !exactRecoveryOperationFenceBinding(pair.binding, namespace, {
+    active: state === "active"
+  })
+) {
+  process.exit(1);
+}
+' "$helper" "$NAMESPACE" "$state"
+}
+
+recovery_operation_fence_identity_json() {
+  local state="$1" policy_json="$2" binding_json="$3"
+  [[ "$state" == dormant || "$state" == active ]] || return 2
+  [[ -n "${RECOVERY_NAMESPACE_UID:-}" &&
+     "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ &&
+     "${RECOVERY_OPERATION_OWNER:-}" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
+     "${RECOVERY_OPERATION_LOCK_NAME:-}" == "$RECOVERY_OPERATION_LOCK_GLOBAL_NAME" &&
+     -n "${RECOVERY_OPERATION_LOCK_UID:-}" &&
+     -n "${RECOVERY_OPERATION_LOCK_RESOURCE_VERSION:-}" &&
+     "${RECOVERY_SERIALIZATION_LEASE_NAME:-}" == "yenhubs-operation-serialization" &&
+     -n "${RECOVERY_SERIALIZATION_LEASE_UID:-}" &&
+     "${RECOVERY_SERIALIZATION_LEASE_HOLDER:-}" =~ ^root-recovery: ]] ||
+    return 1
+  jq -cnS \
+    --arg state "$state" \
+    --arg namespace "$NAMESPACE" \
+    --arg namespace_uid "$RECOVERY_NAMESPACE_UID" \
+    --arg operation_id "$RECOVERY_OPERATION_ID" \
+    --arg operation_owner "$RECOVERY_OPERATION_OWNER" \
+    --arg lock_name "$RECOVERY_OPERATION_LOCK_NAME" \
+    --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
+    --arg lock_rv "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION" \
+    --arg lease_name "$RECOVERY_SERIALIZATION_LEASE_NAME" \
+    --arg lease_uid "$RECOVERY_SERIALIZATION_LEASE_UID" \
+    --arg lease_holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
+    --arg policy_uid "$(jq -er '.metadata.uid' <<<"$policy_json")" \
+    --arg policy_rv "$(jq -er '.metadata.resourceVersion' <<<"$policy_json")" \
+    --arg binding_uid "$(jq -er '.metadata.uid' <<<"$binding_json")" \
+    --arg binding_rv "$(jq -er '.metadata.resourceVersion' <<<"$binding_json")" '
+    {schema_version:1,state:$state,namespace:$namespace,
+     namespace_uid:$namespace_uid,operation_id:$operation_id,
+     operation_owner:$operation_owner,
+     operation_lock:{name:$lock_name,uid:$lock_uid,resource_version:$lock_rv},
+     lease:{name:$lease_name,uid:$lease_uid,holder:$lease_holder},
+     policy:{uid:$policy_uid,resource_version:$policy_rv},
+     binding:{uid:$binding_uid,resource_version:$binding_rv}}
+  '
+}
+
+recovery_operation_fence_identity_is_exact() {
+  local identity_json="$1" expected_state="$2"
+  [[ "$expected_state" == dormant || "$expected_state" == active ]] || return 2
+  jq -e \
+    --arg state "$expected_state" --arg namespace "$NAMESPACE" \
+    --arg namespace_uid "$RECOVERY_NAMESPACE_UID" \
+    --arg operation_id "$RECOVERY_OPERATION_ID" \
+    --arg operation_owner "$RECOVERY_OPERATION_OWNER" \
+    --arg lock_name "$RECOVERY_OPERATION_LOCK_NAME" \
+    --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
+    --arg lock_rv "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION" \
+    --arg lease_name "$RECOVERY_SERIALIZATION_LEASE_NAME" \
+    --arg lease_uid "$RECOVERY_SERIALIZATION_LEASE_UID" \
+    --arg lease_holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" '
+    (keys | sort) == ["binding","lease","namespace","namespace_uid",
+      "operation_id","operation_lock","operation_owner","policy",
+      "schema_version","state"] and
+    .schema_version == 1 and .state == $state and
+    .namespace == $namespace and .namespace_uid == $namespace_uid and
+    .operation_id == $operation_id and .operation_owner == $operation_owner and
+    .operation_lock == {name:$lock_name,uid:$lock_uid,resource_version:$lock_rv} and
+    .lease == {name:$lease_name,uid:$lease_uid,holder:$lease_holder} and
+    (.policy | keys | sort) == ["resource_version","uid"] and
+    (.binding | keys | sort) == ["resource_version","uid"] and
+    all(.policy.uid,.policy.resource_version,.binding.uid,
+      .binding.resource_version; type == "string" and length > 0)
+  ' >/dev/null 2>&1 <<<"$identity_json"
+}
+
+# Reads the pair once and returns a canonical, process-authority-bound identity.
+# Supplying an expected identity additionally pins both resourceVersions, so an
+# active -> dormant -> active ABA excursion cannot be mistaken for continuity.
+recovery_read_recovery_operation_fence_state() {
+  local state="$1" expected_identity="${2:-}"
+  local policy_json binding_json identity_json
+  [[ "$state" == dormant || "$state" == active ]] || return 2
+  policy_json="$(recovery_kubectl get validatingadmissionpolicy \
+    "$RECOVERY_OPERATION_FENCE_POLICY_NAME" -o json)" || return 1
+  binding_json="$(recovery_kubectl get validatingadmissionpolicybinding \
+    "$RECOVERY_OPERATION_FENCE_POLICY_NAME" -o json)" || return 1
+  recovery_operation_fence_pair_is_exact \
+    "$state" "$policy_json" "$binding_json" || return 1
+  identity_json="$(recovery_operation_fence_identity_json \
+    "$state" "$policy_json" "$binding_json")" || return 1
+  if [[ -n "$expected_identity" ]]; then
+    recovery_operation_fence_identity_is_exact \
+      "$expected_identity" "$state" || return 1
+    [[ "$identity_json" == "$expected_identity" ]] || return 1
+  fi
+  printf '%s\n' "$identity_json"
+}
+
+recovery_require_recovery_operation_fence_state() {
+  local state="$1" expected_identity="${2:-}"
+  [[ "$state" == dormant || "$state" == active ]] || return 2
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  recovery_read_recovery_operation_fence_state \
+    "$state" "$expected_identity" >/dev/null || {
+    printf 'The recovery operation admission fence is missing, deleting, drifted or changed identity.\n' >&2
+    return 1
+  }
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+}
+
+recovery_operation_fence_probe_document() {
+  local probe="$1" helper repository_root
+  case "$probe" in
+    parent-writer)
+      jq -cn --arg namespace "$NAMESPACE" '
+        {apiVersion:"v1",kind:"Pod",metadata:{
+          generateName:"yenhubs-recovery-operation-writer-probe-",
+          namespace:$namespace,labels:{app:"reticulum"}},spec:{
+          automountServiceAccountToken:false,enableServiceLinks:false,
+          restartPolicy:"Never",terminationGracePeriodSeconds:0,
+          securityContext:{runAsNonRoot:true,runAsUser:10001,runAsGroup:10001,
+            seccompProfile:{type:"RuntimeDefault"}},containers:[{
+            name:"reticulum",image:"registry.k8s.io/pause:3.10",
+            imagePullPolicy:"IfNotPresent",securityContext:{runAsNonRoot:true,
+              runAsUser:10001,runAsGroup:10001,allowPrivilegeEscalation:false,
+              readOnlyRootFilesystem:true,capabilities:{drop:["ALL"]},
+              seccompProfile:{type:"RuntimeDefault"}},resources:{
+              requests:{cpu:"1m",memory:"1Mi"},
+              limits:{cpu:"1m",memory:"1Mi"}}}]}}
+      '
+      ;;
+    runner)
+      repository_root="$(cd "$RECOVERY_SAFETY_DIR/../.." && pwd -P)" || return 1
+      helper="$repository_root/hubs-cloud/community-edition/services/bot-orchestrator/kubernetes-runner-manager.js"
+      recovery_require_regular_direct_file "$helper" || return 1
+      # shellcheck disable=SC2016 # The single-quoted source is evaluated by Node.
+      command node -e '
+const helper = require(process.argv[1]);
+const identity = {
+  roomKey: "55555555555555555555",
+  processGeneration: "55555555-5555-4555-8555-555555555555"
+};
+identity.name = `bot-runner-${identity.roomKey.substring(0, 16)}-${identity.processGeneration.substring(0, 8)}`;
+process.stdout.write(JSON.stringify(helper.guardPodDocumentForIdentity(
+  identity, "fence", "hcce-bot-runners"
+)));
+' "$helper"
+      ;;
+    *) return 2 ;;
+  esac
+}
+
+recovery_operation_fence_probe_one() {
+  local state="$1" probe="$2" expected_message="$3"
+  local document diagnostic status=0
+  document="$(recovery_operation_fence_probe_document "$probe")" || return 1
+  if diagnostic="$(printf '%s' "$document" | \
+      recovery_kubectl create --dry-run=server -f - 2>&1)"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ "$state" == active ]]; then
+    [[ "$status" != 0 &&
+       "$diagnostic" == *"$RECOVERY_OPERATION_FENCE_POLICY_NAME"* &&
+       "$diagnostic" == *"$expected_message"* &&
+       "$diagnostic" != *'violates PodSecurity'* ]]
+  elif [[ "$state" == dormant ]]; then
+    [[ "$status" == 0 &&
+       "$diagnostic" != *"$RECOVERY_OPERATION_FENCE_POLICY_NAME"* &&
+       "$diagnostic" != *'recovery operation Pod fence denies'* ]]
+  else
+    return 2
+  fi
+}
+
+recovery_operation_fence_probes_match_state() {
+  local state="$1"
+  recovery_operation_fence_probe_one "$state" parent-writer \
+    'recovery operation Pod fence denies database-writer Pod creation while checkpoint or restore is fenced' &&
+    recovery_operation_fence_probe_one "$state" runner \
+      'recovery operation Pod fence denies runner Pod mutation while checkpoint or restore is fenced'
+}
+
+recovery_wait_recovery_operation_fence_propagation() {
+  local state="$1" expected_identity="$2" attempt=0 attempts=60
+  local retry_delay="${RECOVERY_WAIT_RETRY_DELAY_SECONDS:-1}"
+  [[ "$state" == dormant || "$state" == active ]] || return 2
+  [[ "$retry_delay" =~ ^[01]$ ]] || return 2
+  if [[ "${YENHUBS_RECOVERY_TEST_MODE:-}" == local-fixture ]]; then
+    recovery_require_local_fixture_attestation || return 1
+    attempts=3
+  fi
+  while ((attempt < attempts)); do
+    recovery_require_operation_serialization || return 1
+    recovery_require_operation_lock || return 1
+    recovery_read_recovery_operation_fence_state \
+      "$state" "$expected_identity" >/dev/null || return 1
+    if recovery_operation_fence_probes_match_state "$state"; then
+      recovery_require_operation_serialization || return 1
+      recovery_require_operation_lock || return 1
+      recovery_read_recovery_operation_fence_state \
+        "$state" "$expected_identity" >/dev/null || return 1
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    ((attempt >= attempts || retry_delay == 0)) || sleep "$retry_delay"
+  done
+  printf 'Recovery operation fence %s propagation did not satisfy both exact server-side dry-run probes.\n' \
+    "$state" >&2
+  return 1
+}
+
+recovery_transition_recovery_operation_fence() {
+  local source_state="$1" target_state="$2" expected_source_identity="$3"
+  local output_variable="$4" before_identity before_policy before_binding
+  local replacement replaced after_identity after_policy after_binding final_identity
+  local before_policy_uid before_policy_rv before_binding_uid before_binding_rv
+  local replaced_binding_uid replaced_binding_rv
+  [[ "$source_state" == dormant || "$source_state" == active ]] || return 2
+  [[ "$target_state" == dormant || "$target_state" == active ]] || return 2
+  [[ "$source_state" != "$target_state" &&
+     "$output_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 2
+  if [[ "$source_state" == active ]]; then
+    [[ -n "$expected_source_identity" ]] || return 2
+    recovery_operation_fence_identity_is_exact \
+      "$expected_source_identity" active || return 2
+  elif [[ -n "$expected_source_identity" ]]; then
+    return 2
+  fi
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  before_policy="$(recovery_kubectl get validatingadmissionpolicy \
+    "$RECOVERY_OPERATION_FENCE_POLICY_NAME" -o json)" || return 1
+  before_binding="$(recovery_kubectl get validatingadmissionpolicybinding \
+    "$RECOVERY_OPERATION_FENCE_POLICY_NAME" -o json)" || return 1
+  recovery_operation_fence_pair_is_exact \
+    "$source_state" "$before_policy" "$before_binding" || {
+    printf 'Recovery operation fence source state is absent, deleting or drifted.\n' >&2
+    return 1
+  }
+  before_identity="$(recovery_operation_fence_identity_json \
+    "$source_state" "$before_policy" "$before_binding")" || return 1
+  if [[ -n "$expected_source_identity" &&
+        "$before_identity" != "$expected_source_identity" ]]; then
+    printf 'Recovery operation fence source identity changed before compare-and-swap.\n' >&2
+    return 1
+  fi
+  before_policy_uid="$(jq -er '.metadata.uid' <<<"$before_policy")" || return 1
+  before_policy_rv="$(jq -er '.metadata.resourceVersion' <<<"$before_policy")" ||
+    return 1
+  before_binding_uid="$(jq -er '.metadata.uid' <<<"$before_binding")" || return 1
+  before_binding_rv="$(jq -er '.metadata.resourceVersion' <<<"$before_binding")" ||
+    return 1
+  replacement="$(jq -cn \
+    --arg name "$RECOVERY_OPERATION_FENCE_POLICY_NAME" \
+    --arg uid "$before_binding_uid" --arg rv "$before_binding_rv" \
+    --arg namespace "$NAMESPACE" --arg state "$target_state" '
+    {apiVersion:"admissionregistration.k8s.io/v1",
+     kind:"ValidatingAdmissionPolicyBinding",
+     metadata:{name:$name,uid:$uid,resourceVersion:$rv},
+     spec:{policyName:$name,validationActions:["Deny"],matchResources:{
+       matchPolicy:"Equivalent",namespaceSelector:{matchExpressions:[
+         if $state == "active" then
+           {key:"kubernetes.io/metadata.name",operator:"In",
+            values:[$namespace,"hcce-bot-runners"]}
+         else
+           {key:"kubernetes.io/metadata.name",operator:"DoesNotExist"}
+         end]},objectSelector:{}}}}
+  ')" || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  replaced="$(printf '%s' "$replacement" | \
+    recovery_kubectl replace -f - -o json)" || {
+    printf 'Recovery operation fence binding compare-and-swap failed.\n' >&2
+    return 1
+  }
+  recovery_operation_fence_pair_is_exact \
+    "$target_state" "$before_policy" "$replaced" || return 1
+  replaced_binding_uid="$(jq -er '.metadata.uid' <<<"$replaced")" || return 1
+  replaced_binding_rv="$(jq -er '.metadata.resourceVersion' <<<"$replaced")" ||
+    return 1
+  [[ "$replaced_binding_uid" == "$before_binding_uid" &&
+     "$replaced_binding_rv" != "$before_binding_rv" ]] || {
+    printf 'Recovery operation fence compare-and-swap did not preserve UID and advance resourceVersion.\n' >&2
+    return 1
+  }
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  after_policy="$(recovery_kubectl get validatingadmissionpolicy \
+    "$RECOVERY_OPERATION_FENCE_POLICY_NAME" -o json)" || return 1
+  after_binding="$(recovery_kubectl get validatingadmissionpolicybinding \
+    "$RECOVERY_OPERATION_FENCE_POLICY_NAME" -o json)" || return 1
+  recovery_operation_fence_pair_is_exact \
+    "$target_state" "$after_policy" "$after_binding" || return 1
+  [[ "$(jq -er '.metadata.uid' <<<"$after_policy")" == "$before_policy_uid" &&
+     "$(jq -er '.metadata.resourceVersion' <<<"$after_policy")" == "$before_policy_rv" &&
+     "$(jq -er '.metadata.uid' <<<"$after_binding")" == "$replaced_binding_uid" &&
+     "$(jq -er '.metadata.resourceVersion' <<<"$after_binding")" == "$replaced_binding_rv" ]] || {
+    printf 'Recovery operation fence identity changed while confirming compare-and-swap.\n' >&2
+    return 1
+  }
+  after_identity="$(recovery_operation_fence_identity_json \
+    "$target_state" "$after_policy" "$after_binding")" || return 1
+  recovery_wait_recovery_operation_fence_propagation \
+    "$target_state" "$after_identity" || return 1
+  final_identity="$(recovery_read_recovery_operation_fence_state \
+    "$target_state" "$after_identity")" || return 1
+  printf -v "$output_variable" '%s' "$final_identity"
+}
+
+recovery_activate_recovery_operation_fence() {
+  local output_variable="$1"
+  recovery_transition_recovery_operation_fence \
+    dormant active '' "$output_variable"
+}
+
+recovery_deactivate_recovery_operation_fence() {
+  local active_identity="$1" output_variable="$2"
+  recovery_transition_recovery_operation_fence \
+    active dormant "$active_identity" "$output_variable"
+}
+
 recovery_acquire_operation_lock() {
   local owner="$1"
   local lock_name="${2:-$RECOVERY_OPERATION_LOCK_GLOBAL_NAME}"
-  local lock_json fence_annotations="" state_annotation="" binding_annotation=""
+  local lock_json fence_annotations="" inventory_annotation=""
+  local state_annotation="" binding_annotation=""
+  local runner_checkpoint_annotations="" create_status=0
+  local lock_uid="" lock_resource_version=""
   [[ "$owner" =~ ^(checkpoint-backup|checkpoint-restore|aud065-rotation)$ &&
      "$lock_name" == "$RECOVERY_OPERATION_LOCK_GLOBAL_NAME" &&
      -n "${RECOVERY_NAMESPACE_UID:-}" && -n "${RECOVERY_PVC_UID:-}" &&
@@ -2619,15 +5994,23 @@ recovery_acquire_operation_lock() {
   RECOVERY_OPERATION_LOCK_NAME="$lock_name"
   RECOVERY_OPERATION_LOCK_UID=""
   RECOVERY_OPERATION_LOCK_RESOURCE_VERSION=""
+  recovery_operation_runner_contract_is_valid "$owner" || {
+    printf 'Recovery locks require the exact runner-generation evidence contract.\n' >&2
+    return 2
+  }
+  if [[ "$owner" == checkpoint-restore || "$owner" == aud065-rotation ]]; then
+    [[ "${RECOVERY_DEPLOYMENT_INVENTORY_SHA256:-}" =~ ^[a-f0-9]{64}$ ]] ||
+      return 2
+    inventory_annotation="$(printf '    yenhubs.org/deployment-inventory-sha256: "%s"' \
+      "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256")"
+  fi
   if [[ -n "${RECOVERY_FENCE_PRE_EPOCH:-}" || -n "${RECOVERY_FENCE_TARGET_EPOCH:-}" ]]; then
     [[ "$owner" == checkpoint-restore &&
        ( "$RECOVERY_FENCE_PRE_EPOCH" == legacy-absent ||
          "$RECOVERY_FENCE_PRE_EPOCH" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ) &&
-       "$RECOVERY_FENCE_TARGET_EPOCH" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ &&
-       "${RECOVERY_DEPLOYMENT_INVENTORY_SHA256:-}" =~ ^[a-f0-9]{64}$ ]] || return 2
-    fence_annotations="$(printf '    yenhubs.org/pre-fence-epoch: "%s"\n    yenhubs.org/restore-fence-epoch: "%s"\n    yenhubs.org/deployment-inventory-sha256: "%s"' \
-      "$RECOVERY_FENCE_PRE_EPOCH" "$RECOVERY_FENCE_TARGET_EPOCH" \
-      "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256")"
+       "$RECOVERY_FENCE_TARGET_EPOCH" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || return 2
+    fence_annotations="$(printf '    yenhubs.org/pre-fence-epoch: "%s"\n    yenhubs.org/restore-fence-epoch: "%s"' \
+      "$RECOVERY_FENCE_PRE_EPOCH" "$RECOVERY_FENCE_TARGET_EPOCH")"
   fi
   if [[ -n "${RECOVERY_OPERATION_STATE:-}" ]]; then
     [[ ( "$owner" == checkpoint-restore || "$owner" == aud065-rotation ) &&
@@ -2649,6 +6032,11 @@ recovery_acquire_operation_lock() {
     printf 'AUD-065 rotation locks require an exact private-operation binding.\n' >&2
     return 2
   fi
+  if [[ "$owner" == checkpoint-restore || "$owner" == aud065-rotation ]]; then
+    runner_checkpoint_annotations="$(printf '    yenhubs.org/runner-cutover-evidence-sha256: "%s"\n    yenhubs.org/runner-runtime-generation: "%s"' \
+      "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" \
+      "$RECOVERY_RUNNER_RUNTIME_GENERATION")"
+  fi
   if [[ "$owner" == aud065-rotation ]]; then
     [[ "$RECOVERY_OPERATION_IDENTITY_PREBOUND" == 1 &&
        "${RECOVERY_OPERATION_TOKEN:-}" =~ ^[a-f0-9]{32}$ &&
@@ -2665,7 +6053,7 @@ recovery_acquire_operation_lock() {
       return 1
     fi
   fi
-  if ! cat <<EOF | recovery_kubectl_mutate create -f - >/dev/null
+  if cat <<EOF | recovery_kubectl_mutate create -f - >/dev/null
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -2681,33 +6069,53 @@ metadata:
     yenhubs.org/checkpoint-stamp: "$RECOVERY_CHECKPOINT_STAMP"
     yenhubs.org/dump-sha256: "$RECOVERY_DUMP_SHA256"
     yenhubs.org/storage-sha256: "$RECOVERY_STORAGE_SHA256"
+$inventory_annotation
 $fence_annotations
 $state_annotation
 $binding_annotation
+$runner_checkpoint_annotations
 immutable: true
 EOF
   then
-    printf 'Another recovery operation owns the target or the global lock could not be created.\n' >&2
-    return 1
+    create_status=0
+  else
+    create_status=$?
   fi
+  # A transport failure can follow a committed create. Resolve that ambiguity
+  # only by reading the named immutable object under the still-owned Lease and
+  # proving its private token, operation ID and entire expected contract. A
+  # competing or malformed lock therefore remains indistinguishable from
+  # failure and is never adopted by name alone.
+  recovery_require_operation_serialization || return 1
   lock_json="$(
     recovery_kubectl get configmap "$RECOVERY_OPERATION_LOCK_NAME" \
       -n "$NAMESPACE" -o json
-  )" || return 1
+  )" || {
+    printf 'Another recovery operation owns the target or the global lock could not be created.\n' >&2
+    return 1
+  }
   recovery_require_operation_serialization || return 1
-  RECOVERY_OPERATION_LOCK_UID="$(jq -er \
+  lock_uid="$(jq -er \
     '.metadata.uid | select(type == "string" and length > 0)' <<<"$lock_json")" || return 1
-  RECOVERY_OPERATION_LOCK_RESOURCE_VERSION="$(jq -er \
+  lock_resource_version="$(jq -er \
     '.metadata.resourceVersion | select(type == "string" and length > 0)' \
     <<<"$lock_json")" || return 1
+  RECOVERY_OPERATION_LOCK_UID="$lock_uid"
+  RECOVERY_OPERATION_LOCK_RESOURCE_VERSION="$lock_resource_version"
+  if ! recovery_operation_lock_json_is_exact "$lock_json"; then
+    RECOVERY_OPERATION_LOCK_UID=""
+    RECOVERY_OPERATION_LOCK_RESOURCE_VERSION=""
+    if [[ "$create_status" == 0 ]]; then
+      printf 'Created recovery lock does not match its exact operation contract.\n' >&2
+    else
+      printf 'Another recovery operation owns the target or the global lock could not be reconciled.\n' >&2
+    fi
+    return 1
+  fi
   export RECOVERY_OPERATION_OWNER RECOVERY_OPERATION_LOCK_NAME \
     RECOVERY_OPERATION_LOCK_UID RECOVERY_OPERATION_LOCK_RESOURCE_VERSION \
     RECOVERY_OPERATION_TOKEN RECOVERY_OPERATION_ID RECOVERY_OPERATION_STATE \
     RECOVERY_OPERATION_BINDING_SHA256
-  if ! recovery_operation_lock_json_is_exact "$lock_json"; then
-    printf 'Created recovery lock does not match its exact operation contract.\n' >&2
-    return 1
-  fi
 }
 
 # Recover the exact AUD-065 lock after a crash in the remote-create to local
@@ -2874,8 +6282,10 @@ recovery_release_operation_lock() {
     }
   fi
   recovery_require_operation_lock || return 1
-  recovery_delete_namespaced_with_uid configmap "$RECOVERY_OPERATION_LOCK_NAME" \
-    "$RECOVERY_OPERATION_LOCK_UID" 60
+  recovery_delete_namespaced_with_uid_in_namespace \
+    "$NAMESPACE" configmap "$RECOVERY_OPERATION_LOCK_NAME" \
+    "$RECOVERY_OPERATION_LOCK_UID" 60 \
+    "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION"
 }
 
 recovery_delete_namespaced_with_uid() {
@@ -2889,9 +6299,12 @@ recovery_delete_namespaced_with_uid_in_namespace() {
   local name="$3"
   local uid="$4"
   local timeout_seconds="${5:-60}"
+  local expected_resource_version="${6:-}"
   local api_path current_json current_uid started
   [[ "$target_namespace" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ &&
      "$name" =~ ^[A-Za-z0-9._-]+$ && -n "$uid" &&
+     ( -z "$expected_resource_version" ||
+       "$expected_resource_version" =~ ^[A-Za-z0-9._:-]+$ ) &&
      "$timeout_seconds" =~ ^[0-9]+$ && "$timeout_seconds" -gt 0 ]] || return 2
   case "$kind" in
     configmap)
@@ -2907,23 +6320,24 @@ recovery_delete_namespaced_with_uid_in_namespace() {
       return 2
       ;;
   esac
-  if ! jq -cn --arg uid "$uid" '{
+  if ! jq -cn --arg uid "$uid" --arg resource_version "$expected_resource_version" '{
       apiVersion:"v1", kind:"DeleteOptions",
-      propagationPolicy:"Foreground", preconditions:{uid:$uid}
+      propagationPolicy:"Foreground",
+      preconditions:({uid:$uid} +
+        (if $resource_version == "" then {} else {resourceVersion:$resource_version} end))
     }' | recovery_kubectl_mutate delete --raw="$api_path" -f - >/dev/null; then
-    printf 'UID-preconditioned deletion failed for %s/%s.\n' "$kind" "$name" >&2
+    printf 'UID/resourceVersion-preconditioned deletion failed for %s/%s.\n' \
+      "$kind" "$name" >&2
     return 1
   fi
   started="$SECONDS"
   while ((SECONDS - started < timeout_seconds)); do
-    # A 404 after the UID-preconditioned DELETE is the successful terminal
-    # state. Callers use errtrace for fail-safe recovery, so suppress their ERR
-    # trap only inside this expected-failure command substitution; otherwise a
-    # copied trap in the subshell can resume writers and release the live lock.
-    if ! current_json="$(trap - ERR; recovery_kubectl get "$kind" "$name" \
-      -n "$target_namespace" -o json 2>/dev/null)"; then
-      return 0
-    fi
+    # --ignore-not-found makes only a confirmed 404 an empty success. Network,
+    # authorization and API failures remain nonzero and must never be treated
+    # as proof that the exact UID disappeared.
+    current_json="$(recovery_kubectl get "$kind" "$name" \
+      -n "$target_namespace" --ignore-not-found -o json)" || return 1
+    [[ -n "$current_json" ]] || return 0
     current_uid="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' \
       <<<"$current_json")" || return 1
     # A same-name replacement is not ours and must never be deleted or waited
@@ -2998,8 +6412,13 @@ recovery_storage_helper_pod_is_exact() {
     --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
     --arg operation_token "$RECOVERY_OPERATION_TOKEN" \
     --argjson read_only "$read_only" '
+    .apiVersion == "v1" and .kind == "Pod" and
     .metadata.name == $pod and .metadata.uid == $uid and
     .metadata.namespace == $namespace and
+    (.metadata.resourceVersion | type == "string" and length > 0) and
+    ((.metadata.deletionTimestamp // null) == null) and
+    ((.metadata.ownerReferences // []) == []) and
+    ((.metadata.finalizers // []) == []) and
     (.metadata.labels // {}) == {
       "yenhubs.org/recovery-owner":$role,
       "yenhubs.org/operation-id":$operation_id
@@ -3016,9 +6435,13 @@ recovery_storage_helper_pod_is_exact() {
     ((.spec.initContainers // []) | length) == 0 and
     ((.spec.ephemeralContainers // []) | length) == 0 and
     ([.spec.volumes[].name] == ["storage"]) and
-    ((.spec.volumes[0].persistentVolumeClaim | keys | sort) == ["claimName", "readOnly"]) and
+    ((.spec.volumes[0].persistentVolumeClaim |
+      keys - ["claimName", "readOnly"]) | length) == 0 and
+    (.spec.volumes[0].persistentVolumeClaim | has("claimName")) and
     .spec.volumes[0].persistentVolumeClaim.claimName == "ret-pvc" and
-    .spec.volumes[0].persistentVolumeClaim.readOnly == $read_only and
+    (if (.spec.volumes[0].persistentVolumeClaim | has("readOnly"))
+     then .spec.volumes[0].persistentVolumeClaim.readOnly == $read_only
+     else $read_only == false end) and
     ([.spec.containers[].name] == ["helper"]) and
     .spec.containers[0].image == $image and
     .spec.containers[0].command == ["sh", "-c", "sleep 3600"] and
@@ -3030,19 +6453,38 @@ recovery_storage_helper_pod_is_exact() {
     ((.spec.containers[0].volumeMounts // []) | length) == 1 and
     .spec.containers[0].volumeMounts[0].name == "storage" and
     .spec.containers[0].volumeMounts[0].mountPath == "/storage" and
-    .spec.containers[0].volumeMounts[0].readOnly == $read_only and
+    (if (.spec.containers[0].volumeMounts[0] | has("readOnly"))
+     then .spec.containers[0].volumeMounts[0].readOnly == $read_only
+     else $read_only == false end) and
     ((.spec.containers[0].lifecycle // {}) | length) == 0 and
     (.spec.containers[0].stdin // false) == false and
     (.spec.containers[0].stdinOnce // false) == false and
     (.spec.containers[0].tty // false) == false and
+    (.spec.securityContext | keys | sort) ==
+      ["fsGroup", "fsGroupChangePolicy", "runAsGroup", "runAsNonRoot", "runAsUser", "seccompProfile"] and
     .spec.securityContext.runAsNonRoot == true and
     .spec.securityContext.runAsUser == 1000 and .spec.securityContext.runAsGroup == 1000 and
     .spec.securityContext.fsGroup == 1000 and
     .spec.securityContext.fsGroupChangePolicy == "OnRootMismatch" and
-    .spec.securityContext.seccompProfile.type == "RuntimeDefault" and
+    .spec.securityContext.seccompProfile == {type:"RuntimeDefault"} and
+    ((.spec.containers[0].securityContext | keys) - [
+      "allowPrivilegeEscalation", "capabilities", "privileged", "procMount",
+      "readOnlyRootFilesystem", "runAsGroup", "runAsNonRoot", "runAsUser",
+      "seccompProfile"
+    ] | length) == 0 and
     (.spec.containers[0].securityContext.privileged // false) == false and
     .spec.containers[0].securityContext.allowPrivilegeEscalation == false and
     .spec.containers[0].securityContext.readOnlyRootFilesystem == true and
+    (if (.spec.containers[0].securityContext | has("runAsNonRoot"))
+     then .spec.containers[0].securityContext.runAsNonRoot == true else true end) and
+    (if (.spec.containers[0].securityContext | has("runAsUser"))
+     then .spec.containers[0].securityContext.runAsUser == 1000 else true end) and
+    (if (.spec.containers[0].securityContext | has("runAsGroup"))
+     then .spec.containers[0].securityContext.runAsGroup == 1000 else true end) and
+    (if (.spec.containers[0].securityContext | has("seccompProfile"))
+     then .spec.containers[0].securityContext.seccompProfile == {type:"RuntimeDefault"}
+     else true end) and
+    ((.spec.containers[0].securityContext.capabilities | keys) - ["add", "drop"] | length) == 0 and
     ((.spec.containers[0].securityContext.capabilities.drop // []) | sort) == ["ALL"] and
     ((.spec.containers[0].securityContext.capabilities.add // []) | length) == 0 and
     ((.spec.containers[0].securityContext.procMount // "Default") == "Default")
@@ -3062,6 +6504,10 @@ recovery_storage_helper_network_policy_is_exact() {
     .apiVersion == "networking.k8s.io/v1" and .kind == "NetworkPolicy" and
     .metadata.name == $name and .metadata.uid == $uid and
     .metadata.namespace == $namespace and
+    (.metadata.resourceVersion | type == "string" and length > 0) and
+    ((.metadata.deletionTimestamp // null) == null) and
+    ((.metadata.ownerReferences // []) == []) and
+    ((.metadata.finalizers // []) == []) and
     (.metadata.labels // {}) == {
       "yenhubs.org/recovery-owner":$role,
       "yenhubs.org/operation-id":$operation_id
@@ -3089,6 +6535,13 @@ recovery_confirmation_value() {
     "$RECOVERY_CHECKPOINT_STAMP" "$RECOVERY_DUMP_SHA256" "$RECOVERY_STORAGE_SHA256"
   if [[ -n "$resource_uid" ]]; then
     printf ':%s' "$resource_uid"
+  fi
+  if [[ -n "${RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256:-}" ]]; then
+    [[ "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" =~ ^[a-f0-9]{64}$ &&
+       ( "$RECOVERY_RUNNER_RUNTIME_GENERATION" == legacy-absent ||
+         "$RECOVERY_RUNNER_RUNTIME_GENERATION" == durable-v2 ) ]] || return 2
+    printf ':%s:%s' "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" \
+      "$RECOVERY_RUNNER_RUNTIME_GENERATION"
   fi
 }
 
@@ -3119,12 +6572,26 @@ recovery_restore_rebind_confirmation_value() {
     "$RECOVERY_STORAGE_SHA256" "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256"
 }
 
+recovery_require_in_place_restore_target_mode() {
+  local mode="${RESTORE_TARGET_MODE:-in-place}"
+  case "$mode" in
+    in-place)
+      return 0
+      ;;
+    cold-rebind)
+      printf 'RESTORE_TARGET_MODE=cold-rebind is disabled: use a separately designed authenticated namespace-epoch campaign.\n' >&2
+      return 1
+      ;;
+    *)
+      printf 'RESTORE_TARGET_MODE must be exactly in-place; cold-rebind is disabled.\n' >&2
+      return 2
+      ;;
+  esac
+}
+
 recovery_require_restore_target_binding() {
-  local mode="${RESTORE_TARGET_MODE:-in-place}" expected actual inventory_namespace_uid
-  [[ "$mode" == in-place || "$mode" == cold-rebind ]] || {
-    printf 'RESTORE_TARGET_MODE must be in-place or cold-rebind.\n' >&2
-    return 2
-  }
+  local inventory_namespace_uid
+  recovery_require_in_place_restore_target_mode || return
   inventory_namespace_uid="$(jq -er \
     '.namespace_uid | select(type == "string" and length > 0)' \
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY")" || return 1
@@ -3132,24 +6599,9 @@ recovery_require_restore_target_binding() {
     printf 'Checkpoint metadata and deployment inventory disagree on the origin namespace UID.\n' >&2
     return 1
   }
-  if [[ "$mode" == in-place ]]; then
-    [[ "$RECOVERY_NAMESPACE_UID" == "$RECOVERY_CHECKPOINT_NAMESPACE_UID" &&
-       "$RECOVERY_PVC_UID" == "$RECOVERY_CHECKPOINT_PVC_UID" ]] || {
-      printf 'In-place restore requires the exact checkpoint namespace and PVC UIDs.\n' >&2
-      return 1
-    }
-    return 0
-  fi
-  [[ "$RECOVERY_NAMESPACE_UID" != "$RECOVERY_CHECKPOINT_NAMESPACE_UID" &&
-     "$RECOVERY_PVC_UID" != "$RECOVERY_CHECKPOINT_PVC_UID" ]] || {
-    printf 'Cold rebind requires newly created namespace and PVC UIDs.\n' >&2
-    return 1
-  }
-  expected="$(recovery_restore_rebind_confirmation_value)" || return 1
-  actual="${CONFIRM_RESTORE_REBIND:-}"
-  [[ "$actual" == "$expected" ]] || {
-    printf 'Refusing cold restore rebind. Set CONFIRM_RESTORE_REBIND=%q for this exact destination.\n' \
-      "$expected" >&2
+  [[ "$RECOVERY_NAMESPACE_UID" == "$RECOVERY_CHECKPOINT_NAMESPACE_UID" &&
+     "$RECOVERY_PVC_UID" == "$RECOVERY_CHECKPOINT_PVC_UID" ]] || {
+    printf 'In-place restore requires the exact checkpoint namespace and PVC UIDs.\n' >&2
     return 1
   }
 }
@@ -3219,6 +6671,459 @@ recovery_bot_orchestrator_runner_mode() {
       then "kubernetes-pod" else "process-local" end
     end
   '
+}
+
+recovery_runner_checkpoint_helper_path() {
+  local helper_root helper
+  helper_root="$(cd "$RECOVERY_SAFETY_DIR/.." && pwd -P)" || return 1
+  helper="$helper_root/runner-cutover-checkpoint-evidence.mjs"
+  if [[ -n "${YENHUBS_RECOVERY_RUNNER_CHECKPOINT_HELPER:-}" ]]; then
+    recovery_require_local_fixture_attestation || return 1
+    helper="$YENHUBS_RECOVERY_RUNNER_CHECKPOINT_HELPER"
+  fi
+  recovery_require_regular_direct_file "$helper" || return 1
+  printf '%s\n' "$helper"
+}
+
+recovery_canonical_private_tmp_root() {
+  local candidate="${TMPDIR:-/tmp}" canonical private_root current_uid
+  canonical="$(cd "$candidate" 2>/dev/null && pwd -P)" || return 1
+  [[ "$canonical" == /* && -d "$canonical" && ! -L "$canonical" ]] || return 1
+  recovery_path_has_symlink_component "$canonical" && return 1
+  if recovery_capture_private_directory_token "$canonical" >/dev/null 2>&1; then
+    printf '%s\n' "$canonical"
+    return 0
+  fi
+
+  current_uid="$(id -u 2>/dev/null)" || return 1
+  [[ "$current_uid" =~ ^[0-9]+$ ]] || return 1
+  private_root="$canonical/.yenhubs-recovery-private-$current_uid"
+  # A shared system temporary directory is acceptable only as the parent of a
+  # private per-user root. Never chmod or replace an existing pathname: mkdir
+  # may lose a benign concurrent creation race, after which the capability
+  # check below must still prove exact owner, mode, type and canonical binding.
+  if ! (umask 077 && mkdir -- "$private_root") 2>/dev/null; then
+    :
+  fi
+  recovery_capture_private_directory_token "$private_root" >/dev/null || return 1
+  printf '%s\n' "$private_root"
+}
+
+recovery_validate_runner_cutover_evidence_offline() {
+  local evidence_path="$1" inventory_path="$2" helper
+  helper="$(recovery_runner_checkpoint_helper_path)" || return 1
+  recovery_require_regular_direct_file "$evidence_path" || return 1
+  recovery_require_regular_direct_file "$inventory_path" || return 1
+  command node "$helper" validate \
+    --evidence "$evidence_path" --inventory "$inventory_path"
+}
+
+recovery_capture_runner_cutover_evidence() {
+  local values_path="$1" evidence_path="$2" inventory_path="$3"
+  local recovery_operation_fence_state="$4" manifest_path="${5:-}" helper
+  local -a arguments=(capture --values "$values_path" --output "$evidence_path"
+    --inventory "$inventory_path" --recovery-operation-fence-state
+    "$recovery_operation_fence_state")
+  [[ "$recovery_operation_fence_state" == dormant ||
+     "$recovery_operation_fence_state" == active ]] || return 2
+  helper="$(recovery_runner_checkpoint_helper_path)" || {
+    printf 'The AUD078 checkpoint-evidence helper is unavailable or unsafe.\n' >&2
+    return 1
+  }
+  if [[ -n "$manifest_path" ]]; then
+    recovery_require_regular_direct_file "$manifest_path" || return 1
+    arguments+=(--manifest "$manifest_path")
+  fi
+  EXPECTED_KUBE_CONTEXT="$EXPECTED_KUBE_CONTEXT" NAMESPACE="$NAMESPACE" \
+    EXPECTED_NAMESPACE_UID="$RECOVERY_NAMESPACE_UID" \
+    RECOVERY_OPERATION_ID="$RECOVERY_OPERATION_ID" \
+    command node "$helper" "${arguments[@]}" || return 1
+  recovery_runner_cutover_evidence_is_acceptable "$evidence_path"
+}
+
+recovery_verify_runner_cutover_evidence_live() {
+  local values_path="$1" evidence_path="$2" inventory_path="$3"
+  local recovery_operation_fence_state="$4" manifest_path="${5:-}"
+  local live_mode="${6:-checkpoint}"
+  local helper checkpoint_operation_id
+  local -a arguments=(verify --values "$values_path" --evidence "$evidence_path"
+    --inventory "$inventory_path" --live-mode "$live_mode"
+    --recovery-operation-fence-state "$recovery_operation_fence_state")
+  [[ "$recovery_operation_fence_state" == dormant ||
+     "$recovery_operation_fence_state" == active ]] || return 2
+  [[ "$live_mode" == checkpoint || "$live_mode" == active-source ||
+     "$live_mode" == quiesced-source || "$live_mode" == quiesced-target ||
+     "$live_mode" == active-target ||
+     "$live_mode" == quiesced-active-target ]] || return 2
+  helper="$(recovery_runner_checkpoint_helper_path)" || return 1
+  checkpoint_operation_id="$(jq -er '
+    .checkpoint_operation_id | select(type == "string" and test("^[a-f0-9]{32}$"))
+  ' "$evidence_path")" || return 1
+  if [[ "$live_mode" != checkpoint ]]; then
+    [[ "${RECOVERY_CHECKPOINT_OPERATION_ID:-}" == "$checkpoint_operation_id" ]] || return 1
+    arguments+=(--checkpoint-operation-id "$RECOVERY_CHECKPOINT_OPERATION_ID")
+  fi
+  case "$live_mode" in
+    checkpoint)
+      if [[ -n "$manifest_path" ]]; then
+        recovery_require_regular_direct_file "$manifest_path" || return 1
+        arguments+=(--manifest "$manifest_path")
+      fi
+      ;;
+    active-source|quiesced-source)
+      [[ -z "$manifest_path" ]] || return 2
+      ;;
+    quiesced-target|active-target|quiesced-active-target)
+      recovery_require_regular_direct_file "$manifest_path" || return 1
+      arguments+=(--manifest "$manifest_path")
+      ;;
+  esac
+  if [[ "$live_mode" == checkpoint ]]; then
+    EXPECTED_KUBE_CONTEXT="$EXPECTED_KUBE_CONTEXT" NAMESPACE="$NAMESPACE" \
+      EXPECTED_NAMESPACE_UID="$RECOVERY_NAMESPACE_UID" \
+      RECOVERY_OPERATION_ID="$checkpoint_operation_id" \
+      command node "$helper" "${arguments[@]}"
+  else
+    EXPECTED_KUBE_CONTEXT="$EXPECTED_KUBE_CONTEXT" NAMESPACE="$NAMESPACE" \
+      EXPECTED_NAMESPACE_UID="$RECOVERY_NAMESPACE_UID" \
+      command node "$helper" "${arguments[@]}"
+  fi
+}
+
+recovery_classify_runner_pod_list() {
+  local pods_path="$1" output_path="$2" helper
+  helper="$(recovery_runner_checkpoint_helper_path)" || return 1
+  recovery_require_regular_direct_file "$pods_path" || return 1
+  command node "$helper" classify-pods --pods "$pods_path" --output "$output_path" || return 1
+  recovery_require_regular_direct_file "$output_path" || return 1
+  jq -e '
+    type == "object" and
+    (keys | sort) == ["fences", "intents", "list_resource_version", "runners", "schema_version"] and
+    .schema_version == 1 and
+    (.list_resource_version | type == "string" and length > 0) and
+    all(.runners, .intents, .fences; type == "array")
+  ' "$output_path" >/dev/null
+}
+
+recovery_runner_next_action() {
+  local pods_path="$1" output_path="$2" helper
+  helper="$(recovery_runner_checkpoint_helper_path)" || return 1
+  recovery_require_regular_direct_file "$pods_path" || return 1
+  command node "$helper" next-action --pods "$pods_path" --output "$output_path" || return 1
+  recovery_require_regular_direct_file "$output_path" || return 1
+  jq -e '
+    type == "object" and .schema_version == 1 and
+    (.action == "noop" or .action == "delete-pod" or .action == "create-fence")
+  ' "$output_path" >/dev/null
+}
+
+recovery_capture_runner_namespace_pod_list() {
+  local output_path="$1"
+  [[ "$output_path" == /* && -f "$output_path" && ! -L "$output_path" ]] || return 2
+  recovery_kubectl get pod -n hcce-bot-runners -o json >"$output_path" || return 1
+  chmod 600 "$output_path"
+  recovery_require_regular_direct_file "$output_path"
+}
+
+recovery_delete_runner_pod_exact_once() {
+  local name="$1" uid="$2" resource_version="$3" delete_options mutation_status=0
+  [[ "$name" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ && -n "$uid" &&
+     "$resource_version" =~ ^[A-Za-z0-9._:-]+$ ]] || return 2
+  delete_options="$(jq -cn --arg uid "$uid" --arg resource_version "$resource_version" '
+    {
+      apiVersion:"v1",kind:"DeleteOptions",gracePeriodSeconds:0,
+      propagationPolicy:"Background",
+      preconditions:{uid:$uid,resourceVersion:$resource_version}
+    }
+  ')" || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  if printf '%s\n' "$delete_options" |
+     recovery_kubectl_mutate delete \
+       --raw="/api/v1/namespaces/hcce-bot-runners/pods/$name" -f - >/dev/null; then
+    mutation_status=0
+  else
+    mutation_status=$?
+  fi
+  recovery_require_operation_lock || return 1
+  recovery_require_operation_serialization || return 1
+  [[ "$mutation_status" == 0 ]]
+}
+
+recovery_create_runner_fence_once() {
+  local action_path="$1" document_path tmp_root mutation_status=0
+  recovery_require_regular_direct_file "$action_path" || return 1
+  tmp_root="$(recovery_canonical_private_tmp_root)" || return 1
+  document_path="$(mktemp "$tmp_root/yenhubs-runner-fence.XXXXXX")" || return 1
+  chmod 600 "$document_path"
+  if ! jq -e '
+      select(.schema_version == 1 and .action == "create-fence" and
+        (.identity | type == "object") and
+        (.document | type == "object" and .apiVersion == "v1" and
+         .kind == "Pod" and .metadata.namespace == "hcce-bot-runners")) |
+      .document
+    ' "$action_path" >"$document_path"; then
+    rm -f -- "$document_path"
+    return 1
+  fi
+  recovery_require_operation_serialization || {
+    rm -f -- "$document_path"
+    return 1
+  }
+  recovery_require_operation_lock || {
+    rm -f -- "$document_path"
+    return 1
+  }
+  # A timeout or 409 is ambiguous, not proof of failure.  The next complete
+  # LIST resolves whether the exact permanent fence owns the target name.
+  if recovery_kubectl_mutate create -f "$document_path" >/dev/null; then
+    mutation_status=0
+  else
+    mutation_status=$?
+  fi
+  rm -f -- "$document_path"
+  recovery_require_operation_lock || return 1
+  recovery_require_operation_serialization || return 1
+  [[ "$mutation_status" == 0 ]]
+}
+
+recovery_runner_action_advanced_after_ambiguous_failure() {
+  local previous_action="$1" pods_path action_path current_action tmp_root
+  tmp_root="$(recovery_canonical_private_tmp_root)" || return 1
+  pods_path="$(mktemp "$tmp_root/yenhubs-runner-pods.XXXXXX")" || return 1
+  action_path="$(mktemp "$tmp_root/yenhubs-runner-action.XXXXXX")" || {
+    rm -f -- "$pods_path"
+    return 1
+  }
+  chmod 600 "$pods_path"
+  rm -f -- "$action_path"
+  if ! recovery_capture_runner_namespace_pod_list "$pods_path" ||
+     ! recovery_runner_next_action "$pods_path" "$action_path"; then
+    rm -f -- "$pods_path" "$action_path"
+    return 1
+  fi
+  current_action="$(<"$action_path")"
+  rm -f -- "$pods_path" "$action_path"
+  [[ "$current_action" != "$previous_action" ]]
+}
+
+recovery_reconcile_durable_runner_namespace() {
+  local attempt pods_path action_path action _reason name uid resource_version expected_action tmp_root
+  tmp_root="$(recovery_canonical_private_tmp_root)" || return 1
+  for attempt in {1..240}; do
+    recovery_require_operation_serialization || return 1
+    recovery_require_operation_lock || return 1
+    pods_path="$(mktemp "$tmp_root/yenhubs-runner-pods.XXXXXX")" || return 1
+    action_path="$(mktemp "$tmp_root/yenhubs-runner-action.XXXXXX")" || {
+      rm -f -- "$pods_path"
+      return 1
+    }
+    chmod 600 "$pods_path"
+    rm -f -- "$action_path"
+    if ! recovery_capture_runner_namespace_pod_list "$pods_path" ||
+       ! recovery_runner_next_action "$pods_path" "$action_path"; then
+      rm -f -- "$pods_path" "$action_path"
+      return 1
+    fi
+    action="$(jq -er '.action' "$action_path")" || {
+      rm -f -- "$pods_path" "$action_path"
+      return 1
+    }
+    expected_action="$(<"$action_path")"
+    case "$action" in
+      noop)
+        rm -f -- "$pods_path" "$action_path"
+        return 0
+        ;;
+      delete-pod)
+        IFS=$'\t' read -r _reason name uid resource_version < <(jq -er '
+          select((keys | sort) == ["action", "pod", "reason", "schema_version"]) |
+          select(.schema_version == 1 and .action == "delete-pod") |
+          select(.reason == "unarmed-intent" or
+                 .reason == "armed-intent-after-fence" or
+                 .reason == "runner-before-fence" or
+                 .reason == "orphan-runner") |
+          select((.pod | keys | sort) == ["name", "resource_version", "uid"]) |
+          [.reason,.pod.name,.pod.uid,.pod.resource_version] | @tsv
+        ' "$action_path") || {
+          rm -f -- "$pods_path" "$action_path"
+          return 1
+        }
+        rm -f -- "$pods_path" "$action_path"
+        # A conflict means the causal state advanced. Relist rather than
+        # inferring success; any malformed replacement fails in next-action.
+        if ! recovery_delete_runner_pod_exact_once \
+          "$name" "$uid" "$resource_version"; then
+          recovery_runner_action_advanced_after_ambiguous_failure \
+            "$expected_action" || return 1
+        fi
+        ;;
+      create-fence)
+        rm -f -- "$pods_path"
+        if ! recovery_create_runner_fence_once "$action_path"; then
+          rm -f -- "$action_path"
+          recovery_runner_action_advanced_after_ambiguous_failure \
+            "$expected_action" || return 1
+        else
+          rm -f -- "$action_path"
+        fi
+        ;;
+      *)
+        rm -f -- "$pods_path" "$action_path"
+        return 1
+        ;;
+    esac
+    recovery_require_operation_lock || return 1
+    recovery_require_operation_serialization || return 1
+  done
+  printf 'Durable runner reconciliation did not converge to permanent fences.\n' >&2
+  return 1
+}
+
+recovery_capture_durable_quiescence_into() {
+  local __yenhubs_output_variable="$1"
+  local __yenhubs_pods_path __yenhubs_classification_path
+  local __yenhubs_tmp_root __yenhubs_inventory
+  [[ "$__yenhubs_output_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$__yenhubs_output_variable" != __yenhubs_* ]] || return 2
+  __yenhubs_tmp_root="$(recovery_canonical_private_tmp_root)" || return 1
+  __yenhubs_pods_path="$(mktemp "$__yenhubs_tmp_root/yenhubs-runner-pods.XXXXXX")" || return 1
+  __yenhubs_classification_path="$(mktemp "$__yenhubs_tmp_root/yenhubs-runner-classification.XXXXXX")" || {
+    rm -f -- "$__yenhubs_pods_path"
+    return 1
+  }
+  chmod 600 "$__yenhubs_pods_path"
+  rm -f -- "$__yenhubs_classification_path"
+  if ! recovery_capture_runner_namespace_pod_list "$__yenhubs_pods_path" ||
+     ! recovery_classify_runner_pod_list \
+       "$__yenhubs_pods_path" "$__yenhubs_classification_path" ||
+     ! jq -e '.runners == [] and .intents == []' \
+       "$__yenhubs_classification_path" >/dev/null; then
+    rm -f -- "$__yenhubs_pods_path" "$__yenhubs_classification_path"
+    return 1
+  fi
+  # resourceVersion is deliberately excluded from the causal window identity:
+  # status-only Pod updates may advance it without replacing the fence. UID and
+  # the complete durable room/process identity must remain byte-for-byte stable.
+  __yenhubs_inventory="$(jq -ce '[.fences[] | {
+    name,uid,room_key,process_generation,state
+  }] | sort_by(.name)' "$__yenhubs_classification_path")" || {
+    rm -f -- "$__yenhubs_pods_path" "$__yenhubs_classification_path"
+    return 1
+  }
+  rm -f -- "$__yenhubs_pods_path" "$__yenhubs_classification_path"
+  recovery_durable_fence_inventory_json_is_canonical \
+    "$__yenhubs_inventory" || return 1
+  printf -v "$__yenhubs_output_variable" '%s' "$__yenhubs_inventory"
+}
+
+recovery_capture_durable_quiescence() {
+  local inventory
+  recovery_capture_durable_quiescence_into inventory || return 1
+  printf '%s\n' "$inventory"
+}
+
+recovery_durable_fence_inventory_json_is_canonical() {
+  local inventory_json="$1" canonical
+  canonical="$(jq -cer '
+    select(type == "array" and length <= 10000) |
+    select(all(.[];
+      (keys | sort) == [
+        "name", "process_generation", "room_key", "state", "uid"
+      ] and
+      (.name | type == "string" and
+        test("^bot-runner-[a-f0-9]{16}-[a-f0-9]{8}$")) and
+      (.uid | type == "string" and length > 0) and
+      (.room_key | type == "string" and test("^[a-f0-9]{20}$")) and
+      (.process_generation | type == "string" and
+        test("^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$")) and
+      .state == "fenced")) |
+    select(([.[].name] | unique | length) == length) |
+    select(([.[].uid] | unique | length) == length) |
+    sort_by(.name) | map({name,uid,room_key,process_generation,state})
+  ' <<<"$inventory_json")" || return 1
+  [[ "$inventory_json" == "$canonical" ]]
+}
+
+recovery_require_checkpoint_runner_quiescence_exact() {
+  local generation="$1" durable_baseline_path="${2:-}"
+  local expected_baseline_sha256="${3:-}"
+  local durable_baseline current size digest_before digest_after
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  case "$generation" in
+    legacy-absent)
+      [[ -z "$durable_baseline_path" && -z "$expected_baseline_sha256" ]] ||
+        return 1
+      recovery_require_no_managed_bot_runner_pods &&
+        recovery_require_no_legacy_parent_runner_pods
+      ;;
+    durable-v2)
+      [[ "$expected_baseline_sha256" =~ ^[a-f0-9]{64}$ ]] || return 1
+      recovery_private_values_file_is_acceptable "$durable_baseline_path" ||
+        return 1
+      size="$(recovery_file_size_bytes "$durable_baseline_path")" || return 1
+      [[ "$size" =~ ^[0-9]+$ && "$size" -gt 0 && "$size" -le 1048576 ]] ||
+        return 1
+      digest_before="$(recovery_sha256_digest "$durable_baseline_path")" ||
+        return 1
+      [[ "$digest_before" == "$expected_baseline_sha256" ]] || return 1
+      durable_baseline="$(<"$durable_baseline_path")"
+      digest_after="$(recovery_sha256_digest "$durable_baseline_path")" ||
+        return 1
+      [[ "$digest_after" == "$expected_baseline_sha256" ]] || return 1
+      recovery_durable_fence_inventory_json_is_canonical \
+        "$durable_baseline" || return 1
+      recovery_capture_durable_quiescence_into current || return 1
+      recovery_durable_fence_inventory_json_is_canonical "$current" || return 1
+      recovery_require_no_legacy_parent_runner_pods || return 1
+      [[ "$current" == "$durable_baseline" ]] || {
+        printf 'Permanent runner-fence inventory changed during checkpoint backup.\n' >&2
+        return 1
+      }
+      ;;
+    *) return 2 ;;
+  esac
+}
+
+recovery_require_durable_runner_quiescence_stable() {
+  local stable_seconds started baseline current
+  stable_seconds="$(recovery_stable_absence_seconds)" || return 1
+  recovery_reconcile_durable_runner_namespace || return 1
+  recovery_capture_durable_quiescence_into baseline || return 1
+  started="$SECONDS"
+  while :; do
+    recovery_require_operation_serialization || return 1
+    recovery_require_operation_lock || return 1
+    recovery_capture_durable_quiescence_into current || return 1
+    recovery_require_no_legacy_parent_runner_pods || return 1
+    [[ "$current" == "$baseline" ]] || {
+      printf 'Permanent runner-fence inventory changed during quiescence.\n' >&2
+      return 1
+    }
+    ((SECONDS - started >= stable_seconds)) && return 0
+    sleep 1
+  done
+}
+
+recovery_require_no_legacy_parent_runner_pods() {
+  local pods_json
+  pods_json="$(recovery_kubectl get pod -n "$NAMESPACE" -o json)" || return 1
+  jq -e --arg namespace "$NAMESPACE" '
+    .apiVersion == "v1" and .kind == "PodList" and
+    (.metadata.resourceVersion | type == "string" and length > 0) and
+    (.items | type == "array") and
+    all(.items[];
+      .metadata.namespace == $namespace and
+      ((.metadata.labels // {}) | type == "object") and
+      (.spec | type == "object")) and
+    ([.items[] | select(
+      (.metadata.labels.app // "") == "bot-runner" or
+      (.metadata.labels.component // "") == "bot-runner" or
+      (.metadata.labels["yenhubs.org/managed-by"] // "") == "bot-orchestrator" or
+      (.spec.serviceAccountName // "") == "bot-orchestrator"
+    )] | length) == 0
+  ' >/dev/null <<<"$pods_json"
 }
 
 recovery_runner_namespaces() {
@@ -3431,6 +7336,61 @@ recovery_signal_no_managed_bot_runner_watch_stop() {
   fi
 }
 
+# Publish one private handoff marker as an atomic, durable local capability.
+# Normal watcher stop markers retain their existing byte-for-byte protocol;
+# only the legacy restore receipt handoff uses this replacement path.
+recovery_publish_checkpoint_writer_handoff_marker() {
+  local marker_path="$1" marker_json="$2"
+  [[ "$marker_path" == /* && "$marker_json" == \{* &&
+     ${#marker_json} -le 2047 ]] || return 2
+  recovery_runner_watch_marker_is_exact "$marker_path" || return 1
+  command -v python3 >/dev/null 2>&1 || return 127
+  python3 -I - "$marker_path" "$marker_json" <<'PY'
+import os
+import stat
+import sys
+import tempfile
+
+path, value = sys.argv[1:]
+payload = (value + "\n").encode("utf-8")
+if not os.path.isabs(path) or len(payload) > 2048:
+    raise SystemExit(2)
+parent = os.path.dirname(path)
+descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+try:
+    current = os.fstat(descriptor)
+    if not stat.S_ISREG(current.st_mode) or stat.S_IMODE(current.st_mode) != 0o600:
+        raise OSError("marker contract")
+finally:
+    os.close(descriptor)
+temporary = None
+try:
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".checkpoint-writer-handoff.", dir=parent
+    )
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "wb", closefd=True) as output:
+        output.write(payload)
+        output.flush()
+        os.fsync(output.fileno())
+    os.replace(temporary, path)
+    temporary = None
+    directory = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+finally:
+    if temporary is not None:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+PY
+  recovery_runner_watch_marker_is_exact "$marker_path" || return 1
+  [[ "$(<"$marker_path")" == "$marker_json" ]]
+}
+
 recovery_runner_watch_boundary_json() {
   local runner_namespaces runner_namespace pods_json resource_version
   local boundaries='[]'
@@ -3469,17 +7429,28 @@ recovery_runner_watch_boundary_json() {
 
 recovery_start_no_managed_bot_runner_watch() {
   local stop_path="$1" failure_path="$2" ready_path="$3" pid_variable="$4"
+  local identity_variable="$5" progress_path="${6:-}"
   local watcher_path="$RECOVERY_SAFETY_DIR/../watch-bot-runner-pods.mjs"
-  local started_pid="" ready_value="" marker_path runner_namespace="" runner_namespaces="" attempt=0
+  local started_pid="" started_identity="" ready_value="" marker_path
+  local runner_namespace="" runner_namespaces="" attempt=0
   local watcher_stable_seconds="" watcher_test_mode=""
-  [[ "$pid_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 2
+  local -a watcher_args=() marker_paths=("$stop_path" "$failure_path" "$ready_path")
+  [[ "$pid_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$identity_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$pid_variable" != "$identity_variable" ]] || return 2
   [[ "$stop_path" != "$failure_path" && "$stop_path" != "$ready_path" &&
      "$failure_path" != "$ready_path" ]] || return 2
-  for marker_path in "$stop_path" "$failure_path" "$ready_path"; do
+  if [[ -n "$progress_path" ]]; then
+    [[ "$progress_path" != "$stop_path" && "$progress_path" != "$failure_path" &&
+       "$progress_path" != "$ready_path" ]] || return 2
+    marker_paths+=("$progress_path")
+  fi
+  for marker_path in "${marker_paths[@]}"; do
     recovery_runner_watch_marker_is_exact "$marker_path" || return 1
     [[ ! -s "$marker_path" ]] || return 1
   done
   [[ -f "$watcher_path" && ! -L "$watcher_path" ]] || return 1
+  command -v python3 >/dev/null 2>&1 || return 127
   [[ -n "${EXPECTED_KUBE_CONTEXT:-}" && -n "${NAMESPACE:-}" ]] || return 1
   if ! runner_namespaces="$(recovery_runner_namespaces)"; then
     return 1
@@ -3490,78 +7461,122 @@ recovery_start_no_managed_bot_runner_watch() {
   if [[ "$watcher_stable_seconds" != 61 ]]; then
     watcher_test_mode=local-fixture
   fi
+  watcher_args=(
+    "$watcher_path"
+    --context "$EXPECTED_KUBE_CONTEXT"
+    --namespace "$NAMESPACE"
+    --runner-namespace "$runner_namespace"
+    --stop "$stop_path"
+    --failure "$failure_path"
+    --ready "$ready_path"
+  )
+  if [[ -n "$progress_path" ]]; then
+    watcher_args+=(--progress "$progress_path")
+  fi
   (
     # Never let ambient fixture variables reach the Node watcher. Re-export
     # them only after the shell has attested the exact local context,
     # namespace UID and PVC UID above.
     unset YENHUBS_RECOVERY_TEST_MODE RECOVERY_TEST_STABLE_ABSENCE_SECONDS
     if [[ "$watcher_test_mode" == local-fixture ]]; then
+      # shellcheck disable=SC2030 # This export is intentionally child-local.
       export YENHUBS_RECOVERY_TEST_MODE=local-fixture
       export RECOVERY_TEST_STABLE_ABSENCE_SECONDS="$watcher_stable_seconds"
     fi
-    exec node "$watcher_path" \
-      --context "$EXPECTED_KUBE_CONTEXT" \
-      --namespace "$NAMESPACE" \
-      --runner-namespace "$runner_namespace" \
-      --stop "$stop_path" \
-      --failure "$failure_path" \
-      --ready "$ready_path"
+    exec python3 -I -c '
+import os
+import sys
+os.setsid()
+os.execvp(sys.argv[1], sys.argv[1:])
+' node "${watcher_args[@]}"
   ) &
   started_pid=$!
+  started_identity="$(recovery_process_start_identity "$started_pid")" || {
+    # Without the spawn-time identity there is no authority to signal this
+    # numeric PID: a fast exit may already have made it reusable.
+    return 1
+  }
   printf -v "$pid_variable" '%s' "$started_pid"
+  printf -v "$identity_variable" '%s' "$started_identity"
   while [[ "$attempt" -lt 200 ]]; do
     if [[ -s "$failure_path" ]]; then
-      wait "$started_pid" 2>/dev/null || :
+      recovery_discard_no_managed_bot_runner_watch \
+        "$stop_path" "$started_pid" "$started_identity"
       printf -v "$pid_variable" '%s' ""
+      printf -v "$identity_variable" '%s' ""
       printf 'Managed bot-runner event watcher failed before its ready handshake.\n' >&2
       return 1
     fi
     if [[ -s "$ready_path" ]]; then
       ready_value="$(<"$ready_path")"
-      if [[ "$ready_value" == ready ]] && kill -0 "$started_pid" 2>/dev/null; then
+      if [[ "$ready_value" == ready ]] &&
+         recovery_process_identity_is_live "$started_pid" "$started_identity" &&
+         { [[ -z "$progress_path" ]] ||
+           recovery_stream_guard_progress_value "$progress_path" >/dev/null; }; then
         return 0
       fi
       break
     fi
-    if ! kill -0 "$started_pid" 2>/dev/null; then
-      wait "$started_pid" 2>/dev/null || :
+    if ! recovery_process_identity_is_live \
+        "$started_pid" "$started_identity"; then
       printf -v "$pid_variable" '%s' ""
+      printf -v "$identity_variable" '%s' ""
       printf 'Managed bot-runner event watcher exited before its ready handshake.\n' >&2
       return 1
     fi
     sleep 0.05
     attempt=$((attempt + 1))
   done
-  recovery_signal_no_managed_bot_runner_watch_stop "$stop_path" 2>/dev/null || :
-  wait "$started_pid" 2>/dev/null || :
+  recovery_discard_no_managed_bot_runner_watch \
+    "$stop_path" "$started_pid" "$started_identity"
   printf -v "$pid_variable" '%s' ""
+  printf -v "$identity_variable" '%s' ""
   printf 'Managed bot-runner event watcher did not complete an exact ready handshake.\n' >&2
   return 1
 }
 
 recovery_require_no_managed_bot_runner_watch_healthy() {
   local failure_path="$1" ready_path="$2" watcher_pid="$3"
+  local watcher_identity="$4"
   local ready_value=""
   recovery_runner_watch_marker_is_exact "$failure_path" || return 1
   recovery_runner_watch_marker_is_exact "$ready_path" || return 1
   [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && ! -s "$failure_path" ]] || return 1
   ready_value="$(<"$ready_path")"
   [[ "$ready_value" == ready ]] || return 1
-  kill -0 "$watcher_pid" 2>/dev/null
+  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity"
 }
 
 recovery_stop_no_managed_bot_runner_watch() {
   local stop_path="$1" failure_path="$2" ready_path="$3" watcher_pid="$4"
-  local watcher_status=0 ready_value="" boundary_json=""
-  [[ "$watcher_pid" =~ ^[1-9][0-9]*$ ]] || return 2
+  local watcher_identity="$5"
+  local watcher_status=0 ready_value="" boundary_json="" stop_written=0
+  [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" ]] || return 2
+  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" || return 1
   if boundary_json="$(recovery_runner_watch_boundary_json)"; then
-    recovery_signal_no_managed_bot_runner_watch_stop \
-      "$stop_path" "$boundary_json" || watcher_status=1
+    if recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" &&
+       recovery_signal_no_managed_bot_runner_watch_stop \
+        "$stop_path" "$boundary_json"; then
+      stop_written=1
+    else
+      watcher_status=1
+    fi
   else
     watcher_status=1
-    recovery_signal_no_managed_bot_runner_watch_stop "$stop_path" discard || :
+    if recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" &&
+       recovery_signal_no_managed_bot_runner_watch_stop \
+        "$stop_path" discard; then
+      stop_written=1
+    fi
   fi
-  if ! wait "$watcher_pid"; then watcher_status=1; fi
+  if [[ "$stop_written" == 1 ]]; then
+    recovery_wait_isolated_process_bounded \
+      "$watcher_pid" "$watcher_identity" "$stop_path" || watcher_status=1
+  else
+    # A broken marker path must not leave the isolated watcher running forever.
+    recovery_stop_process_group "$watcher_pid" "$watcher_identity" || :
+    watcher_status=1
+  fi
   recovery_runner_watch_marker_is_exact "$failure_path" || watcher_status=1
   recovery_runner_watch_marker_is_exact "$ready_path" || watcher_status=1
   [[ ! -s "$failure_path" ]] || watcher_status=1
@@ -3572,10 +7587,1585 @@ recovery_stop_no_managed_bot_runner_watch() {
 }
 
 recovery_discard_no_managed_bot_runner_watch() {
-  local stop_path="$1" watcher_pid="$2"
-  if [[ "$watcher_pid" =~ ^[1-9][0-9]*$ ]]; then
-    recovery_signal_no_managed_bot_runner_watch_stop "$stop_path" 2>/dev/null || :
-    wait "$watcher_pid" 2>/dev/null || :
+  local stop_path="$1" watcher_pid="$2" watcher_identity="$3"
+  if [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" ]] &&
+     recovery_process_identity_is_live "$watcher_pid" "$watcher_identity"; then
+    if recovery_signal_no_managed_bot_runner_watch_stop \
+        "$stop_path" 2>/dev/null; then
+      recovery_wait_isolated_process_bounded \
+        "$watcher_pid" "$watcher_identity" "$stop_path" 2>/dev/null || :
+    else
+      recovery_stop_process_group "$watcher_pid" "$watcher_identity" || :
+    fi
+  fi
+}
+
+# The coordinated checkpoint has a wider invariant than the isolated-runner
+# watcher above: all five fixed DB consumers must remain at zero, their exact
+# Deployment/ReplicaSet contracts must not advance, and no matching Pod may
+# appear while pg_dump and ret-pvc are captured. The Node watcher binds its
+# initial LIST resourceVersions to continuous watch streams, while these shell
+# wrappers retain the full Lease/operation-lock authorization contract.
+recovery_checkpoint_writer_monitor_file_is_exact() {
+  local file_path="$1" expected_sha256="$2" maximum_bytes="$3"
+  local size digest_before digest_after
+  [[ "$expected_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$maximum_bytes" =~ ^[1-9][0-9]*$ ]] || return 2
+  recovery_private_values_file_is_acceptable "$file_path" || return 1
+  size="$(recovery_file_size_bytes "$file_path")" || return 1
+  [[ "$size" =~ ^[0-9]+$ && "$size" -gt 0 &&
+     "$size" -le "$maximum_bytes" ]] || return 1
+  digest_before="$(recovery_sha256_digest "$file_path")" || return 1
+  [[ "$digest_before" == "$expected_sha256" ]] || return 1
+  # A second descriptor-level digest closes local same-size replacement while
+  # the caller moves from validation into a watcher/boundary invocation.
+  digest_after="$(recovery_sha256_digest "$file_path")" || return 1
+  [[ "$digest_after" == "$expected_sha256" ]]
+}
+
+recovery_checkpoint_writer_monitor_authority_json() {
+  local contract_path="$1" contract_sha256="$2" baseline_path="$3"
+  local stop_path="$4" failure_path="$5" ready_path="$6" progress_path="$7"
+  local final_path="$8" watcher_pid="$9" watcher_identity="${10}"
+  local runtime_generation="${11}" operation_owner="${12}" authority_path
+  authority_path="$(recovery_monitor_authority_path "$ready_path")" || return 1
+  [[ "$contract_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" &&
+     "$runtime_generation" =~ ^(durable-v2|legacy-absent)$ &&
+     "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
+     "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" ]] || return 2
+  jq -cnS \
+    --arg kind checkpoint-writer-monitor --argjson pid "$watcher_pid" \
+    --arg start_identity "$watcher_identity" \
+    --arg context "$EXPECTED_KUBE_CONTEXT" --arg namespace "$NAMESPACE" \
+    --arg namespace_uid "$RECOVERY_NAMESPACE_UID" \
+    --arg operation_id "$RECOVERY_OPERATION_ID" \
+    --arg operation_owner "$operation_owner" \
+    --arg runtime_generation "$runtime_generation" \
+    --arg lock_name "$RECOVERY_OPERATION_LOCK_NAME" \
+    --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
+    --arg lock_rv "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION" \
+    --arg lease_name "$RECOVERY_SERIALIZATION_LEASE_NAME" \
+    --arg lease_uid "$RECOVERY_SERIALIZATION_LEASE_UID" \
+    --arg lease_holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
+    --arg authority "$authority_path" --arg contract "$contract_path" \
+    --arg baseline "$baseline_path" --arg stop "$stop_path" \
+    --arg failure "$failure_path" --arg ready "$ready_path" \
+    --arg progress "$progress_path" --arg final "$final_path" \
+    --arg contract_sha256 "$contract_sha256" '
+    {schema_version:1,kind:$kind,pid:$pid,start_identity:$start_identity,
+     context:$context,namespace:$namespace,namespace_uid:$namespace_uid,
+     operation_id:$operation_id,operation_owner:$operation_owner,
+     runtime_generation:$runtime_generation,
+     operation_lock:{name:$lock_name,uid:$lock_uid,resource_version:$lock_rv},
+     lease:{name:$lease_name,uid:$lease_uid,holder:$lease_holder},
+     paths:{authority:$authority,contract:$contract,baseline:$baseline,
+       stop:$stop,failure:$failure,ready:$ready,progress:$progress,final:$final},
+     hashes:{contract_sha256:$contract_sha256}}
+  '
+}
+
+recovery_checkpoint_writer_monitor_authority_is_exact() {
+  local authority_path="$1" authority_sha256="$2" contract_path="$3"
+  local contract_sha256="$4" baseline_path="$5" stop_path="$6"
+  local failure_path="$7" ready_path="$8" progress_path="$9"
+  local final_path="${10}" watcher_pid="${11}" watcher_identity="${12}"
+  local runtime_generation="${13}" operation_owner="${14}" expected_json
+  local require_live="${15:-1}"
+  [[ "$require_live" == 0 || "$require_live" == 1 ]] || return 2
+  if [[ "$require_live" == 1 ]]; then
+    recovery_monitor_authority_common_is_exact \
+      "$authority_path" "$authority_sha256" checkpoint-writer-monitor \
+      "$watcher_pid" "$watcher_identity" "$failure_path" "$ready_path" \
+      "$progress_path" || return 1
+  else
+    recovery_checkpoint_writer_monitor_file_is_exact \
+      "$authority_path" "$authority_sha256" 65536 || return 1
+  fi
+  expected_json="$(recovery_checkpoint_writer_monitor_authority_json \
+    "$contract_path" "$contract_sha256" "$baseline_path" "$stop_path" \
+    "$failure_path" "$ready_path" "$progress_path" "$final_path" \
+    "$watcher_pid" "$watcher_identity" "$runtime_generation" \
+    "$operation_owner")" || return 1
+  [[ "$(<"$authority_path")" == "$expected_json" ]]
+}
+
+recovery_monitor_authority_sha256_for_ready() {
+  local ready_path="$1" authority_path authority_sha256
+  authority_path="$(recovery_monitor_authority_path "$ready_path")" || return 1
+  recovery_require_regular_direct_file "$authority_path" || return 1
+  authority_sha256="$(recovery_sha256_digest "$authority_path")" || return 1
+  [[ "$authority_sha256" =~ ^[a-f0-9]{64}$ ]] || return 1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$authority_path" "$authority_sha256" 65536 || return 1
+  printf '%s\n' "$authority_sha256"
+}
+
+recovery_checkpoint_writer_monitor_final_json_is_acceptable() {
+  local final_json="$1" contract_path="$2" authority_sha256="${3:-}"
+  [[ -n "$final_json" ]] || return 1
+  if [[ -z "$authority_sha256" ]]; then
+    authority_sha256="$(jq -er '.monitor_authority_sha256' \
+      <<<"$final_json")" || return 1
+  fi
+  [[ "$authority_sha256" =~ ^[a-f0-9]{64}$ ]] || return 2
+  recovery_require_regular_direct_file "$contract_path" || return 1
+  jq -e --slurpfile contract "$contract_path" \
+    --arg authority_sha256 "$authority_sha256" '
+    (keys | sort) == ["complete", "deployments", "monitor_authority_sha256"] and
+    .complete == true and .monitor_authority_sha256 == $authority_sha256 and
+    (.deployments | type == "array" and length == 5) and
+    ([.deployments[].name] | sort) ==
+      ([ $contract[0].consumers[].name ] | sort) and
+    ([.deployments[].name] | unique | length) == 5 and
+    ([.deployments[].uid] | unique | length) == 5 and
+    all(.deployments[];
+      (keys | sort) == ["name", "resource_version", "uid"] and
+      (.name | type == "string" and length > 0) and
+      (.uid | type == "string" and length > 0) and
+      (.resource_version | type == "string" and length > 0)) and
+    all(.deployments[];
+      . as $live |
+      any($contract[0].consumers[];
+        .name == $live.name and .uid == $live.uid)) and
+    (.deployments | map(.name)) == ([.deployments[].name] | sort)
+  ' >/dev/null 2>&1 <<<"$final_json"
+}
+
+recovery_checkpoint_writer_receipt_arm_json() {
+  local boundary_json="$1" authority_sha256="$2" token="$3"
+  local target_name="$4" target_uid="$5"
+  [[ "$authority_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$token" =~ ^[a-f0-9]{32}$ && "$target_name" == reticulum &&
+     -n "$target_uid" &&
+     "${RECOVERY_OPERATION_OWNER:-}" == checkpoint-restore &&
+     "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ &&
+     "${RECOVERY_OPERATION_LOCK_NAME:-}" == "$RECOVERY_OPERATION_LOCK_GLOBAL_NAME" &&
+     -n "${RECOVERY_OPERATION_LOCK_UID:-}" &&
+     -n "${RECOVERY_OPERATION_LOCK_RESOURCE_VERSION:-}" &&
+     -n "${RECOVERY_SERIALIZATION_LEASE_NAME:-}" &&
+     -n "${RECOVERY_SERIALIZATION_LEASE_UID:-}" &&
+     "${RECOVERY_SERIALIZATION_LEASE_HOLDER:-}" =~ ^root-recovery: ]] || return 2
+  recovery_require_legacy_checkpoint_receipt_mutation_context \
+    "$target_name" || return 1
+  jq -e '
+    (keys | sort) == ["boundaries", "stop"] and .stop == true and
+    (.boundaries | keys | sort) == ["deployments", "pods", "replicasets"] and
+    all(.boundaries[]; type == "string" and length > 0)
+  ' >/dev/null 2>&1 <<<"$boundary_json" || return 1
+  jq -cnS --argjson boundary "$boundary_json" \
+    --arg authority_sha256 "$authority_sha256" --arg token "$token" \
+    --arg operation_id "$RECOVERY_OPERATION_ID" \
+    --arg operation_owner "$RECOVERY_OPERATION_OWNER" \
+    --arg lock_name "$RECOVERY_OPERATION_LOCK_NAME" \
+    --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
+    --arg lock_rv "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION" \
+    --arg lease_name "$RECOVERY_SERIALIZATION_LEASE_NAME" \
+    --arg lease_uid "$RECOVERY_SERIALIZATION_LEASE_UID" \
+    --arg lease_holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
+    --arg target_name "$target_name" --arg target_uid "$target_uid" '
+    {handoff:"receipt-arm",boundaries:$boundary.boundaries,
+     monitor_authority_sha256:$authority_sha256,token:$token,
+     operation:{id:$operation_id,owner:$operation_owner},
+     operation_lock:{name:$lock_name,uid:$lock_uid,resource_version:$lock_rv},
+     lease:{name:$lease_name,uid:$lease_uid,holder:$lease_holder},
+     target:{name:$target_name,uid:$target_uid},
+     receipt:{annotation:"yenhubs.org/checkpoint-resume-operation",
+       value:$operation_id,mode:"create",patch_response_resource_version:null}}
+  '
+}
+
+recovery_checkpoint_writer_receipt_commit_json() {
+  local authority_sha256="$1" token="$2" target_name="$3" target_uid="$4"
+  local patch_resource_version="$5"
+  [[ "$authority_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$token" =~ ^[a-f0-9]{32}$ && "$target_name" == reticulum &&
+     -n "$target_uid" && -n "$patch_resource_version" &&
+     "${RECOVERY_OPERATION_OWNER:-}" == checkpoint-restore &&
+     "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ &&
+     "${RECOVERY_OPERATION_LOCK_NAME:-}" == "$RECOVERY_OPERATION_LOCK_GLOBAL_NAME" &&
+     -n "${RECOVERY_OPERATION_LOCK_UID:-}" &&
+     -n "${RECOVERY_OPERATION_LOCK_RESOURCE_VERSION:-}" &&
+     -n "${RECOVERY_SERIALIZATION_LEASE_NAME:-}" &&
+     -n "${RECOVERY_SERIALIZATION_LEASE_UID:-}" &&
+     "${RECOVERY_SERIALIZATION_LEASE_HOLDER:-}" =~ ^root-recovery: ]] || return 2
+  recovery_require_legacy_checkpoint_receipt_mutation_context \
+    "$target_name" || return 1
+  jq -cnS --arg authority_sha256 "$authority_sha256" --arg token "$token" \
+    --arg operation_id "$RECOVERY_OPERATION_ID" \
+    --arg operation_owner "$RECOVERY_OPERATION_OWNER" \
+    --arg lock_name "$RECOVERY_OPERATION_LOCK_NAME" \
+    --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
+    --arg lock_rv "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION" \
+    --arg lease_name "$RECOVERY_SERIALIZATION_LEASE_NAME" \
+    --arg lease_uid "$RECOVERY_SERIALIZATION_LEASE_UID" \
+    --arg lease_holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
+    --arg target_name "$target_name" --arg target_uid "$target_uid" \
+    --arg patch_rv "$patch_resource_version" '
+    {handoff:"receipt-commit",monitor_authority_sha256:$authority_sha256,
+     token:$token,operation:{id:$operation_id,owner:$operation_owner},
+     operation_lock:{name:$lock_name,uid:$lock_uid,resource_version:$lock_rv},
+     lease:{name:$lease_name,uid:$lease_uid,holder:$lease_holder},
+     target:{name:$target_name,uid:$target_uid},
+     receipt:{annotation:"yenhubs.org/checkpoint-resume-operation",
+       value:$operation_id,mode:"create",
+       patch_response_resource_version:$patch_rv}}
+  '
+}
+
+recovery_checkpoint_writer_receipt_armed_json_is_acceptable() {
+  local armed_json="$1" contract_path="$2" authority_sha256="$3"
+  local token_sha256="$4" target_name="$5" target_uid="$6"
+  local target_generation="$7"
+  [[ -n "$armed_json" && "$authority_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$token_sha256" =~ ^[a-f0-9]{64}$ && "$target_name" == reticulum &&
+     -n "$target_uid" && "$target_generation" =~ ^[1-9][0-9]*$ &&
+     "${RECOVERY_OPERATION_OWNER:-}" == checkpoint-restore &&
+     "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ ]] || return 2
+  recovery_require_legacy_checkpoint_receipt_mutation_context \
+    "$target_name" || return 1
+  recovery_require_regular_direct_file "$contract_path" || return 1
+  jq -e --slurpfile contract "$contract_path" \
+    --arg authority_sha256 "$authority_sha256" \
+    --arg token_sha256 "$token_sha256" \
+    --arg operation_id "$RECOVERY_OPERATION_ID" \
+    --arg operation_owner "$RECOVERY_OPERATION_OWNER" \
+    --arg lock_name "$RECOVERY_OPERATION_LOCK_NAME" \
+    --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
+    --arg lock_rv "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION" \
+    --arg lease_name "$RECOVERY_SERIALIZATION_LEASE_NAME" \
+    --arg lease_uid "$RECOVERY_SERIALIZATION_LEASE_UID" \
+    --arg lease_holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
+    --arg target_name "$target_name" --arg target_uid "$target_uid" \
+    --argjson target_generation "$target_generation" '
+    . as $root |
+    ($contract | length) == 1 and
+    $contract[0].operation_id == $operation_id and
+    (keys | sort) == ["deployments", "handoff", "lease",
+      "monitor_authority_sha256", "operation", "operation_lock", "receipt",
+      "target", "token_sha256"] and
+    .handoff == "receipt-armed" and
+    .monitor_authority_sha256 == $authority_sha256 and
+    .token_sha256 == $token_sha256 and
+    (.operation | keys | sort) == ["id", "owner"] and
+    .operation.id == $operation_id and .operation.owner == $operation_owner and
+    (.operation_lock | keys | sort) == ["name", "resource_version", "uid"] and
+    .operation_lock.name == $lock_name and .operation_lock.uid == $lock_uid and
+    .operation_lock.resource_version == $lock_rv and
+    (.lease | keys | sort) == ["holder", "name", "uid"] and
+    .lease.name == $lease_name and .lease.uid == $lease_uid and
+    .lease.holder == $lease_holder and
+    (.target | keys | sort) == ["generation", "name", "uid"] and
+    .target.name == $target_name and .target.uid == $target_uid and
+    .target.generation == $target_generation and
+    (.receipt | keys | sort) == ["annotation", "armed_resource_version",
+      "mode", "value"] and
+    .receipt.annotation == "yenhubs.org/checkpoint-resume-operation" and
+    .receipt.value == $operation_id and .receipt.mode == "create" and
+    (.receipt.armed_resource_version | type == "string" and length > 0) and
+    (.deployments | type == "array" and length == 5) and
+    ([.deployments[].name] | sort) ==
+      ([$contract[0].consumers[].name] | sort) and
+    ([.deployments[].name] | unique | length) == 5 and
+    ([.deployments[].uid] | unique | length) == 5 and
+    all(.deployments[];
+      (keys | sort) == ["name", "resource_version", "uid"] and
+      (.name | type == "string" and length > 0) and
+      (.uid | type == "string" and length > 0) and
+      (.resource_version | type == "string" and length > 0)) and
+    all(.deployments[]; . as $live |
+      any($contract[0].consumers[];
+        .name == $live.name and .uid == $live.uid)) and
+    (.deployments | map(.name)) == ([.deployments[].name] | sort) and
+    ([$root.deployments[] |
+      select(.name == $target_name and .uid == $target_uid)] | length) == 1 and
+    ([$root.deployments[] |
+      select(.name == $target_name and .uid == $target_uid)][0].resource_version ==
+      $root.receipt.armed_resource_version)
+  ' >/dev/null 2>&1 <<<"$armed_json"
+}
+
+recovery_checkpoint_writer_receipt_ack_json_is_acceptable() {
+  local ack_json="$1" contract_path="$2" authority_sha256="$3"
+  local token_sha256="$4" target_name="$5" target_uid="$6"
+  local target_generation="$7" patch_resource_version="$8"
+  [[ -n "$ack_json" && "$authority_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$token_sha256" =~ ^[a-f0-9]{64}$ && "$target_name" == reticulum &&
+     -n "$target_uid" && "$target_generation" =~ ^[1-9][0-9]*$ &&
+     -n "$patch_resource_version" &&
+     "${RECOVERY_OPERATION_OWNER:-}" == checkpoint-restore &&
+     "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ ]] || return 2
+  recovery_require_legacy_checkpoint_receipt_mutation_context \
+    "$target_name" || return 1
+  recovery_require_regular_direct_file "$contract_path" || return 1
+  jq -e --slurpfile contract "$contract_path" \
+    --arg authority_sha256 "$authority_sha256" \
+    --arg token_sha256 "$token_sha256" \
+    --arg operation_id "$RECOVERY_OPERATION_ID" \
+    --arg operation_owner "$RECOVERY_OPERATION_OWNER" \
+    --arg lock_name "$RECOVERY_OPERATION_LOCK_NAME" \
+    --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
+    --arg lock_rv "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION" \
+    --arg lease_name "$RECOVERY_SERIALIZATION_LEASE_NAME" \
+    --arg lease_uid "$RECOVERY_SERIALIZATION_LEASE_UID" \
+    --arg lease_holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
+    --arg target_name "$target_name" --arg target_uid "$target_uid" \
+    --argjson target_generation "$target_generation" \
+    --arg patch_rv "$patch_resource_version" '
+    . as $root |
+    ($contract | length) == 1 and
+    $contract[0].operation_id == $operation_id and
+    (keys | sort) == ["deployments", "handoff", "lease",
+      "monitor_authority_sha256", "operation", "operation_lock", "receipt",
+      "target", "token_sha256"] and
+    .handoff == "receipt-ack" and
+    .monitor_authority_sha256 == $authority_sha256 and
+    .token_sha256 == $token_sha256 and
+    (.operation | keys | sort) == ["id", "owner"] and
+    .operation.id == $operation_id and .operation.owner == $operation_owner and
+    (.operation_lock | keys | sort) == ["name", "resource_version", "uid"] and
+    .operation_lock.name == $lock_name and .operation_lock.uid == $lock_uid and
+    .operation_lock.resource_version == $lock_rv and
+    (.lease | keys | sort) == ["holder", "name", "uid"] and
+    .lease.name == $lease_name and .lease.uid == $lease_uid and
+    .lease.holder == $lease_holder and
+    (.target | keys | sort) == ["generation", "name", "uid"] and
+    .target.name == $target_name and .target.uid == $target_uid and
+    .target.generation == $target_generation and
+    (.receipt | keys | sort) == ["annotation", "mode",
+      "patch_response_resource_version", "terminal_resource_version", "value"] and
+    .receipt.annotation == "yenhubs.org/checkpoint-resume-operation" and
+    .receipt.value == $operation_id and .receipt.mode == "create" and
+    .receipt.patch_response_resource_version == $patch_rv and
+    (.receipt.terminal_resource_version | type == "string" and length > 0) and
+    (.deployments | type == "array" and length == 5) and
+    ([.deployments[].name] | sort) ==
+      ([$contract[0].consumers[].name] | sort) and
+    ([.deployments[].name] | unique | length) == 5 and
+    ([.deployments[].uid] | unique | length) == 5 and
+    all(.deployments[];
+      (keys | sort) == ["name", "resource_version", "uid"] and
+      (.name | type == "string" and length > 0) and
+      (.uid | type == "string" and length > 0) and
+      (.resource_version | type == "string" and length > 0)) and
+    all(.deployments[]; . as $live |
+      any($contract[0].consumers[];
+        .name == $live.name and .uid == $live.uid)) and
+    (.deployments | map(.name)) == ([.deployments[].name] | sort) and
+    ([$root.deployments[] |
+      select(.name == $target_name and .uid == $target_uid)] | length) == 1 and
+    ([$root.deployments[] |
+      select(.name == $target_name and .uid == $target_uid)][0].resource_version ==
+      $root.receipt.terminal_resource_version)
+  ' >/dev/null 2>&1 <<<"$ack_json"
+}
+
+# Arm the legacy metadata-receipt transfer and wait while the same local
+# watcher identity remains live. The random token and initially empty FINAL
+# marker prevent this process from adopting another process's ACK.
+recovery_arm_checkpoint_writer_receipt_handoff() {
+  local contract_path="$1" contract_sha256="$2" baseline_path="$3"
+  local baseline_sha256="$4" stop_path="$5" failure_path="$6"
+  local ready_path="$7" progress_path="$8" final_path="$9"
+  local watcher_pid="${10}" watcher_identity="${11}"
+  local authority_sha256="${12}" runtime_generation="${13}"
+  local operation_owner="${14}" target_name="${15}" target_uid="${16}"
+  local token_variable="${17}" armed_variable="${18}"
+  local authority_path boundary_json arm_json token token_sha256
+  local target_generation observed_armed_json="" timeout_seconds attempt=0
+  local max_attempts
+  [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" &&
+     "$authority_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$runtime_generation" == legacy-absent &&
+     "$operation_owner" == checkpoint-restore && "$target_name" == reticulum &&
+     -n "$target_uid" &&
+     "$token_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$armed_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$token_variable" != "$armed_variable" ]] || return 2
+  recovery_require_legacy_checkpoint_receipt_mutation_context \
+    "$target_name" || return 1
+  authority_path="$(recovery_monitor_authority_path "$ready_path")" || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$contract_path" "$contract_sha256" 131072 || return 1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$baseline_path" "$baseline_sha256" 2097152 || return 1
+  recovery_require_checkpoint_writer_monitor_healthy \
+    "$contract_path" "$contract_sha256" "$baseline_path" \
+    "$baseline_sha256" "$failure_path" "$ready_path" "$watcher_pid" \
+    "$watcher_identity" "$runtime_generation" "$operation_owner" || return 1
+  recovery_checkpoint_writer_monitor_authority_is_exact \
+    "$authority_path" "$authority_sha256" "$contract_path" \
+    "$contract_sha256" "$baseline_path" "$stop_path" "$failure_path" \
+    "$ready_path" "$progress_path" "$final_path" "$watcher_pid" \
+    "$watcher_identity" "$runtime_generation" "$operation_owner" || return 1
+  recovery_runner_watch_marker_is_exact "$stop_path" || return 1
+  recovery_runner_watch_marker_is_exact "$failure_path" || return 1
+  recovery_runner_watch_marker_is_exact "$final_path" || return 1
+  [[ ! -s "$stop_path" && ! -s "$failure_path" && ! -s "$final_path" ]] || return 1
+  target_generation="$(jq -er --arg name "$target_name" --arg uid "$target_uid" '
+    [.deployments[] | select(.name == $name and .uid == $uid)] |
+    select(length == 1) | .[0].generation |
+    select(type == "number" and floor == . and . >= 1)
+  ' "$baseline_path")" || return 1
+  token="$(od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]')" || return 1
+  [[ "$token" =~ ^[a-f0-9]{32}$ ]] || return 1
+  token_sha256="$(printf '%s' "$token" | recovery_sha256_bytes)" || return 1
+  boundary_json="$(recovery_checkpoint_writer_monitor_boundary_json \
+    "$contract_path" "$contract_sha256" "$baseline_path" \
+    "$baseline_sha256" "$runtime_generation" "$operation_owner")" || return 1
+  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" || return 1
+  arm_json="$(recovery_checkpoint_writer_receipt_arm_json \
+    "$boundary_json" "$authority_sha256" "$token" "$target_name" \
+    "$target_uid")" || return 1
+  recovery_publish_checkpoint_writer_handoff_marker \
+    "$stop_path" "$arm_json" || return 1
+  timeout_seconds="$(recovery_watcher_join_timeout_seconds)" || return 1
+  max_attempts=$((timeout_seconds * 20))
+  while ((attempt < max_attempts)); do
+    recovery_runner_watch_marker_is_exact "$failure_path" || return 1
+    recovery_runner_watch_marker_is_exact "$final_path" || return 1
+    [[ ! -s "$failure_path" ]] || return 1
+    if [[ -s "$final_path" ]]; then
+      observed_armed_json="$(<"$final_path")"
+      recovery_checkpoint_writer_receipt_armed_json_is_acceptable \
+        "$observed_armed_json" "$contract_path" "$authority_sha256" \
+        "$token_sha256" \
+        "$target_name" "$target_uid" "$target_generation" || return 1
+      recovery_process_identity_is_live \
+        "$watcher_pid" "$watcher_identity" || return 1
+      recovery_checkpoint_writer_monitor_authority_is_exact \
+        "$authority_path" "$authority_sha256" "$contract_path" \
+        "$contract_sha256" "$baseline_path" "$stop_path" "$failure_path" \
+        "$ready_path" "$progress_path" "$final_path" "$watcher_pid" \
+        "$watcher_identity" "$runtime_generation" "$operation_owner" || return 1
+      recovery_checkpoint_writer_monitor_file_is_exact \
+        "$baseline_path" "$baseline_sha256" 2097152 || return 1
+      recovery_require_operation_serialization || return 1
+      recovery_require_operation_lock || return 1
+      printf -v "$token_variable" '%s' "$token"
+      printf -v "$armed_variable" '%s' "$observed_armed_json"
+      return 0
+    fi
+    recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" || return 1
+    sleep 0.05
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
+recovery_commit_checkpoint_writer_receipt_handoff() {
+  local contract_path="$1" contract_sha256="$2" baseline_path="$3"
+  local baseline_sha256="$4" stop_path="$5" failure_path="$6"
+  local ready_path="$7" progress_path="$8" final_path="$9"
+  local watcher_pid="${10}" watcher_identity="${11}"
+  local authority_sha256="${12}" runtime_generation="${13}"
+  local operation_owner="${14}" target_name="${15}" target_uid="${16}"
+  local token="${17}" armed_json="${18}" patch_resource_version="${19}"
+  local joined_variable="${20}" ack_variable="${21}"
+  local authority_path token_sha256 target_generation commit_json
+  local observed_ack_json=""
+  local joined_state
+  [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" &&
+     "$authority_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$runtime_generation" == legacy-absent &&
+     "$operation_owner" == checkpoint-restore && "$target_name" == reticulum &&
+     -n "$target_uid" && "$token" =~ ^[a-f0-9]{32}$ &&
+     -n "$armed_json" && -n "$patch_resource_version" &&
+     "$joined_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$ack_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$joined_variable" != "$ack_variable" ]] || return 2
+  recovery_require_legacy_checkpoint_receipt_mutation_context \
+    "$target_name" || return 1
+  joined_state="${!joined_variable}"
+  [[ "$joined_state" == 0 ]] || return 2
+  authority_path="$(recovery_monitor_authority_path "$ready_path")" || return 1
+  token_sha256="$(printf '%s' "$token" | recovery_sha256_bytes)" || return 1
+  target_generation="$(jq -er --arg name "$target_name" --arg uid "$target_uid" '
+    [.deployments[] | select(.name == $name and .uid == $uid)] |
+    select(length == 1) | .[0].generation |
+    select(type == "number" and floor == . and . >= 1)
+  ' "$baseline_path")" || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$contract_path" "$contract_sha256" 131072 || return 1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$baseline_path" "$baseline_sha256" 2097152 || return 1
+  recovery_checkpoint_writer_receipt_armed_json_is_acceptable \
+    "$armed_json" "$contract_path" "$authority_sha256" "$token_sha256" \
+    "$target_name" "$target_uid" "$target_generation" || return 1
+  recovery_runner_watch_marker_is_exact "$final_path" || return 1
+  [[ "$(<"$final_path")" == "$armed_json" ]] || return 1
+  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" || return 1
+  recovery_checkpoint_writer_monitor_authority_is_exact \
+    "$authority_path" "$authority_sha256" "$contract_path" \
+    "$contract_sha256" "$baseline_path" "$stop_path" "$failure_path" \
+    "$ready_path" "$progress_path" "$final_path" "$watcher_pid" \
+    "$watcher_identity" "$runtime_generation" "$operation_owner" || return 1
+  commit_json="$(recovery_checkpoint_writer_receipt_commit_json \
+    "$authority_sha256" "$token" "$target_name" "$target_uid" \
+    "$patch_resource_version")" || return 1
+  recovery_publish_checkpoint_writer_handoff_marker \
+    "$stop_path" "$commit_json" || return 1
+  if recovery_wait_isolated_process_bounded \
+      "$watcher_pid" "$watcher_identity" "$stop_path"; then
+    printf -v "$joined_variable" '%s' ok
+  else
+    printf -v "$joined_variable" '%s' failed
+    return 1
+  fi
+  recovery_runner_watch_marker_is_exact "$failure_path" || return 1
+  recovery_runner_watch_marker_is_exact "$final_path" || return 1
+  [[ ! -s "$failure_path" && -s "$final_path" ]] || return 1
+  observed_ack_json="$(<"$final_path")"
+  recovery_checkpoint_writer_receipt_ack_json_is_acceptable \
+    "$observed_ack_json" "$contract_path" "$authority_sha256" "$token_sha256" \
+    "$target_name" "$target_uid" "$target_generation" \
+    "$patch_resource_version" || return 1
+  recovery_checkpoint_writer_monitor_authority_is_exact \
+    "$authority_path" "$authority_sha256" "$contract_path" \
+    "$contract_sha256" "$baseline_path" "$stop_path" "$failure_path" \
+    "$ready_path" "$progress_path" "$final_path" "$watcher_pid" \
+    "$watcher_identity" "$runtime_generation" "$operation_owner" 0 || return 1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$baseline_path" "$baseline_sha256" 2097152 || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  printf -v "$ack_variable" '%s' "$observed_ack_json"
+}
+
+recovery_checkpoint_writer_monitor_common_args() {
+  local contract_path="$1" contract_sha256="$2" baseline_path="$3"
+  local runtime_generation="$4" operation_owner="$5"
+  [[ "$contract_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$runtime_generation" =~ ^(durable-v2|legacy-absent)$ &&
+     "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
+     "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" &&
+     -n "${EXPECTED_KUBE_CONTEXT:-}" && -n "${NAMESPACE:-}" &&
+     -n "${RECOVERY_NAMESPACE_UID:-}" &&
+     "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ &&
+     "${RECOVERY_OPERATION_LOCK_NAME:-}" == "$RECOVERY_OPERATION_LOCK_GLOBAL_NAME" &&
+     -n "${RECOVERY_OPERATION_LOCK_UID:-}" &&
+     -n "${RECOVERY_OPERATION_LOCK_RESOURCE_VERSION:-}" &&
+     -n "${RECOVERY_SERIALIZATION_LEASE_NAME:-}" &&
+     -n "${RECOVERY_SERIALIZATION_LEASE_UID:-}" &&
+     "${RECOVERY_SERIALIZATION_LEASE_HOLDER:-}" =~ ^root-recovery: ]] || return 2
+  printf '%s\0' \
+    --context "$EXPECTED_KUBE_CONTEXT" \
+    --namespace "$NAMESPACE" \
+    --namespace-uid "$RECOVERY_NAMESPACE_UID" \
+    --contract "$contract_path" \
+    --contract-sha256 "$contract_sha256" \
+    --baseline "$baseline_path" \
+    --operation-lock-name "$RECOVERY_OPERATION_LOCK_NAME" \
+    --operation-lock-uid "$RECOVERY_OPERATION_LOCK_UID" \
+    --operation-lock-resource-version "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION" \
+    --operation-owner "$operation_owner" \
+    --operation-id "$RECOVERY_OPERATION_ID" \
+    --lease-name "$RECOVERY_SERIALIZATION_LEASE_NAME" \
+    --lease-uid "$RECOVERY_SERIALIZATION_LEASE_UID" \
+    --lease-holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
+    --runtime-generation "$runtime_generation"
+}
+
+recovery_checkpoint_writer_monitor_kubectl_bin() {
+  local requested="${KUBECTL_BIN:-kubectl}"
+  if [[ -z "$requested" || "$requested" == kubectl ]]; then
+    printf 'kubectl\n'
+    return 0
+  fi
+  recovery_require_local_fixture_attestation || {
+    printf 'Checkpoint writer KUBECTL_BIN overrides require the exact isolated fixture identity.\n' >&2
+    return 1
+  }
+  [[ "$requested" == /* && -x "$requested" ]] || return 2
+  recovery_require_regular_direct_file "$requested" || return 1
+  printf '%s\n' "$requested"
+}
+
+recovery_checkpoint_writer_monitor_boundary_json() {
+  local contract_path="$1" contract_sha256="$2" baseline_path="$3"
+  local baseline_sha256="$4" runtime_generation="$5" operation_owner="$6"
+  local watcher_path watcher_kubectl_bin
+  local boundary_json
+  local -a common_args=()
+  [[ "$runtime_generation" =~ ^(durable-v2|legacy-absent)$ &&
+     "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
+     "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" ]] || return 2
+  watcher_path="$(cd "$RECOVERY_SAFETY_DIR/.." && pwd -P)/watch-checkpoint-writers.mjs" ||
+    return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$contract_path" "$contract_sha256" 131072 || return 1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$baseline_path" "$baseline_sha256" 2097152 || return 1
+  recovery_require_regular_direct_file "$watcher_path" || return 1
+  watcher_kubectl_bin="$(
+    recovery_checkpoint_writer_monitor_kubectl_bin
+  )" || return 1
+  while IFS= read -r -d '' argument; do
+    common_args+=("$argument")
+  done < <(recovery_checkpoint_writer_monitor_common_args \
+    "$contract_path" "$contract_sha256" "$baseline_path" \
+    "$runtime_generation" "$operation_owner")
+  [[ "${#common_args[@]}" == 30 ]] || return 1
+  boundary_json="$(env KUBECTL_BIN="$watcher_kubectl_bin" \
+    node "$watcher_path" boundary \
+      "${common_args[@]}" --baseline-sha256 "$baseline_sha256")" || return 1
+  jq -e '
+    (keys | sort) == ["boundaries", "stop"] and .stop == true and
+    (.boundaries | keys | sort) == ["deployments", "pods", "replicasets"] and
+    all(.boundaries[]; type == "string" and length > 0)
+  ' >/dev/null 2>&1 <<<"$boundary_json" || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  printf '%s\n' "$boundary_json"
+}
+
+recovery_start_checkpoint_writer_monitor() {
+  local contract_path="$1" contract_sha256="$2" baseline_path="$3"
+  local stop_path="$4" failure_path="$5" ready_path="$6" progress_path="$7"
+  local final_path="$8" pid_variable="$9" identity_variable="${10}"
+  local baseline_sha_variable="${11}"
+  local runtime_generation="${12}"
+  local operation_owner="${13}"
+  local watcher_path watcher_kubectl_bin
+  local marker_path started_pid="" started_identity="" ready_value="" attempt=0
+  local spawn_gate="" authority_path authority_json authority_sha256=""
+  local ready_authority_sha256=""
+  local stable_seconds watcher_test_mode="" baseline_sha256
+  local -a common_args=()
+  watcher_path="$(cd "$RECOVERY_SAFETY_DIR/.." && pwd -P)/watch-checkpoint-writers.mjs" ||
+    return 1
+  [[ "$pid_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$identity_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$baseline_sha_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$runtime_generation" =~ ^(durable-v2|legacy-absent)$ &&
+     "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
+     "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" &&
+     "$pid_variable" != "$identity_variable" &&
+     "$pid_variable" != "$baseline_sha_variable" &&
+     "$identity_variable" != "$baseline_sha_variable" ]] || return 2
+  [[ "$stop_path" != "$failure_path" && "$stop_path" != "$ready_path" &&
+     "$stop_path" != "$progress_path" && "$stop_path" != "$final_path" &&
+     "$failure_path" != "$ready_path" && "$failure_path" != "$progress_path" &&
+     "$failure_path" != "$final_path" && "$ready_path" != "$progress_path" &&
+     "$ready_path" != "$final_path" && "$progress_path" != "$final_path" &&
+     "$baseline_path" != "$stop_path" && "$baseline_path" != "$failure_path" &&
+     "$baseline_path" != "$ready_path" && "$baseline_path" != "$progress_path" &&
+     "$baseline_path" != "$final_path" ]] || return 2
+  authority_path="$(recovery_monitor_authority_path "$ready_path")" || return 1
+  [[ "$authority_path" != "$contract_path" &&
+     "$authority_path" != "$baseline_path" &&
+     "$authority_path" != "$stop_path" &&
+     "$authority_path" != "$failure_path" &&
+     "$authority_path" != "$ready_path" &&
+     "$authority_path" != "$progress_path" &&
+     "$authority_path" != "$final_path" &&
+     ! -e "$authority_path" && ! -L "$authority_path" ]] || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$contract_path" "$contract_sha256" 131072 || return 1
+  for marker_path in \
+    "$stop_path" "$failure_path" "$ready_path" "$progress_path" "$final_path" \
+    "$baseline_path"; do
+    recovery_runner_watch_marker_is_exact "$marker_path" || return 1
+    [[ ! -s "$marker_path" ]] || return 1
+  done
+  recovery_require_regular_direct_file "$watcher_path" || return 1
+  command -v python3 >/dev/null 2>&1 || return 127
+  watcher_kubectl_bin="$(
+    recovery_checkpoint_writer_monitor_kubectl_bin
+  )" || return 1
+  while IFS= read -r -d '' argument; do
+    common_args+=("$argument")
+  done < <(recovery_checkpoint_writer_monitor_common_args \
+    "$contract_path" "$contract_sha256" "$baseline_path" \
+    "$runtime_generation" "$operation_owner")
+  [[ "${#common_args[@]}" == 30 ]] || return 1
+  stable_seconds="$(recovery_stable_absence_seconds)" || return 1
+  if [[ "$stable_seconds" != 61 ]]; then
+    watcher_test_mode=local-fixture
+  fi
+  spawn_gate="$(mktemp "$(dirname "$stop_path")/.checkpoint-writer-spawn-gate.XXXXXX")" ||
+    return 1
+  chmod 600 "$spawn_gate" || {
+    rm -f -- "$spawn_gate"
+    return 1
+  }
+  (
+    unset KUBECTL_BIN YENHUBS_RECOVERY_TEST_MODE \
+      RECOVERY_TEST_STABLE_ABSENCE_SECONDS
+    if [[ "$watcher_test_mode" == local-fixture ]]; then
+      exec env \
+        KUBECTL_BIN="$watcher_kubectl_bin" \
+        YENHUBS_RECOVERY_TEST_MODE=local-fixture \
+        RECOVERY_TEST_STABLE_ABSENCE_SECONDS="$stable_seconds" \
+        python3 -I -c '
+import os
+import sys
+import time
+os.setsid()
+gate_path = sys.argv[1]
+deadline = time.monotonic() + 5
+while True:
+    try:
+        with open(gate_path, "rb") as gate:
+            decision = gate.read(16)
+    except OSError:
+        sys.exit(1)
+    if decision == b"go\n":
+        break
+    if decision not in (b"",):
+        sys.exit(1)
+    if time.monotonic() >= deadline:
+        sys.exit(1)
+    time.sleep(0.01)
+try:
+    os.unlink(gate_path)
+except OSError:
+    sys.exit(1)
+os.execvp(sys.argv[2], sys.argv[2:])
+' "$spawn_gate" node "$watcher_path" monitor "${common_args[@]}" \
+        --stop "$stop_path" --failure "$failure_path" --ready "$ready_path" \
+        --progress "$progress_path" --final "$final_path" \
+        --authority "$authority_path"
+    fi
+    exec env KUBECTL_BIN="$watcher_kubectl_bin" \
+      python3 -I -c '
+import os
+import sys
+import time
+os.setsid()
+gate_path = sys.argv[1]
+deadline = time.monotonic() + 5
+while True:
+    try:
+        with open(gate_path, "rb") as gate:
+            decision = gate.read(16)
+    except OSError:
+        sys.exit(1)
+    if decision == b"go\n":
+        break
+    if decision not in (b"",):
+        sys.exit(1)
+    if time.monotonic() >= deadline:
+        sys.exit(1)
+    time.sleep(0.01)
+try:
+    os.unlink(gate_path)
+except OSError:
+    sys.exit(1)
+os.execvp(sys.argv[2], sys.argv[2:])
+' "$spawn_gate" node "$watcher_path" monitor "${common_args[@]}" \
+      --stop "$stop_path" --failure "$failure_path" --ready "$ready_path" \
+      --progress "$progress_path" --final "$final_path" \
+      --authority "$authority_path"
+  ) &
+  started_pid=$!
+  started_identity="$(recovery_process_start_identity "$started_pid")" || {
+    # The private gate proves that the watcher was never execed, so an identity
+    # capture failure can be handled without signalling an untrusted PID.
+    printf 'abort\n' >"$spawn_gate" 2>/dev/null || :
+    wait "$started_pid" 2>/dev/null || :
+    rm -f -- "$spawn_gate"
+    return 1
+  }
+  authority_json="$(recovery_checkpoint_writer_monitor_authority_json \
+    "$contract_path" "$contract_sha256" "$baseline_path" "$stop_path" \
+    "$failure_path" "$ready_path" "$progress_path" "$final_path" \
+    "$started_pid" "$started_identity" "$runtime_generation" \
+    "$operation_owner")" || {
+    printf 'abort\n' >"$spawn_gate" 2>/dev/null || :
+    wait "$started_pid" 2>/dev/null || :
+    rm -f -- "$spawn_gate"
+    return 1
+  }
+  if ! recovery_publish_monitor_authority \
+      "$authority_path" "$authority_json" authority_sha256; then
+    printf 'abort\n' >"$spawn_gate" 2>/dev/null || :
+    wait "$started_pid" 2>/dev/null || :
+    rm -f -- "$spawn_gate" "$authority_path"
+    return 1
+  fi
+  printf 'go\n' >"$spawn_gate" || {
+    recovery_stop_process_group "$started_pid" "$started_identity" || :
+    rm -f -- "$spawn_gate" "$authority_path"
+    return 1
+  }
+  printf -v "$pid_variable" '%s' "$started_pid"
+  printf -v "$identity_variable" '%s' "$started_identity"
+  while [[ "$attempt" -lt 300 ]]; do
+    if [[ -s "$failure_path" ]]; then
+      recovery_discard_checkpoint_writer_monitor \
+        "$stop_path" "$started_pid" "$started_identity"
+      rm -f -- "$spawn_gate" "$authority_path"
+      printf -v "$pid_variable" '%s' ""
+      printf -v "$identity_variable" '%s' ""
+      printf 'Checkpoint writer monitor failed before its ready handshake.\n' >&2
+      return 1
+    fi
+    if [[ -s "$ready_path" ]]; then
+      ready_value="$(<"$ready_path")"
+      if [[ "$ready_value" =~ ^ready:([a-f0-9]{64}):([a-f0-9]{64})$ &&
+            -s "$baseline_path" ]]; then
+        # BASH_REMATCH is process-global.  Copy the digest before any helper
+        # runs another =~ expression and overwrites the capture.
+        baseline_sha256="${BASH_REMATCH[1]}"
+        ready_authority_sha256="${BASH_REMATCH[2]}"
+        if recovery_process_identity_is_live \
+            "$started_pid" "$started_identity"; then
+          recovery_checkpoint_writer_monitor_file_is_exact \
+            "$baseline_path" "$baseline_sha256" 2097152 || break
+          if [[ "$ready_authority_sha256" == "$authority_sha256" ]] &&
+             recovery_checkpoint_writer_monitor_authority_is_exact \
+               "$authority_path" "$authority_sha256" "$contract_path" \
+               "$contract_sha256" "$baseline_path" "$stop_path" \
+               "$failure_path" "$ready_path" "$progress_path" "$final_path" \
+               "$started_pid" "$started_identity" "$runtime_generation" \
+               "$operation_owner" &&
+             recovery_stream_guard_progress_value \
+               "$progress_path" "$authority_sha256" >/dev/null &&
+             recovery_checkpoint_writer_monitor_boundary_json \
+            "$contract_path" "$contract_sha256" "$baseline_path" \
+            "$baseline_sha256" "$runtime_generation" "$operation_owner" >/dev/null &&
+             recovery_process_identity_is_live \
+               "$started_pid" "$started_identity"; then
+            printf -v "$baseline_sha_variable" '%s' "$baseline_sha256"
+            rm -f -- "$spawn_gate"
+            return 0
+          fi
+        fi
+        break
+      fi
+      break
+    fi
+    if ! recovery_process_identity_is_live \
+        "$started_pid" "$started_identity"; then
+      recovery_discard_checkpoint_writer_monitor \
+        "$stop_path" "$started_pid" "$started_identity"
+      rm -f -- "$spawn_gate" "$authority_path"
+      printf -v "$pid_variable" '%s' ""
+      printf -v "$identity_variable" '%s' ""
+      printf 'Checkpoint writer monitor exited before its ready handshake.\n' >&2
+      return 1
+    fi
+    sleep 0.05
+    attempt=$((attempt + 1))
+  done
+  recovery_discard_checkpoint_writer_monitor \
+    "$stop_path" "$started_pid" "$started_identity"
+  rm -f -- "$spawn_gate" "$authority_path"
+  printf -v "$pid_variable" '%s' ""
+  printf -v "$identity_variable" '%s' ""
+  printf -v "$baseline_sha_variable" '%s' ""
+  printf 'Checkpoint writer monitor did not complete an exact ready handshake.\n' >&2
+  return 1
+}
+
+recovery_require_checkpoint_writer_monitor_healthy() {
+  local contract_path="$1" contract_sha256="$2" baseline_path="$3"
+  local baseline_sha256="$4" failure_path="$5" ready_path="$6" watcher_pid="$7"
+  local watcher_identity="$8" runtime_generation="$9" operation_owner="${10}"
+  local ready_value authority_path authority_sha256 stop_path progress_path final_path
+  [[ "$runtime_generation" =~ ^(durable-v2|legacy-absent)$ &&
+     "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
+     "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" ]] || return 2
+  [[ "$watcher_pid" =~ ^[1-9][0-9]*$ ]] || return 2
+  recovery_runner_watch_marker_is_exact "$failure_path" || return 1
+  recovery_runner_watch_marker_is_exact "$ready_path" || return 1
+  [[ ! -s "$failure_path" ]] || return 1
+  authority_path="$(recovery_monitor_authority_path "$ready_path")" || return 1
+  authority_sha256="$(recovery_monitor_authority_sha256_for_ready \
+    "$ready_path")" || return 1
+  stop_path="$(jq -er '.paths.stop' "$authority_path")" || return 1
+  progress_path="$(jq -er '.paths.progress' "$authority_path")" || return 1
+  final_path="$(jq -er '.paths.final' "$authority_path")" || return 1
+  recovery_checkpoint_writer_monitor_authority_is_exact \
+    "$authority_path" "$authority_sha256" "$contract_path" \
+    "$contract_sha256" "$baseline_path" "$stop_path" "$failure_path" \
+    "$ready_path" "$progress_path" "$final_path" "$watcher_pid" \
+    "$watcher_identity" "$runtime_generation" "$operation_owner" || return 1
+  ready_value="$(<"$ready_path")"
+  [[ "$ready_value" == "ready:$baseline_sha256:$authority_sha256" ]] || return 1
+  recovery_stream_guard_progress_value \
+    "$progress_path" "$authority_sha256" >/dev/null || return 1
+  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" || return 1
+  recovery_checkpoint_writer_monitor_boundary_json \
+    "$contract_path" "$contract_sha256" "$baseline_path" \
+    "$baseline_sha256" "$runtime_generation" "$operation_owner" >/dev/null || return 1
+  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity"
+}
+
+recovery_stop_checkpoint_writer_monitor() {
+  local contract_path="$1" contract_sha256="$2" baseline_path="$3"
+  local baseline_sha256="$4" stop_path="$5" failure_path="$6"
+  local ready_path="$7" final_path="$8" watcher_pid="$9"
+  local watcher_identity="${10}" joined_variable="${11}"
+  local runtime_generation="${12}"
+  local operation_owner="${13}"
+  local boundary_json watcher_status=0 ready_value final_json=""
+  local joined_state stop_written=0 authority_path authority_sha256 progress_path
+  [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" &&
+     "$runtime_generation" =~ ^(durable-v2|legacy-absent)$ &&
+     "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
+     "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" &&
+     "$joined_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 2
+  joined_state="${!joined_variable}"
+  [[ "$joined_state" == 0 || "$joined_state" == ok ||
+     "$joined_state" == failed ]] || return 2
+  authority_path="$(recovery_monitor_authority_path "$ready_path")" || return 1
+  authority_sha256="$(recovery_monitor_authority_sha256_for_ready \
+    "$ready_path")" || return 1
+  progress_path="$(jq -er '.paths.progress' "$authority_path")" || return 1
+  recovery_checkpoint_writer_monitor_authority_is_exact \
+    "$authority_path" "$authority_sha256" "$contract_path" \
+    "$contract_sha256" "$baseline_path" "$stop_path" "$failure_path" \
+    "$ready_path" "$progress_path" "$final_path" "$watcher_pid" \
+    "$watcher_identity" "$runtime_generation" "$operation_owner" \
+    "$([[ "$joined_state" == 0 ]] && printf 1 || printf 0)" || return 1
+  if [[ "$joined_state" == 0 ]]; then
+    if recovery_require_checkpoint_writer_monitor_healthy \
+        "$contract_path" "$contract_sha256" "$baseline_path" \
+        "$baseline_sha256" "$failure_path" "$ready_path" "$watcher_pid" \
+        "$watcher_identity" "$runtime_generation" "$operation_owner" &&
+       boundary_json="$(recovery_checkpoint_writer_monitor_boundary_json \
+         "$contract_path" "$contract_sha256" "$baseline_path" \
+         "$baseline_sha256" "$runtime_generation" "$operation_owner")" &&
+       recovery_process_identity_is_live \
+         "$watcher_pid" "$watcher_identity"; then
+      recovery_signal_no_managed_bot_runner_watch_stop \
+        "$stop_path" "$boundary_json" && stop_written=1 || watcher_status=1
+    else
+      watcher_status=1
+      if recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" &&
+         recovery_signal_no_managed_bot_runner_watch_stop \
+           "$stop_path" discard 2>/dev/null; then
+        stop_written=1
+      fi
+    fi
+    if [[ "$stop_written" == 1 ]] &&
+       recovery_wait_isolated_process_bounded \
+         "$watcher_pid" "$watcher_identity" "$stop_path"; then
+      printf -v "$joined_variable" '%s' ok
+      joined_state=ok
+    else
+      if [[ "$stop_written" != 1 ]]; then
+        recovery_stop_process_group \
+          "$watcher_pid" "$watcher_identity" || :
+      fi
+      printf -v "$joined_variable" '%s' failed
+      joined_state=failed
+      watcher_status=1
+    fi
+  else
+    [[ "$joined_state" == ok ]] || watcher_status=1
+  fi
+  recovery_runner_watch_marker_is_exact "$failure_path" || watcher_status=1
+  recovery_runner_watch_marker_is_exact "$ready_path" || watcher_status=1
+  recovery_runner_watch_marker_is_exact "$final_path" || watcher_status=1
+  [[ ! -s "$failure_path" ]] || watcher_status=1
+  if [[ -f "$ready_path" ]]; then ready_value="$(<"$ready_path")"; fi
+  [[ "$ready_value" == "ready:$baseline_sha256:$authority_sha256" ]] || watcher_status=1
+  recovery_stream_guard_progress_value \
+    "$progress_path" "$authority_sha256" >/dev/null || watcher_status=1
+  if [[ -f "$final_path" ]]; then final_json="$(<"$final_path")"; fi
+  recovery_checkpoint_writer_monitor_final_json_is_acceptable \
+    "$final_json" "$contract_path" "$authority_sha256" || watcher_status=1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$contract_path" "$contract_sha256" 131072 || watcher_status=1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$baseline_path" "$baseline_sha256" 2097152 || watcher_status=1
+  recovery_require_operation_serialization || watcher_status=1
+  recovery_require_operation_lock || watcher_status=1
+  [[ "$watcher_status" == 0 ]]
+}
+
+recovery_discard_checkpoint_writer_monitor() {
+  local stop_path="$1" watcher_pid="$2" watcher_identity="$3"
+  local wait_status=0
+  if [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" ]] &&
+     recovery_process_identity_is_live "$watcher_pid" "$watcher_identity"; then
+    if recovery_signal_no_managed_bot_runner_watch_stop \
+        "$stop_path" discard 2>/dev/null; then
+      recovery_wait_isolated_process_bounded \
+        "$watcher_pid" "$watcher_identity" "$stop_path" 2>/dev/null || :
+    else
+      recovery_stop_process_group \
+        "$watcher_pid" "$watcher_identity" || :
+    fi
+  elif [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" ]] &&
+       ! kill -0 "$watcher_pid" 2>/dev/null; then
+    # Reap a fast pre-ready exit, then revoke only descendants that still
+    # retain its isolated PGID. Never signal a positive PID after reuse.
+    if wait "$watcher_pid" 2>/dev/null; then wait_status=0; else wait_status=$?; fi
+    if [[ "$wait_status" != 127 ]] && ! kill -0 "$watcher_pid" 2>/dev/null; then
+      recovery_stop_reaped_isolated_process_group "$watcher_pid"
+    fi
+  fi
+}
+
+# The durable-v2 watcher consumes the immutable runner-fence baseline and the
+# schema-3 writer control baseline produced immediately before it. Its positive
+# markers bind both byte digests plus a third digest over the complete local
+# authority identity, preventing a ready marker from being replayed across
+# operations, owners, Leases or admission-fence transitions.
+recovery_sha256_bytes() {
+  local output
+  if command -v shasum >/dev/null 2>&1; then
+    output="$(shasum -a 256)" || return 1
+  elif command -v sha256sum >/dev/null 2>&1; then
+    output="$(sha256sum)" || return 1
+  else
+    return 127
+  fi
+  output="${output%%[[:space:]]*}"
+  # Both supported tools emit lowercase hexadecimal. Keep the stricter
+  # contract here rather than relying on Bash 4's ${var,,}, because macOS
+  # still ships Bash 3.2 and the recovery tooling must run there too.
+  [[ "$output" =~ ^[a-f0-9]{64}$ ]] || return 1
+  printf '%s\n' "$output"
+}
+
+recovery_durable_runner_monitor_control_capability_sha256() {
+  local control_baseline_path="$1" control_baseline_sha256="$2"
+  local durable_baseline_sha256="$3" operation_owner="$4"
+  local capability_json
+  [[ "$durable_baseline_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
+     "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" ]] || return 2
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$control_baseline_path" "$control_baseline_sha256" 2097152 || return 1
+  jq -e \
+    --arg context "$EXPECTED_KUBE_CONTEXT" --arg namespace "$NAMESPACE" \
+    --arg namespace_uid "$RECOVERY_NAMESPACE_UID" \
+    --arg operation_id "$RECOVERY_OPERATION_ID" \
+    --arg operation_owner "$operation_owner" \
+    --arg lock_name "$RECOVERY_OPERATION_LOCK_NAME" \
+    --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
+    --arg lock_rv "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION" \
+    --arg lease_name "$RECOVERY_SERIALIZATION_LEASE_NAME" \
+    --arg lease_uid "$RECOVERY_SERIALIZATION_LEASE_UID" \
+    --arg lease_holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" '
+    (keys | sort) == ["boundaries","consumers","context","deployments",
+      "lease","namespace","namespace_uid","operation_id","operation_lock",
+      "operation_owner","pods","recovery_operation_fence","replica_sets",
+      "runtime_generation","schema_version","storage_helper"] and
+    .schema_version == 3 and .runtime_generation == "durable-v2" and
+    .context == $context and .namespace == $namespace and
+    .namespace_uid == $namespace_uid and .operation_id == $operation_id and
+    .operation_owner == $operation_owner and
+    .operation_lock == {name:$lock_name,uid:$lock_uid,resource_version:$lock_rv} and
+    .lease.name == $lease_name and .lease.uid == $lease_uid and
+    .lease.holder == $lease_holder and
+    (.lease.acquire_time | type == "string" and length > 0) and
+    (.lease.lease_transitions | type == "number" and floor == . and . >= 0) and
+    (.recovery_operation_fence | keys | sort) == ["binding","namespaces","policy"] and
+    (.recovery_operation_fence.namespaces | keys | sort) == ["parent","runner"] and
+    .recovery_operation_fence.namespaces.parent.name == $namespace and
+    .recovery_operation_fence.namespaces.parent.uid == $namespace_uid and
+    .recovery_operation_fence.namespaces.runner.name == "hcce-bot-runners" and
+    all(.recovery_operation_fence.namespaces[];
+      .phase == "Active" and .metadata_name_label == .name and
+      (.uid | type == "string" and length > 0) and
+      (.resource_version | type == "string" and length > 0)) and
+    (.recovery_operation_fence.policy | keys | sort) ==
+      ["generation","resource_version","spec_sha256","uid"] and
+    (.recovery_operation_fence.policy.generation | type == "number" and
+      floor == . and . > 0) and
+    (.recovery_operation_fence.policy.spec_sha256 |
+      type == "string" and test("^[a-f0-9]{64}$")) and
+    (.recovery_operation_fence.binding | keys | sort) ==
+      ["resource_version","spec_sha256","uid"] and
+    (.recovery_operation_fence.binding.spec_sha256 |
+      type == "string" and test("^[a-f0-9]{64}$")) and
+    all(.recovery_operation_fence.policy.uid,
+      .recovery_operation_fence.policy.resource_version,
+      .recovery_operation_fence.binding.uid,
+      .recovery_operation_fence.binding.resource_version;
+      type == "string" and length > 0)
+  ' "$control_baseline_path" >/dev/null || return 1
+  capability_json="$(jq -cS \
+    --arg durable_sha "$durable_baseline_sha256" \
+    --arg control_sha "$control_baseline_sha256" '
+    {schema_version:1,context:.context,
+     parent_namespace:.recovery_operation_fence.namespaces.parent,
+     runner_namespace:.recovery_operation_fence.namespaces.runner,
+     operation_id:.operation_id,operation_owner:.operation_owner,
+     operation_lock:.operation_lock,lease:.lease,
+     policy:.recovery_operation_fence.policy,
+     binding:.recovery_operation_fence.binding,
+     durable_fence_baseline_sha256:$durable_sha,
+     control_baseline_sha256:$control_sha}
+  ' "$control_baseline_path")" || return 1
+  printf '%s' "$capability_json" | recovery_sha256_bytes
+}
+
+recovery_durable_runner_monitor_authority_json() {
+  local durable_baseline_path="$1" durable_baseline_sha256="$2"
+  local control_baseline_path="$3" control_baseline_sha256="$4"
+  local stop_path="$5" failure_path="$6" ready_path="$7" progress_path="$8"
+  local final_path="$9" watcher_pid="${10}" watcher_identity="${11}"
+  local control_capability_sha256="${12}" operation_owner="${13}"
+  local authority_path
+  authority_path="$(recovery_monitor_authority_path "$ready_path")" || return 1
+  [[ "$durable_baseline_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$control_baseline_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$control_capability_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" &&
+     "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
+     "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" ]] || return 2
+  jq -cnS \
+    --arg kind durable-runner-quiescence-monitor --argjson pid "$watcher_pid" \
+    --arg start_identity "$watcher_identity" \
+    --arg context "$EXPECTED_KUBE_CONTEXT" --arg namespace "$NAMESPACE" \
+    --arg namespace_uid "$RECOVERY_NAMESPACE_UID" \
+    --arg operation_id "$RECOVERY_OPERATION_ID" \
+    --arg operation_owner "$operation_owner" --arg runtime_generation durable-v2 \
+    --arg lock_name "$RECOVERY_OPERATION_LOCK_NAME" \
+    --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
+    --arg lock_rv "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION" \
+    --arg lease_name "$RECOVERY_SERIALIZATION_LEASE_NAME" \
+    --arg lease_uid "$RECOVERY_SERIALIZATION_LEASE_UID" \
+    --arg lease_holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
+    --arg authority "$authority_path" \
+    --arg durable_baseline "$durable_baseline_path" \
+    --arg control_baseline "$control_baseline_path" --arg stop "$stop_path" \
+    --arg failure "$failure_path" --arg ready "$ready_path" \
+    --arg progress "$progress_path" --arg final "$final_path" \
+    --arg durable_sha256 "$durable_baseline_sha256" \
+    --arg control_sha256 "$control_baseline_sha256" \
+    --arg control_capability_sha256 "$control_capability_sha256" '
+    {schema_version:1,kind:$kind,pid:$pid,start_identity:$start_identity,
+     context:$context,namespace:$namespace,namespace_uid:$namespace_uid,
+     operation_id:$operation_id,operation_owner:$operation_owner,
+     runtime_generation:$runtime_generation,
+     operation_lock:{name:$lock_name,uid:$lock_uid,resource_version:$lock_rv},
+     lease:{name:$lease_name,uid:$lease_uid,holder:$lease_holder},
+     paths:{authority:$authority,durable_baseline:$durable_baseline,
+       control_baseline:$control_baseline,stop:$stop,failure:$failure,
+       ready:$ready,progress:$progress,final:$final},
+     hashes:{durable_baseline_sha256:$durable_sha256,
+       control_baseline_sha256:$control_sha256,
+       control_capability_sha256:$control_capability_sha256}}
+  '
+}
+
+recovery_durable_runner_monitor_authority_is_exact() {
+  local authority_path="$1" authority_sha256="$2"
+  local durable_baseline_path="$3" durable_baseline_sha256="$4"
+  local control_baseline_path="$5" control_baseline_sha256="$6"
+  local stop_path="$7" failure_path="$8" ready_path="$9"
+  local progress_path="${10}" final_path="${11}" watcher_pid="${12}"
+  local watcher_identity="${13}" control_capability_sha256="${14}"
+  local operation_owner="${15}" require_live="${16:-1}" expected_json
+  [[ "$require_live" == 0 || "$require_live" == 1 ]] || return 2
+  if [[ "$require_live" == 1 ]]; then
+    recovery_monitor_authority_common_is_exact \
+      "$authority_path" "$authority_sha256" \
+      durable-runner-quiescence-monitor "$watcher_pid" "$watcher_identity" \
+      "$failure_path" "$ready_path" "$progress_path" || return 1
+  else
+    recovery_checkpoint_writer_monitor_file_is_exact \
+      "$authority_path" "$authority_sha256" 65536 || return 1
+  fi
+  expected_json="$(recovery_durable_runner_monitor_authority_json \
+    "$durable_baseline_path" "$durable_baseline_sha256" \
+    "$control_baseline_path" "$control_baseline_sha256" "$stop_path" \
+    "$failure_path" "$ready_path" "$progress_path" "$final_path" \
+    "$watcher_pid" "$watcher_identity" "$control_capability_sha256" \
+    "$operation_owner")" || return 1
+  [[ "$(<"$authority_path")" == "$expected_json" ]]
+}
+
+recovery_durable_runner_monitor_positive_marker() {
+  local durable_baseline_sha256="$1" control_baseline_sha256="$2"
+  local capability_sha256="$3" authority_sha256="${4:-}"
+  [[ "$durable_baseline_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$control_baseline_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$capability_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$authority_sha256" =~ ^[a-f0-9]{64}$ ]] || return 2
+  printf '%s:%s:%s:%s\n' "$durable_baseline_sha256" \
+    "$control_baseline_sha256" "$capability_sha256" "$authority_sha256"
+}
+
+recovery_durable_runner_monitor_kubectl_bin() {
+  recovery_checkpoint_writer_monitor_kubectl_bin
+}
+
+recovery_signal_durable_runner_quiescence_monitor() {
+  local stop_path="$1" action="$2"
+  recovery_runner_watch_marker_is_exact "$stop_path" || return 1
+  case "$action" in
+    stop|discard) printf '%s\n' "$action" >"$stop_path" ;;
+    *) return 2 ;;
+  esac
+}
+
+recovery_start_durable_runner_quiescence_monitor() {
+  local durable_baseline_path="$1" durable_baseline_sha256="$2"
+  local control_baseline_path="$3" control_baseline_sha256="$4"
+  local stop_path="$5" failure_path="$6" ready_path="$7"
+  local progress_path="$8" final_path="$9" pid_variable="${10}"
+  local identity_variable="${11}" capability_variable="${12}"
+  local operation_owner="${13}"
+  local watcher_path watcher_kubectl_bin marker_path spawn_gate=""
+  local started_pid="" started_identity="" expected_capability=""
+  local expected_marker="" ready_value="" attempt=0 watcher_test_mode=""
+  local authority_path authority_json authority_sha256=""
+  watcher_path="$(cd "$RECOVERY_SAFETY_DIR/.." && pwd -P)/watch-durable-runner-quiescence.mjs" ||
+    return 1
+  [[ "$pid_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$identity_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$capability_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$pid_variable" != "$identity_variable" &&
+     "$pid_variable" != "$capability_variable" &&
+     "$identity_variable" != "$capability_variable" &&
+     "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
+     "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" ]] || return 2
+  [[ "$stop_path" != "$failure_path" && "$stop_path" != "$ready_path" &&
+     "$stop_path" != "$progress_path" && "$stop_path" != "$final_path" &&
+     "$failure_path" != "$ready_path" && "$failure_path" != "$progress_path" &&
+     "$failure_path" != "$final_path" && "$ready_path" != "$progress_path" &&
+     "$ready_path" != "$final_path" && "$progress_path" != "$final_path" &&
+     "$durable_baseline_path" != "$control_baseline_path" ]] || return 2
+  authority_path="$(recovery_monitor_authority_path "$ready_path")" || return 1
+  [[ "$authority_path" != "$durable_baseline_path" &&
+     "$authority_path" != "$control_baseline_path" &&
+     "$authority_path" != "$stop_path" &&
+     "$authority_path" != "$failure_path" &&
+     "$authority_path" != "$ready_path" &&
+     "$authority_path" != "$progress_path" &&
+     "$authority_path" != "$final_path" &&
+     ! -e "$authority_path" && ! -L "$authority_path" ]] || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$durable_baseline_path" "$durable_baseline_sha256" 1048576 || return 1
+  recovery_require_checkpoint_runner_quiescence_exact \
+    durable-v2 "$durable_baseline_path" "$durable_baseline_sha256" || return 1
+  expected_capability="$(
+    recovery_durable_runner_monitor_control_capability_sha256 \
+      "$control_baseline_path" "$control_baseline_sha256" \
+      "$durable_baseline_sha256" "$operation_owner"
+  )" || return 1
+  for marker_path in "$stop_path" "$failure_path" "$ready_path" \
+    "$progress_path" "$final_path"; do
+    recovery_runner_watch_marker_is_exact "$marker_path" || return 1
+    [[ ! -s "$marker_path" ]] || return 1
+  done
+  recovery_require_regular_direct_file "$watcher_path" || return 1
+  command -v python3 >/dev/null 2>&1 || return 127
+  watcher_kubectl_bin="$(recovery_durable_runner_monitor_kubectl_bin)" || return 1
+  # shellcheck disable=SC2031 # Prior fixture exports occur only in child subshells.
+  if [[ "${YENHUBS_RECOVERY_TEST_MODE:-}" == local-fixture ]]; then
+    recovery_require_local_fixture_attestation || return 1
+    watcher_test_mode=local-fixture
+  fi
+  spawn_gate="$(mktemp \
+    "$(dirname "$stop_path")/.durable-runner-monitor-spawn-gate.XXXXXX")" ||
+    return 1
+  chmod 600 "$spawn_gate" || {
+    rm -f -- "$spawn_gate"
+    return 1
+  }
+  (
+    unset KUBECTL_BIN YENHUBS_RECOVERY_TEST_MODE
+    if [[ "$watcher_test_mode" == local-fixture ]]; then
+      # shellcheck disable=SC2031 # This export is intentionally child-local.
+      export YENHUBS_RECOVERY_TEST_MODE=local-fixture
+    fi
+    exec env KUBECTL_BIN="$watcher_kubectl_bin" python3 -I -c '
+import os
+import sys
+import time
+os.setsid()
+gate_path = sys.argv[1]
+deadline = time.monotonic() + 5
+while True:
+    try:
+        with open(gate_path, "rb") as gate:
+            decision = gate.read(16)
+    except OSError:
+        sys.exit(1)
+    if decision == b"go\n":
+        break
+    if decision not in (b"",):
+        sys.exit(1)
+    if time.monotonic() >= deadline:
+        sys.exit(1)
+    time.sleep(0.01)
+try:
+    os.unlink(gate_path)
+except OSError:
+    sys.exit(1)
+os.execvp(sys.argv[2], sys.argv[2:])
+' "$spawn_gate" node "$watcher_path" \
+      --context "$EXPECTED_KUBE_CONTEXT" --namespace "$NAMESPACE" \
+      --runner-namespace hcce-bot-runners \
+      --baseline "$durable_baseline_path" \
+      --baseline-sha256 "$durable_baseline_sha256" \
+      --control-baseline "$control_baseline_path" \
+      --control-baseline-sha256 "$control_baseline_sha256" \
+      --stop "$stop_path" --failure "$failure_path" --ready "$ready_path" \
+      --progress "$progress_path" --final "$final_path" \
+      --authority "$authority_path"
+  ) &
+  started_pid=$!
+  started_identity="$(recovery_process_start_identity "$started_pid")" || {
+    printf 'abort\n' >"$spawn_gate" 2>/dev/null || :
+    wait "$started_pid" 2>/dev/null || :
+    rm -f -- "$spawn_gate"
+    return 1
+  }
+  authority_json="$(recovery_durable_runner_monitor_authority_json \
+    "$durable_baseline_path" "$durable_baseline_sha256" \
+    "$control_baseline_path" "$control_baseline_sha256" "$stop_path" \
+    "$failure_path" "$ready_path" "$progress_path" "$final_path" \
+    "$started_pid" "$started_identity" "$expected_capability" \
+    "$operation_owner")" || {
+    printf 'abort\n' >"$spawn_gate" 2>/dev/null || :
+    wait "$started_pid" 2>/dev/null || :
+    rm -f -- "$spawn_gate"
+    return 1
+  }
+  if ! recovery_publish_monitor_authority \
+      "$authority_path" "$authority_json" authority_sha256; then
+    printf 'abort\n' >"$spawn_gate" 2>/dev/null || :
+    wait "$started_pid" 2>/dev/null || :
+    rm -f -- "$spawn_gate" "$authority_path"
+    return 1
+  fi
+  expected_marker="$(recovery_durable_runner_monitor_positive_marker \
+    "$durable_baseline_sha256" "$control_baseline_sha256" \
+    "$expected_capability" "$authority_sha256")" || {
+    printf 'abort\n' >"$spawn_gate" 2>/dev/null || :
+    wait "$started_pid" 2>/dev/null || :
+    rm -f -- "$spawn_gate" "$authority_path"
+    return 1
+  }
+  printf 'go\n' >"$spawn_gate" || {
+    recovery_stop_process_group "$started_pid" "$started_identity" || :
+    rm -f -- "$spawn_gate" "$authority_path"
+    return 1
+  }
+  printf -v "$pid_variable" '%s' "$started_pid"
+  printf -v "$identity_variable" '%s' "$started_identity"
+  while [[ "$attempt" -lt 400 ]]; do
+    if [[ -s "$failure_path" ]]; then
+      recovery_discard_durable_runner_quiescence_monitor \
+        "$stop_path" "$started_pid" "$started_identity"
+      rm -f -- "$authority_path"
+      printf -v "$pid_variable" '%s' ''
+      printf -v "$identity_variable" '%s' ''
+      printf -v "$capability_variable" '%s' ''
+      printf 'Durable runner quiescence monitor failed before its ready handshake.\n' >&2
+      return 1
+    fi
+    if [[ -s "$ready_path" ]]; then
+      ready_value="$(<"$ready_path")"
+      if [[ "$ready_value" == "ready:$expected_marker" ]] &&
+         recovery_durable_runner_monitor_authority_is_exact \
+           "$authority_path" "$authority_sha256" "$durable_baseline_path" \
+           "$durable_baseline_sha256" "$control_baseline_path" \
+           "$control_baseline_sha256" "$stop_path" "$failure_path" \
+           "$ready_path" "$progress_path" "$final_path" "$started_pid" \
+           "$started_identity" "$expected_capability" "$operation_owner" &&
+         recovery_stream_guard_progress_value \
+           "$progress_path" "$authority_sha256" >/dev/null &&
+         recovery_process_identity_is_live \
+           "$started_pid" "$started_identity" &&
+         recovery_require_operation_serialization &&
+         recovery_require_operation_lock; then
+        printf -v "$capability_variable" '%s' "$expected_capability"
+        rm -f -- "$spawn_gate"
+        return 0
+      fi
+      break
+    fi
+    if ! recovery_process_identity_is_live \
+        "$started_pid" "$started_identity"; then
+      recovery_discard_durable_runner_quiescence_monitor \
+        "$stop_path" "$started_pid" "$started_identity"
+      rm -f -- "$authority_path"
+      printf -v "$pid_variable" '%s' ''
+      printf -v "$identity_variable" '%s' ''
+      printf -v "$capability_variable" '%s' ''
+      printf 'Durable runner quiescence monitor exited before its ready handshake.\n' >&2
+      return 1
+    fi
+    sleep 0.05
+    attempt=$((attempt + 1))
+  done
+  recovery_discard_durable_runner_quiescence_monitor \
+    "$stop_path" "$started_pid" "$started_identity"
+  rm -f -- "$spawn_gate" "$authority_path"
+  printf -v "$pid_variable" '%s' ''
+  printf -v "$identity_variable" '%s' ''
+  printf -v "$capability_variable" '%s' ''
+  printf 'Durable runner quiescence monitor did not complete its exact capability handshake.\n' >&2
+  return 1
+}
+
+recovery_require_durable_runner_quiescence_monitor_healthy() {
+  local durable_baseline_path="$1" durable_baseline_sha256="$2"
+  local control_baseline_path="$3" control_baseline_sha256="$4"
+  local failure_path="$5" ready_path="$6" progress_path="$7"
+  local watcher_pid="$8" watcher_identity="$9" capability_sha256="${10}"
+  local operation_owner="${11}" expected_capability expected_marker ready_value
+  local authority_path authority_sha256 stop_path final_path
+  [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" &&
+     "$capability_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
+     "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" ]] || return 2
+  recovery_runner_watch_marker_is_exact "$failure_path" || return 1
+  recovery_runner_watch_marker_is_exact "$ready_path" || return 1
+  recovery_runner_watch_marker_is_exact "$progress_path" || return 1
+  [[ ! -s "$failure_path" ]] || return 1
+  authority_path="$(recovery_monitor_authority_path "$ready_path")" || return 1
+  authority_sha256="$(recovery_monitor_authority_sha256_for_ready \
+    "$ready_path")" || return 1
+  stop_path="$(jq -er '.paths.stop' "$authority_path")" || return 1
+  final_path="$(jq -er '.paths.final' "$authority_path")" || return 1
+  expected_capability="$(
+    recovery_durable_runner_monitor_control_capability_sha256 \
+      "$control_baseline_path" "$control_baseline_sha256" \
+      "$durable_baseline_sha256" "$operation_owner"
+  )" || return 1
+  [[ "$expected_capability" == "$capability_sha256" ]] || return 1
+  recovery_durable_runner_monitor_authority_is_exact \
+    "$authority_path" "$authority_sha256" "$durable_baseline_path" \
+    "$durable_baseline_sha256" "$control_baseline_path" \
+    "$control_baseline_sha256" "$stop_path" "$failure_path" "$ready_path" \
+    "$progress_path" "$final_path" "$watcher_pid" "$watcher_identity" \
+    "$capability_sha256" "$operation_owner" || return 1
+  expected_marker="$(recovery_durable_runner_monitor_positive_marker \
+    "$durable_baseline_sha256" "$control_baseline_sha256" \
+    "$capability_sha256" "$authority_sha256")" || return 1
+  ready_value="$(<"$ready_path")"
+  [[ "$ready_value" == "ready:$expected_marker" ]] || return 1
+  recovery_stream_guard_progress_value \
+    "$progress_path" "$authority_sha256" >/dev/null || return 1
+  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$durable_baseline_path" "$durable_baseline_sha256" 1048576 || return 1
+  recovery_require_checkpoint_runner_quiescence_exact \
+    durable-v2 "$durable_baseline_path" "$durable_baseline_sha256" || return 1
+  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity"
+}
+
+recovery_stop_durable_runner_quiescence_monitor() {
+  local durable_baseline_path="$1" durable_baseline_sha256="$2"
+  local control_baseline_path="$3" control_baseline_sha256="$4"
+  local stop_path="$5" failure_path="$6" ready_path="$7"
+  local progress_path="$8" final_path="$9" watcher_pid="${10}"
+  local watcher_identity="${11}" capability_sha256="${12}"
+  local joined_variable="${13}" operation_owner="${14}"
+  local joined_state watcher_status=0 stop_written=0
+  local expected_marker ready_value="" final_value=""
+  local authority_path authority_sha256
+  [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" &&
+     "$capability_sha256" =~ ^[a-f0-9]{64}$ &&
+     "$joined_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
+     "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" ]] || return 2
+  joined_state="${!joined_variable}"
+  [[ "$joined_state" == 0 || "$joined_state" == ok ||
+     "$joined_state" == failed ]] || return 2
+  authority_path="$(recovery_monitor_authority_path "$ready_path")" || return 1
+  authority_sha256="$(recovery_monitor_authority_sha256_for_ready \
+    "$ready_path")" || return 1
+  recovery_durable_runner_monitor_authority_is_exact \
+    "$authority_path" "$authority_sha256" "$durable_baseline_path" \
+    "$durable_baseline_sha256" "$control_baseline_path" \
+    "$control_baseline_sha256" "$stop_path" "$failure_path" "$ready_path" \
+    "$progress_path" "$final_path" "$watcher_pid" "$watcher_identity" \
+    "$capability_sha256" "$operation_owner" \
+    "$([[ "$joined_state" == 0 ]] && printf 1 || printf 0)" || return 1
+  expected_marker="$(recovery_durable_runner_monitor_positive_marker \
+    "$durable_baseline_sha256" "$control_baseline_sha256" \
+    "$capability_sha256" "$authority_sha256")" || return 1
+  if [[ "$joined_state" == 0 ]]; then
+    if recovery_require_durable_runner_quiescence_monitor_healthy \
+        "$durable_baseline_path" "$durable_baseline_sha256" \
+        "$control_baseline_path" "$control_baseline_sha256" \
+        "$failure_path" "$ready_path" "$progress_path" "$watcher_pid" \
+        "$watcher_identity" "$capability_sha256" "$operation_owner" &&
+       recovery_signal_durable_runner_quiescence_monitor "$stop_path" stop; then
+      stop_written=1
+    else
+      watcher_status=1
+      if recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" &&
+         recovery_signal_durable_runner_quiescence_monitor \
+           "$stop_path" discard 2>/dev/null; then
+        stop_written=1
+      fi
+    fi
+    if [[ "$stop_written" == 1 ]] &&
+       recovery_wait_isolated_process_bounded \
+         "$watcher_pid" "$watcher_identity" "$stop_path"; then
+      printf -v "$joined_variable" '%s' ok
+      joined_state=ok
+    else
+      if [[ "$stop_written" != 1 ]]; then
+        recovery_stop_process_group "$watcher_pid" "$watcher_identity" || :
+      fi
+      printf -v "$joined_variable" '%s' failed
+      joined_state=failed
+      watcher_status=1
+    fi
+  else
+    [[ "$joined_state" == ok ]] || watcher_status=1
+  fi
+  for marker_path in "$failure_path" "$ready_path" "$progress_path" \
+    "$final_path"; do
+    recovery_runner_watch_marker_is_exact "$marker_path" || watcher_status=1
+  done
+  [[ ! -s "$failure_path" ]] || watcher_status=1
+  [[ -f "$ready_path" ]] && ready_value="$(<"$ready_path")"
+  [[ -f "$final_path" ]] && final_value="$(<"$final_path")"
+  [[ "$ready_value" == "ready:$expected_marker" ]] || watcher_status=1
+  [[ "$final_value" == "complete:$expected_marker" ]] || watcher_status=1
+  recovery_stream_guard_progress_value \
+    "$progress_path" "$authority_sha256" >/dev/null || watcher_status=1
+  recovery_checkpoint_writer_monitor_file_is_exact \
+    "$durable_baseline_path" "$durable_baseline_sha256" 1048576 || watcher_status=1
+  [[ "$(recovery_durable_runner_monitor_control_capability_sha256 \
+      "$control_baseline_path" "$control_baseline_sha256" \
+      "$durable_baseline_sha256" "$operation_owner" 2>/dev/null || :)" == \
+     "$capability_sha256" ]] || watcher_status=1
+  recovery_require_operation_serialization || watcher_status=1
+  recovery_require_operation_lock || watcher_status=1
+  recovery_require_checkpoint_runner_quiescence_exact \
+    durable-v2 "$durable_baseline_path" "$durable_baseline_sha256" ||
+    watcher_status=1
+  [[ "$watcher_status" == 0 ]]
+}
+
+recovery_discard_durable_runner_quiescence_monitor() {
+  local stop_path="$1" watcher_pid="$2" watcher_identity="$3"
+  local wait_status=0
+  if [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" ]] &&
+     recovery_process_identity_is_live "$watcher_pid" "$watcher_identity"; then
+    if recovery_signal_durable_runner_quiescence_monitor \
+        "$stop_path" discard 2>/dev/null; then
+      recovery_wait_isolated_process_bounded \
+        "$watcher_pid" "$watcher_identity" "$stop_path" 2>/dev/null || :
+    else
+      recovery_stop_process_group "$watcher_pid" "$watcher_identity" || :
+    fi
+  elif [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" ]] &&
+       ! kill -0 "$watcher_pid" 2>/dev/null; then
+    if wait "$watcher_pid" 2>/dev/null; then wait_status=0; else wait_status=$?; fi
+    if [[ "$wait_status" != 127 ]] && ! kill -0 "$watcher_pid" 2>/dev/null; then
+      recovery_stop_reaped_isolated_process_group "$watcher_pid"
+    fi
   fi
 }
 

@@ -40,9 +40,19 @@ Deployment 18, Hubs 97, navegador 11, capacidad 115 fail-closed, Dialog 2,
 Photomnemonic 7 y Spoke 68. No se afirma build de imágenes, checkpoint nuevo,
 carga física, staging, deploy ni aceptación live.
 
-Esos commits ya pertenecen a las ramas base de los subrepositorios y root
-`main=9f4ada1` los fija tras el PR `#5`. Esta integración no implica build,
-despliegue ni aceptación live.
+El candidato activo posterior usa Hubs `ce8390a8905f` y Cloud
+`24d09706c2d9`. Recovery 861/861 y el gate raíz normal pasan sobre esos
+gitlinks; la única validación local amplia pendiente es `--full`, seguida de
+revisión y PR/CI raíz. Hubs queda 91 commits por delante de
+`prod-2026-03-11` y Cloud 114 por delante de Hubs CE 2.1.0, sin release estable
+pendiente. Esto no modifica el baseline live hasta build y rollout.
+
+Esos commits ya pertenecen a las ramas base de los subrepositorios, pero root
+`main=ed8c9d13fbb` todavía fija Hubs `674ece411691` y Cloud `5392495b0772`.
+Solo el worktree `codex/aud078-root-integration` fija actualmente los candidatos
+Hubs `ce8390a8905f` y Cloud `24d09706c2d9`; faltan su gate `--full`, revisión y
+PR/CI/merge raíz. Esta preparación no implica build, staging, despliegue ni
+aceptación live.
 
 ## Preparar remotos
 
@@ -177,25 +187,30 @@ DB+storage y rotación coordinada), construcción/despliegue/atestación del
 aislamiento por Pod y del fencing DB ya integrados, revisión y aprobación individual del
 inventario que generará la migración ya integrada, y una parada autoritativa
 más fuerte que el `room_stop` best-effort. También
-faltan builds de imágenes por Actions, carga física, staging y aceptación live;
+faltan builds de las cuatro imágenes por Actions, publicación Spoke del contrato
+de asiento, staging Reticulum-first/Hubs-second y aceptación live;
 ningún gate de fuentes mide capacidad ni autoriza rollout público.
 
 El orden de la campaña vigente es estricto: primero terminar y fusionar el
 tooling que corrige la secuencia; después implementar y fusionar `AUD-078` en
 una rama Cloud separada. A continuación se integra en otro PR Cloud el workflow
 conjunto de procedencia y los recibos de fase, y en un PR raíz posterior su
-consumidor y el gitlink. Solo desde un root limpio con
+consumidor y el gitlink Cloud; el gitlink Hubs ya queda fijado por Fase 3B. Como
+estos inputs son nuevos, ambos gates raíz se repiten una
+vez antes de ese merge. Solo desde un root limpio con
 `HEAD=main=origin/main` se permite la excepción acotada de construir, sin
 generar ni aplicar manifiestos, Reticulum, parent y runner en un único workflow
-de GitHub Actions. Las tres imágenes deben quedar atestadas contra el commit
-Cloud derivado del gitlink integrado.
+Cloud de GitHub Actions y Hubs mediante el
+`custom-docker-build-push` ya aprobado. Las cuatro imágenes deben quedar
+ligadas a workflow run, commit y digest derivados de los gitlinks integrados.
 
-El run entrega exactamente cinco ficheros distintos: recibo JSON canónico,
+El run Cloud entrega exactamente cinco ficheros distintos: recibo JSON canónico,
 bundle de ese recibo y bundles OCI de Reticulum, parent y runner. Se verifican
 sin overrides usando un `DOCKER_CONFIG` temporal owner-only `0700`, con
 `config.json` `0600`, materializado desde el pull config privado y eliminado
 incluso ante error. Una publicación parcial o un digest escrito a mano falla
-cerrado. Ese build no cambia ninguna imagen live ni sustituye el checkpoint.
+cerrado. Hubs conserva por separado su run, commit y digest verificados;
+ninguno de esos builds cambia una imagen live ni sustituye el checkpoint.
 
 Después se crea y valida el primer checkpoint DB+storage. El completador deriva
 el runner de los cinco artefactos, completa OLD bajo Lease y permite preparar
@@ -203,25 +218,29 @@ NEW; entonces se completa la rotación sobre el baseline live exclusivamente con
 `deployment/rotate-process-local-credentials.sh`, la operación privada sellada,
 la promoción atómica y el auditor read-only `aud065_rotation_verified`
 descritos en `deployment/README.md`. Después de la rotación se crea y valida un
-segundo checkpoint; solo entonces el gestor vuelve a verificar los mismos cinco
-artefactos, deriva los tres digests finales y prepara la copia candidata
-bootstrap con el pull config nuevo. El verificador global 0/0 se reserva para la
-aceptación final.
+segundo checkpoint; solo entonces el gestor vuelve a verificar los cinco
+artefactos Cloud y la evidencia Hubs, deriva los cuatro digests finales y
+prepara la copia candidata `bootstrap-server` con el pull config nuevo. El
+verificador global 0/0 se reserva para la aceptación final.
 
-El cambio de runners se promociona con tres imágenes del mismo commit y tres
-manifiestos completos de 58 recursos, regenerados sucesivamente con
-`BOT_RUNNER_ACTIVATION_PHASE=bootstrap`, `admission` y `active`. Cada fase se
+El candidato se ensaya primero en staging con Reticulum protocol 2 y el Hubs
+anterior, seguido del Hubs protocol 2 y una carrera de dos navegadores sobre un
+asiento Spoke con `Can be occupied` e identidad estable. Los mismos cuatro
+digests se promocionan mediante cuatro manifiestos completos de 68 recursos,
+regenerados sucesivamente como `bootstrap-server`, `bootstrap-client`,
+`admission` y `active`. Cada fase se
 aplica exclusivamente desde `hubs-cloud/community-edition` mediante
 `npm run apply` y un `KUBECTL_CONTEXT` exacto. El wrapper verifica el manifiesto,
 serializa la mutación con el Lease global, mantiene el parent y los runners
-parados hasta completar policy/RBAC/probe, y vuelve a cercar la autoridad si
+parados hasta completar Hubs, aprobaciones individuales y policy/RBAC/probe, y
+vuelve a cercar la autoridad si
 detecta error o deriva. No usar un `kubectl apply -f hcce.yaml` directo para
 saltar esa máquina de estados. El cambio de fase de la copia candidata y su
 promoción final deben exigir recibos autenticados ligados al fichero exacto,
 commit integrado, digests derivados, checkpoint, contexto/UID y resultado live;
 nunca se marcan por una orden local sin esa evidencia.
 
-Los 58 recursos abarcan los namespaces `hcce` y `hcce-bot-runners`, cuota,
+Los 68 recursos abarcan los namespaces `hcce` y `hcce-bot-runners`, cuota,
 ValidatingAdmissionPolicy+binding, RBAC mínimo comprobado con revisiones
 efectivas y ocho NetworkPolicies. Rollback en orden inverso: cero Pods runner,
 parent legacy contra Reticulum compatible y solo después Reticulum antiguo.
@@ -241,8 +260,9 @@ acepta el token por argv o entorno ni se muestra
 Una release solo se acepta cuando:
 
 - el suite completo pasa;
-- la imagen se publica por Actions;
-- se fija el digest;
+- las cuatro imágenes se publican por Actions y quedan ligadas a run, commit y
+  digest;
+- se fijan los cuatro digests;
 - el manifiesto se regenera sin ediciones;
 - la carga fria no tiene excepciones ni 404;
 - el verificador live informa 0 fallos y 0 avisos;
