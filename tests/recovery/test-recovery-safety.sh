@@ -1052,7 +1052,45 @@ run_private_directory_setup_signal_tests() {
 
 run_private_directory_helper_tests() {
   local root token external case_name original replacement
+  local shared_tmp private_tmp expected_private_tmp
   local owner_tested=false current_uid current_gid
+
+  shared_tmp="$TMP_DIR/shared-temp-root"
+  mkdir -m 755 "$shared_tmp"
+  expected_private_tmp="$shared_tmp/.yenhubs-recovery-private-$(id -u)"
+  # shellcheck disable=SC2016 # Positional arguments expand in isolated Bash.
+  expect_success 'shared temporary root yields one stable private per-user child' \
+    bash -c '
+      set -euo pipefail
+      source "$1"
+      first="$(TMPDIR="$2" recovery_canonical_private_tmp_root)"
+      second="$(TMPDIR="$2" recovery_canonical_private_tmp_root)"
+      [[ "$first" == "$3" && "$second" == "$first" ]]
+      recovery_capture_private_directory_token "$first" >/dev/null
+    ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$shared_tmp" \
+    "$expected_private_tmp"
+  private_tmp="$expected_private_tmp"
+  chmod 755 "$private_tmp"
+  # shellcheck disable=SC2016 # Positional arguments expand in isolated Bash.
+  expect_failure 'shared temporary child rejects weakened private mode' '' \
+    bash -c '
+      set -euo pipefail
+      source "$1"
+      TMPDIR="$2" recovery_canonical_private_tmp_root
+    ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$shared_tmp"
+  chmod 700 "$private_tmp"
+  rmdir "$private_tmp"
+  mkdir -m 700 "$shared_tmp/external"
+  ln -s "$shared_tmp/external" "$private_tmp"
+  # shellcheck disable=SC2016 # Positional arguments expand in isolated Bash.
+  expect_failure 'shared temporary child rejects a symlink collision' '' \
+    bash -c '
+      set -euo pipefail
+      source "$1"
+      TMPDIR="$2" recovery_canonical_private_tmp_root
+    ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$shared_tmp"
+  rm "$private_tmp"
+
   root="$TMP_DIR/private-helper-happy"
   mkdir -m 700 "$root" "$root/one" "$root/one/two"
   printf 'owner\n' >"$root/.owner"

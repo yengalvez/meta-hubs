@@ -6686,11 +6686,27 @@ recovery_runner_checkpoint_helper_path() {
 }
 
 recovery_canonical_private_tmp_root() {
-  local candidate="${TMPDIR:-/tmp}" canonical
+  local candidate="${TMPDIR:-/tmp}" canonical private_root current_uid
   canonical="$(cd "$candidate" 2>/dev/null && pwd -P)" || return 1
   [[ "$canonical" == /* && -d "$canonical" && ! -L "$canonical" ]] || return 1
   recovery_path_has_symlink_component "$canonical" && return 1
-  printf '%s\n' "$canonical"
+  if recovery_capture_private_directory_token "$canonical" >/dev/null 2>&1; then
+    printf '%s\n' "$canonical"
+    return 0
+  fi
+
+  current_uid="$(id -u 2>/dev/null)" || return 1
+  [[ "$current_uid" =~ ^[0-9]+$ ]] || return 1
+  private_root="$canonical/.yenhubs-recovery-private-$current_uid"
+  # A shared system temporary directory is acceptable only as the parent of a
+  # private per-user root. Never chmod or replace an existing pathname: mkdir
+  # may lose a benign concurrent creation race, after which the capability
+  # check below must still prove exact owner, mode, type and canonical binding.
+  if ! (umask 077 && mkdir -- "$private_root") 2>/dev/null; then
+    :
+  fi
+  recovery_capture_private_directory_token "$private_root" >/dev/null || return 1
+  printf '%s\n' "$private_root"
 }
 
 recovery_validate_runner_cutover_evidence_offline() {

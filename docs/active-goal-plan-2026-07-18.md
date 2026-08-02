@@ -2,29 +2,26 @@
 
 Última actualización: 2 de agosto de 2026
 
-Estado actual: **EN EJECUCIÓN; la revalidación raíz `--full` confirmó recovery
-`861/861`, incluido el caso 850, y todos los bloques y builds anteriores. Sus
-cuatro advisories finales de Guardian `2.4.0` se resolvieron mediante la única
-línea de lock `2.4.1`, primera release oficial corregida. Formato, compilación,
-Hex audit, dos migraciones, `461` tests + `5` properties, release y CI
-PostgreSQL 12.19/14.23 están verdes; los PR Cloud `#21`/`#22` se fusionaron en
-`master=c0a3419b`. El gitlink raíz ya lo fija y el commit `1d45626` está
-publicado en el PR raíz `#14`. Sus cuatro jobs AUD-065 quedaron verdes. El
-commit `6601cb1` resolvió los dos `SC2015`; al avanzar, el segundo CI señaló
-solo falsos positivos del ShellCheck Linux antiguo en dos callbacks de `trap` y
-una función invocada indirectamente con argumentos. Las supresiones locales
-justificadas no cambian código ejecutable y pasan Bash, ShellCheck local y
-diff-check. Falta publicarlas, obtener CI verde y fusionar. Producción
-permanece intacta.**
+Estado actual: **EN EJECUCIÓN; el PR raíz `#14` está abierto en el commit
+`15f713d`. Sus cuatro jobs AUD-065 están verdes y ambos jobs de seguridad ya
+superan gitlinks, Gitleaks, workflows y ShellCheck. Al alcanzar por primera vez
+la recuperación integral en Linux, ambos reprodujeron el mismo fallo del caso
+156: sin `TMPDIR`, el sistema elegía `/tmp` (directorio compartido `01777`) para
+un fichero cuya lectura segura exige también un padre privado `0700`. Es un
+defecto real y acotado de portabilidad del checkpoint, no una función nueva ni
+un cambio visible de Hubs. La corrección mínima crea o reutiliza una raíz
+privada por UID, jamás cambia permisos ni sustituye una ruta existente, y
+mantiene la validación fail-closed. Sintaxis, ShellCheck, diff-check, el lector
+Node `32/32`, la matriz de directorios privados `78/78` y la reproducción
+durable exacta sin `TMPDIR` `50/50` están verdes. Falta publicar el commit y
+obtener el CI completo. Producción permanece intacta.**
 
-Punto exacto de reanudación: crear un tercer commit —sin reescribir los dos ya
-publicados— con las supresiones locales del fixture y estos documentos, subirlo
-al PR raíz `#14`, exigir CI verde y fusionarlo en `main`. Los pines, diff-check,
-auditoría upstream, Gitleaks y revisión final ya pasan; recovery, Hubs, Spoke y
-capacidad quedaron verdes en el full y no se repiten porque sus entradas
-materiales no cambiaron.
-Después continuar con la cadena definida de build, checkpoints, rotación,
-staging, rollout y aceptación live, sin añadir funciones nuevas.
+Punto exacto de reanudación: actualizar los tres documentos, crear un cuarto
+commit —sin reescribir los tres ya publicados—, subirlo al PR raíz `#14`,
+exigir CI íntegramente verde y fusionarlo en `main`. No se repite el full local:
+el siguiente CI ejecuta el gate integral sobre los bytes nuevos.
+Después continuar con build, checkpoints, rotación, staging, rollout y
+aceptación live, sin añadir funciones nuevas.
 
 Worktree inicial: `/Users/Shared/Gits/YenHubs-aud075-root`
 
@@ -44,10 +41,11 @@ campo «Worktree activo» debe actualizarse antes de continuar.
 
 Panel humano obligatorio:
 `/Users/Shared/Gits/YenHubs-aud078-root/docs/estado-sencillo.md`. Debe
-actualizarse después de cada hito real y siempre que cambie la acción actual,
-manteniendo casillas y lenguaje sencillo coherentes con este plan técnico. Si
-hubiera una discrepancia, este plan gobierna la ejecución y ambos documentos se
-sincronizan antes de continuar.
+actualizarse antes de pasar a una acción distinta, después de cada hito real y
+siempre que cambie la acción actual, manteniendo casillas y lenguaje sencillo
+coherentes con este plan técnico. Esta obligación forma parte de la meta porque
+la meta ordena seguir este documento. Si hubiera una discrepancia, este plan
+gobierna la ejecución y ambos documentos se sincronizan antes de continuar.
 
 El historial de sesión y las cuentas completas de pruebas se conservan exclusivamente en
 `docs/session-changelog.md`. `docs/completion-plan-2026-07-18.md` es solo una
@@ -57,17 +55,17 @@ esta meta.
 ## Panel operativo vigente
 
 - Fase activa: **3B, integración raíz final**.
-- Primera acción al reanudar: publicar las supresiones locales del fixture y
-  esperar el siguiente CI del PR raíz `#14`; no abrir otra ronda general de
-  dependencias, diseño o auditoría.
+- Primera acción al reanudar: publicar la corrección portable ya validada de la
+  raíz temporal privada en el PR raíz `#14` y esperar su CI completo. No abrir
+  otra ronda general de dependencias, diseño o auditoría.
 - El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
   incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
   `mix hex.audit` final por cuatro advisories nuevos de Guardian `2.4.0`.
 - Guardian `2.4.1` ya está validado e integrado mediante los PR `#21`/`#22` en
   Cloud `master=c0a3419b`; el gitlink, los controles proporcionales y la única
-  revisión final están cerrados. El PR raíz `#14` ya existe: AUD-065 pasó, los
-  `SC2015` quedaron resueltos y solo queda confirmar en CI las supresiones
-  locales de sus falsos positivos Linux posteriores.
+  revisión final están cerrados. El PR raíz `#14` ya existe: AUD-065 y
+  ShellCheck pasan. El gate integral posterior descubrió el defecto portable de
+  `/tmp`; solo se corrige y revalida esa superficie antes del merge.
 - Camino crítico posterior: (1) integrar la procedencia de Cloud y su
   consumidor raíz; (2) construir por Actions cuatro imágenes trazables —Hubs,
   Reticulum, parent y runner—; (3) checkpoint 1, rotación y checkpoint 2;
