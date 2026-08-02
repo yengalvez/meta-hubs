@@ -17,7 +17,7 @@ pero esa versión nueva todavía no se ha desplegado.
 - **Producción:** sin cambios durante esta campaña. Conserva el último baseline
   que fue aceptado en funcionamiento; esa aceptación es histórica y se repetirá
   con navegador real después del nuevo despliegue.
-- **Código candidato:** casi cerrado, pero todavía está en una rama raíz y no en
+- **Código candidato:** publicado en el PR raíz `#14`, pero todavía no está en
   `main`.
 - **Prueba larga más reciente:** el caso temporal corregido ya pasó y recovery
   quedó verde `861/861`. También pasaron las demás pruebas y builds hasta el
@@ -29,9 +29,11 @@ pero esa versión nueva todavía no se ha desplegado.
   migración, `461` pruebas + `5` propiedades en local y en PostgreSQL 12/14 de
   CI, además de su release. Los PR Cloud `#21` y `#22` están fusionados en
   `master=c0a3419b`.
-- **Qué estoy haciendo ahora:** crear el commit y PR raíz sobre el árbol ya
-  staged, validado y revisado. No se repiten las 3,5 horas de recovery, Hubs,
-  Spoke y capacidad porque sus bytes no cambiaron.
+- **Qué estoy haciendo ahora:** publicar en el mismo PR la corrección explícita
+  de dos avisos ShellCheck `SC2015` encontrados por CI y exigir que todos sus
+  checks queden verdes. La corrección ya pasó Bash, ShellCheck y las pruebas
+  afectadas `46/46` y `170/170`; no se repiten las 3,5 horas de bloques cuyos
+  bytes no cambiaron.
 
 ## Lo que ya funcionaba antes de esta campaña
 
@@ -78,7 +80,11 @@ considerarse terminado.
   `master=c0a3419b`.
 - [x] Fijar Cloud `c0a3419b` en la raíz, pasar pines, diff-check, auditoría
   upstream y Gitleaks, y revisar una vez el diff sin P0/P1/P2.
-- [ ] Crear el commit y PR raíz, exigir CI verde y fusionarlo en `main`.
+- [x] Crear el commit raíz `1d45626` y abrir el PR raíz `#14`.
+- [x] Corregir los dos únicos avisos `SC2015` detectados por CI y validar la
+  zona afectada: Bash, ShellCheck, foco corto `46/46` y writers `170/170`.
+- [ ] Publicar esa corrección, exigir CI completamente verde y fusionar el PR
+  `#14` en `main`.
 - [ ] Integrar la procedencia y los recibos que demostrarán exactamente qué
   código e imágenes se despliegan.
 - [ ] Construir por GitHub Actions cuatro imágenes trazables: Hubs, Reticulum,

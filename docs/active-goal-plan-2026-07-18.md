@@ -8,14 +8,19 @@ cuatro advisories finales de Guardian `2.4.0` se resolvieron mediante la única
 línea de lock `2.4.1`, primera release oficial corregida. Formato, compilación,
 Hex audit, dos migraciones, `461` tests + `5` properties, release y CI
 PostgreSQL 12.19/14.23 están verdes; los PR Cloud `#21`/`#22` se fusionaron en
-`master=c0a3419b`. El gitlink raíz ya lo fija, los controles proporcionales y la
-revisión final pasan sin P0/P1/P2; falta commit/PR/CI/merge raíz. Producción
-permanece intacta.**
+`master=c0a3419b`. El gitlink raíz ya lo fija y el commit `1d45626` está
+publicado en el PR raíz `#14`. Sus cuatro jobs AUD-065 quedaron verdes; los dos
+jobs estáticos señalaron únicamente dos `SC2015`, ya sustituidos por `if`
+explícitos y validados con Bash, ShellCheck y focos `46/46` y `170/170`. Falta
+publicar esa corrección, obtener CI verde y fusionar. Producción permanece
+intacta.**
 
-Punto exacto de reanudación: crear el commit del árbol raíz ya staged, abrir su
-PR, exigir CI verde y fusionarlo en `main`. Los pines, diff-check, auditoría
+Punto exacto de reanudación: crear un segundo commit —sin reescribir el ya
+publicado— con los dos `if` explícitos y estos documentos, subirlo al PR raíz
+`#14`, exigir CI verde y fusionarlo en `main`. Los pines, diff-check, auditoría
 upstream, Gitleaks y revisión final ya pasan; recovery, Hubs, Spoke y capacidad
-quedaron verdes en el full y no se repiten porque Guardian no los afecta.
+quedaron verdes en el full y no se repiten porque sus entradas materiales no
+cambiaron.
 Después continuar con la cadena definida de build, checkpoints, rotación,
 staging, rollout y aceptación live, sin añadir funciones nuevas.
 
@@ -50,15 +55,16 @@ esta meta.
 ## Panel operativo vigente
 
 - Fase activa: **3B, integración raíz final**.
-- Primera acción al reanudar: crear el commit y PR raíz del árbol ya staged,
-  validado y revisado; no abrir otra ronda general de dependencias, diseño o
-  auditoría.
+- Primera acción al reanudar: publicar en un segundo commit la corrección
+  `SC2015` ya validada y esperar el CI del PR raíz `#14`; no abrir otra ronda
+  general de dependencias, diseño o auditoría.
 - El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
   incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
   `mix hex.audit` final por cuatro advisories nuevos de Guardian `2.4.0`.
 - Guardian `2.4.1` ya está validado e integrado mediante los PR `#21`/`#22` en
   Cloud `master=c0a3419b`; el gitlink, los controles proporcionales y la única
-  revisión final están cerrados. Queda commit/PR/CI/merge raíz.
+  revisión final están cerrados. El PR raíz `#14` ya existe: AUD-065 pasó y la
+  única corrección pendiente de publicar son dos expresiones `SC2015`.
 - Camino crítico posterior: (1) integrar la procedencia de Cloud y su
   consumidor raíz; (2) construir por Actions cuatro imágenes trazables —Hubs,
   Reticulum, parent y runner—; (3) checkpoint 1, rotación y checkpoint 2;
@@ -623,8 +629,12 @@ estar integrado hasta cerrar sus callsites, gates y PR root.
 - [x] Fijar Cloud `c0a3419b` en raíz y ejecutar la validación proporcional:
   pines exactos, diff-check, auditoría upstream y Gitleaks raíz verdes. La única
   revisión final no encontró P0/P1/P2 ni archivos accidentales.
-- [ ] Crear el commit y PR raíz, exigir CI verde y fusionarlo en `main`. No crear
-  todavía un checkpoint real.
+- [x] Crear el commit raíz `1d45626`, publicarlo y abrir el PR raíz `#14`.
+- [x] Resolver los dos únicos diagnósticos `SC2015` de su primer CI mediante
+  `if` explícitos, sin alterar la semántica. Pasan Bash syntax, ShellCheck,
+  diff-check, el foco de librería `46/46` y el foco writers `170/170`.
+- [ ] Publicar la corrección en un segundo commit, exigir CI verde y fusionar el
+  PR `#14` en `main`. No crear todavía un checkpoint real.
 
 Resultado: los checkpoints anteriores siguen siendo legibles en su generación,
 pero el rollout durable solo puede avanzar con evidencia restaurable ligada al
@@ -947,8 +957,7 @@ verdes. Como el único byte lógico posterior pertenece a la dependencia ya
 validada de Reticulum, no se vuelven a ejecutar recovery, Hubs, Spoke o
 capacidad.
 
-Hashes vigentes sometidos a la regresión final y al full que confirmó recovery
-861/861:
+Hashes sometidos a la regresión final y al full que confirmó recovery 861/861:
 `create-checkpoint.sh=2cec747e1dd24bf201a386a6128b672d2f2946b3c0509bde77e07b1dc748a037`,
 `recovery-safety.sh=93afad8ce84a41fd66d953dcc73fc84a5a0d6fe88f58579d8a6d70cee9734200`,
 `watch-checkpoint-writers.mjs=6acc75c821103c776279301b51d19f176a8d2110b29c7728728f38bd94e4c1f5`,
@@ -956,6 +965,13 @@ Hashes vigentes sometidos a la regresión final y al full que confirmó recovery
 `restore-checkpoint.sh=d1ab89e77635976abd96329b541a4ea229b48c9b8389690365c7d9c86fe1b4b9`
 y
 `test-recovery-safety.sh=0ea88ed52e80ec8a420fa5bd53a77eba56776c518238f1eb9b9d8388ebb18bc0`.
+
+El candidato actual cambia después únicamente la forma ShellCheck de dos
+señalizaciones de descarte, de `cmd && asignación || :` a `if cmd; then
+asignación; fi`, sin cambiar sus comandos ni estados. Su hash vigente es
+`recovery-safety.sh=c5a1f2df9a2c26698f60a1064065d15aee6f6401cbf4b812400101a660392a54`;
+queda cubierto por Bash syntax, ShellCheck, diff-check, el foco de librería
+`46/46` y writers `170/170`. El fixture conserva el hash anterior.
 
 ### Fase 4 — integrar evidencias, construir sin desplegar y completar `AUD-065`
 

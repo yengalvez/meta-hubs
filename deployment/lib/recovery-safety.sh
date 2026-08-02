@@ -8526,9 +8526,11 @@ recovery_stop_checkpoint_writer_monitor() {
         "$stop_path" "$boundary_json" && stop_written=1 || watcher_status=1
     else
       watcher_status=1
-      recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" &&
-        recovery_signal_no_managed_bot_runner_watch_stop \
-        "$stop_path" discard 2>/dev/null && stop_written=1 || :
+      if recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" &&
+         recovery_signal_no_managed_bot_runner_watch_stop \
+           "$stop_path" discard 2>/dev/null; then
+        stop_written=1
+      fi
     fi
     if [[ "$stop_written" == 1 ]] &&
        recovery_wait_isolated_process_bounded \
@@ -9083,9 +9085,11 @@ recovery_stop_durable_runner_quiescence_monitor() {
       stop_written=1
     else
       watcher_status=1
-      recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" &&
-        recovery_signal_durable_runner_quiescence_monitor \
-          "$stop_path" discard 2>/dev/null && stop_written=1 || :
+      if recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" &&
+         recovery_signal_durable_runner_quiescence_monitor \
+           "$stop_path" discard 2>/dev/null; then
+        stop_written=1
+      fi
     fi
     if [[ "$stop_written" == 1 ]] &&
        recovery_wait_isolated_process_bounded \
