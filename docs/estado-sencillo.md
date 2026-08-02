@@ -34,8 +34,13 @@ salida segura al finalizar o reanudar una copia. Los logs sitúan el corte al
 comprobar que Reticulum y el coordinador de bots comparten la misma versión de
 recuperación. Se ha eliminado una segunda forma innecesaria de pasar esos datos
 a `jq` y se han añadido diagnósticos seguros para que, si Linux aún rechaza un
-caso, diga el paso exacto sin mostrar valores ni secretos. No se avanzará al
-bloque 2 hasta publicar esta corrección y obtener un gate completo verde.
+caso, diga el paso exacto sin mostrar valores ni secretos. La corrección se
+publicó como `79f863d`, pero el nuevo gate se detuvo antes de probar recovery:
+una prueba de limpieza vio un segundo proceso que nació entre dos fotos. La
+limpieza sí eliminó ambos; lo incorrecto era exigir que la lista final fuese
+idéntica a la foto anterior. Ahora se exige que incluya todo lo observado y que
+todo lo limpiado haya desaparecido. El caso exacto pasa `1/1`. No se avanzará
+al bloque 2 hasta publicar este ajuste y obtener el gate completo verde.
 
 ## Qué se ha terminado
 
@@ -79,7 +84,12 @@ bloque 2 hasta publicar esta corrección y obtener un gate completo verde.
   salida segura de finalización/rollback, sin tocar producción.
 - [x] Validar la comprobación portable del epoch y sus diagnósticos seguros en
   el foco local `47/47`, además de Bash, ShellCheck y diff-check.
-- [ ] Publicar la corrección residual en el mismo PR `#15`.
+- [x] Publicar la corrección residual como `79f863d` en el mismo PR `#15` y
+  confirmar que solo queda el run `30756093418`.
+- [x] Diagnosticar el único fallo temprano de `30756093418`: carrera de dos
+  fotos en un fixture, aunque el cleanup eliminó correctamente ambos procesos.
+- [x] Corregir solo esa expectativa concurrente y pasar su foco exacto `1/1`.
+- [ ] Publicar el ajuste del fixture en el mismo PR `#15`.
 - [ ] Exigir un gate Linux completo verde antes de pasar al bloque 2.
 
 Este arreglo pertenece al sistema de checkpoint/restore. No modifica la sala,

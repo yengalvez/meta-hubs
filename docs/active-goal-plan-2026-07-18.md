@@ -16,14 +16,20 @@ validación estricta y añade mensajes sin valores para distinguir lectura,
 estructura, formato o desacuerdo de epoch. El handler de checkpoint registra
 además solo el stage/code allowlisted si el reingreso automático falla, sin
 secretos. Bash, ShellCheck, diff-check y el foco diagnóstico `47/47` están
-verdes. Falta publicar esta corrección mínima en el mismo PR y exigir un único
-CI integral verde. Producción permanece intacta.**
+verdes. La corrección se publicó como `79f863d`; su run único `30756093418` no
+llegó a recovery porque una prueba Node existente quedó `56/57`. El cleanup
+había eliminado dos grupos de procesos, pero la aserción comparaba esa lista
+con una foto anterior que solo contenía uno; un watch concurrente había
+publicado el segundo PGID entre ambas lecturas. La corrección local exige que
+todos los grupos de la foto previa estén incluidos y que todos los realmente
+limpiados hayan desaparecido, admitiendo el grupo tardío que el cleanup debe
+recoger. El foco exacto pasa `1/1`. Producción permanece intacta.**
 
-Punto exacto de reanudación: publicar en el PR `#15` únicamente la corrección
-del límite residual y sus diagnósticos seguros; esperar el único gate que
-dispare el push, sin relanzarlo ni repetir el full local. Si queda verde, marcar
-listo, fusionar y cerrar la Fase 3B. Si falla, usar el nuevo stage exacto y
-corregir solo esa causa. No se avanza a Fase 4 antes del verde.
+Punto exacto de reanudación: publicar en el mismo PR `#15` únicamente la
+corrección de esa aserción concurrente y esperar el único gate que dispare el
+push, sin relanzarlo ni repetir bloques verdes. Si queda verde, marcar listo,
+fusionar y cerrar la Fase 3B. Si falla, corregir solo la nueva causa exacta. No
+se avanza a Fase 4 antes del verde.
 Después continuar con build, checkpoints, rotación, staging, rollout y
 aceptación live, sin añadir funciones nuevas.
 
@@ -57,9 +63,9 @@ esta meta.
 ## Panel operativo vigente
 
 - Fase activa: **3B, integración raíz final**.
-- Primera acción al reanudar: publicar en el mismo PR `#15` la corrección
-  residual ya acotada y esperar su único gate completo. No abrir otra ronda
-  general de dependencias, diseño o auditoría.
+- Primera acción al reanudar: publicar en el mismo PR `#15` la corrección de la
+  única carrera del fixture detectada por `30756093418` y esperar su único gate
+  integral. No abrir otra ronda general de dependencias, diseño o auditoría.
 - El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
   incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
   `mix hex.audit` final por cuatro advisories nuevos de Guardian `2.4.0`.
@@ -69,8 +75,9 @@ esta meta.
   ya está resuelto; la primera incompatibilidad `ARG_MAX` también. El segundo
   gate dejó siete fallos fail-closed en una única superficie residual de
   finalización/rollback, ahora acotada a la comprobación del epoch compartido y
-  con diagnóstico seguro del stage. Esa es la única superficie abierta antes
-  de Fase 4.
+  con diagnóstico seguro del stage. El gate siguiente quedó bloqueado antes de
+  recovery por una sola carrera de expectativa en su fixture Node; esa es la
+  única superficie abierta antes de Fase 4.
 - Camino crítico posterior: (1) integrar la procedencia de Cloud y su
   consumidor raíz; (2) construir por Actions cuatro imágenes trazables —Hubs,
   Reticulum, parent y runner—; (3) checkpoint 1, rotación y checkpoint 2;
