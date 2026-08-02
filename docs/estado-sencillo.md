@@ -29,11 +29,11 @@ pero esa versión nueva todavía no se ha desplegado.
   migración, `461` pruebas + `5` propiedades en local y en PostgreSQL 12/14 de
   CI, además de su release. Los PR Cloud `#21` y `#22` están fusionados en
   `master=c0a3419b`.
-- **Qué estoy haciendo ahora:** publicar en el mismo PR la corrección explícita
-  de dos avisos ShellCheck `SC2015` encontrados por CI y exigir que todos sus
-  checks queden verdes. La corrección ya pasó Bash, ShellCheck y las pruebas
-  afectadas `46/46` y `170/170`; no se repiten las 3,5 horas de bloques cuyos
-  bytes no cambiaron.
+- **Qué estoy haciendo ahora:** publicar en el mismo PR cuatro comentarios
+  locales que explican al ShellCheck antiguo de Linux dos callbacks llamados
+  por `trap` y una función llamada indirectamente con argumentos. La corrección
+  `SC2015` ya permitió a CI avanzar; este segundo hallazgo está solo en el
+  fichero de pruebas y no cambia ninguna instrucción ejecutable.
 
 ## Lo que ya funcionaba antes de esta campaña
 
@@ -83,6 +83,11 @@ considerarse terminado.
 - [x] Crear el commit raíz `1d45626` y abrir el PR raíz `#14`.
 - [x] Corregir los dos únicos avisos `SC2015` detectados por CI y validar la
   zona afectada: Bash, ShellCheck, foco corto `46/46` y writers `170/170`.
+- [x] Publicar esa corrección como commit `6601cb1`; AUD-065 volvió a pasar y
+  CI descubrió después únicamente falsos positivos Linux `SC2317` y
+  `SC2119/SC2120` en callbacks y llamadas indirectas del fichero de pruebas.
+- [x] Añadir supresiones locales justificadas para esos diagnósticos; sintaxis
+  Bash, ShellCheck sobre el fichero completo y diff-check están verdes.
 - [ ] Publicar esa corrección, exigir CI completamente verde y fusionar el PR
   `#14` en `main`.
 - [ ] Integrar la procedencia y los recibos que demostrarán exactamente qué

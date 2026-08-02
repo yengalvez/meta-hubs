@@ -6206,7 +6206,7 @@ start_checkpoint_backup_writer_guard() {
     writer_pid="" writer_identity="" writer_baseline_sha="" writer_authority_sha=""
     durable_pid="" durable_identity="" durable_capability_sha=""
     durable_authority_sha="" active_identity=""
-    # shellcheck disable=SC2329 # Invoked indirectly by EXIT/INT/TERM traps.
+    # shellcheck disable=SC2317,SC2329 # Invoked indirectly by EXIT/INT/TERM traps.
     cleanup_parent_monitor_fixture() {
       if [[ "${durable_pid:-}" =~ ^[1-9][0-9]*$ ]]; then
         kill -CONT "$durable_pid" 2>/dev/null || :
@@ -9127,6 +9127,8 @@ run_legacy_receipt_monitor_handoff_case() {
   return 1
 }
 
+# Invoked indirectly through expect_success with optional fixture overrides.
+# shellcheck disable=SC2120
 run_checkpoint_writer_monitor_success() {
   local mode="${1:-}" runtime_generation="${2:-durable-v2}"
   local operation_owner="${3:-checkpoint-backup}"
@@ -12352,6 +12354,8 @@ run_durable_runner_monitor_library_success() (
   local control_sha durable_json durable_path durable_sha monitor_dir
   local monitor_pid="" monitor_identity="" capability_sha="" authority_sha="" joined=0
   local stop_path failure_path ready_path progress_path final_path
+  # Defaults are intentional here; other calls pass overrides via expect_success.
+  # shellcheck disable=SC2119
   run_checkpoint_writer_monitor_success || return 1
   control_sha="$(sha256_digest "$WRITER_TEST_BASELINE")" || return 1
   NAMESPACE=hcce
@@ -12871,7 +12875,7 @@ run_storage_helper_pod_snapshot_race_test() (
   local final_list_path="$TMP_DIR/storage-helper-race-final-list.json"
   local pod_name list_pid=""
   # Invoked indirectly by the trap installed immediately below.
-  # shellcheck disable=SC2329
+  # shellcheck disable=SC2317,SC2329
   cleanup_storage_helper_pod_snapshot_race() {
     if [[ "$list_pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$list_pid" 2>/dev/null; then
       kill -TERM "$list_pid" 2>/dev/null || :

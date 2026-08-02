@@ -9,18 +9,20 @@ línea de lock `2.4.1`, primera release oficial corregida. Formato, compilación
 Hex audit, dos migraciones, `461` tests + `5` properties, release y CI
 PostgreSQL 12.19/14.23 están verdes; los PR Cloud `#21`/`#22` se fusionaron en
 `master=c0a3419b`. El gitlink raíz ya lo fija y el commit `1d45626` está
-publicado en el PR raíz `#14`. Sus cuatro jobs AUD-065 quedaron verdes; los dos
-jobs estáticos señalaron únicamente dos `SC2015`, ya sustituidos por `if`
-explícitos y validados con Bash, ShellCheck y focos `46/46` y `170/170`. Falta
-publicar esa corrección, obtener CI verde y fusionar. Producción permanece
-intacta.**
+publicado en el PR raíz `#14`. Sus cuatro jobs AUD-065 quedaron verdes. El
+commit `6601cb1` resolvió los dos `SC2015`; al avanzar, el segundo CI señaló
+solo falsos positivos del ShellCheck Linux antiguo en dos callbacks de `trap` y
+una función invocada indirectamente con argumentos. Las supresiones locales
+justificadas no cambian código ejecutable y pasan Bash, ShellCheck local y
+diff-check. Falta publicarlas, obtener CI verde y fusionar. Producción
+permanece intacta.**
 
-Punto exacto de reanudación: crear un segundo commit —sin reescribir el ya
-publicado— con los dos `if` explícitos y estos documentos, subirlo al PR raíz
-`#14`, exigir CI verde y fusionarlo en `main`. Los pines, diff-check, auditoría
-upstream, Gitleaks y revisión final ya pasan; recovery, Hubs, Spoke y capacidad
-quedaron verdes en el full y no se repiten porque sus entradas materiales no
-cambiaron.
+Punto exacto de reanudación: crear un tercer commit —sin reescribir los dos ya
+publicados— con las supresiones locales del fixture y estos documentos, subirlo
+al PR raíz `#14`, exigir CI verde y fusionarlo en `main`. Los pines, diff-check,
+auditoría upstream, Gitleaks y revisión final ya pasan; recovery, Hubs, Spoke y
+capacidad quedaron verdes en el full y no se repiten porque sus entradas
+materiales no cambiaron.
 Después continuar con la cadena definida de build, checkpoints, rotación,
 staging, rollout y aceptación live, sin añadir funciones nuevas.
 
@@ -55,16 +57,17 @@ esta meta.
 ## Panel operativo vigente
 
 - Fase activa: **3B, integración raíz final**.
-- Primera acción al reanudar: publicar en un segundo commit la corrección
-  `SC2015` ya validada y esperar el CI del PR raíz `#14`; no abrir otra ronda
-  general de dependencias, diseño o auditoría.
+- Primera acción al reanudar: publicar las supresiones locales del fixture y
+  esperar el siguiente CI del PR raíz `#14`; no abrir otra ronda general de
+  dependencias, diseño o auditoría.
 - El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
   incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
   `mix hex.audit` final por cuatro advisories nuevos de Guardian `2.4.0`.
 - Guardian `2.4.1` ya está validado e integrado mediante los PR `#21`/`#22` en
   Cloud `master=c0a3419b`; el gitlink, los controles proporcionales y la única
-  revisión final están cerrados. El PR raíz `#14` ya existe: AUD-065 pasó y la
-  única corrección pendiente de publicar son dos expresiones `SC2015`.
+  revisión final están cerrados. El PR raíz `#14` ya existe: AUD-065 pasó, los
+  `SC2015` quedaron resueltos y solo queda confirmar en CI las supresiones
+  locales de sus falsos positivos Linux posteriores.
 - Camino crítico posterior: (1) integrar la procedencia de Cloud y su
   consumidor raíz; (2) construir por Actions cuatro imágenes trazables —Hubs,
   Reticulum, parent y runner—; (3) checkpoint 1, rotación y checkpoint 2;
@@ -633,8 +636,15 @@ estar integrado hasta cerrar sus callsites, gates y PR root.
 - [x] Resolver los dos únicos diagnósticos `SC2015` de su primer CI mediante
   `if` explícitos, sin alterar la semántica. Pasan Bash syntax, ShellCheck,
   diff-check, el foco de librería `46/46` y el foco writers `170/170`.
-- [ ] Publicar la corrección en un segundo commit, exigir CI verde y fusionar el
-  PR `#14` en `main`. No crear todavía un checkpoint real.
+- [x] Publicar esa corrección en el segundo commit `6601cb1`. Los cuatro jobs
+  AUD-065 volvieron a pasar; los jobs estáticos avanzaron hasta falsos positivos
+  Linux `SC2317` en dos callbacks de `trap` y `SC2119/SC2120` en una función que
+  recibe overrides mediante `expect_success`.
+- [x] Añadir supresiones locales justificadas solo para esos diagnósticos. No
+  cambia ninguna instrucción ejecutable; Bash syntax, ShellCheck local sobre el
+  fichero completo y diff-check pasan.
+- [ ] Publicar las supresiones en un tercer commit, exigir CI verde y fusionar
+  el PR `#14` en `main`. No crear todavía un checkpoint real.
 
 Resultado: los checkpoints anteriores siguen siendo legibles en su generación,
 pero el rollout durable solo puede avanzar con evidencia restaurable ligada al
@@ -971,7 +981,10 @@ señalizaciones de descarte, de `cmd && asignación || :` a `if cmd; then
 asignación; fi`, sin cambiar sus comandos ni estados. Su hash vigente es
 `recovery-safety.sh=c5a1f2df9a2c26698f60a1064065d15aee6f6401cbf4b812400101a660392a54`;
 queda cubierto por Bash syntax, ShellCheck, diff-check, el foco de librería
-`46/46` y writers `170/170`. El fixture conserva el hash anterior.
+`46/46` y writers `170/170`. El fixture solo añade después comentarios de
+compatibilidad ShellCheck y su hash vigente es
+`test-recovery-safety.sh=01c41bb2d461fc3e0f434f8ebc8176accdb044f07adad0e83ff37551e2b7f80e`;
+no cambió ninguna instrucción ejecutable.
 
 ### Fase 4 — integrar evidencias, construir sin desplegar y completar `AUD-065`
 
