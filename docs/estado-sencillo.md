@@ -26,14 +26,14 @@ actualiza cada vez que cambia la tarea activa o se completa un hito.
 [ PENDIENTE] 5. Despliegue, comprobación real y cierre
 ```
 
-Estamos al final del bloque 1. El PR raíz `#14` está fusionado. La corrección de
-la carpeta privada pasó localmente y los cuatro checks rápidos de GitHub están
-verdes. Los dos gates largos no encontraron un fallo: GitHub los canceló al
-cumplir el límite configurado de 75 minutos, cuando todavía iban por los casos
-315 y 295 de 861. Ahora se corrige únicamente ese límite y se evita ejecutar dos
-veces el mismo gate por push y PR. No se avanzará al bloque 2 hasta obtener un
-gate completo verde. La corrección CI ya pasa sus comprobaciones locales y la
-acción actual es publicarla en un PR nuevo.
+Estamos al final del bloque 1. El PR raíz `#14` está fusionado y el PR `#15`
+arregló el límite de tiempo y evitó ejecutar dos veces el gate. Su única
+ejecución sí llegó mucho más lejos y encontró 19 fallos, pero todos proceden de
+la misma causa: Linux no permite entregar a un programa un argumento tan grande
+como el inventario de 214.796 bytes. En macOS sí cabía y por eso no se había
+visto. La comparación no se elimina ni se relaja: ahora lee ese inventario desde
+un fichero temporal privado y lo borra después. No se avanzará al bloque 2 hasta
+publicar esta corrección y obtener un gate completo verde.
 
 ## Qué se ha terminado
 
@@ -62,8 +62,16 @@ acción actual es publicarla en un PR nuevo.
   un fallo de pruebas.
 - [x] Validar la corrección CI: workflow, ShellCheck, 51 controles de seguridad,
   gitlinks, diff y escaneo de secretos están verdes.
-- [ ] Publicar la corrección CI acotada: 360 minutos para el gate largo y una
-  sola ejecución por rama cuando coinciden push y PR.
+- [x] Publicar la corrección CI acotada como `d303d3e` en el PR borrador `#15`.
+- [x] Confirmar que push y PR no duplican el gate: el push se canceló y quedó
+  una sola ejecución (`30731785217`).
+- [x] Diagnosticar sus 19 fallos como cascadas de un único límite Linux al pasar
+  214.796 bytes directamente a `jq`; no son 19 defectos del metaverso.
+- [x] Mantener la comparación exacta leyendo el inventario desde un fichero
+  privado `0600`, con aceptación, rechazo y borrado comprobados.
+- [x] Pasar el caso durable completo `50/50` con el límite Linux simulado, más
+  los 51 controles de seguridad, Actionlint, ShellCheck, gitlinks y Gitleaks.
+- [ ] Publicar esta corrección mínima en el PR `#15`.
 - [ ] Exigir un gate Linux completo verde antes de pasar al bloque 2.
 
 Este arreglo pertenece al sistema de checkpoint/restore. No modifica la sala,

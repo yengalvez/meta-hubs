@@ -3494,11 +3494,18 @@ recovery_require_checkpoint_generation_matches_live() {
 }
 
 recovery_require_live_images_match_checkpoint() {
-  local inventory_path="$1" deployments_json
+  local inventory_path="$1" deployments_path tmp_root status=0
   recovery_checkpoint_deployment_inventory_is_acceptable \
     "$inventory_path" "$NAMESPACE" || return 1
-  deployments_json="$(recovery_kubectl get deployment -n "$NAMESPACE" -o json)" || return 1
-  jq -e --argjson live "$deployments_json" '
+  tmp_root="$(recovery_canonical_private_tmp_root)" || return 1
+  deployments_path="$(mktemp \
+    "$tmp_root/yenhubs-live-deployments.XXXXXX")" || return 1
+  if ! recovery_kubectl get deployment -n "$NAMESPACE" -o json \
+      >"$deployments_path"; then
+    rm -f -- "$deployments_path"
+    return 1
+  fi
+  if ! jq -e --slurpfile live "$deployments_path" '
     def projection($items):
       [$items[] | {
         name:.metadata.name,
@@ -3507,12 +3514,17 @@ recovery_require_live_images_match_checkpoint() {
         containers:[.spec.template.spec.containers[] |
           {name:.name,image:.image}] | sort_by(.name)
       }] | sort_by(.name);
-    ($live | type == "object" and (.items | type) == "array") and
-    (projection($live.items) ==
+    ($live | length == 1) and
+    ($live[0] | type == "object" and (.items | type) == "array") and
+    (projection($live[0].items) ==
       ([.deployments[] | {
         name:.name,init_containers:.init_containers,containers:.containers
       }] | sort_by(.name)))
-  ' "$inventory_path" >/dev/null
+  ' "$inventory_path" >/dev/null; then
+    status=1
+  fi
+  rm -f -- "$deployments_path" || return 1
+  return "$status"
 }
 
 recovery_checkpoint_image_for_pair() {

@@ -3,22 +3,26 @@
 Última actualización: 2 de agosto de 2026
 
 Estado actual: **EN EJECUCIÓN; el PR raíz `#14` fusionó `78b7165` como
-`main=9c1b85be99a7`. La corrección portable de `/tmp` pasa localmente: sintaxis,
-ShellCheck, diff-check, lector Node `32/32`, helper privado `78/78` y reproducción
-durable exacta sin `TMPDIR` `50/50`. Sus cuatro jobs AUD-065 también quedaron
-verdes. Los dos `static-security` no fallaron una prueba: GitHub los canceló al
-alcanzar el límite del workflow de 75 minutos, después de avanzar
-aproximadamente hasta los casos 315 y 295 de 861. El checkout canónico está
-sincronizado en ese `main` y la rama `codex/project-security-timeout` corrige
-únicamente la operabilidad CI: timeout de 360 minutos para el gate ya medido y
-una clave de concurrencia común que evita duplicar push+PR de la misma rama.
-Actionlint con ShellCheck, los 51 gates de seguridad, gitlinks, diff-check y
-Gitleaks 9,08 MB están verdes. Producción permanece intacta.**
+`main=9c1b85be99a7` y el checkout canónico está sincronizado. El commit
+`d303d3e` del PR borrador `#15` amplió correctamente el timeout a 360 minutos y
+deduplicó push+PR. Su único run `30731785217` terminó recovery con `845/864`:
+los 19 fallos son cascadas de una sola incompatibilidad Linux demostrada. La
+función de comparación de imágenes pasaba un JSON live de 214.796 bytes a
+`jq --argjson`; Linux limita un argumento a unos 128 KiB y devolvió `Argument
+list too long`, mientras macOS lo aceptaba. La corrección local conserva la
+misma comparación, pero hace que `jq` lea el JSON desde un fichero `0600` bajo
+la raíz temporal privada y lo elimina tanto al aceptar como al rechazar el
+inventario. La reproducción match/mismatch bajo un límite Linux simulado pasa
+con cleanup exacto; el foco end-to-end durable pasa `50/50` bajo ese mismo
+límite, y Actionlint, Bash, ShellCheck, los 51 gates de seguridad, gitlinks,
+diff-check y Gitleaks 9,09 MB están verdes. Falta publicar el commit en el mismo
+PR y exigir un único CI verde. Producción permanece intacta.**
 
-Punto exacto de reanudación: revisar/stagear los cuatro ficheros exactos, crear
-el commit, publicar un PR nuevo desde `codex/project-security-timeout` y exigir
-un único `static-security` integral verde. No se repite el full local ni se
-avanza a Fase 4 antes de ese resultado.
+Punto exacto de reanudación: publicar la única corrección portable ya validada
+en el PR `#15` y esperar el gate que dispare el push; no relanzarlo manualmente
+ni repetir el full local. Si el gate queda verde, marcar el PR listo, fusionarlo
+y cerrar la Fase 3B. Si falla, corregir solo la nueva causa exacta. No se avanza
+a Fase 4 antes del verde.
 Después continuar con build, checkpoints, rotación, staging, rollout y
 aceptación live, sin añadir funciones nuevas.
 
@@ -52,19 +56,19 @@ esta meta.
 ## Panel operativo vigente
 
 - Fase activa: **3B, integración raíz final**.
-- Primera acción al reanudar: cerrar y publicar la corrección acotada del
-  timeout/concurrencia de `project-security`, ya validada localmente; exigir un
-  único gate completo verde y no abrir otra ronda general de dependencias,
-  diseño o auditoría.
+- Primera acción al reanudar: publicar en el mismo PR `#15` la lectura por
+  fichero privado ya validada que elimina el `ARG_MAX` Linux del run
+  `30731785217`; después exigir un único gate completo verde. No abrir otra
+  ronda general de dependencias, diseño o auditoría.
 - El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
   incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
   `mix hex.audit` final por cuatro advisories nuevos de Guardian `2.4.0`.
 - Guardian `2.4.1` ya está validado e integrado mediante los PR `#21`/`#22` en
   Cloud `master=c0a3419b`; el gitlink, los controles proporcionales y la única
-  revisión final están cerrados. El PR raíz `#14` está fusionado: AUD-065,
-  ShellCheck y el foco portable pasan. El gate integral posterior quedó
-  inconcluso únicamente por el timeout CI de 75 minutos; esa es la única
-  superficie abierta antes de Fase 4.
+  revisión final están cerrados. El PR raíz `#14` está fusionado. El timeout CI
+  ya está resuelto y el gate posterior reveló una única incompatibilidad
+  `ARG_MAX` en la comparación local de inventarios; esa es la única superficie
+  abierta antes de Fase 4.
 - Camino crítico posterior: (1) integrar la procedencia de Cloud y su
   consumidor raíz; (2) construir por Actions cuatro imágenes trazables —Hubs,
   Reticulum, parent y runner—; (3) checkpoint 1, rotación y checkpoint 2;
@@ -640,8 +644,12 @@ estar integrado hasta cerrar sus callsites, gates y PR root.
 - [x] Añadir supresiones locales justificadas solo para esos diagnósticos. No
   cambia ninguna instrucción ejecutable; Bash syntax, ShellCheck local sobre el
   fichero completo y diff-check pasan.
-- [ ] Publicar las supresiones en un tercer commit, exigir CI verde y fusionar
-  el PR `#14` en `main`. No crear todavía un checkpoint real.
+- [x] Publicar las supresiones en un tercer commit y fusionar el PR `#14` en
+  `main`. No se creó todavía un checkpoint real. Sus gates largos fueron
+  cancelados por el límite de 75 minutos y el cierre permaneció retenido.
+- [ ] Cerrar el PR `#15`: timeout 360 y deduplicación ya funcionan; corregir la
+  única incompatibilidad Linux demostrada (`jq --argjson` con inventario live
+  de 214.796 bytes), exigir un único gate integral verde y fusionar en `main`.
 
 Resultado: los checkpoints anteriores siguen siendo legibles en su generación,
 pero el rollout durable solo puede avanzar con evidencia restaurable ligada al
