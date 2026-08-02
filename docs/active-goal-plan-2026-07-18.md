@@ -2,24 +2,23 @@
 
 Última actualización: 2 de agosto de 2026
 
-Estado actual: **EN EJECUCIÓN; el PR raíz `#14` está abierto en el commit
-`15f713d`. Sus cuatro jobs AUD-065 están verdes y ambos jobs de seguridad ya
-superan gitlinks, Gitleaks, workflows y ShellCheck. Al alcanzar por primera vez
-la recuperación integral en Linux, ambos reprodujeron el mismo fallo del caso
-156: sin `TMPDIR`, el sistema elegía `/tmp` (directorio compartido `01777`) para
-un fichero cuya lectura segura exige también un padre privado `0700`. Es un
-defecto real y acotado de portabilidad del checkpoint, no una función nueva ni
-un cambio visible de Hubs. La corrección mínima crea o reutiliza una raíz
-privada por UID, jamás cambia permisos ni sustituye una ruta existente, y
-mantiene la validación fail-closed. Sintaxis, ShellCheck, diff-check, el lector
-Node `32/32`, la matriz de directorios privados `78/78` y la reproducción
-durable exacta sin `TMPDIR` `50/50` están verdes. Falta publicar el commit y
-obtener el CI completo. Producción permanece intacta.**
+Estado actual: **EN EJECUCIÓN; el PR raíz `#14` fusionó `78b7165` como
+`main=9c1b85be99a7`. La corrección portable de `/tmp` pasa localmente: sintaxis,
+ShellCheck, diff-check, lector Node `32/32`, helper privado `78/78` y reproducción
+durable exacta sin `TMPDIR` `50/50`. Sus cuatro jobs AUD-065 también quedaron
+verdes. Los dos `static-security` no fallaron una prueba: GitHub los canceló al
+alcanzar el límite del workflow de 75 minutos, después de avanzar
+aproximadamente hasta los casos 315 y 295 de 861. El checkout canónico está
+sincronizado en ese `main` y la rama `codex/project-security-timeout` corrige
+únicamente la operabilidad CI: timeout de 360 minutos para el gate ya medido y
+una clave de concurrencia común que evita duplicar push+PR de la misma rama.
+Actionlint con ShellCheck, los 51 gates de seguridad, gitlinks, diff-check y
+Gitleaks 9,08 MB están verdes. Producción permanece intacta.**
 
-Punto exacto de reanudación: actualizar los tres documentos, crear un cuarto
-commit —sin reescribir los tres ya publicados—, subirlo al PR raíz `#14`,
-exigir CI íntegramente verde y fusionarlo en `main`. No se repite el full local:
-el siguiente CI ejecuta el gate integral sobre los bytes nuevos.
+Punto exacto de reanudación: revisar/stagear los cuatro ficheros exactos, crear
+el commit, publicar un PR nuevo desde `codex/project-security-timeout` y exigir
+un único `static-security` integral verde. No se repite el full local ni se
+avanza a Fase 4 antes de ese resultado.
 Después continuar con build, checkpoints, rotación, staging, rollout y
 aceptación live, sin añadir funciones nuevas.
 
@@ -27,20 +26,18 @@ Worktree inicial: `/Users/Shared/Gits/YenHubs-aud075-root`
 
 Rama inicial: `codex/aud075-integration`
 
-Worktree activo: `/Users/Shared/Gits/YenHubs-aud078-root`
+Worktree activo: `/Users/Shared/Gits/YenHubs`
 
 Última rama de desbloqueo fusionada: `codex/aud065-sequencing-unblock`
 
-Durante la Fase 3B, este fichero exacto del worktree activo es la única fuente
-de verdad operativa:
-`/Users/Shared/Gits/YenHubs-aud078-root/docs/active-goal-plan-2026-07-18.md`.
+Este fichero exacto del worktree activo es la única fuente de verdad operativa:
+`/Users/Shared/Gits/YenHubs/docs/active-goal-plan-2026-07-18.md`.
 Los worktrees `aud075`, `aud076` y `aud077` son evidencia histórica y nunca se
-usan para reanudar. Después de fusionar el PR raíz de Fase 3B, la autoridad pasa
-a la copia trackeada de un `/Users/Shared/Gits/YenHubs` limpio en `main`, y el
-campo «Worktree activo» debe actualizarse antes de continuar.
+usan para reanudar. El worktree `aud078` conserva evidencia local previa al
+traslado, pero tampoco vuelve a usarse para reanudar.
 
 Panel humano obligatorio:
-`/Users/Shared/Gits/YenHubs-aud078-root/docs/estado-sencillo.md`. Debe
+`/Users/Shared/Gits/YenHubs/docs/estado-sencillo.md`. Debe
 actualizarse antes de pasar a una acción distinta, después de cada hito real y
 siempre que cambie la acción actual, manteniendo casillas y lenguaje sencillo
 coherentes con este plan técnico. Esta obligación forma parte de la meta porque
@@ -55,17 +52,19 @@ esta meta.
 ## Panel operativo vigente
 
 - Fase activa: **3B, integración raíz final**.
-- Primera acción al reanudar: publicar la corrección portable ya validada de la
-  raíz temporal privada en el PR raíz `#14` y esperar su CI completo. No abrir
-  otra ronda general de dependencias, diseño o auditoría.
+- Primera acción al reanudar: cerrar y publicar la corrección acotada del
+  timeout/concurrencia de `project-security`, ya validada localmente; exigir un
+  único gate completo verde y no abrir otra ronda general de dependencias,
+  diseño o auditoría.
 - El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
   incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
   `mix hex.audit` final por cuatro advisories nuevos de Guardian `2.4.0`.
 - Guardian `2.4.1` ya está validado e integrado mediante los PR `#21`/`#22` en
   Cloud `master=c0a3419b`; el gitlink, los controles proporcionales y la única
-  revisión final están cerrados. El PR raíz `#14` ya existe: AUD-065 y
-  ShellCheck pasan. El gate integral posterior descubrió el defecto portable de
-  `/tmp`; solo se corrige y revalida esa superficie antes del merge.
+  revisión final están cerrados. El PR raíz `#14` está fusionado: AUD-065,
+  ShellCheck y el foco portable pasan. El gate integral posterior quedó
+  inconcluso únicamente por el timeout CI de 75 minutos; esa es la única
+  superficie abierta antes de Fase 4.
 - Camino crítico posterior: (1) integrar la procedencia de Cloud y su
   consumidor raíz; (2) construir por Actions cuatro imágenes trazables —Hubs,
   Reticulum, parent y runner—; (3) checkpoint 1, rotación y checkpoint 2;

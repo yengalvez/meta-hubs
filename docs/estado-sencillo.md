@@ -26,12 +26,14 @@ actualiza cada vez que cambia la tarea activa o se completa un hito.
 [ PENDIENTE] 5. Despliegue, comprobación real y cierre
 ```
 
-Estamos al final del bloque 1. El PR raíz `#14` está abierto. Sus pruebas
-principales ya pasan; el CI de Linux descubrió después un problema real y
-acotado: usaba `/tmp`, que es compartido, para un fichero que por seguridad
-exige una carpeta privada. La corrección crea una carpeta privada del usuario,
-sin relajar la comprobación ni esconder el error. Las pruebas locales ya pasan
-y la acción actual es publicarla para que CI repita el gate completo.
+Estamos al final del bloque 1. El PR raíz `#14` está fusionado. La corrección de
+la carpeta privada pasó localmente y los cuatro checks rápidos de GitHub están
+verdes. Los dos gates largos no encontraron un fallo: GitHub los canceló al
+cumplir el límite configurado de 75 minutos, cuando todavía iban por los casos
+315 y 295 de 861. Ahora se corrige únicamente ese límite y se evita ejecutar dos
+veces el mismo gate por push y PR. No se avanzará al bloque 2 hasta obtener un
+gate completo verde. La corrección CI ya pasa sus comprobaciones locales y la
+acción actual es publicarla en un PR nuevo.
 
 ## Qué se ha terminado
 
@@ -55,9 +57,14 @@ y la acción actual es publicarla para que CI repita el gate completo.
 - [x] Validar en macOS con `TMPDIR` ausente, como en el CI Linux, que la carpeta
   temporal privada funciona y sigue rechazando permisos inseguros o enlaces
   falsos.
-- [ ] Publicar únicamente esa corrección en el PR `#14`.
-- [ ] Esperar a que el CI complete todas sus pruebas y fusionar el PR si queda
-  completamente verde.
+- [x] Publicar la corrección como `78b7165` y fusionar el PR `#14`.
+- [x] Diagnosticar las dos cancelaciones: límite del workflow de 75 minutos, no
+  un fallo de pruebas.
+- [x] Validar la corrección CI: workflow, ShellCheck, 51 controles de seguridad,
+  gitlinks, diff y escaneo de secretos están verdes.
+- [ ] Publicar la corrección CI acotada: 360 minutos para el gate largo y una
+  sola ejecución por rama cuando coinciden push y PR.
+- [ ] Exigir un gate Linux completo verde antes de pasar al bloque 2.
 
 Este arreglo pertenece al sistema de checkpoint/restore. No modifica la sala,
 la interfaz ni las personalizaciones visibles de Hubs.

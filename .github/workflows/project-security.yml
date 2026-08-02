@@ -9,13 +9,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: meta-hubs-security-${{ github.ref }}
+  group: >-
+    meta-hubs-security-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   static-security:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 360
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
