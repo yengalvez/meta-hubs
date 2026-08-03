@@ -12588,7 +12588,7 @@ initialize_restore_fence_test_environment() {
   # kubectl wrapper and export failure modes. A full-suite restore must not
   # inherit that synthetic query profile; focused restore tests already start
   # with the ordinary kubectl stub. Keep both entry paths byte-for-byte equal.
-  unset STUB_MODE STUB_CHECKPOINT_WRITER_QUERY
+  unset STUB_MODE STUB_CHECKPOINT_WRITER_QUERY CHECKPOINT_WRITER_KUBECTL_BIN
   KUBECTL_BIN="$TMP_DIR/bin/kubectl"
   export KUBECTL_BIN
 }
@@ -12599,9 +12599,11 @@ initialize_checkpoint_tail_test_environment() {
   # the full suite crosses back into checkpoint coverage.
   STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON"
   STUB_RUNNER_NAMESPACE=present
-  STUB_CHECKPOINT_WRITER_QUERY=1
+  KUBECTL_BIN="$TMP_DIR/bin/kubectl"
+  CHECKPOINT_WRITER_KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer"
+  unset STUB_CHECKPOINT_WRITER_QUERY
   export STUB_DEPLOYMENTS_JSON STUB_RUNNER_NAMESPACE \
-    STUB_CHECKPOINT_WRITER_QUERY
+    KUBECTL_BIN CHECKPOINT_WRITER_KUBECTL_BIN
 }
 
 initialize_restore_fence_test_context() {
@@ -13029,11 +13031,13 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == restore-context-isolation ]]; then
   initialize_checkpoint_tail_test_environment
   if [[ "$STUB_DEPLOYMENTS_JSON" == "$KUBERNETES_DEPLOYMENTS_JSON" &&
         "$STUB_RUNNER_NAMESPACE" == present &&
-        "$STUB_CHECKPOINT_WRITER_QUERY" == 1 ]]; then
+        "$KUBECTL_BIN" == "$TMP_DIR/bin/kubectl" &&
+        "$CHECKPOINT_WRITER_KUBECTL_BIN" == "$TMP_DIR/bin/kubectl-checkpoint-writer" &&
+        -z "${STUB_CHECKPOINT_WRITER_QUERY:-}" ]]; then
     pass 'checkpoint tail restores its synthetic writer-query profile'
   else
     fail 'checkpoint tail fixture environment isolation' \
-      "deployments=$STUB_DEPLOYMENTS_JSON namespace=$STUB_RUNNER_NAMESPACE query=${STUB_CHECKPOINT_WRITER_QUERY-unset}"
+      "deployments=$STUB_DEPLOYMENTS_JSON namespace=$STUB_RUNNER_NAMESPACE kubectl=$KUBECTL_BIN writer_kubectl=${CHECKPOINT_WRITER_KUBECTL_BIN-unset} query=${STUB_CHECKPOINT_WRITER_QUERY-unset}"
   fi
   if [[ "$FAIL_COUNT" -ne 0 ]]; then
     printf '%s focused restore-context isolation test(s) failed; %s passed.\n' \
@@ -16055,6 +16059,7 @@ expect_failure 'pre-watcher quiesce failure safely reconstructs resume monitorin
   EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
   VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
   STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+  CHECKPOINT_WRITER_KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer" \
   STUB_MODE=checkpoint-parent-wait-failure \
   RECOVERY_STREAM_POLL_SECONDS=0.01 \
   "$ROOT_DIR/deployment/create-checkpoint.sh" \

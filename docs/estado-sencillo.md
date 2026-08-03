@@ -59,8 +59,13 @@ tocan la sala: son dos cambios de contexto que la prueba larga no restauraba
 bien. El verificador esperaba los ficheros originales aunque el sistema usa
 copias privadas idénticas, y el bloque checkpoint heredaba el modo de consultas
 del bloque restore. Ambos límites están corregidos; sus pruebas enfocadas pasan
-`48/48` y `54/54`. No se avanzará al bloque 2 hasta publicar este ajuste y
-obtener el gate completo verde.
+`48/48` y `54/54`. El ajuste `8d79b37` llegó al gate `30794007261`: PostgreSQL,
+secretos, workflows y ShellCheck quedaron verdes; recovery pasó `451/455`.
+Los cuatro fallos tienen una sola causa: el simulador daba al checkpoint la
+vista especial que solo debe ver su vigilante. Ya están separadas ambas vistas;
+pasan aislamiento `48/48`, proceso local `89/89` y los cuatro puntos exactos
+que fallaron en GitHub. Falta publicar este ajuste y obtener un único gate
+verde. No se avanzará al bloque 2 antes de ese verde.
 
 ## Qué se ha terminado
 
@@ -115,7 +120,14 @@ obtener el gate completo verde.
   siete efectos de dos contaminaciones de fixture y sin mutar producción.
 - [x] Corregir únicamente snapshots privados y el retorno restore -> checkpoint;
   focos `48/48` y `54/54`, Bash, ShellCheck y diff-check verdes.
-- [ ] Publicar la corrección en el mismo PR `#15` y esperar un único gate nuevo.
+- [x] Publicar la corrección como `8d79b37` en el mismo PR `#15` y confirmar
+  que el push duplicado `30794003733` queda cancelado.
+- [x] Inspeccionar `30794007261`: recovery `451/455`; los cuatro fallos son una
+  única contaminación entre la vista general y la vista del vigilante.
+- [x] Separar ambas rutas y validar aislamiento `48/48`, proceso local `89/89`
+  y los cuatro puntos exactos de publicación/reanudación.
+- [ ] Publicar esta corrección acotada en el mismo PR `#15` y esperar un único
+  gate integral nuevo, sin repetir manualmente bloques verdes.
 - [ ] Exigir un gate Linux completo verde antes de pasar al bloque 2.
 
 Este arreglo pertenece al sistema de checkpoint/restore. No modifica la sala,

@@ -8196,7 +8196,7 @@ recovery_checkpoint_writer_monitor_common_args() {
 }
 
 recovery_checkpoint_writer_monitor_kubectl_bin() {
-  local requested="${KUBECTL_BIN:-kubectl}"
+  local requested="${CHECKPOINT_WRITER_KUBECTL_BIN:-${KUBECTL_BIN:-kubectl}}"
   if [[ -z "$requested" || "$requested" == kubectl ]]; then
     printf 'kubectl\n'
     return 0

@@ -34,11 +34,19 @@ restablece el perfil solo en el bloque que lo necesita. El foco de aislamiento
 pasa `48/48`, el finalizador real de fixture `54/54`, y Bash, ShellCheck y
 diff-check están verdes. Producción permanece intacta.**
 
-Punto exacto de reanudación: publicar en el mismo PR `#15` únicamente esta
-corrección de fixtures y esperar el único gate autoritativo nuevo, sin repetir
-bloques verdes. Si queda verde, marcar listo, fusionar y cerrar la Fase 3B. Si
-falla, corregir solo la nueva causa exacta. No se avanza a Fase 4 antes del
-verde.
+La corrección `8d79b37` dejó cancelado el push duplicado `30794003733`; el run
+PR autoritativo `30794007261` terminó con PostgreSQL 12/14, Gitleaks,
+Actionlint y ShellCheck verdes y recovery `451/455`. Los cuatro fallos
+convergen en una sola frontera del fixture: tras restore, la misma ruta
+`kubectl` sintética se usaba tanto para la vista general del checkpoint como
+para la vista especial del monitor de writers. La corrección local mantiene la
+ruta general ordinaria y entrega el wrapper de writers únicamente al monitor,
+con fallback idéntico en producción. Pasan Bash, ShellCheck, aislamiento
+`48/48`, proceso local `89/89` y los cuatro puntos exactos antes fallidos en el
+foco checkpoint (publicación atómica, contrato schema 3 y orden de reanudación).
+Punto exacto de reanudación: publicar esta única causa en el mismo PR `#15` y
+esperar un solo gate integral nuevo; no repetir bloques verdes ni avanzar a
+Fase 4 antes del verde.
 Después continuar con build, checkpoints, rotación, staging, rollout y
 aceptación live, sin añadir funciones nuevas.
 
@@ -72,10 +80,10 @@ esta meta.
 ## Panel operativo vigente
 
 - Fase activa: **3B, integración raíz final**.
-- Primera acción al reanudar: publicar en el mismo PR `#15` la corrección
-  mínima de los dos límites de fixture revelados por `30763147513`, cuyos focos
-  pasan `48/48` y `54/54`. No abrir otra ronda general de dependencias, diseño
-  o auditoría.
+- Primera acción al reanudar: publicar la corrección acotada de la separación
+  entre `KUBECTL_BIN` general y el binario exclusivo del monitor de writers en
+  el mismo PR `#15`; después observar un solo gate integral nuevo. No abrir
+  otra ronda general de dependencias, diseño o auditoría.
 - El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
   incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
   `mix hex.audit` final por cuatro advisories nuevos de Guardian `2.4.0`.
