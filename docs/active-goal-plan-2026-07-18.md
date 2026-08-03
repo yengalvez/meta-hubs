@@ -44,9 +44,18 @@ ruta general ordinaria y entrega el wrapper de writers únicamente al monitor,
 con fallback idéntico en producción. Pasan Bash, ShellCheck, aislamiento
 `48/48`, proceso local `89/89` y los cuatro puntos exactos antes fallidos en el
 foco checkpoint (publicación atómica, contrato schema 3 y orden de reanudación).
-Punto exacto de reanudación: publicar esta única causa en el mismo PR `#15` y
-esperar un solo gate integral nuevo; no repetir bloques verdes ni avanzar a
-Fase 4 antes del verde.
+La corrección `9c65e01` dejó cancelado el push `30805867201`; el run PR
+`30805869591` terminó con PostgreSQL 12/14 y todos los estáticos verdes y
+recovery `859/864`. Los cinco fallos convergen en la duración excesiva de la
+nueva ruta exclusiva del monitor: debía existir solo en dos invocaciones, pero
+quedó exportada durante el resto del fixture y contaminó rollback/reentrada.
+La corrección local limita esa ruta a los dos callsites exactos; el fallback
+productivo permanece idéntico. Pasan Bash, ShellCheck, diff-check, aislamiento
+`48/48`, proceso local `89/89`, diagnóstico `47/47` y el foco completo del
+monitor `170/170`, incluidos los cinco casos remotos. Punto exacto de
+reanudación: publicar esta única corrección en el mismo PR `#15` y observar un
+solo gate integral nuevo; no repetir bloques verdes ni avanzar a Fase 4 antes
+del verde.
 Después continuar con build, checkpoints, rotación, staging, rollout y
 aceptación live, sin añadir funciones nuevas.
 
@@ -80,10 +89,10 @@ esta meta.
 ## Panel operativo vigente
 
 - Fase activa: **3B, integración raíz final**.
-- Primera acción al reanudar: publicar la corrección acotada de la separación
-  entre `KUBECTL_BIN` general y el binario exclusivo del monitor de writers en
-  el mismo PR `#15`; después observar un solo gate integral nuevo. No abrir
-  otra ronda general de dependencias, diseño o auditoría.
+- Primera acción al reanudar: publicar en el mismo PR `#15` el alcance
+  callsite-local de la ruta exclusiva del monitor, ya validado por los focos
+  `48/48`, `89/89`, `47/47` y `170/170`; después observar un solo gate integral
+  nuevo. No abrir otra ronda general de dependencias, diseño o auditoría.
 - El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
   incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
   `mix hex.audit` final por cuatro advisories nuevos de Guardian `2.4.0`.

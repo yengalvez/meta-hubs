@@ -64,8 +64,13 @@ secretos, workflows y ShellCheck quedaron verdes; recovery pasó `451/455`.
 Los cuatro fallos tienen una sola causa: el simulador daba al checkpoint la
 vista especial que solo debe ver su vigilante. Ya están separadas ambas vistas;
 pasan aislamiento `48/48`, proceso local `89/89` y los cuatro puntos exactos
-que fallaron en GitHub. Falta publicar este ajuste y obtener un único gate
-verde. No se avanzará al bloque 2 antes de ese verde.
+que fallaron en GitHub. El ajuste `9c65e01` llegó al run `30805869591`, que
+mejoró recovery a `859/864` y dejó cinco consecuencias de una sola causa: la
+vista especial del vigilante permanecía activa después de los dos usos que la
+necesitaban. Ya está limitada a esos dos callsites. Pasan aislamiento `48/48`,
+proceso local `89/89`, diagnóstico `47/47` y vigilancia completa `170/170`,
+incluidos los cinco casos remotos. Falta publicar el alcance final y obtener un
+único gate verde. No se avanzará al bloque 2 antes de ese verde.
 
 ## Qué se ha terminado
 
@@ -126,7 +131,13 @@ verde. No se avanzará al bloque 2 antes de ese verde.
   única contaminación entre la vista general y la vista del vigilante.
 - [x] Separar ambas rutas y validar aislamiento `48/48`, proceso local `89/89`
   y los cuatro puntos exactos de publicación/reanudación.
-- [ ] Publicar esta corrección acotada en el mismo PR `#15` y esperar un único
+- [x] Publicar esta corrección acotada como `9c65e01` en el mismo PR `#15`.
+- [x] Confirmar que `30805867201` quedó cancelado e inspeccionar
+  `30805869591`: recovery `859/864`, con cinco efectos de una única variable
+  exportada durante demasiado tiempo.
+- [x] Limitar la ruta especial a dos callsites y validar `48/48`, `89/89`,
+  `47/47` y el foco completo `170/170`.
+- [ ] Publicar esta corrección final en el mismo PR `#15` y esperar un único
   gate integral nuevo, sin repetir manualmente bloques verdes.
 - [ ] Exigir un gate Linux completo verde antes de pasar al bloque 2.
 

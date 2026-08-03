@@ -12600,10 +12600,9 @@ initialize_checkpoint_tail_test_environment() {
   STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON"
   STUB_RUNNER_NAMESPACE=present
   KUBECTL_BIN="$TMP_DIR/bin/kubectl"
-  CHECKPOINT_WRITER_KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer"
-  unset STUB_CHECKPOINT_WRITER_QUERY
+  unset STUB_CHECKPOINT_WRITER_QUERY CHECKPOINT_WRITER_KUBECTL_BIN
   export STUB_DEPLOYMENTS_JSON STUB_RUNNER_NAMESPACE \
-    KUBECTL_BIN CHECKPOINT_WRITER_KUBECTL_BIN
+    KUBECTL_BIN
 }
 
 initialize_restore_fence_test_context() {
@@ -13032,7 +13031,7 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == restore-context-isolation ]]; then
   if [[ "$STUB_DEPLOYMENTS_JSON" == "$KUBERNETES_DEPLOYMENTS_JSON" &&
         "$STUB_RUNNER_NAMESPACE" == present &&
         "$KUBECTL_BIN" == "$TMP_DIR/bin/kubectl" &&
-        "$CHECKPOINT_WRITER_KUBECTL_BIN" == "$TMP_DIR/bin/kubectl-checkpoint-writer" &&
+        -z "${CHECKPOINT_WRITER_KUBECTL_BIN:-}" &&
         -z "${STUB_CHECKPOINT_WRITER_QUERY:-}" ]]; then
     pass 'checkpoint tail restores its synthetic writer-query profile'
   else
@@ -16142,7 +16141,7 @@ for checkpoint_preflight_case in \
 done
 reset_stub
 seed_recovery_operation_fence_binding_state dormant
-expect_success 'checkpoint creation publishes one fully verified directory atomically' env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$VALUES_FIXTURE" RECOVERY_STREAM_POLL_SECONDS=0.01 "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_FINAL"
+expect_success 'checkpoint creation publishes one fully verified directory atomically' env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$VALUES_FIXTURE" CHECKPOINT_WRITER_KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer" RECOVERY_STREAM_POLL_SECONDS=0.01 "$ROOT_DIR/deployment/create-checkpoint.sh" "$CREATE_FINAL"
 if jq -e '.schema_version == 4 and
       .bot_runner_runtime.generation == "durable-v2" and
       .bot_runner_runtime.mode == "kubernetes-pod"' \
