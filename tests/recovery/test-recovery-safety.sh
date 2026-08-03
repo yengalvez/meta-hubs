@@ -4899,10 +4899,12 @@ set -euo pipefail
 [[ "${EXPECTED_KUBE_CONTEXT:-}" == fixture-context &&
    "${EXPECTED_NAMESPACE_UID:-}" == fixture-uid &&
    "${EXPECTED_RET_PVC_UID:-}" == fixture-pvc-uid &&
-   "${VALUES_FILE:-}" == "${STUB_LIVE_REACTIVATION_VALUES_FILE:?}" &&
-   "${HCCE_MANIFEST_PATH:-}" == "${STUB_LIVE_REACTIVATION_MANIFEST_FILE:?}" &&
+   "${VALUES_FILE:-}" != "${STUB_LIVE_REACTIVATION_VALUES_FILE:?}" &&
+   "${HCCE_MANIFEST_PATH:-}" != "${STUB_LIVE_REACTIVATION_MANIFEST_FILE:?}" &&
    -f "$VALUES_FILE" && ! -L "$VALUES_FILE" &&
    -f "$HCCE_MANIFEST_PATH" && ! -L "$HCCE_MANIFEST_PATH" ]]
+cmp -s -- "$VALUES_FILE" "$STUB_LIVE_REACTIVATION_VALUES_FILE"
+cmp -s -- "$HCCE_MANIFEST_PATH" "$STUB_LIVE_REACTIVATION_MANIFEST_FILE"
 count_path="${STUB_STATE_DIR:?}/live-reactivation-verifier-count"
 count=0
 [[ ! -f "$count_path" ]] || count="$(cat "$count_path")"
@@ -12591,6 +12593,17 @@ initialize_restore_fence_test_environment() {
   export KUBECTL_BIN
 }
 
+initialize_checkpoint_tail_test_environment() {
+  # Restore fixtures must not expose checkpoint writer Pods, while the later
+  # checkpoint fixtures must. Re-establish the focused-checkpoint profile when
+  # the full suite crosses back into checkpoint coverage.
+  STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON"
+  STUB_RUNNER_NAMESPACE=present
+  STUB_CHECKPOINT_WRITER_QUERY=1
+  export STUB_DEPLOYMENTS_JSON STUB_RUNNER_NAMESPACE \
+    STUB_CHECKPOINT_WRITER_QUERY
+}
+
 initialize_restore_fence_test_context() {
   initialize_restore_fence_test_environment
   initialize_durable_restore_fixture
@@ -12987,6 +13000,7 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == storage-helper-pod-snapshot-race ]];
 fi
 
 if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == restore-context-isolation ]]; then
+  context_snapshot_dir="$TMP_DIR/restore-context-snapshots"
   STUB_MODE=legacy-receipt-r-exit-91
   STUB_CHECKPOINT_WRITER_QUERY=1
   KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer"
@@ -12998,6 +13012,28 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == restore-context-isolation ]]; then
   else
     fail 'restore fixture environment isolation' \
       "mode=${STUB_MODE-unset} query=${STUB_CHECKPOINT_WRITER_QUERY-unset} kubectl=$KUBECTL_BIN"
+  fi
+  mkdir -p "$context_snapshot_dir"
+  chmod 700 "$context_snapshot_dir"
+  cp -- "$RESTORE_VALUES_FIXTURE" "$context_snapshot_dir/values.yaml"
+  cp -- "$RUNNER_ACTIVE_TARGET_MANIFEST_FIXTURE" \
+    "$context_snapshot_dir/manifest.yaml"
+  chmod 600 "$context_snapshot_dir/values.yaml" \
+    "$context_snapshot_dir/manifest.yaml"
+  expect_success 'live verifier accepts only content-identical private snapshots' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context \
+      EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+      VALUES_FILE="$context_snapshot_dir/values.yaml" \
+      HCCE_MANIFEST_PATH="$context_snapshot_dir/manifest.yaml" \
+      bash "$LIVE_REACTIVATION_VERIFIER_FIXTURE"
+  initialize_checkpoint_tail_test_environment
+  if [[ "$STUB_DEPLOYMENTS_JSON" == "$KUBERNETES_DEPLOYMENTS_JSON" &&
+        "$STUB_RUNNER_NAMESPACE" == present &&
+        "$STUB_CHECKPOINT_WRITER_QUERY" == 1 ]]; then
+    pass 'checkpoint tail restores its synthetic writer-query profile'
+  else
+    fail 'checkpoint tail fixture environment isolation' \
+      "deployments=$STUB_DEPLOYMENTS_JSON namespace=$STUB_RUNNER_NAMESPACE query=${STUB_CHECKPOINT_WRITER_QUERY-unset}"
   fi
   if [[ "$FAIL_COUNT" -ne 0 ]]; then
     printf '%s focused restore-context isolation test(s) failed; %s passed.\n' \
@@ -16072,9 +16108,7 @@ else
 fi
 
 # All remaining checkpoint cases exercise the post-rollout isolated path.
-STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON"
-STUB_RUNNER_NAMESPACE=present
-export STUB_DEPLOYMENTS_JSON STUB_RUNNER_NAMESPACE
+initialize_checkpoint_tail_test_environment
 CREATE_FINAL="$CREATE_PARENT/published-checkpoint"
 for checkpoint_preflight_case in \
   checkpoint-control-plane-preflight-failure \

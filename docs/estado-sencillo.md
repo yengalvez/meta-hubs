@@ -1,6 +1,6 @@
 # Estado sencillo de YenHubs
 
-Última actualización: 2 de agosto de 2026
+Última actualización: 3 de agosto de 2026
 
 Este es el panel humano del proyecto. Aquí debe poder entenderse, sin leer el
 plan técnico, qué está terminado, qué se está haciendo y qué queda. Se
@@ -9,12 +9,25 @@ actualiza cada vez que cambia la tarea activa o se completa un hito.
 ## Resumen rápido
 
 - **El YenHubs que usabas sigue funcionando y no se ha tocado.**
+- **Aviso urgente de coste:** GitHub Actions está facturando **USD 0**, pero la
+  infraestructura actual de DigitalOcean cuesta aproximadamente **USD 65/mes**
+  antes de impuestos, por encima del objetivo aproximado de 40 al mes.
 - **Todavía no estamos desplegando.** Estamos acabando de integrar y probar el
   código que hará más seguros los bots, los asientos, las copias y la
   recuperación.
 - **No estamos añadiendo funciones nuevas ni actualizando Hubs entero.**
+- **No se añadirá ni ampliará ningún recurso de pago sin avisar antes.**
 - **Faltan cuatro bloques después del actual:** construir las imágenes, hacer
   copias y rotar credenciales, probar en staging y desplegar/verificar.
+
+GitHub muestra `Gross USD 4.66`, pero aplica exactamente `Discount USD 4.66` y
+el importe real es `Billed USD 0.00`. Los tres repositorios son públicos y sus
+workflows usan runners estándar gratuitos. En DigitalOcean sí hay gasto real:
+un nodo de USD 48/mes, un balanceador de USD 15/mes y dos volúmenes de alrededor
+de USD 1/mes cada uno. Reducir esos USD 65 exige estudiar capacidad y rollback;
+no se apagará ni empeorará el metaverso de forma improvisada.
+Una vigilancia semanal read-only (`vigilar-coste-yenhubs`, lunes 09:00) avisará
+solo si aparece una subida, un recurso nuevo o riesgo real de cobro.
 
 ## Dónde estamos
 
@@ -39,8 +52,15 @@ publicó como `79f863d`, pero el nuevo gate se detuvo antes de probar recovery:
 una prueba de limpieza vio un segundo proceso que nació entre dos fotos. La
 limpieza sí eliminó ambos; lo incorrecto era exigir que la lista final fuese
 idéntica a la foto anterior. Ahora se exige que incluya todo lo observado y que
-todo lo limpiado haya desaparecido. El caso exacto pasa `1/1`. No se avanzará
-al bloque 2 hasta publicar este ajuste y obtener el gate completo verde.
+todo lo limpiado haya desaparecido. El caso exacto pasa `1/1` y el ajuste ya
+está publicado como `3a83436`. El push duplicado `30763145799` quedó cancelado
+y el run PR `30763147513` llegó a recovery `857/864`. Los siete fallos no
+tocan la sala: son dos cambios de contexto que la prueba larga no restauraba
+bien. El verificador esperaba los ficheros originales aunque el sistema usa
+copias privadas idénticas, y el bloque checkpoint heredaba el modo de consultas
+del bloque restore. Ambos límites están corregidos; sus pruebas enfocadas pasan
+`48/48` y `54/54`. No se avanzará al bloque 2 hasta publicar este ajuste y
+obtener el gate completo verde.
 
 ## Qué se ha terminado
 
@@ -89,7 +109,13 @@ al bloque 2 hasta publicar este ajuste y obtener el gate completo verde.
 - [x] Diagnosticar el único fallo temprano de `30756093418`: carrera de dos
   fotos en un fixture, aunque el cleanup eliminó correctamente ambos procesos.
 - [x] Corregir solo esa expectativa concurrente y pasar su foco exacto `1/1`.
-- [ ] Publicar el ajuste del fixture en el mismo PR `#15`.
+- [x] Publicar el ajuste del fixture como `3a83436` en el mismo PR `#15`.
+- [x] Confirmar que el push duplicado `30763145799` queda cancelado.
+- [x] Inspeccionar el fallo exacto de `30763147513`: recovery `857/864`, con
+  siete efectos de dos contaminaciones de fixture y sin mutar producción.
+- [x] Corregir únicamente snapshots privados y el retorno restore -> checkpoint;
+  focos `48/48` y `54/54`, Bash, ShellCheck y diff-check verdes.
+- [ ] Publicar la corrección en el mismo PR `#15` y esperar un único gate nuevo.
 - [ ] Exigir un gate Linux completo verde antes de pasar al bloque 2.
 
 Este arreglo pertenece al sistema de checkpoint/restore. No modifica la sala,

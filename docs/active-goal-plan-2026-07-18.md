@@ -1,6 +1,6 @@
 # Meta activa de YenHubs: cierre seguro y runtime endurecido
 
-Última actualización: 2 de agosto de 2026
+Última actualización: 3 de agosto de 2026
 
 Estado actual: **EN EJECUCIÓN; el PR raíz `#14` fusionó `78b7165` como
 `main=9c1b85be99a7` y el checkout canónico está sincronizado. El commit
@@ -23,13 +23,22 @@ con una foto anterior que solo contenía uno; un watch concurrente había
 publicado el segundo PGID entre ambas lecturas. La corrección local exige que
 todos los grupos de la foto previa estén incluidos y que todos los realmente
 limpiados hayan desaparecido, admitiendo el grupo tardío que el cleanup debe
-recoger. El foco exacto pasa `1/1`. Producción permanece intacta.**
+recoger. El foco exacto pasa `1/1`. La corrección está publicada como `3a83436`.
+El run push `30763145799` terminó cancelado y el run PR autoritativo
+`30763147513` falló en recovery `857/864`. Los siete casos convergen en dos
+límites del fixture, no en producción: el verificador live exigía las rutas
+originales aunque restore usa copias privadas idénticas, y el bloque restore
+desactivaba el perfil sintético de Pods sin restaurarlo al volver a checkpoint.
+La corrección mínima valida contenido idéntico en snapshots privados y
+restablece el perfil solo en el bloque que lo necesita. El foco de aislamiento
+pasa `48/48`, el finalizador real de fixture `54/54`, y Bash, ShellCheck y
+diff-check están verdes. Producción permanece intacta.**
 
-Punto exacto de reanudación: publicar en el mismo PR `#15` únicamente la
-corrección de esa aserción concurrente y esperar el único gate que dispare el
-push, sin relanzarlo ni repetir bloques verdes. Si queda verde, marcar listo,
-fusionar y cerrar la Fase 3B. Si falla, corregir solo la nueva causa exacta. No
-se avanza a Fase 4 antes del verde.
+Punto exacto de reanudación: publicar en el mismo PR `#15` únicamente esta
+corrección de fixtures y esperar el único gate autoritativo nuevo, sin repetir
+bloques verdes. Si queda verde, marcar listo, fusionar y cerrar la Fase 3B. Si
+falla, corregir solo la nueva causa exacta. No se avanza a Fase 4 antes del
+verde.
 Después continuar con build, checkpoints, rotación, staging, rollout y
 aceptación live, sin añadir funciones nuevas.
 
@@ -63,9 +72,10 @@ esta meta.
 ## Panel operativo vigente
 
 - Fase activa: **3B, integración raíz final**.
-- Primera acción al reanudar: publicar en el mismo PR `#15` la corrección de la
-  única carrera del fixture detectada por `30756093418` y esperar su único gate
-  integral. No abrir otra ronda general de dependencias, diseño o auditoría.
+- Primera acción al reanudar: publicar en el mismo PR `#15` la corrección
+  mínima de los dos límites de fixture revelados por `30763147513`, cuyos focos
+  pasan `48/48` y `54/54`. No abrir otra ronda general de dependencias, diseño
+  o auditoría.
 - El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
   incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
   `mix hex.audit` final por cuatro advisories nuevos de Guardian `2.4.0`.
@@ -73,10 +83,10 @@ esta meta.
   Cloud `master=c0a3419b`; el gitlink, los controles proporcionales y la única
   revisión final están cerrados. El PR raíz `#14` está fusionado. El timeout CI
   ya está resuelto; la primera incompatibilidad `ARG_MAX` también. El segundo
-  gate dejó siete fallos fail-closed en una única superficie residual de
-  finalización/rollback, ahora acotada a la comprobación del epoch compartido y
-  con diagnóstico seguro del stage. El gate siguiente quedó bloqueado antes de
-  recovery por una sola carrera de expectativa en su fixture Node; esa es la
+  gate dejó siete fallos fail-closed. `30763147513` confirmó `857/864` y acotó
+  los siete restantes a dos transiciones de fixture: snapshots privados del
+  verificador live y restauración del perfil de consultas al regresar de
+  restore a checkpoint. Ambas correcciones enfocadas están verdes y son la
   única superficie abierta antes de Fase 4.
 - Camino crítico posterior: (1) integrar la procedencia de Cloud y su
   consumidor raíz; (2) construir por Actions cuatro imágenes trazables —Hubs,
@@ -89,6 +99,30 @@ esta meta.
 - Las prohibiciones fail-closed son guardarraíles, no trabajo adicional. Una
   repetición solo procede si cambian código, workflow, gitlinks, values,
   commits, digests, inventario, DB/storage o el TTL del checkpoint.
+
+## Regla de coste vinculante
+
+- GitHub debe permanecer en **USD 0 facturados**. Los repositorios raíz, Hubs y
+  Cloud son públicos y todos sus workflows actuales usan únicamente runners
+  estándar `ubuntu-latest`/`ubuntu-24.04`; la pantalla de uso del 2 de agosto
+  muestra `Gross USD 4.66`, `Discount USD 4.66` y `Billed USD 0.00`.
+- Queda prohibido activar runners grandes, Codespaces, repositorios privados,
+  almacenamiento/sobrecoste facturable u otro producto GitHub de pago. Si
+  cambia visibilidad, runner, precio o `Billed amount` deja de ser cero, se
+  detiene el trabajo afectado y se avisa al propietario antes de generar coste.
+- El inventario DigitalOcean leído el 2 de agosto contiene un nodo DOKS
+  `s-4vcpu-8gb`, un Load Balancer regional pequeño y dos volúmenes de 10 GiB.
+  Sus precios vigentes suman aproximadamente **USD 65/mes** antes de impuestos
+  o sobreconsumos (`48 + 15 + 1 + 1`), por encima del objetivo comunicado de
+  aproximadamente 40 al mes.
+- No se crea, amplía ni contrata ningún recurso. Cualquier cambio que pueda
+  aumentar el coste mensual se bloquea y se notifica previamente. Reducir la
+  base actual requiere una decisión separada y pruebas de capacidad/rollback;
+  nunca se sacrifica el servicio o sus datos improvisando una reducción.
+- La automatización read-only `vigilar-coste-yenhubs` revisa cada lunes a las
+  09:00 (Europe/Madrid) GitHub, el inventario y preview de DigitalOcean y los
+  precios oficiales. Solo avisará ante una subida o riesgo real de cobro; no
+  tiene autoridad para crear, ampliar, reducir ni apagar recursos.
 
 ## Meta
 
