@@ -69,8 +69,15 @@ mejoró recovery a `859/864` y dejó cinco consecuencias de una sola causa: la
 vista especial del vigilante permanecía activa después de los dos usos que la
 necesitaban. Ya está limitada a esos dos callsites. Pasan aislamiento `48/48`,
 proceso local `89/89`, diagnóstico `47/47` y vigilancia completa `170/170`,
-incluidos los cinco casos remotos. Falta publicar el alcance final y obtener un
-único gate verde. No se avanzará al bloque 2 antes de ese verde.
+incluidos los cinco casos remotos. El alcance se publicó como `9bc1f35`; su
+push duplicado `30845987527` está cancelado, pero el run PR `30845991151`
+repitió `859/864`. La causa real ya está acotada: al salir de restore, la suite
+ponía `kubectl` ordinario y al volver a checkpoint no recuperaba el wrapper que
+usaba originalmente. La corrección elimina la variable alternativa de la ronda
+anterior y restaura ese wrapper justo en la frontera. Pasan aislamiento
+`48/48`, proceso local `89/89`, diagnóstico `47/47`, vigilancia `170/170`, Bash,
+ShellCheck y diff-check. Falta publicar esta corrección mínima y exigir un único
+gate PR verde. No se avanzará al bloque 2 antes de ese verde.
 
 ## Qué se ha terminado
 
@@ -137,8 +144,14 @@ incluidos los cinco casos remotos. Falta publicar el alcance final y obtener un
   exportada durante demasiado tiempo.
 - [x] Limitar la ruta especial a dos callsites y validar `48/48`, `89/89`,
   `47/47` y el foco completo `170/170`.
-- [ ] Publicar esta corrección final en el mismo PR `#15` y esperar un único
-  gate integral nuevo, sin repetir manualmente bloques verdes.
+- [x] Publicar esta corrección final como `9bc1f35` en el mismo PR `#15` y
+  confirmar que el push duplicado `30845987527` queda cancelado.
+- [x] Inspeccionar `30845991151`: los mismos cinco fallos proceden de no
+  restaurar el wrapper original al volver de restore a checkpoint.
+- [x] Corregir solo esa frontera y validarla en `48/48`, `89/89`, `47/47` y
+  `170/170`, más Bash, ShellCheck y diff-check.
+- [ ] Publicar la corrección mínima en el mismo PR `#15` y esperar solo su run
+  PR, sin repetir manualmente bloques verdes.
 - [ ] Exigir un gate Linux completo verde antes de pasar al bloque 2.
 
 Este arreglo pertenece al sistema de checkpoint/restore. No modifica la sala,

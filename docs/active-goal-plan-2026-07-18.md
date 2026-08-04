@@ -52,10 +52,20 @@ quedó exportada durante el resto del fixture y contaminó rollback/reentrada.
 La corrección local limita esa ruta a los dos callsites exactos; el fallback
 productivo permanece idéntico. Pasan Bash, ShellCheck, diff-check, aislamiento
 `48/48`, proceso local `89/89`, diagnóstico `47/47` y el foco completo del
-monitor `170/170`, incluidos los cinco casos remotos. Punto exacto de
-reanudación: publicar esta única corrección en el mismo PR `#15` y observar un
-solo gate integral nuevo; no repetir bloques verdes ni avanzar a Fase 4 antes
-del verde.
+monitor `170/170`, incluidos los cinco casos remotos. La corrección está
+publicada como `9bc1f35`; el push duplicado `30845987527` terminó cancelado y
+el run PR `30845991151` dejó de nuevo PostgreSQL 12/14 y todos los estáticos
+verdes, pero recovery permaneció en `859/864`. La inspección conjunta de la
+suite completa y los focos aislados corrigió el diagnóstico anterior: restore
+restablecía `KUBECTL_BIN` al stub ordinario, pero el retorno a checkpoint no
+recuperaba el wrapper original que los tests checkpoint habían usado desde el
+inicio. Se elimina la variable alternativa añadida en la ronda anterior y se
+restaura el contrato original de una sola variable al cruzar ese límite. Pasan
+Bash, ShellCheck, diff-check, aislamiento `48/48`, proceso local `89/89`,
+diagnóstico `47/47` y monitor completo `170/170`, ahora reproduciendo también
+la transición restore -> checkpoint. Punto exacto de reanudación: publicar
+esta corrección mínima en el mismo PR `#15` y observar solo su nuevo run PR; no
+repetir bloques verdes ni avanzar a Fase 4 antes del verde.
 Después continuar con build, checkpoints, rotación, staging, rollout y
 aceptación live, sin añadir funciones nuevas.
 
@@ -89,10 +99,10 @@ esta meta.
 ## Panel operativo vigente
 
 - Fase activa: **3B, integración raíz final**.
-- Primera acción al reanudar: publicar en el mismo PR `#15` el alcance
-  callsite-local de la ruta exclusiva del monitor, ya validado por los focos
-  `48/48`, `89/89`, `47/47` y `170/170`; después observar un solo gate integral
-  nuevo. No abrir otra ronda general de dependencias, diseño o auditoría.
+- Primera acción al reanudar: publicar en el mismo PR `#15` la restauración del
+  wrapper original al volver de restore a checkpoint y observar exclusivamente
+  el nuevo run PR. No abrir otra ronda general de dependencias, diseño o
+  auditoría.
 - El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
   incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
   `mix hex.audit` final por cuatro advisories nuevos de Guardian `2.4.0`.
