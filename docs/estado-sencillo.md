@@ -1,6 +1,6 @@
 # Estado sencillo de YenHubs
 
-Última actualización: 3 de agosto de 2026
+Última actualización: 4 de agosto de 2026
 
 Este es el panel humano del proyecto. Aquí debe poder entenderse, sin leer el
 plan técnico, qué está terminado, qué se está haciendo y qué queda. Se
@@ -76,8 +76,16 @@ ponía `kubectl` ordinario y al volver a checkpoint no recuperaba el wrapper que
 usaba originalmente. La corrección elimina la variable alternativa de la ronda
 anterior y restaura ese wrapper justo en la frontera. Pasan aislamiento
 `48/48`, proceso local `89/89`, diagnóstico `47/47`, vigilancia `170/170`, Bash,
-ShellCheck y diff-check. Falta publicar esta corrección mínima y exigir un único
-gate PR verde. No se avanzará al bloque 2 antes de ese verde.
+ShellCheck y diff-check. La corrección se publicó como `fa9c8cf`; el push
+duplicado `30865217238` quedó cancelado, pero el run PR `30865219455` repitió
+los mismos cinco fallos `859/864`. Eso demostró que la explicación anterior no
+era la causa real. El simulador cerraba instantáneamente cada espera WATCH y,
+en Linux rápido, podía ocupar continuamente el turno e impedir que el monitor
+hermano hiciera su primera comprobación completa. El ajuste actual solo pausa
+20 ms esas esperas simuladas; no cambia Hubs, la recuperación productiva ni la
+sala. Pasan los tres grupos afectados (`89/89`, `47/47` y `170/170`), Bash,
+ShellCheck y diff-check. Falta publicar este ajuste y obtener un único gate
+Linux verde; no se avanzará al bloque 2 antes de ese verde.
 
 ## Qué se ha terminado
 
@@ -150,8 +158,15 @@ gate PR verde. No se avanzará al bloque 2 antes de ese verde.
   restaurar el wrapper original al volver de restore a checkpoint.
 - [x] Corregir solo esa frontera y validarla en `48/48`, `89/89`, `47/47` y
   `170/170`, más Bash, ShellCheck y diff-check.
-- [ ] Publicar la corrección mínima en el mismo PR `#15` y esperar solo su run
-  PR, sin repetir manualmente bloques verdes.
+- [x] Publicar la corrección mínima como `fa9c8cf` en el mismo PR `#15` y
+  confirmar que el push duplicado `30865217238` queda cancelado.
+- [x] Inspeccionar `30865219455`: PostgreSQL y estáticos verdes, recovery
+  `859/864`; descartar el diagnóstico anterior al repetirse los cinco fallos.
+- [x] Corregir solo el bucle WATCH de duración cero del fixture y validar los
+  grupos afectados `89/89`, `47/47` y `170/170`, más Bash, ShellCheck y
+  diff-check.
+- [ ] Publicar el ajuste de 20 ms en el mismo PR `#15` y observar un único run
+  Linux, sin repetir manualmente bloques verdes.
 - [ ] Exigir un gate Linux completo verde antes de pasar al bloque 2.
 
 Este arreglo pertenece al sistema de checkpoint/restore. No modifica la sala,

@@ -1373,15 +1373,20 @@ lease_fixture_lock_release() {
 lease_fixture_handoff_pending() {
   compgen -G "$STUB_STATE_DIR/serialization-lease-watch-handoff.*" >/dev/null
 }
-if [[ "${STUB_MONITOR_WATCH_PACE:-0}" == 1 &&
+if [[ ( "${STUB_MONITOR_WATCH_PACE:-0}" == 1 ||
+        "${STUB_CHECKPOINT_WRITER_QUERY:-0}" == 1 ) &&
       "$joined" == *"watch=true"* &&
       "$joined" == *"timeoutSeconds=2"* &&
       "$joined" != *"sendInitialEvents=true"* ]]; then
   # The local kubectl stub closes ordinary WATCH requests immediately. Pace
-  # only the durable parent-guard fixture so its two long-lived monitors do not
-  # spin thousands of synthetic rounds and starve the child's first complete
-  # quiescence sweep. Production still uses the real API watch duration.
-  sleep 1
+  # long-lived monitor fixtures so they cannot spin thousands of synthetic
+  # rounds and starve a sibling's first complete quiescence sweep on faster
+  # Linux runners. Production still uses the real API watch duration.
+  if [[ "${STUB_MONITOR_WATCH_PACE:-0}" == 1 ]]; then
+    sleep 1
+  else
+    sleep 0.02
+  fi
 fi
 # The checkpoint-evidence helper uses kubectl's namespace prefix and the
 # plural Pods resource. Normalize those read-only forms to the long-standing

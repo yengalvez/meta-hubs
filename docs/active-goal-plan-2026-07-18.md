@@ -1,6 +1,6 @@
 # Meta activa de YenHubs: cierre seguro y runtime endurecido
 
-Última actualización: 3 de agosto de 2026
+Última actualización: 4 de agosto de 2026
 
 Estado actual: **EN EJECUCIÓN; el PR raíz `#14` fusionó `78b7165` como
 `main=9c1b85be99a7` y el checkout canónico está sincronizado. El commit
@@ -63,9 +63,19 @@ inicio. Se elimina la variable alternativa añadida en la ronda anterior y se
 restaura el contrato original de una sola variable al cruzar ese límite. Pasan
 Bash, ShellCheck, diff-check, aislamiento `48/48`, proceso local `89/89`,
 diagnóstico `47/47` y monitor completo `170/170`, ahora reproduciendo también
-la transición restore -> checkpoint. Punto exacto de reanudación: publicar
-esta corrección mínima en el mismo PR `#15` y observar solo su nuevo run PR; no
-repetir bloques verdes ni avanzar a Fase 4 antes del verde.
+la transición restore -> checkpoint. La corrección se publicó como `fa9c8cf`;
+el push duplicado `30865217238` terminó cancelado y el run PR `30865219455`
+mantuvo PostgreSQL 12/14 y todos los estáticos verdes, pero repitió recovery
+`859/864`. Esto descartó el diagnóstico anterior. La comparación exacta de la
+suite completa con los focos reveló una espera sintética de duración cero: el
+stub local cerraba cada WATCH inmediatamente y, en el runner Linux más rápido,
+su bucle podía impedir que el monitor hermano completase siquiera su primera
+barrida. La corrección actual solo da una pausa de 20 ms a los WATCH sintéticos
+del fixture de writers; el código productivo y sus WATCH reales no cambian.
+Pasan proceso local `89/89`, diagnóstico `47/47`, writers `170/170`, Bash,
+ShellCheck y diff-check. Punto exacto de reanudación: publicar este único
+ajuste en el PR `#15` y observar un solo gate Linux; no repetir bloques verdes
+ni avanzar a Fase 4 antes del verde.
 Después continuar con build, checkpoints, rotación, staging, rollout y
 aceptación live, sin añadir funciones nuevas.
 
@@ -99,9 +109,9 @@ esta meta.
 ## Panel operativo vigente
 
 - Fase activa: **3B, integración raíz final**.
-- Primera acción al reanudar: publicar en el mismo PR `#15` la restauración del
-  wrapper original al volver de restore a checkpoint y observar exclusivamente
-  el nuevo run PR. No abrir otra ronda general de dependencias, diseño o
+- Primera acción al reanudar: publicar en el PR `#15` el ajuste de 20 ms del
+  WATCH sintético ya validado en `89/89`, `47/47` y `170/170`, y observar un
+  solo gate Linux. No abrir otra ronda general de dependencias, diseño o
   auditoría.
 - El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
   incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
