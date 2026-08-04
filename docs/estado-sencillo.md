@@ -1,6 +1,6 @@
 # Estado sencillo de YenHubs
 
-Última actualización: 2 de agosto de 2026
+Última actualización: 4 de agosto de 2026
 
 Este es el panel humano del proyecto. Aquí debe poder entenderse, sin leer el
 plan técnico, qué está terminado, qué se está haciendo y qué queda. Se
@@ -9,12 +9,25 @@ actualiza cada vez que cambia la tarea activa o se completa un hito.
 ## Resumen rápido
 
 - **El YenHubs que usabas sigue funcionando y no se ha tocado.**
+- **Aviso urgente de coste:** GitHub Actions está facturando **USD 0**, pero la
+  infraestructura actual de DigitalOcean cuesta aproximadamente **USD 65/mes**
+  antes de impuestos, por encima del objetivo aproximado de 40 al mes.
 - **Todavía no estamos desplegando.** Estamos acabando de integrar y probar el
   código que hará más seguros los bots, los asientos, las copias y la
   recuperación.
 - **No estamos añadiendo funciones nuevas ni actualizando Hubs entero.**
+- **No se añadirá ni ampliará ningún recurso de pago sin avisar antes.**
 - **Faltan cuatro bloques después del actual:** construir las imágenes, hacer
   copias y rotar credenciales, probar en staging y desplegar/verificar.
+
+GitHub muestra `Gross USD 4.66`, pero aplica exactamente `Discount USD 4.66` y
+el importe real es `Billed USD 0.00`. Los tres repositorios son públicos y sus
+workflows usan runners estándar gratuitos. En DigitalOcean sí hay gasto real:
+un nodo de USD 48/mes, un balanceador de USD 15/mes y dos volúmenes de alrededor
+de USD 1/mes cada uno. Reducir esos USD 65 exige estudiar capacidad y rollback;
+no se apagará ni empeorará el metaverso de forma improvisada.
+Una vigilancia semanal read-only (`vigilar-coste-yenhubs`, lunes 09:00) avisará
+solo si aparece una subida, un recurso nuevo o riesgo real de cobro.
 
 ## Dónde estamos
 
@@ -26,12 +39,53 @@ actualiza cada vez que cambia la tarea activa o se completa un hito.
 [ PENDIENTE] 5. Despliegue, comprobación real y cierre
 ```
 
-Estamos al final del bloque 1. El PR raíz `#14` está abierto. Sus pruebas
-principales ya pasan; el CI de Linux descubrió después un problema real y
-acotado: usaba `/tmp`, que es compartido, para un fichero que por seguridad
-exige una carpeta privada. La corrección crea una carpeta privada del usuario,
-sin relajar la comprobación ni esconder el error. Las pruebas locales ya pasan
-y la acción actual es publicarla para que CI repita el gate completo.
+Estamos al final del bloque 1. El PR raíz `#14` está fusionado y el PR `#15`
+arregló el límite de tiempo y evitó ejecutar dos veces el gate. La primera
+corrección Linux funcionó: el nuevo gate pasó de 19 fallos a 7 (`857/864`). Los
+7 restantes no son cambios nuevos del metaverso; son variantes de la misma
+salida segura al finalizar o reanudar una copia. Los logs sitúan el corte al
+comprobar que Reticulum y el coordinador de bots comparten la misma versión de
+recuperación. Se ha eliminado una segunda forma innecesaria de pasar esos datos
+a `jq` y se han añadido diagnósticos seguros para que, si Linux aún rechaza un
+caso, diga el paso exacto sin mostrar valores ni secretos. La corrección se
+publicó como `79f863d`, pero el nuevo gate se detuvo antes de probar recovery:
+una prueba de limpieza vio un segundo proceso que nació entre dos fotos. La
+limpieza sí eliminó ambos; lo incorrecto era exigir que la lista final fuese
+idéntica a la foto anterior. Ahora se exige que incluya todo lo observado y que
+todo lo limpiado haya desaparecido. El caso exacto pasa `1/1` y el ajuste ya
+está publicado como `3a83436`. El push duplicado `30763145799` quedó cancelado
+y el run PR `30763147513` llegó a recovery `857/864`. Los siete fallos no
+tocan la sala: son dos cambios de contexto que la prueba larga no restauraba
+bien. El verificador esperaba los ficheros originales aunque el sistema usa
+copias privadas idénticas, y el bloque checkpoint heredaba el modo de consultas
+del bloque restore. Ambos límites están corregidos; sus pruebas enfocadas pasan
+`48/48` y `54/54`. El ajuste `8d79b37` llegó al gate `30794007261`: PostgreSQL,
+secretos, workflows y ShellCheck quedaron verdes; recovery pasó `451/455`.
+Los cuatro fallos tienen una sola causa: el simulador daba al checkpoint la
+vista especial que solo debe ver su vigilante. Ya están separadas ambas vistas;
+pasan aislamiento `48/48`, proceso local `89/89` y los cuatro puntos exactos
+que fallaron en GitHub. El ajuste `9c65e01` llegó al run `30805869591`, que
+mejoró recovery a `859/864` y dejó cinco consecuencias de una sola causa: la
+vista especial del vigilante permanecía activa después de los dos usos que la
+necesitaban. Ya está limitada a esos dos callsites. Pasan aislamiento `48/48`,
+proceso local `89/89`, diagnóstico `47/47` y vigilancia completa `170/170`,
+incluidos los cinco casos remotos. El alcance se publicó como `9bc1f35`; su
+push duplicado `30845987527` está cancelado, pero el run PR `30845991151`
+repitió `859/864`. La causa real ya está acotada: al salir de restore, la suite
+ponía `kubectl` ordinario y al volver a checkpoint no recuperaba el wrapper que
+usaba originalmente. La corrección elimina la variable alternativa de la ronda
+anterior y restaura ese wrapper justo en la frontera. Pasan aislamiento
+`48/48`, proceso local `89/89`, diagnóstico `47/47`, vigilancia `170/170`, Bash,
+ShellCheck y diff-check. La corrección se publicó como `fa9c8cf`; el push
+duplicado `30865217238` quedó cancelado, pero el run PR `30865219455` repitió
+los mismos cinco fallos `859/864`. Eso demostró que la explicación anterior no
+era la causa real. El simulador cerraba instantáneamente cada espera WATCH y,
+en Linux rápido, podía ocupar continuamente el turno e impedir que el monitor
+hermano hiciera su primera comprobación completa. El ajuste actual solo pausa
+20 ms esas esperas simuladas; no cambia Hubs, la recuperación productiva ni la
+sala. Pasan los tres grupos afectados (`89/89`, `47/47` y `170/170`), Bash,
+ShellCheck y diff-check. Falta publicar este ajuste y obtener un único gate
+Linux verde; no se avanzará al bloque 2 antes de ese verde.
 
 ## Qué se ha terminado
 
@@ -55,9 +109,65 @@ y la acción actual es publicarla para que CI repita el gate completo.
 - [x] Validar en macOS con `TMPDIR` ausente, como en el CI Linux, que la carpeta
   temporal privada funciona y sigue rechazando permisos inseguros o enlaces
   falsos.
-- [ ] Publicar únicamente esa corrección en el PR `#14`.
-- [ ] Esperar a que el CI complete todas sus pruebas y fusionar el PR si queda
-  completamente verde.
+- [x] Publicar la corrección como `78b7165` y fusionar el PR `#14`.
+- [x] Diagnosticar las dos cancelaciones: límite del workflow de 75 minutos, no
+  un fallo de pruebas.
+- [x] Validar la corrección CI: workflow, ShellCheck, 51 controles de seguridad,
+  gitlinks, diff y escaneo de secretos están verdes.
+- [x] Publicar la corrección CI acotada como `d303d3e` en el PR borrador `#15`.
+- [x] Confirmar que push y PR no duplican el gate: el push se canceló y quedó
+  una sola ejecución (`30731785217`).
+- [x] Diagnosticar sus 19 fallos como cascadas de un único límite Linux al pasar
+  214.796 bytes directamente a `jq`; no son 19 defectos del metaverso.
+- [x] Mantener la comparación exacta leyendo el inventario desde un fichero
+  privado `0600`, con aceptación, rechazo y borrado comprobados.
+- [x] Pasar el caso durable completo `50/50` con el límite Linux simulado, más
+  los 51 controles de seguridad, Actionlint, ShellCheck, gitlinks y Gitleaks.
+- [x] Publicar esta corrección mínima como `354919c` en el PR `#15` y volver a
+  confirmar que solo queda una ejecución remota.
+- [x] Comprobar que `354919c` eliminó 12 fallos y acotar los 7 residuales a la
+  salida segura de finalización/rollback, sin tocar producción.
+- [x] Validar la comprobación portable del epoch y sus diagnósticos seguros en
+  el foco local `47/47`, además de Bash, ShellCheck y diff-check.
+- [x] Publicar la corrección residual como `79f863d` en el mismo PR `#15` y
+  confirmar que solo queda el run `30756093418`.
+- [x] Diagnosticar el único fallo temprano de `30756093418`: carrera de dos
+  fotos en un fixture, aunque el cleanup eliminó correctamente ambos procesos.
+- [x] Corregir solo esa expectativa concurrente y pasar su foco exacto `1/1`.
+- [x] Publicar el ajuste del fixture como `3a83436` en el mismo PR `#15`.
+- [x] Confirmar que el push duplicado `30763145799` queda cancelado.
+- [x] Inspeccionar el fallo exacto de `30763147513`: recovery `857/864`, con
+  siete efectos de dos contaminaciones de fixture y sin mutar producción.
+- [x] Corregir únicamente snapshots privados y el retorno restore -> checkpoint;
+  focos `48/48` y `54/54`, Bash, ShellCheck y diff-check verdes.
+- [x] Publicar la corrección como `8d79b37` en el mismo PR `#15` y confirmar
+  que el push duplicado `30794003733` queda cancelado.
+- [x] Inspeccionar `30794007261`: recovery `451/455`; los cuatro fallos son una
+  única contaminación entre la vista general y la vista del vigilante.
+- [x] Separar ambas rutas y validar aislamiento `48/48`, proceso local `89/89`
+  y los cuatro puntos exactos de publicación/reanudación.
+- [x] Publicar esta corrección acotada como `9c65e01` en el mismo PR `#15`.
+- [x] Confirmar que `30805867201` quedó cancelado e inspeccionar
+  `30805869591`: recovery `859/864`, con cinco efectos de una única variable
+  exportada durante demasiado tiempo.
+- [x] Limitar la ruta especial a dos callsites y validar `48/48`, `89/89`,
+  `47/47` y el foco completo `170/170`.
+- [x] Publicar esta corrección final como `9bc1f35` en el mismo PR `#15` y
+  confirmar que el push duplicado `30845987527` queda cancelado.
+- [x] Inspeccionar `30845991151`: los mismos cinco fallos proceden de no
+  restaurar el wrapper original al volver de restore a checkpoint.
+- [x] Corregir solo esa frontera y validarla en `48/48`, `89/89`, `47/47` y
+  `170/170`, más Bash, ShellCheck y diff-check.
+- [x] Publicar la corrección mínima como `fa9c8cf` en el mismo PR `#15` y
+  confirmar que el push duplicado `30865217238` queda cancelado.
+- [x] Inspeccionar `30865219455`: PostgreSQL y estáticos verdes, recovery
+  `859/864`; descartar el diagnóstico anterior al repetirse los cinco fallos.
+- [x] Corregir solo el bucle WATCH de duración cero del fixture y validar los
+  grupos afectados `89/89`, `47/47` y `170/170`, más Bash, ShellCheck y
+  diff-check.
+- [ ] Publicar el ajuste de 20 ms en el mismo PR `#15` y observar un único run
+  Linux, sin repetir manualmente bloques verdes.
+- [ ] Exigir un gate Linux completo verde antes de pasar al bloque 2.
 
 Este arreglo pertenece al sistema de checkpoint/restore. No modifica la sala,
 la interfaz ni las personalizaciones visibles de Hubs.

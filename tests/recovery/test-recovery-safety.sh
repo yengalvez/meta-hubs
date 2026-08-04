@@ -1373,15 +1373,20 @@ lease_fixture_lock_release() {
 lease_fixture_handoff_pending() {
   compgen -G "$STUB_STATE_DIR/serialization-lease-watch-handoff.*" >/dev/null
 }
-if [[ "${STUB_MONITOR_WATCH_PACE:-0}" == 1 &&
+if [[ ( "${STUB_MONITOR_WATCH_PACE:-0}" == 1 ||
+        "${STUB_CHECKPOINT_WRITER_QUERY:-0}" == 1 ) &&
       "$joined" == *"watch=true"* &&
       "$joined" == *"timeoutSeconds=2"* &&
       "$joined" != *"sendInitialEvents=true"* ]]; then
   # The local kubectl stub closes ordinary WATCH requests immediately. Pace
-  # only the durable parent-guard fixture so its two long-lived monitors do not
-  # spin thousands of synthetic rounds and starve the child's first complete
-  # quiescence sweep. Production still uses the real API watch duration.
-  sleep 1
+  # long-lived monitor fixtures so they cannot spin thousands of synthetic
+  # rounds and starve a sibling's first complete quiescence sweep on faster
+  # Linux runners. Production still uses the real API watch duration.
+  if [[ "${STUB_MONITOR_WATCH_PACE:-0}" == 1 ]]; then
+    sleep 1
+  else
+    sleep 0.02
+  fi
 fi
 # The checkpoint-evidence helper uses kubectl's namespace prefix and the
 # plural Pods resource. Normalize those read-only forms to the long-standing
@@ -4899,10 +4904,12 @@ set -euo pipefail
 [[ "${EXPECTED_KUBE_CONTEXT:-}" == fixture-context &&
    "${EXPECTED_NAMESPACE_UID:-}" == fixture-uid &&
    "${EXPECTED_RET_PVC_UID:-}" == fixture-pvc-uid &&
-   "${VALUES_FILE:-}" == "${STUB_LIVE_REACTIVATION_VALUES_FILE:?}" &&
-   "${HCCE_MANIFEST_PATH:-}" == "${STUB_LIVE_REACTIVATION_MANIFEST_FILE:?}" &&
+   "${VALUES_FILE:-}" != "${STUB_LIVE_REACTIVATION_VALUES_FILE:?}" &&
+   "${HCCE_MANIFEST_PATH:-}" != "${STUB_LIVE_REACTIVATION_MANIFEST_FILE:?}" &&
    -f "$VALUES_FILE" && ! -L "$VALUES_FILE" &&
    -f "$HCCE_MANIFEST_PATH" && ! -L "$HCCE_MANIFEST_PATH" ]]
+cmp -s -- "$VALUES_FILE" "$STUB_LIVE_REACTIVATION_VALUES_FILE"
+cmp -s -- "$HCCE_MANIFEST_PATH" "$STUB_LIVE_REACTIVATION_MANIFEST_FILE"
 count_path="${STUB_STATE_DIR:?}/live-reactivation-verifier-count"
 count=0
 [[ ! -f "$count_path" ]] || count="$(cat "$count_path")"
@@ -12591,6 +12598,18 @@ initialize_restore_fence_test_environment() {
   export KUBECTL_BIN
 }
 
+initialize_checkpoint_tail_test_environment() {
+  # Restore fixtures must not expose checkpoint writer Pods, while the later
+  # checkpoint fixtures must. Re-establish the focused-checkpoint profile when
+  # the full suite crosses back into checkpoint coverage.
+  STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON"
+  STUB_RUNNER_NAMESPACE=present
+  KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer"
+  unset STUB_CHECKPOINT_WRITER_QUERY
+  export STUB_DEPLOYMENTS_JSON STUB_RUNNER_NAMESPACE \
+    KUBECTL_BIN
+}
+
 initialize_restore_fence_test_context() {
   initialize_restore_fence_test_environment
   initialize_durable_restore_fixture
@@ -12987,6 +13006,7 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == storage-helper-pod-snapshot-race ]];
 fi
 
 if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == restore-context-isolation ]]; then
+  context_snapshot_dir="$TMP_DIR/restore-context-snapshots"
   STUB_MODE=legacy-receipt-r-exit-91
   STUB_CHECKPOINT_WRITER_QUERY=1
   KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer"
@@ -12998,6 +13018,29 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == restore-context-isolation ]]; then
   else
     fail 'restore fixture environment isolation' \
       "mode=${STUB_MODE-unset} query=${STUB_CHECKPOINT_WRITER_QUERY-unset} kubectl=$KUBECTL_BIN"
+  fi
+  mkdir -p "$context_snapshot_dir"
+  chmod 700 "$context_snapshot_dir"
+  cp -- "$RESTORE_VALUES_FIXTURE" "$context_snapshot_dir/values.yaml"
+  cp -- "$RUNNER_ACTIVE_TARGET_MANIFEST_FIXTURE" \
+    "$context_snapshot_dir/manifest.yaml"
+  chmod 600 "$context_snapshot_dir/values.yaml" \
+    "$context_snapshot_dir/manifest.yaml"
+  expect_success 'live verifier accepts only content-identical private snapshots' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context \
+      EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+      VALUES_FILE="$context_snapshot_dir/values.yaml" \
+      HCCE_MANIFEST_PATH="$context_snapshot_dir/manifest.yaml" \
+      bash "$LIVE_REACTIVATION_VERIFIER_FIXTURE"
+  initialize_checkpoint_tail_test_environment
+  if [[ "$STUB_DEPLOYMENTS_JSON" == "$KUBERNETES_DEPLOYMENTS_JSON" &&
+        "$STUB_RUNNER_NAMESPACE" == present &&
+        "$KUBECTL_BIN" == "$TMP_DIR/bin/kubectl-checkpoint-writer" &&
+        -z "${STUB_CHECKPOINT_WRITER_QUERY:-}" ]]; then
+    pass 'checkpoint tail restores its synthetic writer-query profile'
+  else
+    fail 'checkpoint tail fixture environment isolation' \
+      "deployments=$STUB_DEPLOYMENTS_JSON namespace=$STUB_RUNNER_NAMESPACE kubectl=$KUBECTL_BIN writer_kubectl=${CHECKPOINT_WRITER_KUBECTL_BIN-unset} query=${STUB_CHECKPOINT_WRITER_QUERY-unset}"
   fi
   if [[ "$FAIL_COUNT" -ne 0 ]]; then
     printf '%s focused restore-context isolation test(s) failed; %s passed.\n' \
@@ -13340,6 +13383,8 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-writer-fence ]]; then
 fi
 
 if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-writers ]]; then
+  initialize_restore_fence_test_environment
+  initialize_checkpoint_tail_test_environment
   run_checkpoint_writer_monitor_tests
   if [[ "$FAIL_COUNT" -ne 0 ]]; then
     printf '%s focused checkpoint writer-monitor test(s) failed; %s passed.\n' \
@@ -13390,6 +13435,8 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-durable-fence-drift ]]; t
 fi
 
 if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-finalization ]]; then
+  initialize_restore_fence_test_environment
+  initialize_checkpoint_tail_test_environment
   case "${YENHUBS_RECOVERY_TEST_CASE:-}" in
     diagnostic)
       run_checkpoint_finalization_diagnostic_tests \
@@ -13929,6 +13976,7 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-process-local ]]; then
     EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
     VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
     STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+    KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer" \
     STUB_MODE=checkpoint-parent-wait-failure \
     RECOVERY_STREAM_POLL_SECONDS=0.01 \
     "$ROOT_DIR/deployment/create-checkpoint.sh" \
@@ -16019,6 +16067,7 @@ expect_failure 'pre-watcher quiesce failure safely reconstructs resume monitorin
   EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
   VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
   STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+  KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer" \
   STUB_MODE=checkpoint-parent-wait-failure \
   RECOVERY_STREAM_POLL_SECONDS=0.01 \
   "$ROOT_DIR/deployment/create-checkpoint.sh" \
@@ -16072,9 +16121,7 @@ else
 fi
 
 # All remaining checkpoint cases exercise the post-rollout isolated path.
-STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON"
-STUB_RUNNER_NAMESPACE=present
-export STUB_DEPLOYMENTS_JSON STUB_RUNNER_NAMESPACE
+initialize_checkpoint_tail_test_environment
 CREATE_FINAL="$CREATE_PARENT/published-checkpoint"
 for checkpoint_preflight_case in \
   checkpoint-control-plane-preflight-failure \

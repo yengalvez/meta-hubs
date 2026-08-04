@@ -1360,8 +1360,9 @@ test("fixture cleanup reaps kubectl groups after abrupt monitor loss", async t =
   assert.deepEqual({ code: result.code, signal: result.signal },
     { code: null, signal: "SIGKILL" });
   const cleanedGroups = await cleanupFixture(fixture);
-  assert.deepEqual(cleanedGroups.sort((left, right) => left - right),
-    processGroups.sort((left, right) => left - right));
+  // A concurrent watch may publish another PGID after the pre-kill snapshot;
+  // cleanup must include that late group rather than make both lists identical.
+  assert.ok(processGroups.every(pid => cleanedGroups.includes(pid)));
   assert.ok(cleanedGroups.every(pid => !fixtureProcessGroupExists(pid)));
   assert.ok(descendantPids.every(pid => {
     try {

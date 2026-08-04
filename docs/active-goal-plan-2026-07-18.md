@@ -1,25 +1,81 @@
 # Meta activa de YenHubs: cierre seguro y runtime endurecido
 
-Última actualización: 2 de agosto de 2026
+Última actualización: 4 de agosto de 2026
 
-Estado actual: **EN EJECUCIÓN; el PR raíz `#14` está abierto en el commit
-`15f713d`. Sus cuatro jobs AUD-065 están verdes y ambos jobs de seguridad ya
-superan gitlinks, Gitleaks, workflows y ShellCheck. Al alcanzar por primera vez
-la recuperación integral en Linux, ambos reprodujeron el mismo fallo del caso
-156: sin `TMPDIR`, el sistema elegía `/tmp` (directorio compartido `01777`) para
-un fichero cuya lectura segura exige también un padre privado `0700`. Es un
-defecto real y acotado de portabilidad del checkpoint, no una función nueva ni
-un cambio visible de Hubs. La corrección mínima crea o reutiliza una raíz
-privada por UID, jamás cambia permisos ni sustituye una ruta existente, y
-mantiene la validación fail-closed. Sintaxis, ShellCheck, diff-check, el lector
-Node `32/32`, la matriz de directorios privados `78/78` y la reproducción
-durable exacta sin `TMPDIR` `50/50` están verdes. Falta publicar el commit y
-obtener el CI completo. Producción permanece intacta.**
+Estado actual: **EN EJECUCIÓN; el PR raíz `#14` fusionó `78b7165` como
+`main=9c1b85be99a7` y el checkout canónico está sincronizado. El commit
+`d303d3e` del PR borrador `#15` amplió correctamente el timeout a 360 minutos y
+deduplicó push+PR. El commit `354919c` eliminó el primer límite Linux
+`ARG_MAX`: su único run `30745238145` avanzó de `845/864` a `857/864`. Los siete
+fallos residuales siguen siendo fail-closed y convergen al reingreso de
+finalización/rollback. El log exacto corta tras leer los Deployments Reticulum y
+bot-orchestrator para probar su epoch compartido; esa función conservaba una
+segunda frontera de pipe innecesaria y devolvía `1` sin diagnóstico. La
+corrección local entrega el JSON a `jq` mediante here-string, conserva la misma
+validación estricta y añade mensajes sin valores para distinguir lectura,
+estructura, formato o desacuerdo de epoch. El handler de checkpoint registra
+además solo el stage/code allowlisted si el reingreso automático falla, sin
+secretos. Bash, ShellCheck, diff-check y el foco diagnóstico `47/47` están
+verdes. La corrección se publicó como `79f863d`; su run único `30756093418` no
+llegó a recovery porque una prueba Node existente quedó `56/57`. El cleanup
+había eliminado dos grupos de procesos, pero la aserción comparaba esa lista
+con una foto anterior que solo contenía uno; un watch concurrente había
+publicado el segundo PGID entre ambas lecturas. La corrección local exige que
+todos los grupos de la foto previa estén incluidos y que todos los realmente
+limpiados hayan desaparecido, admitiendo el grupo tardío que el cleanup debe
+recoger. El foco exacto pasa `1/1`. La corrección está publicada como `3a83436`.
+El run push `30763145799` terminó cancelado y el run PR autoritativo
+`30763147513` falló en recovery `857/864`. Los siete casos convergen en dos
+límites del fixture, no en producción: el verificador live exigía las rutas
+originales aunque restore usa copias privadas idénticas, y el bloque restore
+desactivaba el perfil sintético de Pods sin restaurarlo al volver a checkpoint.
+La corrección mínima valida contenido idéntico en snapshots privados y
+restablece el perfil solo en el bloque que lo necesita. El foco de aislamiento
+pasa `48/48`, el finalizador real de fixture `54/54`, y Bash, ShellCheck y
+diff-check están verdes. Producción permanece intacta.**
 
-Punto exacto de reanudación: actualizar los tres documentos, crear un cuarto
-commit —sin reescribir los tres ya publicados—, subirlo al PR raíz `#14`,
-exigir CI íntegramente verde y fusionarlo en `main`. No se repite el full local:
-el siguiente CI ejecuta el gate integral sobre los bytes nuevos.
+La corrección `8d79b37` dejó cancelado el push duplicado `30794003733`; el run
+PR autoritativo `30794007261` terminó con PostgreSQL 12/14, Gitleaks,
+Actionlint y ShellCheck verdes y recovery `451/455`. Los cuatro fallos
+convergen en una sola frontera del fixture: tras restore, la misma ruta
+`kubectl` sintética se usaba tanto para la vista general del checkpoint como
+para la vista especial del monitor de writers. La corrección local mantiene la
+ruta general ordinaria y entrega el wrapper de writers únicamente al monitor,
+con fallback idéntico en producción. Pasan Bash, ShellCheck, aislamiento
+`48/48`, proceso local `89/89` y los cuatro puntos exactos antes fallidos en el
+foco checkpoint (publicación atómica, contrato schema 3 y orden de reanudación).
+La corrección `9c65e01` dejó cancelado el push `30805867201`; el run PR
+`30805869591` terminó con PostgreSQL 12/14 y todos los estáticos verdes y
+recovery `859/864`. Los cinco fallos convergen en la duración excesiva de la
+nueva ruta exclusiva del monitor: debía existir solo en dos invocaciones, pero
+quedó exportada durante el resto del fixture y contaminó rollback/reentrada.
+La corrección local limita esa ruta a los dos callsites exactos; el fallback
+productivo permanece idéntico. Pasan Bash, ShellCheck, diff-check, aislamiento
+`48/48`, proceso local `89/89`, diagnóstico `47/47` y el foco completo del
+monitor `170/170`, incluidos los cinco casos remotos. La corrección está
+publicada como `9bc1f35`; el push duplicado `30845987527` terminó cancelado y
+el run PR `30845991151` dejó de nuevo PostgreSQL 12/14 y todos los estáticos
+verdes, pero recovery permaneció en `859/864`. La inspección conjunta de la
+suite completa y los focos aislados corrigió el diagnóstico anterior: restore
+restablecía `KUBECTL_BIN` al stub ordinario, pero el retorno a checkpoint no
+recuperaba el wrapper original que los tests checkpoint habían usado desde el
+inicio. Se elimina la variable alternativa añadida en la ronda anterior y se
+restaura el contrato original de una sola variable al cruzar ese límite. Pasan
+Bash, ShellCheck, diff-check, aislamiento `48/48`, proceso local `89/89`,
+diagnóstico `47/47` y monitor completo `170/170`, ahora reproduciendo también
+la transición restore -> checkpoint. La corrección se publicó como `fa9c8cf`;
+el push duplicado `30865217238` terminó cancelado y el run PR `30865219455`
+mantuvo PostgreSQL 12/14 y todos los estáticos verdes, pero repitió recovery
+`859/864`. Esto descartó el diagnóstico anterior. La comparación exacta de la
+suite completa con los focos reveló una espera sintética de duración cero: el
+stub local cerraba cada WATCH inmediatamente y, en el runner Linux más rápido,
+su bucle podía impedir que el monitor hermano completase siquiera su primera
+barrida. La corrección actual solo da una pausa de 20 ms a los WATCH sintéticos
+del fixture de writers; el código productivo y sus WATCH reales no cambian.
+Pasan proceso local `89/89`, diagnóstico `47/47`, writers `170/170`, Bash,
+ShellCheck y diff-check. Punto exacto de reanudación: publicar este único
+ajuste en el PR `#15` y observar un solo gate Linux; no repetir bloques verdes
+ni avanzar a Fase 4 antes del verde.
 Después continuar con build, checkpoints, rotación, staging, rollout y
 aceptación live, sin añadir funciones nuevas.
 
@@ -27,20 +83,18 @@ Worktree inicial: `/Users/Shared/Gits/YenHubs-aud075-root`
 
 Rama inicial: `codex/aud075-integration`
 
-Worktree activo: `/Users/Shared/Gits/YenHubs-aud078-root`
+Worktree activo: `/Users/Shared/Gits/YenHubs`
 
 Última rama de desbloqueo fusionada: `codex/aud065-sequencing-unblock`
 
-Durante la Fase 3B, este fichero exacto del worktree activo es la única fuente
-de verdad operativa:
-`/Users/Shared/Gits/YenHubs-aud078-root/docs/active-goal-plan-2026-07-18.md`.
+Este fichero exacto del worktree activo es la única fuente de verdad operativa:
+`/Users/Shared/Gits/YenHubs/docs/active-goal-plan-2026-07-18.md`.
 Los worktrees `aud075`, `aud076` y `aud077` son evidencia histórica y nunca se
-usan para reanudar. Después de fusionar el PR raíz de Fase 3B, la autoridad pasa
-a la copia trackeada de un `/Users/Shared/Gits/YenHubs` limpio en `main`, y el
-campo «Worktree activo» debe actualizarse antes de continuar.
+usan para reanudar. El worktree `aud078` conserva evidencia local previa al
+traslado, pero tampoco vuelve a usarse para reanudar.
 
 Panel humano obligatorio:
-`/Users/Shared/Gits/YenHubs-aud078-root/docs/estado-sencillo.md`. Debe
+`/Users/Shared/Gits/YenHubs/docs/estado-sencillo.md`. Debe
 actualizarse antes de pasar a una acción distinta, después de cada hito real y
 siempre que cambie la acción actual, manteniendo casillas y lenguaje sencillo
 coherentes con este plan técnico. Esta obligación forma parte de la meta porque
@@ -55,17 +109,22 @@ esta meta.
 ## Panel operativo vigente
 
 - Fase activa: **3B, integración raíz final**.
-- Primera acción al reanudar: publicar la corrección portable ya validada de la
-  raíz temporal privada en el PR raíz `#14` y esperar su CI completo. No abrir
-  otra ronda general de dependencias, diseño o auditoría.
+- Primera acción al reanudar: publicar en el PR `#15` el ajuste de 20 ms del
+  WATCH sintético ya validado en `89/89`, `47/47` y `170/170`, y observar un
+  solo gate Linux. No abrir otra ronda general de dependencias, diseño o
+  auditoría.
 - El último full sobre Cloud `master=c540c292` confirmó recovery `861/861`,
   incluido el caso 850, y todos los bloques anteriores; falló únicamente en el
   `mix hex.audit` final por cuatro advisories nuevos de Guardian `2.4.0`.
 - Guardian `2.4.1` ya está validado e integrado mediante los PR `#21`/`#22` en
   Cloud `master=c0a3419b`; el gitlink, los controles proporcionales y la única
-  revisión final están cerrados. El PR raíz `#14` ya existe: AUD-065 y
-  ShellCheck pasan. El gate integral posterior descubrió el defecto portable de
-  `/tmp`; solo se corrige y revalida esa superficie antes del merge.
+  revisión final están cerrados. El PR raíz `#14` está fusionado. El timeout CI
+  ya está resuelto; la primera incompatibilidad `ARG_MAX` también. El segundo
+  gate dejó siete fallos fail-closed. `30763147513` confirmó `857/864` y acotó
+  los siete restantes a dos transiciones de fixture: snapshots privados del
+  verificador live y restauración del perfil de consultas al regresar de
+  restore a checkpoint. Ambas correcciones enfocadas están verdes y son la
+  única superficie abierta antes de Fase 4.
 - Camino crítico posterior: (1) integrar la procedencia de Cloud y su
   consumidor raíz; (2) construir por Actions cuatro imágenes trazables —Hubs,
   Reticulum, parent y runner—; (3) checkpoint 1, rotación y checkpoint 2;
@@ -77,6 +136,30 @@ esta meta.
 - Las prohibiciones fail-closed son guardarraíles, no trabajo adicional. Una
   repetición solo procede si cambian código, workflow, gitlinks, values,
   commits, digests, inventario, DB/storage o el TTL del checkpoint.
+
+## Regla de coste vinculante
+
+- GitHub debe permanecer en **USD 0 facturados**. Los repositorios raíz, Hubs y
+  Cloud son públicos y todos sus workflows actuales usan únicamente runners
+  estándar `ubuntu-latest`/`ubuntu-24.04`; la pantalla de uso del 2 de agosto
+  muestra `Gross USD 4.66`, `Discount USD 4.66` y `Billed USD 0.00`.
+- Queda prohibido activar runners grandes, Codespaces, repositorios privados,
+  almacenamiento/sobrecoste facturable u otro producto GitHub de pago. Si
+  cambia visibilidad, runner, precio o `Billed amount` deja de ser cero, se
+  detiene el trabajo afectado y se avisa al propietario antes de generar coste.
+- El inventario DigitalOcean leído el 2 de agosto contiene un nodo DOKS
+  `s-4vcpu-8gb`, un Load Balancer regional pequeño y dos volúmenes de 10 GiB.
+  Sus precios vigentes suman aproximadamente **USD 65/mes** antes de impuestos
+  o sobreconsumos (`48 + 15 + 1 + 1`), por encima del objetivo comunicado de
+  aproximadamente 40 al mes.
+- No se crea, amplía ni contrata ningún recurso. Cualquier cambio que pueda
+  aumentar el coste mensual se bloquea y se notifica previamente. Reducir la
+  base actual requiere una decisión separada y pruebas de capacidad/rollback;
+  nunca se sacrifica el servicio o sus datos improvisando una reducción.
+- La automatización read-only `vigilar-coste-yenhubs` revisa cada lunes a las
+  09:00 (Europe/Madrid) GitHub, el inventario y preview de DigitalOcean y los
+  precios oficiales. Solo avisará ante una subida o riesgo real de cobro; no
+  tiene autoridad para crear, ampliar, reducir ni apagar recursos.
 
 ## Meta
 
@@ -641,8 +724,12 @@ estar integrado hasta cerrar sus callsites, gates y PR root.
 - [x] Añadir supresiones locales justificadas solo para esos diagnósticos. No
   cambia ninguna instrucción ejecutable; Bash syntax, ShellCheck local sobre el
   fichero completo y diff-check pasan.
-- [ ] Publicar las supresiones en un tercer commit, exigir CI verde y fusionar
-  el PR `#14` en `main`. No crear todavía un checkpoint real.
+- [x] Publicar las supresiones en un tercer commit y fusionar el PR `#14` en
+  `main`. No se creó todavía un checkpoint real. Sus gates largos fueron
+  cancelados por el límite de 75 minutos y el cierre permaneció retenido.
+- [ ] Cerrar el PR `#15`: timeout 360 y deduplicación ya funcionan; corregir la
+  única incompatibilidad Linux demostrada (`jq --argjson` con inventario live
+  de 214.796 bytes), exigir un único gate integral verde y fusionar en `main`.
 
 Resultado: los checkpoints anteriores siguen siendo legibles en su generación,
 pero el rollout durable solo puede avanzar con evidencia restaurable ligada al
