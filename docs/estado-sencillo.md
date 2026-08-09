@@ -77,28 +77,23 @@ limpio desde `origin/main` antes de seleccionar cualquier pieza reutilizable.
 [HECHO] Detectar que el restore actual no admite un cluster/PVC nuevos
 [HECHO] Preservar la rama antigua y partir limpio de main
 [HECHO] Fijar el bundle minimo y el mapa de piezas que se conservan
-[AHORA] Conceder microfono y cerrar una unica prueba de audio
-[SIGUE] Implementar restore sobre identidades nuevas
+[HECHO] Aceptacion real: login, dos usuarios, audio, camara, avatar, Admin y Spoke
+[AHORA] H2: implementar freeze y restore sobre identidades nuevas
 [LUEGO] Ensayarlo sin crear recursos DO nuevos
 [DESPUES] Un full local y un unico GitHub final
 [FINAL] Hibernacion real, reconstruccion, aceptacion y vuelta a features
 ```
 
-Estamos en **H1, el primero de seis hitos**. Toda su parte estatica esta cerrada:
-worktree limpio, contrato `freeze-bundle-v1`, mapa keep/remove y revision
-adversarial GO. Ya se comprobaron el login real, Admin, el proyecto Spoke, la
-sala con dos presencias, el avatar y el cambio primera/tercera persona. No se
+**H1 esta terminado.** Se comprobaron login real, Admin, el proyecto Spoke, la
+sala con dos presencias, el avatar, primera/tercera persona y los dos microfonos.
+Silenciar y reactivar cada cliente se reflejo en el otro en tiempo real. No se
 guardo ni publico contenido y no se toco DigitalOcean.
 
-Solo falta una accion fisica pequena: permitir el microfono en el segundo
-navegador y comprobar mute/unmute y audio en ambos sentidos. H1 sigue abierto
-exclusivamente por esa evidencia; no estamos repitiendo trabajo ni investigando
-otra vez recovery avanzado.
-
-Ese control no implica reprogramar el metaverso ni tocar DigitalOcean. Cuando
-pase, H1 se marca completo y empieza H2. Quedaran entonces cuatro hitos de
-construccion/demostracion y uno de cierre. No se dara otro porcentaje cambiante:
-el avance se comunica como hitos completos y evidencia pendiente concreta.
+La unica fase activa es **H2**: implementar el bundle de hibernacion y permitir
+restaurarlo sobre Namespace/PVC nuevos. Quedan H2-H6; cada hito tiene un cierre
+binario y el trabajo antiguo de recovery permanece congelado. No se dara otro
+porcentaje cambiante: el avance se comunica como hitos completos y evidencia
+pendiente concreta.
 
 El diseno tecnico corto esta en `docs/client-hibernation-design-v1.md`. Define
 nueve artefactos exactos, separa los UID antiguos de los UID nuevos y limita H2

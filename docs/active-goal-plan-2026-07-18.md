@@ -109,14 +109,14 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
   - Confirmado: el restore actual es in-place y `cold-rebind` esta deshabilitado.
   - Resultado: recovery avanzado congelado y este plan sustituye su continuacion.
 
-- [ ] **H1. Congelar un baseline funcional y el contrato minimo.**
+- [x] **H1. Congelar un baseline funcional y el contrato minimo.**
   - [x] Preservar sin fusionar la rama/worktree `codex/recovery-closure` y sus tres
     ficheros tecnicos sin commit. Crear un worktree limpio
     `codex/client-hibernation` desde `origin/main`; no trasladar codigo por
     defecto, solo documentacion y piezas aceptadas por el mapa keep/remove. El
-    worktree activo es `/Users/Shared/Gits/YenHubs-client-hibernation` en
-    `9c1b85be99a797c219022b0dd506b0be5ebd026b`.
-  - [ ] Hacer una aceptacion fria no destructiva del baseline actual: lobby/sala,
+    worktree activo es `/Users/Shared/Gits/YenHubs-client-hibernation`, creado
+    desde `origin/main=9c1b85be99a797c219022b0dd506b0be5ebd026b`.
+  - [x] Hacer una aceptacion fria no destructiva del baseline actual: lobby/sala,
     login, audio, camaras, avatar, Admin, Spoke y bots baseline que formen parte
     de la oferta.
     - [x] Magic link real, sesion `info@virtualmente.com`, Admin y proyecto Spoke
@@ -124,9 +124,10 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     - [x] Sala `VJopCY3` cargada con dos presencias; avatar GLB visible y cambio
       visual primera/tercera persona comprobado. El boton de asiento responde y
       rechaza correctamente cuando no hay un waypoint disponible a menos de 2 m.
-    - [ ] Conceder el permiso fisico de microfono al segundo cliente y demostrar
-      mute/unmute y audio bidireccional. Es la unica evidencia H1 pendiente; bots
-      publicos no forman parte del baseline comercial v1.
+    - [x] Dos clientes enumeraron y activaron sus microfonos. Cada cliente pudo
+      silenciarse y reactivarse, y el otro reflejo ambos cambios en tiempo real;
+      quedaron demostradas las dos direcciones del canal de audio. Bots publicos
+      no forman parte del baseline comercial v1.
   - [x] Definir el contrato minimo `freeze-bundle-v1`: DB, `ret-pvc`, hashes,
     contratos, digests, commits, configuracion externa redactada y receta de
     infraestructura. Contrato en `docs/client-hibernation-design-v1.md`.
@@ -135,8 +136,8 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     funcionales y sus tres ficheros locales quedan congelados.
   - [x] Revisar una sola vez `docs/client-hibernation-design-v1.md`: GO sin
     P0/P1/P2 residual tras corregir hashes, custodia, digests y bootstrap.
-  - [ ] Cierre: lista funcional aceptada, sin produccion mutada. No iniciar H2
-    antes de cerrar la unica comprobacion de audio pendiente.
+  - [x] Cierre: lista funcional aceptada sin mutar produccion, sala, Admin ni
+    Spoke. H2 pasa a ser la unica fase activa.
 
 - [ ] **H2. Implementar freeze y cold-rebind minimos.**
   - Preservar con una prueba enfocada el orden ya correcto de `origin/main`: el

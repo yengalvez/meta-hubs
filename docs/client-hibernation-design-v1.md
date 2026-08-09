@@ -57,10 +57,11 @@ publicar, la sala con dos presencias, el avatar visible y el cambio visual
 primera/tercera persona. El control de asiento respondio de forma segura al no
 encontrar un waypoint cercano.
 
-El permiso fisico de microfono del segundo navegador sigue pendiente. Falta
-demostrar mute/unmute y audio bidireccional; hasta entonces H1 no declara la
-aceptacion funcional completa. No se toco DigitalOcean ni se mutaron datos de
-la sala, Admin o Spoke.
+Ambos navegadores enumeraron y activaron sus microfonos. Cada participante pudo
+silenciar y reactivar su pista, y el otro cliente reflejo los dos cambios en
+tiempo real en ambas direcciones. Con esta evidencia H1 declara completa la
+aceptacion funcional del baseline. No se toco DigitalOcean ni se mutaron datos
+de la sala, Admin o Spoke.
 
 ## 3. Contrato exacto `freeze-bundle-v1`
 
