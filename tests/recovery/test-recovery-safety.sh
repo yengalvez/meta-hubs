@@ -3637,23 +3637,13 @@ if [[ "$joined" == "get pod -n hcce -o json" ||
   exit 0
 fi
 if [[ "$joined" == "get --raw /apis/apps/v1/namespaces/hcce/deployments" ]]; then
-  if [[ "${STUB_CHECKPOINT_WRITER_QUERY:-0}" == 1 ]]; then
-    "$0" --context fixture-context --request-timeout=45s \
-      get deployments -n hcce -o json
-  else
-    "$0" --context fixture-context --request-timeout=45s \
-      get deployment -n hcce -o json
-  fi
+  "$0" --context fixture-context --request-timeout=45s \
+    get deployments -n hcce -o json
   exit $?
 fi
 if [[ "$joined" == "get --raw /apis/apps/v1/namespaces/hcce/replicasets" ]]; then
-  if [[ "${STUB_CHECKPOINT_WRITER_QUERY:-0}" == 1 ]]; then
-    "$0" --context fixture-context --request-timeout=45s \
-      get replicasets -n hcce -o json
-  else
-    "$0" --context fixture-context --request-timeout=45s \
-      get replicaset -n hcce -o json
-  fi
+  "$0" --context fixture-context --request-timeout=45s \
+    get replicasets -n hcce -o json
   exit $?
 fi
 if [[ "$joined" == get\ --raw\ /apis/apps/v1/namespaces/hcce/deployments\?* ||
