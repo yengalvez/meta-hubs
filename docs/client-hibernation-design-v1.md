@@ -51,11 +51,16 @@ El 9 de agosto se refresco sin mutaciones la parte publica de produccion:
 - redireccion de Admin al login;
 - carga del editor Spoke y rechazo correcto del proyecto sin autenticar.
 
-No se concedieron permisos de microfono, no se envio ningun magic link y no se
-guardo ni publico contenido. Queda una unica sesion autorizada para comprobar
-login real, dos presencias con audio, camara, avatar y vistas autenticadas de
-Admin/Spoke. Hasta entonces H1 no puede declarar la aceptacion funcional
-completa.
+La sesion autorizada envio y entrego un magic link real. Quedaron comprobados el
+login de `info@virtualmente.com`, Admin, el proyecto Spoke sin guardar ni
+publicar, la sala con dos presencias, el avatar visible y el cambio visual
+primera/tercera persona. El control de asiento respondio de forma segura al no
+encontrar un waypoint cercano.
+
+El permiso fisico de microfono del segundo navegador sigue pendiente. Falta
+demostrar mute/unmute y audio bidireccional; hasta entonces H1 no declara la
+aceptacion funcional completa. No se toco DigitalOcean ni se mutaron datos de
+la sala, Admin o Spoke.
 
 ## 3. Contrato exacto `freeze-bundle-v1`
 

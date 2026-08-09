@@ -118,8 +118,15 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     `9c1b85be99a797c219022b0dd506b0be5ebd026b`.
   - [ ] Hacer una aceptacion fria no destructiva del baseline actual: lobby/sala,
     login, audio, camaras, avatar, Admin, Spoke y bots baseline que formen parte
-    de la oferta. La superficie publica ya esta refrescada; queda una sola sesion
-    autorizada de login/microfono con dos clientes y las vistas autenticadas.
+    de la oferta.
+    - [x] Magic link real, sesion `info@virtualmente.com`, Admin y proyecto Spoke
+      autenticados, sin guardar ni publicar contenido.
+    - [x] Sala `VJopCY3` cargada con dos presencias; avatar GLB visible y cambio
+      visual primera/tercera persona comprobado. El boton de asiento responde y
+      rechaza correctamente cuando no hay un waypoint disponible a menos de 2 m.
+    - [ ] Conceder el permiso fisico de microfono al segundo cliente y demostrar
+      mute/unmute y audio bidireccional. Es la unica evidencia H1 pendiente; bots
+      publicos no forman parte del baseline comercial v1.
   - [x] Definir el contrato minimo `freeze-bundle-v1`: DB, `ret-pvc`, hashes,
     contratos, digests, commits, configuracion externa redactada y receta de
     infraestructura. Contrato en `docs/client-hibernation-design-v1.md`.
@@ -129,7 +136,7 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
   - [x] Revisar una sola vez `docs/client-hibernation-design-v1.md`: GO sin
     P0/P1/P2 residual tras corregir hashes, custodia, digests y bootstrap.
   - [ ] Cierre: lista funcional aceptada, sin produccion mutada. No iniciar H2
-    antes de cerrar la sesion funcional pendiente.
+    antes de cerrar la unica comprobacion de audio pendiente.
 
 - [ ] **H2. Implementar freeze y cold-rebind minimos.**
   - Preservar con una prueba enfocada el orden ya correcto de `origin/main`: el

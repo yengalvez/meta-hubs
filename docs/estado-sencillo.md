@@ -77,7 +77,7 @@ limpio desde `origin/main` antes de seleccionar cualquier pieza reutilizable.
 [HECHO] Detectar que el restore actual no admite un cluster/PVC nuevos
 [HECHO] Preservar la rama antigua y partir limpio de main
 [HECHO] Fijar el bundle minimo y el mapa de piezas que se conservan
-[AHORA] Terminar una unica aceptacion de login/audio/vistas privadas
+[AHORA] Conceder microfono y cerrar una unica prueba de audio
 [SIGUE] Implementar restore sobre identidades nuevas
 [LUEGO] Ensayarlo sin crear recursos DO nuevos
 [DESPUES] Un full local y un unico GitHub final
@@ -86,9 +86,14 @@ limpio desde `origin/main` antes de seleccionar cualquier pieza reutilizable.
 
 Estamos en **H1, el primero de seis hitos**. Toda su parte estatica esta cerrada:
 worktree limpio, contrato `freeze-bundle-v1`, mapa keep/remove y revision
-adversarial GO. La parte publica del metaverso tambien se ha refrescado. Solo
-falta una sesion controlada que requiere permiso de microfono e inicio de sesion
-para probar de verdad dos usuarios con audio, camara, avatar, Admin y Spoke.
+adversarial GO. Ya se comprobaron el login real, Admin, el proyecto Spoke, la
+sala con dos presencias, el avatar y el cambio primera/tercera persona. No se
+guardo ni publico contenido y no se toco DigitalOcean.
+
+Solo falta una accion fisica pequena: permitir el microfono en el segundo
+navegador y comprobar mute/unmute y audio en ambos sentidos. H1 sigue abierto
+exclusivamente por esa evidencia; no estamos repitiendo trabajo ni investigando
+otra vez recovery avanzado.
 
 Ese control no implica reprogramar el metaverso ni tocar DigitalOcean. Cuando
 pase, H1 se marca completo y empieza H2. Quedaran entonces cuatro hitos de
