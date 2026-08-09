@@ -299,6 +299,20 @@ que borrar el cluster elimina cualquier recurso de la cuenta.
 
 ## Restauracion
 
+### Ensayo local aceptado antes de H4
+
+El 9 de agosto de 2026 se completo el ensayo `20260809-h3d` en Ubuntu 24.04
+ARM64 con K3s `v1.35.5+k3s1`. Origen y destino usaron identidades distintas de
+cluster, Namespace y ambos PVC; DB y medios se restauraron juntos y los cinco
+consumidores terminaron `1/1`, sin lock residual. El harness paso `14/14` y el
+segmento local de reactivacion midio `11 s`.
+
+Esta evidencia demuestra el contrato cold-rebind y no toca DigitalOcean. No
+sustituye el ensayo comercial: no incluye provisionamiento DOKS, DNS,
+certificados, pulls remotos ni aceptacion de navegador. Los recursos y el
+expediente privado del laboratorio se preservan para auditoria; no se reutiliza
+el mismo `RUN_ID` ni se borra evidencia para repetir un verde.
+
 1. Recuperar los tres repos, el bundle, el recibo separado y los values
    privados. Confirmar commits y digests.
 2. Antes de crear infraestructura, ejecutar el gate offline:

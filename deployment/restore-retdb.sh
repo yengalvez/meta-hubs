@@ -252,7 +252,9 @@ SQL_CHECK_PATH=""
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 recovery_require_restore_target_binding
-if ! recovery_require_live_runner_control_plane_matches_checkpoint \
+if [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind ]]; then
+  recovery_require_cold_rebind_target_bootstrap "$VALUES_SOURCE_FILE"
+elif ! recovery_require_live_runner_control_plane_matches_checkpoint \
   "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"; then
   printf 'The live runner control-plane identity does not match the checkpoint inventory.\n' >&2
   exit 1
@@ -304,8 +306,12 @@ if [[ "$PREFLIGHT" == "1" ]]; then
   recovery_require_cluster_identity
   recovery_require_pvc_identity ret-pvc
   recovery_require_restore_target_binding
-  recovery_require_live_runner_control_plane_matches_checkpoint \
-    "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
+  if [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind ]]; then
+    recovery_require_cold_rebind_target_bootstrap "$VALUES_SOURCE_FILE"
+  else
+    recovery_require_live_runner_control_plane_matches_checkpoint \
+      "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
+  fi
   recovery_require_live_images_match_checkpoint \
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
   require_pgsql_source

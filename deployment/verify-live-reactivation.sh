@@ -83,7 +83,8 @@ jq_check() {
 capture_bot_runner_pods() {
   local destination="$1"
   chmod 600 "$destination"
-  recovery_kubectl get pod -n "$RUNNER_NAMESPACE" -o json >"$destination" || return 1
+  recovery_kubectl_get_namespaced_list pods "$RUNNER_NAMESPACE" \
+    >"$destination" || return 1
   jq -e --arg namespace "$RUNNER_NAMESPACE" '
     .apiVersion == "v1" and .kind == "PodList" and
     (.metadata.resourceVersion | type == "string" and length > 0) and
@@ -230,7 +231,9 @@ for host in "${hosts[@]}"; do
 done
 
 printf '\nDeployments y runtime\n'
-if ! deployments_json="$(recovery_kubectl get deployment -n "$NAMESPACE" -o json)" ||
+if ! deployments_json="$(
+     recovery_kubectl_get_namespaced_list deployments "$NAMESPACE"
+   )" ||
    ! printf '%s' "$deployments_json" | jq -e '.items | type == "array"' >/dev/null; then
   fail "kubectl no pudo entregar un inventario JSON valido de Deployments"
   deployments_json='{"items":[]}'

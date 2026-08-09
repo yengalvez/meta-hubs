@@ -1,12 +1,12 @@
 # Diseno minimo de hibernacion de clientes v1
 
-Estado: **H2 IMPLEMENTADO Y VALIDADO LOCALMENTE; H3 PENDIENTE**
+Estado: **H3 DEMOSTRADO EN K3S LOCAL; H4 PENDIENTE**
 Fecha: **9 de agosto de 2026**
 
 Este documento convierte el objetivo comercial en un contrato tecnico finito.
 No sustituye el runbook ejecutable de `deployment/README.md`. H2 implemento el
-contrato local; H3 debe demostrarlo en Namespace/PVC realmente aislados antes
-de cualquier integracion o uso comercial.
+contrato y H3 lo demostro en Namespace/PVC realmente aislados. H4 debe validar
+e integrar el candidato antes de cualquier uso comercial.
 
 ## 1. Problema que resolvemos
 
@@ -284,7 +284,7 @@ docs/estado-sencillo.md
 docs/session-changelog.md
 ```
 
-No se cambian `restore-retdb.sh`, `restore-ret-storage.sh` ni los dos monitores.
+H2 no cambia `restore-retdb.sh`, `restore-ret-storage.sh` ni los dos monitores.
 `capture-instance-state.sh` queda incorporado de forma causal al alcance H2:
 es el productor actual de los inventarios, y su modo `freeze-bundle-v1` debe
 emitir directamente las cuatro proyecciones portables sin crear volcados crudos
@@ -303,3 +303,26 @@ greenfield `4/4`, preflight target `49/49`, creacion `49/49` y cold restore con
 fail-close `49/49`. Tambien pasan Bash syntax, ShellCheck y `51/51` regresiones
 de seguridad. No se ejecuto el full, GitHub, un cluster real ni produccion; esa
 frontera corresponde a H3/H4.
+
+## 9. Evidencia de cierre H3
+
+El ensayo aceptado `20260809-h3d` se ejecuto sobre Ubuntu 24.04 ARM64 con K3s
+`v1.35.5+k3s1`, un unico nodo y API local. La VM no monto el checkout ni el Home
+del host y el harness no llama a DigitalOcean, GitHub ni endpoints publicos.
+
+El origen y el destino tuvieron UID distintos de cluster, Namespace,
+`pgsql-pvc` y `ret-pvc`. El mismo bundle restauro:
+
+- `356` relaciones PostgreSQL, `94` migraciones y `17` hubs;
+- `4` pares de medios: avatar, escena, proyecto Spoke y diferido;
+- los `3` UUID activos y los bytes exactos de DB/storage;
+- los cinco writers a `1/1`, con cero lock residual.
+
+El resultado fue `14/14 PASS` y el segmento local de reactivacion midio `11 s`.
+La medida excluye provisionamiento DOKS, pull de imagenes, DNS, certificados y
+aceptacion funcional de navegador; H5 medira el ciclo comercial completo.
+
+La ejecucion tambien justifico una ampliacion causal del alcance H3: los hijos
+DB/storage y los dos watchers debian distinguir identidad source de target y
+usar endpoints de listas Kubernetes tipados. No se incorporo el recovery
+avanzado congelado ni se anadio servicio, CRD, protocolo o dependencia.

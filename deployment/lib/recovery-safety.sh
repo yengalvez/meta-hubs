@@ -75,6 +75,40 @@ recovery_kubectl() {
   command kubectl --context "$EXPECTED_KUBE_CONTEXT" --request-timeout=45s "$@"
 }
 
+# `kubectl get <resource> -o json` normalizes collection responses into a
+# generic v1/List and can discard the collection resourceVersion. Recovery
+# watches need the API server's typed List and its exact RV, so all guarded
+# namespaced collection reads go through the raw, resource-specific endpoint.
+recovery_namespaced_list_raw_path() {
+  local resource="$1" namespace="$2" prefix=""
+  [[ ${#namespace} -le 63 &&
+     "$namespace" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || return 2
+  case "$resource" in
+    pods | persistentvolumeclaims)
+      prefix="/api/v1"
+      ;;
+    deployments | daemonsets | replicasets | statefulsets)
+      prefix="/apis/apps/v1"
+      ;;
+    cronjobs | jobs)
+      prefix="/apis/batch/v1"
+      ;;
+    horizontalpodautoscalers)
+      prefix="/apis/autoscaling/v2"
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+  printf '%s/namespaces/%s/%s\n' "$prefix" "$namespace" "$resource"
+}
+
+recovery_kubectl_get_namespaced_list() {
+  local resource="$1" namespace="$2" raw_path
+  raw_path="$(recovery_namespaced_list_raw_path "$resource" "$namespace")" || return
+  recovery_kubectl get --raw "$raw_path"
+}
+
 recovery_process_start_identity() {
   local pid="$1" identity
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 2
@@ -3809,10 +3843,22 @@ recovery_require_checkpoint_generation_matches_live() {
 }
 
 recovery_require_live_images_match_checkpoint() {
-  local inventory_path="$1" deployments_json
+  local inventory_path="$1" deployments_json inventory_namespace
+  inventory_namespace="$NAMESPACE"
+  if [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind ]]; then
+    # The frozen inventory is source evidence. Its namespace is already bound
+    # to freeze metadata and checksums; a reconstructed target may use another
+    # namespace name as well as new UIDs. Validate the inventory against its
+    # recorded source name, then compare only its image projection to live.
+    inventory_namespace="$(jq -er \
+      '.namespace | select(type == "string" and length > 0)' \
+      "$inventory_path")" || return 1
+  fi
   recovery_checkpoint_deployment_inventory_is_acceptable \
-    "$inventory_path" "$NAMESPACE" || return 1
-  deployments_json="$(recovery_kubectl get deployment -n "$NAMESPACE" -o json)" || return 1
+    "$inventory_path" "$inventory_namespace" || return 1
+  deployments_json="$(
+    recovery_kubectl_get_namespaced_list deployments "$NAMESPACE"
+  )" || return 1
   jq -e --argjson live "$deployments_json" '
     def projection($items):
       [$items[] | {
@@ -4500,11 +4546,48 @@ recovery_extract_dump_relations() {
 
 recovery_sql_dump_has_complete_marker() {
   awk '
-    BEGIN { marker_count=0; last_nonempty="" }
+    BEGIN {
+      marker_count=0
+      marker_line=0
+      restrict_count=0
+      restrict_line=0
+      restrict_token=""
+      unrestrict_count=0
+      unrestrict_line=0
+      unrestrict_token=""
+      last_nonempty=""
+    }
     NF { last_nonempty=$0 }
-    $0 == "-- PostgreSQL database dump complete" { marker_count++ }
+    $0 == "-- PostgreSQL database dump complete" {
+      marker_count++
+      marker_line=NR
+      next
+    }
+    $1 == "\\restrict" {
+      restrict_count++
+      if (NF != 2 || $2 !~ /^[A-Za-z0-9]+$/ ||
+          length($2) < 32 || length($2) > 128) invalid=1
+      restrict_token=$2
+      restrict_line=NR
+      next
+    }
+    $1 == "\\unrestrict" {
+      unrestrict_count++
+      if (NF != 2 || $2 !~ /^[A-Za-z0-9]+$/ ||
+          length($2) < 32 || length($2) > 128) invalid=1
+      unrestrict_token=$2
+      unrestrict_line=NR
+      next
+    }
     END {
-      if (marker_count != 1 || last_nonempty != "-- PostgreSQL database dump complete") exit 2
+      if (invalid || marker_count != 1) exit 2
+      if (restrict_count == 0 && unrestrict_count == 0 &&
+          last_nonempty == "-- PostgreSQL database dump complete") exit 0
+      if (restrict_count == 1 && unrestrict_count == 1 &&
+          restrict_token == unrestrict_token &&
+          restrict_line < marker_line && marker_line < unrestrict_line &&
+          last_nonempty == "\\unrestrict " unrestrict_token) exit 0
+      exit 2
     }
   ' "$1"
 }
@@ -7080,7 +7163,7 @@ recovery_require_cold_rebind_target_bootstrap() {
   recovery_require_live_images_match_checkpoint \
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" || return 1
   deployments_json="$(
-    recovery_kubectl get deployment -n "$NAMESPACE" -o json
+    recovery_kubectl_get_namespaced_list deployments "$NAMESPACE"
   )" || return 1
   jq -e '
     .apiVersion == "apps/v1" and .kind == "DeploymentList" and
@@ -7115,7 +7198,7 @@ recovery_require_cold_rebind_target_bootstrap() {
     return 1
   }
   pvcs_json="$(
-    recovery_kubectl get persistentvolumeclaim -n "$NAMESPACE" -o json
+    recovery_kubectl_get_namespaced_list persistentvolumeclaims "$NAMESPACE"
   )" || return 1
   jq -e --arg namespace "$NAMESPACE" --arg ret_uid "$RECOVERY_PVC_UID" \
     --arg source_ret_uid "$RECOVERY_CHECKPOINT_PVC_UID" '
@@ -7131,9 +7214,9 @@ recovery_require_cold_rebind_target_bootstrap() {
     printf 'Cold rebind target PVC inventory is not the exact empty target pair.\n' >&2
     return 1
   }
-  for resource in job cronjob daemonset statefulset; do
+  for resource in jobs cronjobs daemonsets statefulsets; do
     workload_json="$(
-      recovery_kubectl get "$resource" -n "$NAMESPACE" -o json
+      recovery_kubectl_get_namespaced_list "$resource" "$NAMESPACE"
     )" || return 1
     jq -e '(.apiVersion | type) == "string" and
       (.kind | type) == "string" and (.kind | endswith("List")) and
@@ -7155,7 +7238,9 @@ recovery_require_cold_rebind_target_bootstrap() {
 recovery_pvc_consumer_names() {
   local claim_name="$1"
   local pods_json
-  if ! pods_json="$(recovery_kubectl get pod -n "$NAMESPACE" -o json)"; then
+  if ! pods_json="$(
+    recovery_kubectl_get_namespaced_list pods "$NAMESPACE"
+  )"; then
     return 1
   fi
   printf '%s' "$pods_json" | jq -r --arg claim "$claim_name" '
@@ -7366,7 +7451,8 @@ recovery_runner_next_action() {
 recovery_capture_runner_namespace_pod_list() {
   local output_path="$1"
   [[ "$output_path" == /* && -f "$output_path" && ! -L "$output_path" ]] || return 2
-  recovery_kubectl get pod -n hcce-bot-runners -o json >"$output_path" || return 1
+  recovery_kubectl_get_namespaced_list pods hcce-bot-runners \
+    >"$output_path" || return 1
   chmod 600 "$output_path"
   recovery_require_regular_direct_file "$output_path"
 }
@@ -7654,7 +7740,9 @@ recovery_require_durable_runner_quiescence_stable() {
 
 recovery_require_no_legacy_parent_runner_pods() {
   local pods_json
-  pods_json="$(recovery_kubectl get pod -n "$NAMESPACE" -o json)" || return 1
+  pods_json="$(
+    recovery_kubectl_get_namespaced_list pods "$NAMESPACE"
+  )" || return 1
   jq -e --arg namespace "$NAMESPACE" '
     .apiVersion == "v1" and .kind == "PodList" and
     (.metadata.resourceVersion | type == "string" and length > 0) and
@@ -7708,7 +7796,9 @@ recovery_managed_bot_runner_pod_identities() {
   fi
   while IFS= read -r runner_namespace; do
     [[ -n "$runner_namespace" ]] || return 1
-    if ! pods_json="$(recovery_kubectl get pod -n "$runner_namespace" -o json)"; then
+    if ! pods_json="$(
+      recovery_kubectl_get_namespaced_list pods "$runner_namespace"
+    )"; then
       return 1
     fi
     printf '%s' "$pods_json" | jq -r --arg namespace "$runner_namespace" \
@@ -7943,7 +8033,9 @@ recovery_runner_watch_boundary_json() {
   runner_namespaces="$(recovery_runner_namespaces)" || return 1
   while IFS= read -r runner_namespace; do
     [[ -n "$runner_namespace" ]] || return 1
-    pods_json="$(recovery_kubectl get pod -n "$runner_namespace" -o json)" || return 1
+    pods_json="$(
+      recovery_kubectl_get_namespaced_list pods "$runner_namespace"
+    )" || return 1
     resource_version="$(printf '%s' "$pods_json" | jq -er \
       --arg namespace "$runner_namespace" --arg parent_namespace "$NAMESPACE" '
       if .apiVersion != "v1" or .kind != "PodList" or

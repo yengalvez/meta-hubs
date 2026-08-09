@@ -213,6 +213,62 @@ make_sql_fixture "$RENAMED_TABLE_SQL_PLAIN" "$RENAMED_TABLE_SQL_GZIP" renamed-ta
 make_sql_fixture "$DIFFERENT_HUB_SQL_PLAIN" "$DIFFERENT_HUB_SQL_GZIP" different-hub
 make_sql_fixture "$DIFFERENT_OWNED_SQL_PLAIN" "$DIFFERENT_OWNED_SQL_GZIP" different-owned
 make_sql_fixture "$EXTRA_DDL_SQL_PLAIN" "$EXTRA_DDL_SQL_GZIP" extra-noncritical-ddl
+HARDENED_DUMP_TOKEN='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+HARDENED_SQL_PLAIN="$TMP_DIR/retdb-hardened.sql"
+HARDENED_MISMATCH_SQL_PLAIN="$TMP_DIR/retdb-hardened-mismatch.sql"
+HARDENED_DANGLING_SQL_PLAIN="$TMP_DIR/retdb-hardened-dangling.sql"
+HARDENED_TRAILING_SQL_PLAIN="$TMP_DIR/retdb-hardened-trailing.sql"
+awk -v token="$HARDENED_DUMP_TOKEN" '
+  NR == 1 { print "\\restrict " token }
+  { print }
+  END { print "\\unrestrict " token }
+' "$SQL_PLAIN" >"$HARDENED_SQL_PLAIN"
+awk -v token="$HARDENED_DUMP_TOKEN" '
+  NR == 1 { print "\\restrict " token }
+  { print }
+  END { print "\\unrestrict " token "Z" }
+' "$SQL_PLAIN" >"$HARDENED_MISMATCH_SQL_PLAIN"
+awk -v token="$HARDENED_DUMP_TOKEN" '
+  NR == 1 { print "\\restrict " token }
+  { print }
+' "$SQL_PLAIN" >"$HARDENED_DANGLING_SQL_PLAIN"
+awk '{ print } END { print "SELECT 1;" }' \
+  "$HARDENED_SQL_PLAIN" >"$HARDENED_TRAILING_SQL_PLAIN"
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == sql-dump-envelope ]]; then
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_success 'legacy pg_dump completion envelope remains accepted' bash -c '
+    source "$1"
+    recovery_sql_dump_has_complete_marker "$2"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$SQL_PLAIN"
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_success 'PostgreSQL hardened restrict/unrestrict envelope is accepted' bash -c '
+    source "$1"
+    recovery_sql_dump_has_complete_marker "$2"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$HARDENED_SQL_PLAIN"
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_failure 'hardened pg_dump rejects mismatched envelope tokens' '' bash -c '
+    source "$1"
+    recovery_sql_dump_has_complete_marker "$2"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$HARDENED_MISMATCH_SQL_PLAIN"
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_failure 'hardened pg_dump rejects a dangling restrict token' '' bash -c '
+    source "$1"
+    recovery_sql_dump_has_complete_marker "$2"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$HARDENED_DANGLING_SQL_PLAIN"
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_failure 'hardened pg_dump rejects SQL after the terminal unrestrict' '' bash -c '
+    source "$1"
+    recovery_sql_dump_has_complete_marker "$2"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$HARDENED_TRAILING_SQL_PLAIN"
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused SQL dump envelope test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused SQL dump envelope tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
 DATABASE_CONTRACT="$TMP_DIR/database-contract.json"
 make_database_contract "$DATABASE_CONTRACT" "$SQL_PLAIN"
 DRIFTED_DATABASE_CONTRACT="$TMP_DIR/database-contract-drifted.json"
@@ -3580,6 +3636,26 @@ if [[ "$joined" == "get pod -n hcce -o json" ||
   printf '%s' "$pods_json"
   exit 0
 fi
+if [[ "$joined" == "get --raw /apis/apps/v1/namespaces/hcce/deployments" ]]; then
+  if [[ "${STUB_CHECKPOINT_WRITER_QUERY:-0}" == 1 ]]; then
+    "$0" --context fixture-context --request-timeout=45s \
+      get deployments -n hcce -o json
+  else
+    "$0" --context fixture-context --request-timeout=45s \
+      get deployment -n hcce -o json
+  fi
+  exit $?
+fi
+if [[ "$joined" == "get --raw /apis/apps/v1/namespaces/hcce/replicasets" ]]; then
+  if [[ "${STUB_CHECKPOINT_WRITER_QUERY:-0}" == 1 ]]; then
+    "$0" --context fixture-context --request-timeout=45s \
+      get replicasets -n hcce -o json
+  else
+    "$0" --context fixture-context --request-timeout=45s \
+      get replicaset -n hcce -o json
+  fi
+  exit $?
+fi
 if [[ "$joined" == get\ --raw\ /apis/apps/v1/namespaces/hcce/deployments\?* ||
       "$joined" == get\ --raw\ /apis/apps/v1/namespaces/hcce/replicasets\?* ]]; then
   raw_path="${3:-}"
@@ -3759,6 +3835,32 @@ if [[ "$joined" == \
       "get --raw /api/v1/namespaces/hcce-bot-runners/pods" ]]; then
   "$0" --context fixture-context --request-timeout=45s \
     get pod -n hcce-bot-runners -o json
+  exit $?
+fi
+if [[ "$joined" == \
+      "get --raw /api/v1/namespaces/hcce/persistentvolumeclaims" ]]; then
+  "$0" --context fixture-context --request-timeout=45s \
+    get persistentvolumeclaim -n hcce -o json
+  exit $?
+fi
+if [[ "$joined" == "get --raw /apis/batch/v1/namespaces/hcce/jobs" ]]; then
+  "$0" --context fixture-context --request-timeout=45s \
+    get job -n hcce -o json
+  exit $?
+fi
+if [[ "$joined" == "get --raw /apis/batch/v1/namespaces/hcce/cronjobs" ]]; then
+  "$0" --context fixture-context --request-timeout=45s \
+    get cronjob -n hcce -o json
+  exit $?
+fi
+if [[ "$joined" == "get --raw /apis/apps/v1/namespaces/hcce/daemonsets" ]]; then
+  "$0" --context fixture-context --request-timeout=45s \
+    get daemonset -n hcce -o json
+  exit $?
+fi
+if [[ "$joined" == "get --raw /apis/apps/v1/namespaces/hcce/statefulsets" ]]; then
+  "$0" --context fixture-context --request-timeout=45s \
+    get statefulset -n hcce -o json
   exit $?
 fi
 if [[ "$joined" == "get --raw /api/v1/namespaces/hcce" ]]; then
@@ -4183,7 +4285,8 @@ if [[ "$joined" == "get service lb -n hcce -o jsonpath={.status.loadBalancer.ing
 fi
 if [[ "$joined" == "get replicaset -n hcce -o json" ]]; then
   jq -c '
-    {apiVersion:"v1",kind:"ReplicaSetList",items:[.items[] |
+    {apiVersion:"apps/v1",kind:"ReplicaSetList",
+     metadata:{resourceVersion:"replicaset-list-rv-1"},items:[.items[] |
       .metadata.name as $name |
       select(["reticulum","pgbouncer","pgbouncer-t","bot-orchestrator","coturn"] |
         index($name)) |
@@ -9526,7 +9629,7 @@ run_checkpoint_writer_monitor_success() {
   local mode="${1:-}" runtime_generation="${2:-durable-v2}"
   local operation_owner="${3:-checkpoint-backup}"
   local ready baseline_sha authority_sha boundary monitor_status=0
-  local first_progress current_progress="" progress_authority _
+  local first_progress current_progress="" progress_authority typed_path _
   prepare_checkpoint_writer_monitor_fixture \
     "$runtime_generation" "$operation_owner" || return 1
   start_checkpoint_writer_test_monitor "$mode"
@@ -9646,7 +9749,13 @@ run_checkpoint_writer_monitor_success() {
   jq -e '.stop == true and
     (.boundaries | keys | sort) == ["deployments","pods","replicasets"] and
     all(.boundaries[]; type == "string" and length > 0)' \
-    >/dev/null <<<"$boundary"
+    >/dev/null <<<"$boundary" || return 1
+  for typed_path in \
+    /apis/apps/v1/namespaces/hcce/deployments \
+    /apis/apps/v1/namespaces/hcce/replicasets \
+    /api/v1/namespaces/hcce/pods; do
+    grep -Fq -- "get --raw $typed_path" "$KUBECTL_LOG" || return 1
+  done
 }
 
 run_checkpoint_writer_terminal_gap_failure() {
@@ -10453,6 +10562,12 @@ run_runner_identity_tests() {
   reset_stub
   expect_success 'managed bot-runner watcher returns an identity and completes ready/stop handshake' \
     run_runner_identity_handshake_test
+  if grep -Fq -- 'get --raw /api/v1/namespaces/hcce/pods' "$KUBECTL_LOG"; then
+    pass 'managed bot-runner watcher starts from the typed PodList endpoint'
+  else
+    fail 'managed bot-runner watcher starts from the typed PodList endpoint' \
+      "$(cat "$KUBECTL_LOG")"
+  fi
   if [[ "$(cat "$STUB_STATE_DIR/runner-watch-count-hcce" 2>/dev/null || :)" -ge 2 ]]; then
     pass 'runner watcher completes a post-ready exact-RV round before honoring stop'
   else
@@ -10902,7 +11017,9 @@ run_legacy_receipt_create_checkpoint_regression_test() {
 
 run_legacy_receipt_shell_tests() {
   run_legacy_receipt_shell_happy_test
-  [[ "${YENHUBS_RECOVERY_TEST_CASE:-}" != shell-happy ]] || return
+  if [[ "${YENHUBS_RECOVERY_TEST_CASE:-}" == shell-happy ]]; then
+    return 0
+  fi
   run_legacy_receipt_shell_failure_tests
   run_legacy_clear_stale_receipt_tests
   expect_success 'malformed receipt envelope matrix executes against exact context' \
@@ -11258,10 +11375,7 @@ run_checkpoint_writer_monitor_tests() {
 run_restore_target_mode_tests() {
   local mode expected expected_status surface input_path test_name case_tmp
   for mode in cold-rebind future-rebind; do
-    if [[ "$mode" == cold-rebind ]]; then
-      expected='RESTORE_TARGET_MODE=cold-rebind is disabled'
-      expected_status=1
-    else
+    if [[ "$mode" != cold-rebind ]]; then
       expected='RESTORE_TARGET_MODE must be exactly in-place'
       expected_status=2
     fi
@@ -11270,7 +11384,20 @@ run_restore_target_mode_tests() {
       case_tmp="$TMP_DIR/restore-target-mode-$mode-$surface-tmp"
       mkdir -p "$case_tmp"
       input_path="$case_tmp/must-not-exist"
-      test_name="$surface rejects RESTORE_TARGET_MODE=$mode before input materialization"
+      if [[ "$mode" == cold-rebind ]]; then
+        expected_status=1
+        case "$surface" in
+          coordinator)
+            expected='Checkpoint directory must be direct and contain no symlink component'
+            ;;
+          db-child | storage-child-clear-stale-helper)
+            expected='Restore artifacts must be regular files, not links'
+            ;;
+        esac
+        test_name="$surface accepts RESTORE_TARGET_MODE=cold-rebind and rejects a missing input before materialization"
+      else
+        test_name="$surface rejects RESTORE_TARGET_MODE=$mode before input materialization"
+      fi
       case "$surface" in
         coordinator)
           expect_failure_status "$test_name" "$expected" "$expected_status" \
@@ -13475,6 +13602,26 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == cold-rebind-preflight ]]; then
     fail 'cold target preflight is strictly read-only' "$(cat "$KUBECTL_LOG")"
   else
     pass 'cold target preflight is strictly read-only'
+  fi
+  typed_list_paths=(
+    /apis/apps/v1/namespaces/hcce/deployments
+    /api/v1/namespaces/hcce/persistentvolumeclaims
+    /apis/batch/v1/namespaces/hcce/jobs
+    /apis/batch/v1/namespaces/hcce/cronjobs
+    /apis/apps/v1/namespaces/hcce/daemonsets
+    /apis/apps/v1/namespaces/hcce/statefulsets
+    /api/v1/namespaces/hcce/pods
+  )
+  typed_list_reads_exact=1
+  for typed_list_path in "${typed_list_paths[@]}"; do
+    grep -Fq -- "get --raw $typed_list_path" "$KUBECTL_LOG" ||
+      typed_list_reads_exact=0
+  done
+  if [[ "$typed_list_reads_exact" == 1 ]]; then
+    pass 'cold target preflight reads every guarded collection from its typed API endpoint'
+  else
+    fail 'cold target preflight missed a guarded typed collection endpoint' \
+      "$(cat "$KUBECTL_LOG")"
   fi
   # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
   expect_failure 'cold rebind rejects reuse of the source PVC UID' \

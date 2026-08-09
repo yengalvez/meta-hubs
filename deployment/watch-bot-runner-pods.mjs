@@ -507,7 +507,7 @@ function listPods(kubectl, context, namespace, parentNamespace) {
     return parsePodList(execFileSync(kubectl, [
       "--context", context,
       "--request-timeout=45s",
-      "get", "pod", "-n", namespace, "-o", "json"
+      "get", "--raw", `/api/v1/namespaces/${encodeURIComponent(namespace)}/pods`
     ], {
       encoding: "utf8",
       maxBuffer: MAX_LIST_BYTES,

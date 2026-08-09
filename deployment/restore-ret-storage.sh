@@ -461,6 +461,7 @@ cleanup_local() {
       if recovery_cleanup_private_directory "$VALIDATION_DIR_PRIVATE_TOKEN" \
           f:archive-paths f:archive-verbose \
           f:blob-uuids f:meta-uuids f:db-active-uuids \
+          f:checkpoint.sql \
           f:quiesced-db-active-uuids \
           f:quiesced-database-contract.json \
           f:restored-blob-uuids f:restored-meta-uuids f:restored-paths \
@@ -630,6 +631,7 @@ ARCHIVE_VERBOSE="$VALIDATION_DIR/archive-verbose"
 ARCHIVE_BLOB_UUIDS="$VALIDATION_DIR/blob-uuids"
 ARCHIVE_META_UUIDS="$VALIDATION_DIR/meta-uuids"
 DB_ACTIVE_UUIDS="$VALIDATION_DIR/db-active-uuids"
+DUMP_SQL_PATH="$VALIDATION_DIR/checkpoint.sql"
 QUIESCED_DB_ACTIVE_UUIDS="$VALIDATION_DIR/quiesced-db-active-uuids"
 QUIESCED_DATABASE_CONTRACT="$VALIDATION_DIR/quiesced-database-contract.json"
 RESTORED_BLOB_UUIDS="$VALIDATION_DIR/restored-blob-uuids"
@@ -692,7 +694,9 @@ fi
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 recovery_require_restore_target_binding
-if ! recovery_require_live_runner_control_plane_matches_checkpoint \
+if [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind ]]; then
+  recovery_require_cold_rebind_target_bootstrap "$VALUES_SOURCE_FILE"
+elif ! recovery_require_live_runner_control_plane_matches_checkpoint \
   "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"; then
   printf 'The live runner control-plane identity does not match the checkpoint inventory.\n' >&2
   exit 1
@@ -739,14 +743,28 @@ require_pgsql_source() {
     recovery_require_pod_deployment_ownership \
       "$current_pod" pgsql "$PGSQL_DEPLOYMENT_UID"
 }
-# Expansion is intentionally deferred to the PostgreSQL container.
-# shellcheck disable=SC2016
-require_pgsql_source
-if ! recovery_kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
-  'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d retdb -Atc "select owned_file_uuid from ret0.owned_files where state = '\''active'\'' order by owned_file_uuid"' \
-  | tr -d '\r' | LC_ALL=C sort >"$DB_ACTIVE_UUIDS"; then
-  printf 'Could not query exact active owned-file UUIDs.\n' >&2
-  exit 1
+# A coordinated cold preflight intentionally runs before the target database
+# is restored. Its authoritative active-file set therefore comes from the
+# already jointly validated private dump, not from the empty target database.
+if [[ "$PREFLIGHT" == 1 && "$COORDINATED" == 1 &&
+      "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind ]]; then
+  gzip -cd "$RECOVERY_DUMP_COPY" >"$DUMP_SQL_PATH"
+  chmod 600 "$DUMP_SQL_PATH"
+  if ! recovery_extract_active_owned_file_uuids "$DUMP_SQL_PATH" |
+       LC_ALL=C sort >"$DB_ACTIVE_UUIDS"; then
+    printf 'Could not derive exact active owned-file UUIDs from the cold-rebind dump.\n' >&2
+    exit 1
+  fi
+else
+  # Expansion is intentionally deferred to the PostgreSQL container.
+  # shellcheck disable=SC2016
+  require_pgsql_source
+  if ! recovery_kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
+    'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d retdb -Atc "select owned_file_uuid from ret0.owned_files where state = '\''active'\'' order by owned_file_uuid"' \
+    | tr -d '\r' | LC_ALL=C sort >"$DB_ACTIVE_UUIDS"; then
+    printf 'Could not query exact active owned-file UUIDs.\n' >&2
+    exit 1
+  fi
 fi
 DB_ACTIVE_COUNT="$(wc -l <"$DB_ACTIVE_UUIDS" | tr -d ' ')"
 DB_ACTIVE_UNIQUE_COUNT="$(LC_ALL=C sort -u "$DB_ACTIVE_UUIDS" | wc -l | tr -d ' ')"
@@ -774,8 +792,12 @@ if [[ "$PREFLIGHT" == "1" ]]; then
   recovery_require_cluster_identity
   recovery_require_pvc_identity ret-pvc
   recovery_require_restore_target_binding
-  recovery_require_live_runner_control_plane_matches_checkpoint \
-    "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
+  if [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind ]]; then
+    recovery_require_cold_rebind_target_bootstrap "$VALUES_SOURCE_FILE"
+  else
+    recovery_require_live_runner_control_plane_matches_checkpoint \
+      "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
+  fi
   recovery_require_live_images_match_checkpoint \
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
   require_pgsql_source

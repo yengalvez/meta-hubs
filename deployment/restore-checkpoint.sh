@@ -2177,14 +2177,22 @@ require_fixed_deployment_zero_failclose() {
 
 require_no_pods_owned_by_fixed_deployment() {
   local deployment="$1" replica_sets_json pods_json
-  replica_sets_json="$(recovery_kubectl get replicaset -n "$NAMESPACE" -o json)" || return 1
-  pods_json="$(recovery_kubectl get pod -n "$NAMESPACE" -o json)" || return 1
+  replica_sets_json="$(
+    recovery_kubectl_get_namespaced_list replicasets "$NAMESPACE"
+  )" || return 1
+  pods_json="$(
+    recovery_kubectl_get_namespaced_list pods "$NAMESPACE"
+  )" || return 1
   jq -e --arg deployment "$deployment" '
     .[0] as $replicasets | .[1] as $pods |
-    if ($replicasets.apiVersion == "v1" and
+    if ($replicasets.apiVersion == "apps/v1" and
         $replicasets.kind == "ReplicaSetList" and
+        ($replicasets.metadata.resourceVersion | type) == "string" and
+        $replicasets.metadata.resourceVersion != "" and
         ($replicasets.items | type) == "array" and
         $pods.apiVersion == "v1" and $pods.kind == "PodList" and
+        ($pods.metadata.resourceVersion | type) == "string" and
+        $pods.metadata.resourceVersion != "" and
         ($pods.items | type) == "array") then
       ([ $replicasets.items[]
          | select(.metadata.uid | type == "string" and length > 0)
@@ -2948,9 +2956,15 @@ if [[ "$PREFLIGHT" == 1 || "$PREPARE_FENCE" == 1 ]]; then
 fi
 
 if [[ "$PREFLIGHT" == "1" ]]; then
-  VALUES_FILE="$VALUES_SOURCE_FILE" RESTORE_PREFLIGHT=1 \
+  CHILD_PREFLIGHT_COORDINATED=0
+  [[ "${RESTORE_TARGET_MODE:-in-place}" != cold-rebind ]] ||
+    CHILD_PREFLIGHT_COORDINATED=1
+  VALUES_FILE="$VALUES_SOURCE_FILE" \
+    RESTORE_COORDINATED="$CHILD_PREFLIGHT_COORDINATED" RESTORE_PREFLIGHT=1 \
     "$SCRIPT_DIR/restore-retdb.sh" "$DUMP_PATH"
-  VALUES_FILE="$VALUES_SOURCE_FILE" RESTORE_STORAGE_PREFLIGHT=1 \
+  VALUES_FILE="$VALUES_SOURCE_FILE" \
+    RESTORE_COORDINATED="$CHILD_PREFLIGHT_COORDINATED" \
+    RESTORE_STORAGE_PREFLIGHT=1 \
     "$SCRIPT_DIR/restore-ret-storage.sh" "$STORAGE_PATH"
   printf 'Coordinated checkpoint preflight passed without mutation: checkpoint=%s\n' "$stamp"
   exit 0

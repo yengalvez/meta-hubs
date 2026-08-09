@@ -1135,8 +1135,15 @@ function validateStorageHelperPod(pod, namespace, options, baseline, allowDeleti
 }
 
 function listResource(kubectl, context, namespace, resource, deadline = null) {
+  const prefixes = {
+    deployments: "/apis/apps/v1",
+    replicasets: "/apis/apps/v1",
+    pods: "/api/v1"
+  };
+  const prefix = prefixes[resource];
+  if (!prefix) fail(`${resource}_list_contract`);
   const value = kubectlJson(kubectl, context, [
-    "get", resource, "-n", namespace, "-o", "json"
+    "get", "--raw", `${prefix}/namespaces/${encodeURIComponent(namespace)}/${resource}`
   ], MAX_LIST_BYTES, deadline);
   const expected = {
     deployments: ["apps/v1", "DeploymentList"],

@@ -24,8 +24,8 @@ sin una reconstruccion artesanal.
 
 Al abrir esta meta, el runbook documentaba `freeze -> borrar DOKS -> recrear`,
 pero el restore de partida rechazaba `cold-rebind` y exigia los UID originales
-del Namespace y del PVC. H2 ya cierra esa brecha localmente; H3 debe demostrarla
-en un target aislado real.
+del Namespace y del PVC. H2 cerro esa brecha en el codigo y H3 la demostro en un
+target Kubernetes aislado real, sin crear recursos DigitalOcean.
 
 ## Resultado buscado
 
@@ -158,14 +158,26 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     `49/49`, creacion `49/49` y cold restore/fail-close `49/49`. No se ejecuto
     full ni GitHub y no se toco produccion, DigitalOcean o secretos.
 
-- [ ] **H3. Ensayar reactivacion sin crear recursos DO nuevos.**
-  - Restaurar el bundle en Namespace/PVC nuevos y aislados sobre la capacidad ya
-    pagada, o en Linux efimero local cuando la semantica sea equivalente.
-  - Probar DB + medios juntos, migraciones, UUID activos, escenas, avatares y el
-    runtime baseline; retirar el entorno de ensayo solo mediante el mecanismo
-    recuperable autorizado por las reglas del proyecto.
-  - Medir tiempo real y registrar el RTO observado; no prometerlo antes.
-  - Cierre: un cold-rebind real verde con UID nuevos y sin mezclar fechas.
+- [x] **H3. Ensayar reactivacion sin crear recursos DO nuevos.**
+  - [x] El ensayo aceptado `20260809-h3d` se ejecuto sobre Ubuntu 24.04 ARM64 y
+    K3s `v1.35.5+k3s1`, en una VM Lima local sin mounts del host, endpoint
+    publico, GitHub, DigitalOcean ni coste externo.
+  - [x] El bundle conjunto restauro una DB con `356` relaciones, `94`
+    migraciones y `17` hubs, mas `4` pares de medios —avatar, escena, proyecto
+    Spoke y diferido—; los tres UUID activos quedaron presentes y byte-exactos.
+  - [x] Origen y destino usaron identidades distintas de cluster, Namespace y
+    ambos PVC. Los cinco writers terminaron `1/1`, sin lock de recovery
+    residual, y pasaron las `14/14` comprobaciones del ensayo.
+  - [x] El segmento local de reactivacion observado tardo `11 s`. Es una medida
+    del laboratorio K3s, no un RTO prometido para recrear DigitalOcean, DNS,
+    imagenes o navegadores.
+  - [x] Los intentos H3a-H3c descubrieron causas distintas y corregibles
+    —envolvente PostgreSQL 14, listas Kubernetes tipadas y preflight coordinado
+    source/target—. H3d fue el unico candidato aceptado; no se repitieron bytes
+    verdes ni se reabrio la matriz de recovery congelada.
+  - Cierre: cold-rebind real local verde con UID nuevos y contenido de una sola
+    fecha. La evidencia privada queda preservada en la VM; no se borra para
+    fingir limpieza.
 
 - [ ] **H4. Validar e integrar una sola vez.**
   - Focos aplicables, ShellCheck/Actionlint/Gitleaks y un unico

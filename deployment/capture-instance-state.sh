@@ -97,7 +97,9 @@ if ! reactivation_image_override_is_exact hubs "$HUBS_IMAGE" ||
   printf 'Deployed core image overrides do not have the exact trusted repositories and digests.\n' >&2
   exit 1
 fi
-deployments_json="$(recovery_kubectl get deployment -n "$NAMESPACE" -o json)"
+deployments_json="$(
+  recovery_kubectl_get_namespaced_list deployments "$NAMESPACE"
+)"
 checkpoint_runner_mode="$(recovery_checkpoint_runner_mode_candidate)" || {
   printf 'Could not classify the live checkpoint runner boundary.\n' >&2
   exit 1
