@@ -7185,6 +7185,7 @@ run_guarded_legacy_restore_child() {
       if env EXPECTED_KUBE_CONTEXT=fixture-context \
         EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
         VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+        KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer" \
         STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
         STUB_RUNNER_NAMESPACE='' STUB_RUNNER_POD_PROFILE='' \
         STUB_MODE="$child_stub_mode" STUB_DB_CONTRACT="$child_db_contract" \
@@ -7202,6 +7203,7 @@ run_guarded_legacy_restore_child() {
       if env EXPECTED_KUBE_CONTEXT=fixture-context \
         EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
         VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+        KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer" \
         STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
         STUB_RUNNER_NAMESPACE='' STUB_RUNNER_POD_PROFILE='' \
         STUB_MODE="$child_stub_mode" STUB_DB_CONTRACT="$child_db_contract" \
