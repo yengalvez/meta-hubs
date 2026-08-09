@@ -646,7 +646,7 @@ runner_pods_verifier_call="$(awk '
 # These dollar-prefixed names are literal callsite contracts under inspection.
 # shellcheck disable=SC2016
 if ! grep -Fq 'RUNNER_NAMESPACE="hcce-bot-runners"' "$live_gate_path" ||
-   [[ "$runner_capture_call" != *'recovery_kubectl get pod -n "$RUNNER_NAMESPACE" -o json'* ]] ||
+   [[ "$runner_capture_call" != *'recovery_kubectl_get_namespaced_list pods "$RUNNER_NAMESPACE"'* ]] ||
    [[ "$runner_capture_call" == *'-l app=bot-runner'* ||
       "$runner_capture_call" == *'-l yenhubs.org/managed-by=bot-orchestrator'* ]] ||
    [[ "$pull_verifier_call" != *'--secret "$bot_pull_secret_file" --namespace "$NAMESPACE"'* ]] ||
