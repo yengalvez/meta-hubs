@@ -1,15 +1,17 @@
 # Documentacion activa de YenHubs
 
-Este directorio contiene solo documentacion vigente. El material sustituido se
-conserva en `OLD/` y nunca debe usarse como entrada operativa.
+Este directorio contiene las fuentes vigentes y cortes historicos marcados. El
+material sustituido se conserva en `OLD/` y nunca debe usarse como entrada
+operativa.
 
 ## Por donde empezar
 
 | Necesidad | Documento |
 | --- | --- |
-| Entender el estado actual | `docs/project-handoff-2026-07.md` |
-| Ver hallazgos, pruebas y riesgos | `docs/audit-2026-07.md` |
-| Comprobar evidencia requisito por requisito | `docs/final-audit-evidence-2026-07.md` |
+| Entender el estado actual en lenguaje sencillo | `docs/estado-sencillo.md` |
+| Continuar la unica meta activa | `docs/active-goal-plan-2026-07-18.md` |
+| Ver auditoria, decision y riesgos vigentes | `docs/audit-general-2026-08-09.md` |
+| Ver el contrato minimo de hibernacion | `docs/client-hibernation-design-v1.md` |
 | Desarrollar o integrar upstream | `docs/development-workflow.md` |
 | Saber que personalizaciones preservar | `docs/customization-inventory.md` |
 | Desplegar y operar | `deployment/README.md` |
@@ -19,6 +21,10 @@ conserva en `OLD/` y nunca debe usarse como entrada operativa.
 | Coste y escalabilidad de bots/Hubs | `docs/bots-cost-capacity-analysis-2026-07.md` |
 | Auditar y modernizar Spoke por fases | `docs/spoke-legacy-audit-2026-07.md` |
 | Historial cronologico | `docs/session-changelog.md` |
+
+El handoff, la auditoria y la matriz de evidencia de julio son cortes
+historicos. Conservan evidencia util, pero no deciden la siguiente accion si
+contradicen el plan activo.
 
 ## Fuentes de verdad
 
@@ -33,11 +39,13 @@ conserva en `OLD/` y nunca debe usarse como entrada operativa.
 
 ```bash
 ./scripts/audit-upstream.sh
-./scripts/verify-project.sh
 ./scripts/verify-project.sh --full
 ./deployment/preflight-reactivation.sh
 ./deployment/create-checkpoint.sh
 ```
+
+`--full` incluye el bloque normal; no ejecutar ambos seguidos sobre los mismos
+bytes. El comando normal se reserva para iteracion intermedia.
 
 Antes del checkpoint, exportar `EXPECTED_KUBE_CONTEXT` y
 `EXPECTED_NAMESPACE_UID` siguiendo `deployment/client-instance-lifecycle.md`.

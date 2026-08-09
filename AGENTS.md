@@ -11,8 +11,13 @@ operating rules only. Session history belongs exclusively in
 - Hubs CE and backend submodule: `hubs-cloud/`, fork `yengalvez/hubs-cloud`,
   base branch `master`.
 - Runtime and recovery source of truth: `deployment/README.md`.
-- Current project handoff: `docs/project-handoff-2026-07.md`.
-- Current audit and residual risks: `docs/audit-2026-07.md`.
+- Sole authority for current order and task state:
+  `docs/active-goal-plan-2026-07-18.md`.
+- Human-readable projection of that plan: `docs/estado-sencillo.md`.
+- Latest frozen audit snapshot and residual risks:
+  `docs/audit-general-2026-08-09.md`.
+- H1 hibernation contract: `docs/client-hibernation-design-v1.md`.
+- July handoff and audit are historical evidence, not resumption points.
 - Upstream update procedure: `docs/development-workflow.md`.
 - Per-client create/freeze/restore lifecycle: `deployment/client-instance-lifecycle.md`.
 - Feature specifications: `features/<feature>/`.
@@ -65,12 +70,16 @@ the disruption to existing clones and references.
 
 ## Required Validation
 
-Run from the root:
+Run from the root. The `--full` path already executes the common/normal block,
+so do not run both commands consecutively on the same bytes:
 
 ```bash
-./scripts/verify-project.sh
 ./scripts/verify-project.sh --full
 ```
+
+Use `./scripts/verify-project.sh` alone only as the faster intermediate gate
+when the full-only components are not yet due. A frozen final candidate must
+pass `--full` once.
 
 The full gate covers Hubs, Admin, Hubs CE generator, bot orchestrator, Dialog,
 Photomnemonic, Coturn, Spoke and Reticulum. Do not use `npm audit fix --force`

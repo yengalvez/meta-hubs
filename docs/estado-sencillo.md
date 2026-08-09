@@ -1,103 +1,142 @@
 # Estado sencillo de YenHubs
 
-Última actualización: 2 de agosto de 2026
+Ultima actualizacion: **9 de agosto de 2026**
 
-Este es el panel humano del proyecto. Aquí debe poder entenderse, sin leer el
-plan técnico, qué está terminado, qué se está haciendo y qué queda. Se
-actualiza cada vez que cambia la tarea activa o se completa un hito.
+## Respuesta corta
 
-## Resumen rápido
+El metaverso no se esta rehaciendo y produccion no ha sido sustituida.
 
-- **El YenHubs que usabas sigue funcionando y no se ha tocado.**
-- **Todavía no estamos desplegando.** Estamos acabando de integrar y probar el
-  código que hará más seguros los bots, los asientos, las copias y la
-  recuperación.
-- **No estamos añadiendo funciones nuevas ni actualizando Hubs entero.**
-- **Faltan cuatro bloques después del actual:** construir las imágenes, hacer
-  copias y rotar credenciales, probar en staging y desplegar/verificar.
+El objetivo correcto es poder **hibernar la instancia de un cliente para dejar
+de pagar DigitalOcean y recuperarla mas adelante sin una reconstruccion
+artesanal**.
 
-## Dónde estamos
+La auditoria ha descubierto que estabamos profundizando en el problema
+equivocado. Se habia construido un coordinador muy complejo para reaccionar a
+fallos ambiguos durante una copia. Sin embargo, el restore que existe sigue
+exigiendo los UID antiguos del Namespace y del volumen, por lo que no puede
+restaurar directamente sobre el cluster nuevo que aparece despues de borrar el
+anterior.
+
+Por eso el trabajo complejo queda congelado y cambiamos a un plan corto.
+
+## Que queremos conseguir
 
 ```text
-[ EN CURSO ] 1. Terminar e integrar el código seguro
-[ PENDIENTE] 2. Construir las cuatro imágenes definitivas
-[ PENDIENTE] 3. Copias de seguridad y cambio de credenciales
-[ PENDIENTE] 4. Ensayo completo en staging
-[ PENDIENTE] 5. Despliegue, comprobación real y cierre
+cliente activo
+  -> guardar DB + escenas/avatares/Spoke/medios
+  -> comprobar la copia y guardarla cifrada fuera de DigitalOcean
+  -> registrar versiones, digests, DNS y dependencias
+  -> borrar los recursos que siguen cobrando
+  -> meses despues crear infraestructura nueva
+  -> restaurar todo sobre Namespace/PVC nuevos
+  -> comprobar el metaverso en un navegador real
+  -> volver a features
 ```
 
-Estamos al final del bloque 1. El PR raíz `#14` está abierto. Sus pruebas
-principales ya pasan; el CI de Linux descubrió después un problema real y
-acotado: usaba `/tmp`, que es compartido, para un fichero que por seguridad
-exige una carpeta privada. La corrección crea una carpeta privada del usuario,
-sin relajar la comprobación ni esconder el error. Las pruebas locales ya pasan
-y la acción actual es publicarla para que CI repita el gate completo.
+Esto es **hibernacion y reactivacion**, no alta disponibilidad. Mientras la
+instancia esta hibernada, el metaverso esta apagado. Mantenerlo online aunque
+falle un servidor seria otro proyecto y otro coste.
 
-## Qué se ha terminado
+## Que estaba haciendo el plan anterior
 
-- [x] Revisar el alcance y quitar trabajos que no hacen falta para cerrar.
-- [x] Conservar la versión estable de Hubs como base actualizable; no se ha
-  incorporado `upstream/master` ni una modernización masiva.
-- [x] Integrar en los forks el endurecimiento de sitting, bots, runners y
-  parada segura.
-- [x] Hacer que las copias y restauraciones traten juntas la base de datos y
-  los ficheros del metaverso.
-- [x] Corregir los avisos de seguridad necesarios de Immutable.js, Cowboy,
-  Cowlib y Guardian sin actualizar dependencias ajenas.
-- [x] Pasar las pruebas locales y de CI de Reticulum en PostgreSQL 12 y 14.
-- [x] Abrir el PR raíz `#14` con el código candidato.
-- [x] Resolver los avisos reales y falsos positivos de ShellCheck que impedían
-  que el CI llegase a la prueba completa.
-- [x] Mantener producción intacta durante todo este trabajo.
+Intentaba resolver automaticamente situaciones como:
 
-## Qué estoy haciendo ahora
+- Kubernetes hizo un cambio pero se perdio la respuesta;
+- murio un monitor justo entre dos cambios;
+- otro proceso encontro un lock a mitad de operacion;
+- no se sabia si habia que reanudar un servicio una o dos veces.
 
-- [x] Validar en macOS con `TMPDIR` ausente, como en el CI Linux, que la carpeta
-  temporal privada funciona y sigue rechazando permisos inseguros o enlaces
-  falsos.
-- [ ] Publicar únicamente esa corrección en el PR `#14`.
-- [ ] Esperar a que el CI complete todas sus pruebas y fusionar el PR si queda
-  completamente verde.
+Esa seguridad puede tener valor en una plataforma grande y multioperador, pero
+no es la pieza que permite borrar DigitalOcean y volver meses despues. Ademas,
+su complejidad habia creado otro riesgo: una copia coherente podia descartarse
+si despues fallaba el reencendido de un servicio.
 
-Este arreglo pertenece al sistema de checkpoint/restore. No modifica la sala,
-la interfaz ni las personalizaciones visibles de Hubs.
+## Que conservamos
 
-## Qué quedará después de fusionar el PR
+- el producto Hubs que ya funcionaba;
+- las features existentes en los forks;
+- la copia conjunta de PostgreSQL y `ret-pvc`;
+- validacion de hashes, salas y pares de medios;
+- commits, versiones e imagenes por digest;
+- inventario de infraestructura y dependencias;
+- publicacion atomica, preflights y verificacion final;
+- una segunda copia cifrada fuera del cluster.
 
-- [ ] Añadir la evidencia que une cada imagen con su código y su digest.
-- [ ] Construir mediante GitHub Actions Hubs, Reticulum, parent de bots y
-  runner de bots. Construir no significa desplegar.
-- [ ] Crear una copia completa previa, rotar las credenciales preventivas y
-  crear la copia posterior.
-- [ ] Probar en staging primero Reticulum y después Hubs, incluida la escena de
-  Spoke, los bots y dos usuarios intentando ocupar el mismo asiento.
-- [ ] Desplegar en producción exactamente los mismos digests aceptados en
-  staging.
-- [ ] Comprobar con navegador frío en ordenador y móvil: acceso y magic link,
-  sala, audio, español, cámaras, avatares, sitting, bots, chat, Admin y Spoke.
-- [ ] Probar backup/rollback, crear la copia final y cerrar la documentación.
+No se borra el trabajo avanzado. Queda preservado en su rama como investigacion,
+pero deja de bloquear el producto.
 
-## Por qué hace falta
+Los tres ficheros tecnicos sin commit del recovery anterior siguen intactos y
+no se consideran parte del nuevo candidato. El siguiente hito crea un worktree
+limpio desde `origin/main` antes de seleccionar cualquier pieza reutilizable.
 
-Antes ya funcionaba para los usuarios. El objetivo no es reparar un metaverso
-roto ni cambiar su aspecto: es poder actualizarlo, recuperarlo y desplegarlo
-sin que un fallo parcial deje datos, bots o permisos en un estado ambiguo. La
-prueba final debe confirmar que, además de ser más seguro por dentro, sigue
-funcionando igual por fuera.
+## Donde estamos
 
-## Lo que no vamos a hacer ahora
+```text
+[HECHO] Producto base y forks preservados
+[HECHO] Auditoria general y objetivo comercial aclarado
+[HECHO] Detectar que el restore actual no admite un cluster/PVC nuevos
+[HECHO] Preservar la rama antigua y partir limpio de main
+[HECHO] Fijar el bundle minimo y el mapa de piezas que se conservan
+[AHORA] Terminar una unica aceptacion de login/audio/vistas privadas
+[SIGUE] Implementar restore sobre identidades nuevas
+[LUEGO] Ensayarlo sin crear recursos DO nuevos
+[DESPUES] Un full local y un unico GitHub final
+[FINAL] Hibernacion real, reconstruccion, aceptacion y vuelta a features
+```
 
-- [x] No certificar 30, 100, 300 o 10.000 usuarios con pruebas de carga.
-- [x] No convertir Reticulum en multirréplica ni añadir alta disponibilidad.
-- [x] No actualizar masivamente Hubs, Spoke o sus dependencias.
-- [x] No incorporar `upstream/master`, VR, otro proveedor de avatares ni
-  funciones nuevas.
-- [x] No repetir pruebas o auditorías verdes si no cambia lo que verifican.
+Estamos en **H1, el primero de seis hitos**. Toda su parte estatica esta cerrada:
+worktree limpio, contrato `freeze-bundle-v1`, mapa keep/remove y revision
+adversarial GO. La parte publica del metaverso tambien se ha refrescado. Solo
+falta una sesion controlada que requiere permiso de microfono e inicio de sesion
+para probar de verdad dos usuarios con audio, camara, avatar, Admin y Spoke.
 
-## Regla para mantener este panel
+Ese control no implica reprogramar el metaverso ni tocar DigitalOcean. Cuando
+pase, H1 se marca completo y empieza H2. Quedaran entonces cuatro hitos de
+construccion/demostracion y uno de cierre. No se dara otro porcentaje cambiante:
+el avance se comunica como hitos completos y evidencia pendiente concreta.
 
-Antes de pasar a una tarea distinta se actualizan «Dónde estamos» y «Qué estoy
-haciendo ahora». Al cerrar un hito se marca su casilla. El detalle técnico y la
-evidencia quedan en `docs/active-goal-plan-2026-07-18.md` y
-`docs/session-changelog.md`; este fichero siempre debe contar el mismo estado
-en lenguaje sencillo.
+El diseno tecnico corto esta en `docs/client-hibernation-design-v1.md`. Define
+nueve artefactos exactos, separa los UID antiguos de los UID nuevos y limita H2
+a una lista pequena de scripts. No importa por defecto ninguno de los cuatro
+commits funcionales del recovery avanzado.
+
+## Comprobacion anti-loop
+
+No se esta repitiendo la matriz antigua:
+
+- no se han ejecutado sus 28 casos pendientes, full ni GitHub;
+- la rama antigua sigue preservada, pero el nuevo candidato parte de `main`;
+- H1 solo ha hecho una comprobacion publica y una revision estatica por tema;
+- cada evidencia queda ligada a una casilla concreta;
+- si el mismo fallo reaparece dos veces sin causa nueva, el plan obliga a parar.
+
+El trabajo anterior no se declara inutil: se conservan sus ideas y evidencia.
+Lo que se evita es terminar o desplegar su coordinador complejo solo por el
+tiempo ya invertido.
+
+## Como sabremos que esta terminado
+
+Recovery queda cerrado cuando una instancia pueda:
+
+1. producir una copia completa y validada en dos ubicaciones;
+2. registrar exactamente que recursos y dependencias necesita;
+3. eliminar los recursos DigitalOcean aprobados y mostrar el coste residual;
+4. recrearse con Namespace y PVC nuevos;
+5. recuperar DB, escenas, avatares, proyectos Spoke y medios;
+6. superar login, sala, audio, camaras, avatar, Admin, Spoke y bots incluidos;
+7. dejar un tiempo real medido y un runbook repetible.
+
+En ese punto no seguiremos perfeccionando recovery por inercia. Se cierra esta
+meta y se elige una sola capacidad nueva del metaverso.
+
+## Seguridad, produccion y coste
+
+- Produccion no se toca durante las fases locales.
+- No se ejecutan las matrices pendientes del recovery congelado.
+- No se fusiona el PR `#15` rojo.
+- No se crea infraestructura DigitalOcean nueva para el ensayo inicial.
+- Antes de borrar o recrear recursos reales se pedira una confirmacion concreta.
+- GitHub se reserva para una confirmacion final sobre un candidato ya verde.
+
+La lista tecnica completa y el prompt de continuacion estan en
+`docs/active-goal-plan-2026-07-18.md`.
