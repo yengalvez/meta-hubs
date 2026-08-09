@@ -32,6 +32,11 @@ RECOVERY_CHECKPOINT_METADATA_SCHEMA=""
 RECOVERY_CHECKPOINT_RUNNER_GENERATION=""
 RECOVERY_RUNNER_RUNTIME_GENERATION=""
 RECOVERY_CHECKPOINT_OPERATION_ID=""
+RECOVERY_FREEZE_ID=""
+RECOVERY_FREEZE_CLIENT_INSTANCE_ID=""
+RECOVERY_FREEZE_SOURCE_CLUSTER_UID=""
+RECOVERY_FREEZE_MANIFEST_SHA256=""
+RECOVERY_TARGET_CLUSTER_UID=""
 RECOVERY_FENCE_PRE_EPOCH="${RECOVERY_FENCE_PRE_EPOCH:-}"
 RECOVERY_FENCE_TARGET_EPOCH="${RECOVERY_FENCE_TARGET_EPOCH:-}"
 RECOVERY_OPERATION_STATE="${RECOVERY_OPERATION_STATE:-}"
@@ -1980,6 +1985,316 @@ recovery_checkpoint_artifacts() {
   printf 'retdb-%s.sql.gz\nret-storage-%s.tar.gz\n' "$stamp" "$stamp"
 }
 
+recovery_freeze_bundle_artifacts() {
+  local stamp="$1"
+  [[ "$stamp" =~ ^[0-9]{8}-[0-9]{6}$ ]] || return 2
+  printf '%s\n' \
+    checkpoint-metadata.json \
+    database-contract.json \
+    deployment-images.json \
+    external-config-redacted.json \
+    git-state.json \
+    infrastructure-recipe.json \
+    "retdb-$stamp.sql.gz" \
+    "ret-storage-$stamp.tar.gz"
+}
+
+recovery_freeze_bundle_metadata_is_acceptable() {
+  local metadata_path="$1" expected_stamp="$2"
+  recovery_require_regular_direct_file "$metadata_path" || return 1
+  jq -e --arg stamp "$expected_stamp" '
+    def utc: type == "string" and
+      test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+    def identity($kind):
+      type == "object" and
+      (keys | sort) == (["name", "uid"] +
+        (if $kind == "cluster" then [] else [] end)) and
+      (.name | type == "string" and length > 0) and
+      (.uid | type == "string" and length > 0);
+    def payload($name):
+      type == "object" and
+      (keys | sort) == ["filename", "sha256", "size_bytes"] and
+      .filename == $name and
+      (.sha256 | type == "string" and test("^[a-f0-9]{64}$")) and
+      (.size_bytes | type == "number" and floor == . and . > 0);
+    type == "object" and
+    (keys | sort) == [
+      "client_instance_id", "created_at_utc", "freeze_id",
+      "minimum_restore_version", "operation", "payloads",
+      "provenance", "publication_state", "runner_mode", "runtime_generation",
+      "schema", "source", "stamp"
+    ] and
+    .schema == "freeze-bundle-v1" and .stamp == $stamp and
+    (.client_instance_id | type == "string" and
+      test("^[a-z0-9][a-z0-9-]{2,62}$")) and
+    (.freeze_id | type == "string" and test("^[a-f0-9]{32}$")) and
+    (.created_at_utc | utc) and
+    .minimum_restore_version == 1 and
+    .publication_state == "complete" and
+    .runtime_generation == "legacy-absent" and .runner_mode == "process-local" and
+    (.source | type == "object" and
+      (keys | sort) == ["cluster", "kube_context", "namespace", "pvc"] and
+      (.kube_context | type == "string" and length > 0) and
+      (.cluster | identity("cluster")) and
+      (.namespace | identity("namespace")) and
+      (.pvc | identity("pvc"))) and
+    (.operation | type == "object" and
+      (keys | sort) == ["id", "quiescence"] and
+      .id == .id and (.id | type == "string" and test("^[a-f0-9]{32}$")) and
+      (.quiescence | type == "object" and
+        (keys | sort) == ["completed_at_utc", "started_at_utc"] and
+        (.started_at_utc | utc) and (.completed_at_utc | utc) and
+        .completed_at_utc >= .started_at_utc)) and
+    .operation.id == .freeze_id and
+    (.payloads | type == "object" and (keys | sort) == ["database", "storage"] and
+      (.database | payload("retdb-" + $stamp + ".sql.gz")) and
+      (.storage | payload("ret-storage-" + $stamp + ".tar.gz"))) and
+    .provenance == {
+      generator:"yenhubs-freeze-bundle-v1",
+      external_import:false
+    }
+  ' "$metadata_path" >/dev/null
+}
+
+recovery_freeze_bundle_git_state_is_acceptable() {
+  local path="$1"
+  recovery_require_regular_direct_file "$path" || return 1
+  jq -e '
+    def commit: type == "string" and test("^[a-f0-9]{40}$");
+    type == "object" and
+    (keys | sort) == ["accepted_releases", "captured_at_utc", "gitlinks",
+      "repositories", "schema"] and
+    .schema == "freeze-git-state-v1" and
+    (.captured_at_utc | type == "string" and
+      test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
+    (.repositories | keys | sort) == ["hubs", "hubs_cloud", "root"] and
+    all(.repositories[]; (keys | sort) == ["commit"] and (.commit | commit)) and
+    (.gitlinks | keys | sort) == ["hubs", "hubs_cloud"] and
+    (.gitlinks.hubs | commit) and (.gitlinks.hubs_cloud | commit) and
+    .gitlinks.hubs == .repositories.hubs.commit and
+    .gitlinks.hubs_cloud == .repositories.hubs_cloud.commit and
+    .accepted_releases == {hubs:"prod-2026-03-11",hubs_ce:"2.1.0"}
+  ' "$path" >/dev/null
+}
+
+recovery_freeze_bundle_external_config_is_acceptable() {
+  local path="$1"
+  recovery_require_regular_direct_file "$path" || return 1
+  jq -e '
+    def text: type == "string" and length > 0;
+    def key_name: type == "string" and test("^[A-Z][A-Z0-9_]+$");
+    type == "object" and
+    (keys | sort) == ["configured_presence", "dns", "functional_ids", "images",
+      "responsibility", "schema", "smtp"] and
+    .schema == "freeze-external-config-v1" and
+    (.dns | type == "object" and (keys | sort) == ["domain", "provider", "records"] and
+      (.domain | text) and (.provider | text) and
+      (.records | type == "array" and length == 4 and
+       ([.[]] | unique | length) == 4 and all(.[]; text))) and
+    (.smtp | type == "object" and
+      (keys | sort) == ["host_configured", "password_configured", "port_configured",
+        "provider", "user_configured"] and
+      (.provider | text) and
+      all(.host_configured, .password_configured, .port_configured,
+        .user_configured; type == "boolean")) and
+    (.functional_ids | type == "object" and
+      (keys | sort) == ["room", "scene", "spoke_project"] and
+      all(.[]; text)) and
+    (.images | type == "object" and (keys | sort) == ["repositories"] and
+      (.repositories | type == "array" and length == 12 and
+       ([.[]] | unique | length) == 12 and all(.[]; text))) and
+    (.configured_presence | type == "object" and length > 0 and
+      all(keys[]; key_name) and all(.[]; type == "boolean")) and
+    (.responsibility | type == "object" and
+      (keys | sort) == ["dns", "operations", "registry", "smtp"] and
+      all(.[]; text))
+  ' "$path" >/dev/null
+}
+
+recovery_freeze_bundle_infrastructure_recipe_is_acceptable() {
+  local path="$1"
+  recovery_require_regular_direct_file "$path" || return 1
+  jq -e '
+    def text: type == "string" and length > 0;
+    def utc: type == "string" and
+      test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+    type == "object" and
+    (keys | sort) == ["apply_order", "cert_manager", "cluster", "cost_gate",
+      "ingress", "load_balancer", "namespace", "provider", "region", "schema",
+      "storage", "topology"] and
+    .schema == "freeze-infrastructure-recipe-v1" and
+    .provider == "digitalocean" and (.region | text) and (.namespace | text) and
+    (.cluster | type == "object" and
+      (keys | sort) == ["ha_control_plane", "name", "node_pools"] and
+      .ha_control_plane == false and (.name | text) and
+      (.node_pools | type == "array" and length > 0 and all(.[];
+        (keys | sort) == ["count", "size"] and (.size | text) and
+        (.count | type == "number" and floor == . and . > 0)))) and
+    (.storage | type == "object" and
+      (keys | sort) == ["class", "persistent_volume_claims"] and
+      (.class | text) and
+      (.persistent_volume_claims | type == "array" and length == 2 and
+       ([.[].name] | sort) == ["pgsql-pvc", "ret-pvc"] and all(.[];
+         (keys | sort) == ["name", "size"] and (.size | text)))) and
+    .load_balancer == {count:1,type:"REGIONAL_NETWORK"} and
+    (.ingress | text) and (.cert_manager | text) and
+    .topology == "single-region-low-cost" and
+    .apply_order == ["infrastructure", "cert-manager", "ingress",
+      "generated-manifest", "restore", "live-verification"] and
+    (.cost_gate | type == "object" and
+      (keys | sort) == ["checked_at_utc", "estimated_monthly_usd",
+        "result"] and (.checked_at_utc | utc) and
+      (.estimated_monthly_usd | type == "number" and . >= 0) and
+      .result == "approval-required-before-create")
+  ' "$path" >/dev/null
+}
+
+recovery_validate_freeze_bundle_layout() {
+  local directory="$1" stamp="$2" actual expected artifact
+  if [[ ! -d "$directory" || -L "$directory" ]] ||
+     recovery_path_has_symlink_component "$directory"; then
+    printf 'Freeze bundle directory is missing, linked or not a directory.\n' >&2
+    return 1
+  fi
+  expected="$({ recovery_freeze_bundle_artifacts "$stamp"; printf 'SHA256SUMS\n'; } |
+    LC_ALL=C sort)" || return 1
+  actual="$(find "$directory" -mindepth 1 -maxdepth 1 -print |
+    while IFS= read -r artifact; do basename "$artifact"; done | LC_ALL=C sort)" || return 1
+  [[ "$actual" == "$expected" ]] || {
+    printf 'Freeze bundle does not contain the exact nine-file artifact set.\n' >&2
+    return 1
+  }
+  while IFS= read -r artifact; do
+    recovery_require_regular_direct_file "$directory/$artifact" || {
+      printf 'Freeze bundle artifact is missing, empty, linked or non-regular: %s.\n' \
+        "$artifact" >&2
+      return 1
+    }
+  done <<<"$expected"
+}
+
+recovery_validate_freeze_bundle_manifest() {
+  local directory="$1" stamp="$2" manifest
+  local expected_names manifest_names line artifact expected_digest actual_digest
+  manifest="$directory/SHA256SUMS"
+  recovery_require_regular_direct_file "$manifest" || return 1
+  expected_names="$(recovery_freeze_bundle_artifacts "$stamp" | LC_ALL=C sort)" || return 1
+  manifest_names="$(awk '
+    BEGIN { failed=0; count=0 }
+    $0 !~ /^[a-f0-9]{64}  [A-Za-z0-9][A-Za-z0-9._-]*$/ { failed=1; next }
+    { name=substr($0,67); if (seen[name]++) failed=1; names[++count]=name }
+    END {
+      if (failed || count != 8) exit 2
+      for (item_index=1; item_index<=count; item_index++) print names[item_index]
+    }
+  ' "$manifest")" || {
+    printf 'Freeze bundle SHA256SUMS is malformed or duplicated.\n' >&2
+    return 1
+  }
+  [[ "$(printf '%s\n' "$manifest_names" | LC_ALL=C sort)" == "$expected_names" ]] || {
+    printf 'Freeze bundle SHA256SUMS does not cover exactly the other eight files.\n' >&2
+    return 1
+  }
+  while IFS= read -r line; do
+    expected_digest="${line:0:64}"
+    artifact="${line:66}"
+    actual_digest="$(recovery_sha256_digest "$directory/$artifact")" || return 1
+    [[ "$actual_digest" == "$expected_digest" ]] || {
+      printf 'Freeze bundle SHA256 verification failed for %s.\n' "$artifact" >&2
+      return 1
+    }
+  done <"$manifest"
+}
+
+recovery_verify_freeze_bundle_contents() {
+  local directory="$1" stamp="$2" metadata
+  local dump_digest storage_digest dump_size storage_size
+  metadata="$directory/checkpoint-metadata.json"
+  recovery_validate_freeze_bundle_manifest "$directory" "$stamp" &&
+    recovery_freeze_bundle_metadata_is_acceptable "$metadata" "$stamp" &&
+    recovery_checkpoint_deployment_inventory_is_acceptable \
+      "$directory/deployment-images.json" "$(jq -er '.source.namespace.name' "$metadata")" &&
+    jq -e --slurpfile metadata "$metadata" '
+      ($metadata | length) == 1 and
+      .namespace == $metadata[0].source.namespace.name and
+      .namespace_uid == $metadata[0].source.namespace.uid
+    ' "$directory/deployment-images.json" >/dev/null &&
+    jq -e '.schema_version == 4 and
+      .bot_runner_runtime == {generation:"legacy-absent",mode:"process-local",
+        image:null,control_plane:{state:"legacy-absent"},
+        recovery_epoch:{state:"legacy-absent"}}' \
+      "$directory/deployment-images.json" >/dev/null &&
+    recovery_freeze_bundle_git_state_is_acceptable "$directory/git-state.json" &&
+    recovery_freeze_bundle_external_config_is_acceptable \
+      "$directory/external-config-redacted.json" &&
+    recovery_freeze_bundle_infrastructure_recipe_is_acceptable \
+      "$directory/infrastructure-recipe.json" || return 1
+  dump_digest="$(recovery_sha256_digest "$directory/retdb-$stamp.sql.gz")" || return 1
+  storage_digest="$(recovery_sha256_digest "$directory/ret-storage-$stamp.tar.gz")" || return 1
+  dump_size="$(recovery_file_size_bytes "$directory/retdb-$stamp.sql.gz")" || return 1
+  storage_size="$(recovery_file_size_bytes "$directory/ret-storage-$stamp.tar.gz")" || return 1
+  jq -e --arg dump_digest "$dump_digest" --arg storage_digest "$storage_digest" \
+    --argjson dump_size "$dump_size" --argjson storage_size "$storage_size" '
+      .payloads.database.sha256 == $dump_digest and
+      .payloads.database.size_bytes == $dump_size and
+      .payloads.storage.sha256 == $storage_digest and
+      .payloads.storage.size_bytes == $storage_size
+    ' "$metadata" >/dev/null
+}
+
+recovery_verify_freeze_bundle_directory() {
+  local directory="$1" stamp="$2"
+  recovery_validate_freeze_bundle_layout "$directory" "$stamp" &&
+    recovery_verify_freeze_bundle_contents "$directory" "$stamp"
+}
+
+recovery_freeze_bundle_receipt_is_acceptable() {
+  local receipt_path="$1" bundle_directory="$2" metadata inventory
+  local manifest_digest
+  recovery_require_regular_direct_file "$receipt_path" || return 1
+  [[ -d "$bundle_directory" && ! -L "$bundle_directory" ]] || return 1
+  metadata="$bundle_directory/checkpoint-metadata.json"
+  inventory="$bundle_directory/deployment-images.json"
+  recovery_require_regular_direct_file "$metadata" &&
+    recovery_require_regular_direct_file "$inventory" || return 1
+  manifest_digest="$(recovery_sha256_digest "$bundle_directory/SHA256SUMS")" || return 1
+  jq -e --arg manifest_digest "$manifest_digest" \
+    --slurpfile metadata "$metadata" --slurpfile inventory "$inventory" '
+    def utc: type == "string" and
+      test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+    def reference: type == "string" and
+      test("^[A-Za-z0-9][A-Za-z0-9._:/-]{2,255}$");
+    ($metadata | length) == 1 and ($inventory | length) == 1 and
+    ($metadata[0]) as $meta | ($inventory[0]) as $images |
+    type == "object" and
+    (keys | sort) == ["client_instance_id", "copies", "credential_set_reference",
+      "freeze_id", "image_custody", "key_escrow_reference", "responsible",
+      "schema", "sha256sums_sha256", "verified_at_utc"] and
+    .schema == "freeze-bundle-receipt-v1" and
+    .client_instance_id == $meta.client_instance_id and .freeze_id == $meta.freeze_id and
+    .sha256sums_sha256 == $manifest_digest and (.verified_at_utc | utc) and
+    (.key_escrow_reference | reference) and
+    (.credential_set_reference | reference) and (.responsible | reference) and
+    (.copies | type == "array" and length == 2 and
+      ([.[].reference] | unique | length) == 2 and all(.[];
+        (keys | sort) == ["decrypt_rehash", "reference", "verified_at_utc"] and
+        (.reference | reference) and .decrypt_rehash == "passed" and
+        (.verified_at_utc | utc))) and
+    ([ $images.deployments[] as $deployment | $deployment.containers[] |
+      {pair:($deployment.name + "/" + .name),image:.image}] | sort_by(.pair)) as $expected |
+    (.image_custody | type == "array" and length == 13 and
+      ([.[].pair] | unique | length) == 13 and
+      ([.[] | {pair,image}] | sort_by(.pair)) == $expected and
+      all(.[];
+        (keys | sort) == ["image", "pair", "reference", "restore_probe",
+          "verified_at_utc"] and
+        (.pair | type == "string" and length > 0) and
+        (.image | type == "string" and test("@sha256:[a-f0-9]{64}$")) and
+        (.reference | reference) and .restore_probe == "passed" and
+        (.verified_at_utc | utc)))
+  ' "$receipt_path" >/dev/null
+}
+
 recovery_checkpoint_stamp_from_artifact() {
   local name
   name="$(basename "$1")"
@@ -3544,10 +3859,17 @@ recovery_set_materialized_checkpoint_cleanup_allowlist() {
     "f:checkpoint/SHA256SUMS"
   )
   [[ "$stamp" =~ ^[0-9]{8}-[0-9]{6}$ &&
-     ( "$metadata_schema" == 2 || "$metadata_schema" == 3 ) ]] || return 2
-  while IFS= read -r artifact; do
-    cleanup_paths+=("f:checkpoint/$artifact")
-  done < <(recovery_checkpoint_artifacts "$stamp" "$metadata_schema")
+     ( "$metadata_schema" == 2 || "$metadata_schema" == 3 ||
+       "$metadata_schema" == freeze-bundle-v1 ) ]] || return 2
+  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+    while IFS= read -r artifact; do
+      cleanup_paths+=("f:checkpoint/$artifact")
+    done < <(recovery_freeze_bundle_artifacts "$stamp")
+  else
+    while IFS= read -r artifact; do
+      cleanup_paths+=("f:checkpoint/$artifact")
+    done < <(recovery_checkpoint_artifacts "$stamp" "$metadata_schema")
+  fi
   RECOVERY_MATERIALIZED_ALLOWED_PATHS=("${cleanup_paths[@]}")
 }
 
@@ -3666,41 +3988,76 @@ recovery_materialize_checkpoint() {
       return 1
     fi
   done
-  metadata_schema="$(recovery_checkpoint_metadata_schema "$checkpoint_copy_dir")" || {
-    recovery_cleanup_materialized_checkpoint || :
-    printf 'Checkpoint metadata schema is missing or unsupported.\n' >&2
-    return 1
-  }
+  if jq -e '.schema == "freeze-bundle-v1"' \
+      "$checkpoint_copy_dir/checkpoint-metadata.json" >/dev/null 2>&1; then
+    metadata_schema=freeze-bundle-v1
+  else
+    metadata_schema="$(recovery_checkpoint_metadata_schema "$checkpoint_copy_dir")" || {
+      recovery_cleanup_materialized_checkpoint || :
+      printf 'Checkpoint metadata schema is missing or unsupported.\n' >&2
+      return 1
+    }
+  fi
   if ! recovery_set_materialized_checkpoint_cleanup_allowlist \
       "$stamp" "$metadata_schema"; then
     recovery_cleanup_materialized_checkpoint || :
     printf 'Could not bind the materialized checkpoint cleanup contract.\n' >&2
     return 1
   fi
-  if ! recovery_validate_checkpoint_layout "$directory" "$stamp" "$metadata_schema"; then
-    recovery_cleanup_materialized_checkpoint || :
-    return 1
-  fi
-  while IFS= read -r artifact; do
-    [[ "$artifact" != checkpoint-metadata.json ]] || continue
-    if ! recovery_require_regular_direct_file "$directory/$artifact" ||
-       ! COPYFILE_DISABLE=1 command cp "$directory/$artifact" \
-         "$checkpoint_copy_dir/$artifact" ||
-       ! chmod 600 "$checkpoint_copy_dir/$artifact"; then
+  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+    recovery_validate_freeze_bundle_layout "$directory" "$stamp" || {
       recovery_cleanup_materialized_checkpoint || :
-      printf 'Could not materialize the checkpoint artifacts.\n' >&2
       return 1
-    fi
-  done < <(recovery_checkpoint_artifacts "$stamp" "$metadata_schema")
+    }
+    while IFS= read -r artifact; do
+      [[ "$artifact" != checkpoint-metadata.json ]] || continue
+      if ! recovery_require_regular_direct_file "$directory/$artifact" ||
+         ! COPYFILE_DISABLE=1 command cp "$directory/$artifact" \
+           "$checkpoint_copy_dir/$artifact" ||
+         ! chmod 600 "$checkpoint_copy_dir/$artifact"; then
+        recovery_cleanup_materialized_checkpoint || :
+        printf 'Could not materialize the freeze bundle artifacts.\n' >&2
+        return 1
+      fi
+    done < <(recovery_freeze_bundle_artifacts "$stamp")
+  else
+    recovery_validate_checkpoint_layout "$directory" "$stamp" "$metadata_schema" || {
+      recovery_cleanup_materialized_checkpoint || :
+      return 1
+    }
+    while IFS= read -r artifact; do
+      [[ "$artifact" != checkpoint-metadata.json ]] || continue
+      if ! recovery_require_regular_direct_file "$directory/$artifact" ||
+         ! COPYFILE_DISABLE=1 command cp "$directory/$artifact" \
+           "$checkpoint_copy_dir/$artifact" ||
+         ! chmod 600 "$checkpoint_copy_dir/$artifact"; then
+        recovery_cleanup_materialized_checkpoint || :
+        printf 'Could not materialize the checkpoint artifacts.\n' >&2
+        return 1
+      fi
+    done < <(recovery_checkpoint_artifacts "$stamp" "$metadata_schema")
+  fi
 
-  if ! recovery_verify_checkpoint_directory "$checkpoint_copy_dir" "$stamp"; then
+  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+    recovery_verify_freeze_bundle_directory "$checkpoint_copy_dir" "$stamp"
+  else
+    recovery_verify_checkpoint_directory "$checkpoint_copy_dir" "$stamp"
+  fi || {
     recovery_cleanup_materialized_checkpoint || :
     printf 'Private checkpoint snapshot failed integrity validation.\n' >&2
     return 1
-  fi
-  if ! dump_digest="$(recovery_checkpoint_digest_for "$checkpoint_copy_dir" "$dump_name")" ||
-     ! storage_digest="$(recovery_checkpoint_digest_for "$checkpoint_copy_dir" "$storage_name")" ||
-     ! inventory_digest="$(recovery_checkpoint_digest_for "$checkpoint_copy_dir" "$inventory_name")"; then
+  }
+  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+    if ! dump_digest="$(recovery_sha256_digest "$checkpoint_copy_dir/$dump_name")" ||
+       ! storage_digest="$(recovery_sha256_digest "$checkpoint_copy_dir/$storage_name")" ||
+       ! inventory_digest="$(recovery_sha256_digest "$checkpoint_copy_dir/$inventory_name")"; then
+      recovery_cleanup_materialized_checkpoint || :
+      printf 'Could not resolve exact freeze bundle artifact digests.\n' >&2
+      return 1
+    fi
+  elif ! dump_digest="$(recovery_checkpoint_digest_for "$checkpoint_copy_dir" "$dump_name")" ||
+       ! storage_digest="$(recovery_checkpoint_digest_for "$checkpoint_copy_dir" "$storage_name")" ||
+       ! inventory_digest="$(recovery_checkpoint_digest_for "$checkpoint_copy_dir" "$inventory_name")"; then
     recovery_cleanup_materialized_checkpoint || :
     printf 'Could not resolve exact checkpoint artifact digests.\n' >&2
     return 1
@@ -3722,9 +4079,17 @@ recovery_materialize_checkpoint() {
   # A concurrent publication or directory replacement must not silently turn
   # the private view into an A/B mixture. Revalidate the source and require its
   # defining metadata and manifest to remain byte-identical to the private view.
-  if ! recovery_validate_checkpoint_layout "$directory" "$stamp" "$metadata_schema" ||
-     ! recovery_validate_sha256_manifest "$directory" "$stamp" "$metadata_schema" ||
-     ! metadata_copy_digest="$(recovery_sha256_digest \
+  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+    recovery_verify_freeze_bundle_directory "$directory" "$stamp"
+  else
+    recovery_validate_checkpoint_layout "$directory" "$stamp" "$metadata_schema" &&
+      recovery_validate_sha256_manifest "$directory" "$stamp" "$metadata_schema"
+  fi || {
+    recovery_cleanup_materialized_checkpoint || :
+    printf 'Checkpoint source changed while it was being materialized.\n' >&2
+    return 1
+  }
+  if ! metadata_copy_digest="$(recovery_sha256_digest \
        "$checkpoint_copy_dir/checkpoint-metadata.json")" ||
      ! manifest_copy_digest="$(recovery_sha256_digest \
        "$checkpoint_copy_dir/SHA256SUMS")" ||
@@ -3748,13 +4113,39 @@ recovery_materialize_checkpoint() {
   RECOVERY_CHECKPOINT_METADATA_COPY="$checkpoint_copy_dir/checkpoint-metadata.json"
   RECOVERY_DEPLOYMENT_INVENTORY_SHA256="$inventory_digest"
   RECOVERY_CHECKPOINT_METADATA_SCHEMA="$metadata_schema"
-  RECOVERY_CHECKPOINT_OPERATION_ID="$(jq -er '
-    .operation_id | select(type == "string" and test("^[a-f0-9]{32}$"))
-  ' "$RECOVERY_CHECKPOINT_METADATA_COPY")" || {
+  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+    RECOVERY_CHECKPOINT_OPERATION_ID="$(jq -er '
+      .operation.id | select(type == "string" and test("^[a-f0-9]{32}$"))
+    ' "$RECOVERY_CHECKPOINT_METADATA_COPY")"
+    RECOVERY_FREEZE_ID="$(jq -er '
+      .freeze_id | select(type == "string" and test("^[a-f0-9]{32}$"))
+    ' "$RECOVERY_CHECKPOINT_METADATA_COPY")"
+    RECOVERY_FREEZE_CLIENT_INSTANCE_ID="$(jq -er '
+      .client_instance_id | select(type == "string" and
+        test("^[a-z0-9][a-z0-9-]{2,62}$"))
+    ' "$RECOVERY_CHECKPOINT_METADATA_COPY")"
+    RECOVERY_FREEZE_SOURCE_CLUSTER_UID="$(jq -er \
+      '.source.cluster.uid | select(type == "string" and length > 0)' \
+      "$RECOVERY_CHECKPOINT_METADATA_COPY")"
+    RECOVERY_FREEZE_MANIFEST_SHA256="$manifest_copy_digest"
+  else
+    RECOVERY_CHECKPOINT_OPERATION_ID="$(jq -er '
+      .operation_id | select(type == "string" and test("^[a-f0-9]{32}$"))
+    ' "$RECOVERY_CHECKPOINT_METADATA_COPY")"
+    RECOVERY_FREEZE_ID=""
+    RECOVERY_FREEZE_CLIENT_INSTANCE_ID=""
+    RECOVERY_FREEZE_SOURCE_CLUSTER_UID=""
+    RECOVERY_FREEZE_MANIFEST_SHA256=""
+  fi || {
     recovery_cleanup_materialized_checkpoint || :
     return 1
   }
-  if [[ "$metadata_schema" == 3 ]]; then
+  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+    RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY=""
+    RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256="$inventory_digest"
+    RECOVERY_CHECKPOINT_RUNNER_GENERATION=legacy-absent
+    RECOVERY_RUNNER_RUNTIME_GENERATION=legacy-absent
+  elif [[ "$metadata_schema" == 3 ]]; then
     runner_generation="$(jq -er '
       .runtime_generation | select(. == "legacy-absent" or . == "durable-v2")
     ' "$RECOVERY_CHECKPOINT_METADATA_COPY")" || {
@@ -3774,15 +4165,21 @@ recovery_materialize_checkpoint() {
     RECOVERY_CHECKPOINT_RUNNER_GENERATION=legacy-absent
     RECOVERY_RUNNER_RUNTIME_GENERATION=legacy-absent
   fi
-  RECOVERY_CHECKPOINT_NAMESPACE_UID="$(jq -er \
-    '.namespace_uid | select(type == "string" and length > 0)' \
-    "$RECOVERY_CHECKPOINT_METADATA_COPY")" || {
-    recovery_cleanup_materialized_checkpoint || :
-    return 1
-  }
-  RECOVERY_CHECKPOINT_PVC_UID="$(jq -er \
-    '.ret_pvc_uid | select(type == "string" and length > 0)' \
-    "$RECOVERY_CHECKPOINT_METADATA_COPY")" || {
+  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+    RECOVERY_CHECKPOINT_NAMESPACE_UID="$(jq -er \
+      '.source.namespace.uid | select(type == "string" and length > 0)' \
+      "$RECOVERY_CHECKPOINT_METADATA_COPY")"
+    RECOVERY_CHECKPOINT_PVC_UID="$(jq -er \
+      '.source.pvc.uid | select(type == "string" and length > 0)' \
+      "$RECOVERY_CHECKPOINT_METADATA_COPY")"
+  else
+    RECOVERY_CHECKPOINT_NAMESPACE_UID="$(jq -er \
+      '.namespace_uid | select(type == "string" and length > 0)' \
+      "$RECOVERY_CHECKPOINT_METADATA_COPY")"
+    RECOVERY_CHECKPOINT_PVC_UID="$(jq -er \
+      '.ret_pvc_uid | select(type == "string" and length > 0)' \
+      "$RECOVERY_CHECKPOINT_METADATA_COPY")"
+  fi || {
     recovery_cleanup_materialized_checkpoint || :
     return 1
   }
@@ -3850,6 +4247,11 @@ recovery_cleanup_materialized_checkpoint() {
   RECOVERY_CHECKPOINT_OPERATION_ID=""
   RECOVERY_CHECKPOINT_NAMESPACE_UID=""
   RECOVERY_CHECKPOINT_PVC_UID=""
+  RECOVERY_FREEZE_ID=""
+  RECOVERY_FREEZE_CLIENT_INSTANCE_ID=""
+  RECOVERY_FREEZE_SOURCE_CLUSTER_UID=""
+  RECOVERY_FREEZE_MANIFEST_SHA256=""
+  RECOVERY_TARGET_CLUSTER_UID=""
   return 0
 }
 
@@ -5458,11 +5860,24 @@ recovery_operation_runner_contract_is_valid() {
           recovery_materialized_schema3_runner_binding_is_valid \
             "$RECOVERY_RUNNER_RUNTIME_GENERATION" || return 1
           ;;
+        freeze-bundle-v1)
+          [[ "${RECOVERY_RUNNER_RUNTIME_GENERATION:-}" == legacy-absent &&
+             -z "${RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY:-}" &&
+             "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" == \
+               "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256" &&
+             "${RECOVERY_FREEZE_ID:-}" =~ ^[a-f0-9]{32}$ &&
+             "${RECOVERY_FREEZE_MANIFEST_SHA256:-}" =~ ^[a-f0-9]{64}$ &&
+             -n "${RECOVERY_CHECKPOINT_METADATA_COPY:-}" ]] || return 1
+          recovery_verify_freeze_bundle_directory \
+            "$(dirname "$RECOVERY_CHECKPOINT_METADATA_COPY")" \
+            "$RECOVERY_CHECKPOINT_STAMP" || return 1
+          ;;
         *) return 1 ;;
       esac
       case "${RECOVERY_RUNNER_RUNTIME_GENERATION:-}" in
         legacy-absent)
-          [[ "${RECOVERY_OPERATION_STATE:-}" == legacy-in-place &&
+          [[ ( "${RECOVERY_OPERATION_STATE:-}" == legacy-in-place ||
+               "${RECOVERY_OPERATION_STATE:-}" == cold-rebind ) &&
              -z "${RECOVERY_FENCE_PRE_EPOCH:-}" &&
              -z "${RECOVERY_FENCE_TARGET_EPOCH:-}" ]]
           ;;
@@ -6037,11 +6452,13 @@ recovery_acquire_operation_lock() {
       "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" \
       "$RECOVERY_RUNNER_RUNTIME_GENERATION")"
   fi
-  if [[ "$owner" == aud065-rotation ]]; then
+  if [[ "$owner" == aud065-rotation ||
+        ( "$owner" == checkpoint-restore &&
+          "${RECOVERY_OPERATION_STATE:-}" == cold-rebind ) ]]; then
     [[ "$RECOVERY_OPERATION_IDENTITY_PREBOUND" == 1 &&
        "${RECOVERY_OPERATION_TOKEN:-}" =~ ^[a-f0-9]{32}$ &&
        "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ ]] || {
-      printf 'AUD-065 identifiers must be durably prebound before lock creation.\n' >&2
+      printf 'This recovery operation requires identifiers to be prebound before lock creation.\n' >&2
       return 2
     }
   else
@@ -6564,34 +6981,58 @@ recovery_require_confirmation() {
 }
 
 recovery_restore_rebind_confirmation_value() {
-  [[ -n "${RECOVERY_NAMESPACE_UID:-}" && -n "${RECOVERY_PVC_UID:-}" &&
+  [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind &&
+     "${RECOVERY_CHECKPOINT_METADATA_SCHEMA:-}" == freeze-bundle-v1 &&
+     "${RECOVERY_FREEZE_ID:-}" =~ ^[a-f0-9]{32}$ &&
+     "${RECOVERY_FREEZE_MANIFEST_SHA256:-}" =~ ^[a-f0-9]{64}$ &&
+     -n "${RECOVERY_FREEZE_SOURCE_CLUSTER_UID:-}" &&
+     -n "${RECOVERY_CHECKPOINT_NAMESPACE_UID:-}" &&
+     -n "${RECOVERY_CHECKPOINT_PVC_UID:-}" &&
+     -n "${RECOVERY_TARGET_CLUSTER_UID:-}" &&
+     -n "${RECOVERY_NAMESPACE_UID:-}" && -n "${RECOVERY_PVC_UID:-}" &&
+     "${RECOVERY_COLD_REBIND_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ &&
      "${RECOVERY_DEPLOYMENT_INVENTORY_SHA256:-}" =~ ^[a-f0-9]{64}$ ]] || return 2
-  printf 'cold-rebind:%s:%s:%s:%s:%s:%s:%s:%s' \
-    "$EXPECTED_KUBE_CONTEXT" "$NAMESPACE" "$RECOVERY_NAMESPACE_UID" \
-    "$RECOVERY_PVC_UID" "$RECOVERY_CHECKPOINT_STAMP" "$RECOVERY_DUMP_SHA256" \
-    "$RECOVERY_STORAGE_SHA256" "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256"
+  printf 'cold-rebind:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s' \
+    "$EXPECTED_KUBE_CONTEXT" "$NAMESPACE" "$RECOVERY_FREEZE_ID" \
+    "$RECOVERY_FREEZE_MANIFEST_SHA256" "$RECOVERY_DUMP_SHA256" \
+    "$RECOVERY_STORAGE_SHA256" "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256" \
+    "$RECOVERY_FREEZE_SOURCE_CLUSTER_UID" \
+    "$RECOVERY_CHECKPOINT_NAMESPACE_UID" "$RECOVERY_CHECKPOINT_PVC_UID" \
+    "$RECOVERY_TARGET_CLUSTER_UID" "$RECOVERY_NAMESPACE_UID" \
+    "$RECOVERY_PVC_UID" "$RECOVERY_COLD_REBIND_OPERATION_ID" \
+    "$RECOVERY_FREEZE_CLIENT_INSTANCE_ID"
 }
 
 recovery_require_in_place_restore_target_mode() {
   local mode="${RESTORE_TARGET_MODE:-in-place}"
   case "$mode" in
-    in-place)
+    in-place | cold-rebind)
       return 0
       ;;
-    cold-rebind)
-      printf 'RESTORE_TARGET_MODE=cold-rebind is disabled: use a separately designed authenticated namespace-epoch campaign.\n' >&2
-      return 1
-      ;;
     *)
-      printf 'RESTORE_TARGET_MODE must be exactly in-place; cold-rebind is disabled.\n' >&2
+      printf 'RESTORE_TARGET_MODE must be exactly in-place or cold-rebind.\n' >&2
       return 2
       ;;
   esac
 }
 
+recovery_current_cluster_anchor_uid() {
+  local cluster_namespace_json
+  cluster_namespace_json="$(
+    recovery_kubectl get namespace kube-system -o json
+  )" || return 1
+  jq -er '
+    select(.apiVersion == "v1" and .kind == "Namespace") |
+    select(.metadata.name == "kube-system" and
+      (.metadata.deletionTimestamp // null) == null) |
+    .metadata.uid | select(type == "string" and length > 0)
+  ' <<<"$cluster_namespace_json"
+}
+
 recovery_require_restore_target_binding() {
-  local inventory_namespace_uid
+  local inventory_namespace_uid mode target_cluster_uid
   recovery_require_in_place_restore_target_mode || return
+  mode="${RESTORE_TARGET_MODE:-in-place}"
   inventory_namespace_uid="$(jq -er \
     '.namespace_uid | select(type == "string" and length > 0)' \
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY")" || return 1
@@ -6599,9 +7040,114 @@ recovery_require_restore_target_binding() {
     printf 'Checkpoint metadata and deployment inventory disagree on the origin namespace UID.\n' >&2
     return 1
   }
-  [[ "$RECOVERY_NAMESPACE_UID" == "$RECOVERY_CHECKPOINT_NAMESPACE_UID" &&
-     "$RECOVERY_PVC_UID" == "$RECOVERY_CHECKPOINT_PVC_UID" ]] || {
-    printf 'In-place restore requires the exact checkpoint namespace and PVC UIDs.\n' >&2
+  case "$mode" in
+    in-place)
+      [[ "$RECOVERY_NAMESPACE_UID" == "$RECOVERY_CHECKPOINT_NAMESPACE_UID" &&
+         "$RECOVERY_PVC_UID" == "$RECOVERY_CHECKPOINT_PVC_UID" ]] || {
+        printf 'In-place restore requires the exact checkpoint namespace and PVC UIDs.\n' >&2
+        return 1
+      }
+      ;;
+    cold-rebind)
+      [[ "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 &&
+         "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == legacy-absent &&
+         "$RECOVERY_NAMESPACE_UID" != "$RECOVERY_CHECKPOINT_NAMESPACE_UID" &&
+         "$RECOVERY_PVC_UID" != "$RECOVERY_CHECKPOINT_PVC_UID" ]] || {
+        printf 'Cold rebind requires a freeze-bundle-v1 and new Namespace/PVC UIDs.\n' >&2
+        return 1
+      }
+      target_cluster_uid="$(recovery_current_cluster_anchor_uid)" || {
+        printf 'Cold rebind could not capture the target cluster identity.\n' >&2
+        return 1
+      }
+      [[ -n "$RECOVERY_FREEZE_SOURCE_CLUSTER_UID" &&
+         "$target_cluster_uid" != "$RECOVERY_FREEZE_SOURCE_CLUSTER_UID" ]] || {
+        printf 'Cold rebind requires a target cluster UID different from the source.\n' >&2
+        return 1
+      }
+      RECOVERY_TARGET_CLUSTER_UID="$target_cluster_uid"
+      ;;
+  esac
+}
+
+recovery_require_cold_rebind_target_bootstrap() {
+  local values_path="$1" deployments_json pvcs_json workload_json
+  local resource
+  [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind ]] || return 2
+  recovery_require_restore_target_binding || return 1
+  recovery_require_checkpoint_generation_matches_live \
+    "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" "$values_path" || return 1
+  recovery_require_live_images_match_checkpoint \
+    "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" || return 1
+  deployments_json="$(
+    recovery_kubectl get deployment -n "$NAMESPACE" -o json
+  )" || return 1
+  jq -e '
+    .apiVersion == "apps/v1" and .kind == "DeploymentList" and
+    (.items | type) == "array" and
+    ([.items[].metadata.name] | sort) == [
+      "bot-orchestrator", "coturn", "dialog", "haproxy", "hubs", "nearspark",
+      "pgbouncer", "pgbouncer-t", "pgsql", "photomnemonic", "reticulum", "spoke"
+    ] and
+    ([.items[] | select(.metadata.name == "reticulum" or
+      .metadata.name == "pgbouncer" or .metadata.name == "pgbouncer-t" or
+      .metadata.name == "bot-orchestrator" or .metadata.name == "coturn") |
+      select(.spec.replicas == 0 and (.status.replicas // 0) == 0 and
+        (.status.readyReplicas // 0) == 0 and
+        (.status.availableReplicas // 0) == 0)] | length) == 5 and
+    ([.items[] | select(.metadata.name == "pgsql" and .spec.replicas == 1)] |
+      length) == 1 and
+    all(.items[];
+      (.metadata.uid | type == "string" and length > 0) and
+      (.metadata.resourceVersion | type == "string" and length > 0) and
+      (.metadata.deletionTimestamp // null) == null)
+  ' >/dev/null <<<"$deployments_json" || {
+    printf 'Cold rebind target Deployments are not the exact bootstrap set.\n' >&2
+    jq -r '
+      "Cold rebind deployment diagnostic: api=" + (.apiVersion // "missing") +
+      " kind=" + (.kind // "missing") +
+      " names=" + ([.items[]?.metadata.name] | sort | join(",")) +
+      " zero=" + ([.items[]? | select((.spec.replicas // -1) == 0)] |
+        length | tostring) +
+      " pgsql=" + ([.items[]? | select(.metadata.name == "pgsql") |
+        (.spec.replicas // -1)] | join(","))
+    ' <<<"$deployments_json" >&2 || :
+    return 1
+  }
+  pvcs_json="$(
+    recovery_kubectl get persistentvolumeclaim -n "$NAMESPACE" -o json
+  )" || return 1
+  jq -e --arg namespace "$NAMESPACE" --arg ret_uid "$RECOVERY_PVC_UID" \
+    --arg source_ret_uid "$RECOVERY_CHECKPOINT_PVC_UID" '
+    .apiVersion == "v1" and .kind == "PersistentVolumeClaimList" and
+    ([.items[].metadata.name] | sort) == ["pgsql-pvc", "ret-pvc"] and
+    ([.items[] | select(.metadata.name == "ret-pvc" and
+      .metadata.namespace == $namespace and .metadata.uid == $ret_uid and
+      .metadata.uid != $source_ret_uid and
+      (.metadata.deletionTimestamp // null) == null)] | length) == 1 and
+    all(.items[]; (.metadata.uid | type == "string" and length > 0) and
+      (.metadata.deletionTimestamp // null) == null)
+  ' >/dev/null <<<"$pvcs_json" || {
+    printf 'Cold rebind target PVC inventory is not the exact empty target pair.\n' >&2
+    return 1
+  }
+  for resource in job cronjob daemonset statefulset; do
+    workload_json="$(
+      recovery_kubectl get "$resource" -n "$NAMESPACE" -o json
+    )" || return 1
+    jq -e '(.apiVersion | type) == "string" and
+      (.kind | type) == "string" and (.kind | endswith("List")) and
+      (.items | type) == "array" and (.items | length) == 0' \
+      >/dev/null <<<"$workload_json" || {
+      printf 'Cold rebind target contains an undeclared workload type: %s.\n' \
+        "$resource" >&2
+      return 1
+    }
+  done
+  recovery_require_exact_pvc_consumers ret-pvc || return 1
+  recovery_require_no_managed_bot_runner_pods || return 1
+  [[ "$(recovery_runner_isolation_residual_state)" == absent ]] || {
+    printf 'Cold rebind target contains runner control-plane residue.\n' >&2
     return 1
   }
 }

@@ -609,6 +609,159 @@ make_checkpoint() {
   refresh_manifest "$directory"
 }
 
+make_freeze_bundle() {
+  local directory="$1" dump_digest storage_digest dump_size storage_size artifact
+  mkdir -p "$directory"
+  cp "$SQL_GZIP" "$directory/retdb-$STAMP.sql.gz"
+  cp "$VALID_STORAGE" "$directory/ret-storage-$STAMP.tar.gz"
+  cp "$DATABASE_CONTRACT" "$directory/database-contract.json"
+  jq --arg namespace hcce --arg uid source-namespace-uid '
+    {schema_version:4,namespace:$namespace,namespace_uid:$uid,
+      bot_runner_runtime:{generation:"legacy-absent",mode:"process-local",image:null,
+        control_plane:{state:"legacy-absent"},recovery_epoch:{state:"legacy-absent"}},
+      deployments:[.items[]|{name:.metadata.name,uid:.metadata.uid,
+        replicas:.spec.replicas,init_containers:[],
+        containers:[.spec.template.spec.containers[]|{name,image}]}]}
+  ' "$LEGACY_DEPLOYMENTS_JSON" >"$directory/deployment-images.json"
+  jq -n '{
+    schema:"freeze-git-state-v1",captured_at_utc:"2026-08-09T12:00:00Z",
+    repositories:{root:{commit:("a"*40)},hubs:{commit:("b"*40)},
+      hubs_cloud:{commit:("c"*40)}},
+    gitlinks:{hubs:("b"*40),hubs_cloud:("c"*40)},
+    accepted_releases:{hubs:"prod-2026-03-11",hubs_ce:"2.1.0"}
+  }' >"$directory/git-state.json"
+  jq -n '{
+    schema:"freeze-external-config-v1",
+    dns:{domain:"hubs.fixture.invalid",provider:"fixture-dns",
+      records:["hubs.fixture.invalid","stream.hubs.fixture.invalid",
+        "assets.hubs.fixture.invalid","cors.hubs.fixture.invalid"]},
+    smtp:{provider:"fixture-smtp",host_configured:true,port_configured:true,
+      user_configured:true,password_configured:true},
+    functional_ids:{room:"VJopCY3",scene:"f6VKtim",spoke_project:"qa3U3Ke"},
+    images:{repositories:["ghcr.io/yengalvez/bot-orchestrator",
+      "ghcr.io/yengalvez/coturn","ghcr.io/yengalvez/dialog",
+      "ghcr.io/yengalvez/haproxy","ghcr.io/yengalvez/hubs",
+      "ghcr.io/yengalvez/nearspark","ghcr.io/yengalvez/pgbouncer",
+      "ghcr.io/yengalvez/photomnemonic","ghcr.io/yengalvez/postgres",
+      "ghcr.io/yengalvez/postgrest","ghcr.io/yengalvez/reticulum",
+      "ghcr.io/yengalvez/spoke"]},
+    configured_presence:{ADM_EMAIL:true,DB_PASS:true,HUB_DOMAIN:true,
+      OPENAI_API_KEY:true,SMTP_PASS:true},
+    responsibility:{dns:"fixture-owner",operations:"fixture-owner",
+      registry:"fixture-owner",smtp:"fixture-owner"}
+  }' >"$directory/external-config-redacted.json"
+  jq -n '{
+    schema:"freeze-infrastructure-recipe-v1",provider:"digitalocean",region:"ams3",
+    cluster:{name:"hubs-ce",ha_control_plane:false,
+      node_pools:[{size:"s-4vcpu-8gb",count:1}]},
+    storage:{class:"do-block-storage",persistent_volume_claims:[
+      {name:"pgsql-pvc",size:"10Gi"},{name:"ret-pvc",size:"10Gi"}]},
+    load_balancer:{count:1,type:"REGIONAL_NETWORK"},namespace:"hcce",
+    ingress:"haproxytech-kubernetes-ingress-3.2",cert_manager:"cert-manager",
+    topology:"single-region-low-cost",
+    apply_order:["infrastructure","cert-manager","ingress",
+      "generated-manifest","restore","live-verification"],
+    cost_gate:{checked_at_utc:"2026-08-09T12:00:00Z",estimated_monthly_usd:65,
+      result:"approval-required-before-create"}
+  }' >"$directory/infrastructure-recipe.json"
+  dump_digest="$(sha256_digest "$directory/retdb-$STAMP.sql.gz")"
+  storage_digest="$(sha256_digest "$directory/ret-storage-$STAMP.tar.gz")"
+  dump_size="$(wc -c <"$directory/retdb-$STAMP.sql.gz" | tr -d '[:space:]')"
+  storage_size="$(wc -c <"$directory/ret-storage-$STAMP.tar.gz" | tr -d '[:space:]')"
+  jq -n --arg stamp "$STAMP" --arg dump_digest "$dump_digest" \
+    --arg storage_digest "$storage_digest" --argjson dump_size "$dump_size" \
+    --argjson storage_size "$storage_size" '{
+      schema:"freeze-bundle-v1",client_instance_id:"fixture-client-001",
+      freeze_id:("9"*32),stamp:$stamp,created_at_utc:"2026-08-09T12:00:00Z",
+      source:{kube_context:"fixture-context",
+        cluster:{name:"hubs-ce",uid:"source-cluster-uid"},
+        namespace:{name:"hcce",uid:"source-namespace-uid"},
+        pvc:{name:"ret-pvc",uid:"source-pvc-uid"}},
+      operation:{id:("9"*32),quiescence:{started_at_utc:"2026-08-09T12:00:00Z",
+        completed_at_utc:"2026-08-09T12:00:01Z"}},
+      payloads:{database:{filename:("retdb-"+$stamp+".sql.gz"),
+        size_bytes:$dump_size,sha256:$dump_digest},
+        storage:{filename:("ret-storage-"+$stamp+".tar.gz"),
+        size_bytes:$storage_size,sha256:$storage_digest}},
+      runtime_generation:"legacy-absent",runner_mode:"process-local",
+      provenance:{generator:"yenhubs-freeze-bundle-v1",external_import:false},
+      minimum_restore_version:1,publication_state:"complete"
+    }' >"$directory/checkpoint-metadata.json"
+  : >"$directory/SHA256SUMS"
+  while IFS= read -r artifact; do
+    printf '%s  %s\n' "$(sha256_digest "$directory/$artifact")" "$artifact" \
+      >>"$directory/SHA256SUMS"
+  done < <(
+    source "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+    recovery_freeze_bundle_artifacts "$STAMP"
+  )
+  chmod 600 "$directory"/*
+}
+
+refresh_freeze_manifest() {
+  local directory="$1" artifact
+  : >"$directory/SHA256SUMS"
+  while IFS= read -r artifact; do
+    printf '%s  %s\n' "$(sha256_digest "$directory/$artifact")" "$artifact" \
+      >>"$directory/SHA256SUMS"
+  done < <(
+    source "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+    recovery_freeze_bundle_artifacts "$STAMP"
+  )
+  chmod 600 "$directory/SHA256SUMS"
+}
+
+make_freeze_receipt() {
+  local bundle="$1" destination="$2" manifest_digest
+  manifest_digest="$(sha256_digest "$bundle/SHA256SUMS")"
+  jq -n --arg manifest_digest "$manifest_digest" \
+    --slurpfile metadata "$bundle/checkpoint-metadata.json" \
+    --slurpfile inventory "$bundle/deployment-images.json" '
+    ($metadata[0]) as $meta | ($inventory[0]) as $images |
+    {
+      schema:"freeze-bundle-receipt-v1",
+      client_instance_id:$meta.client_instance_id,freeze_id:$meta.freeze_id,
+      sha256sums_sha256:$manifest_digest,
+      copies:[
+        {reference:"copy:primary",decrypt_rehash:"passed",
+          verified_at_utc:"2026-08-09T12:05:00Z"},
+        {reference:"copy:secondary",decrypt_rehash:"passed",
+          verified_at_utc:"2026-08-09T12:06:00Z"}],
+      key_escrow_reference:"escrow:key-fixture",
+      credential_set_reference:"escrow:credentials-fixture",
+      image_custody:[$images.deployments[] as $deployment |
+        $deployment.containers[] | {
+          pair:($deployment.name+"/"+.name),image:.image,
+          reference:("custody:"+$deployment.name+"/"+.name),
+          restore_probe:"passed",verified_at_utc:"2026-08-09T12:07:00Z"}]
+        | sort_by(.pair),
+      responsible:"fixture-owner",verified_at_utc:"2026-08-09T12:08:00Z"
+    }
+  ' >"$destination"
+  chmod 600 "$destination"
+}
+
+make_cold_rebind_target_deployments() {
+  local destination="$1"
+  jq -c '
+    .apiVersion = "apps/v1" | .kind = "DeploymentList" |
+    .items |= map(
+      .metadata.namespace = "hcce" |
+      .metadata.resourceVersion = ("target-rv-" + .metadata.name) |
+      .metadata.uid = ("target-uid-" + .metadata.name) |
+      if (.metadata.name == "reticulum" or .metadata.name == "pgbouncer" or
+          .metadata.name == "pgbouncer-t" or
+          .metadata.name == "bot-orchestrator" or .metadata.name == "coturn")
+      then .spec.replicas = 0 |
+        .status = {observedGeneration:.metadata.generation,replicas:0,
+          readyReplicas:0,availableReplicas:0,updatedReplicas:0,
+          unavailableReplicas:0}
+      elif .metadata.name == "pgsql" then .spec.replicas = 1
+      else . end)
+  ' "$LEGACY_DEPLOYMENTS_JSON" >"$destination"
+  chmod 600 "$destination"
+}
+
 refresh_manifest() {
   local directory="$1" artifact digest metadata_schema
   metadata_schema="$(jq -er '.schema_version | select(type == "number")' \
@@ -636,6 +789,139 @@ GOOD_CHECKPOINT_RUNNER_EVIDENCE_SHA="$(
 )"
 CONFIRM_DB="retdb:fixture-context:hcce:fixture-uid:$STAMP:$DUMP_SHA:$STORAGE_SHA:$GOOD_CHECKPOINT_RUNNER_EVIDENCE_SHA:legacy-absent"
 CONFIRM_STORAGE="ret-pvc:fixture-context:hcce:fixture-uid:$STAMP:$DUMP_SHA:$STORAGE_SHA:fixture-pvc-uid:$GOOD_CHECKPOINT_RUNNER_EVIDENCE_SHA:legacy-absent"
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == freeze-bundle ]]; then
+  FREEZE_BUNDLE="$TMP_DIR/freeze-bundle-good"
+  make_freeze_bundle "$FREEZE_BUNDLE"
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_success 'freeze-bundle-v1 accepts exactly nine verified files' bash -c '
+    set -euo pipefail
+    source "$1"
+    recovery_verify_freeze_bundle_directory "$2" "$3"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$FREEZE_BUNDLE" "$STAMP"
+
+  FREEZE_EXTRA="$TMP_DIR/freeze-bundle-extra"
+  cp -R "$FREEZE_BUNDLE" "$FREEZE_EXTRA"
+  printf 'unexpected\n' >"$FREEZE_EXTRA/untracked.txt"
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_failure 'freeze bundle rejects every tenth file' \
+    'exact nine-file artifact set' bash -c '
+      source "$1"
+      recovery_verify_freeze_bundle_directory "$2" "$3"
+    ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$FREEZE_EXTRA" "$STAMP"
+
+  FREEZE_MUTATED="$TMP_DIR/freeze-bundle-mutated"
+  cp -R "$FREEZE_BUNDLE" "$FREEZE_MUTATED"
+  printf 'mutation\n' >>"$FREEZE_MUTATED/ret-storage-$STAMP.tar.gz"
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_failure 'freeze bundle rejects payload mutation' \
+    'SHA256 verification failed' bash -c '
+      source "$1"
+      recovery_verify_freeze_bundle_directory "$2" "$3"
+    ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$FREEZE_MUTATED" "$STAMP"
+
+  FREEZE_WRONG_SOURCE="$TMP_DIR/freeze-bundle-wrong-source"
+  cp -R "$FREEZE_BUNDLE" "$FREEZE_WRONG_SOURCE"
+  jq '.source.namespace.uid = "different-source"' \
+    "$FREEZE_WRONG_SOURCE/checkpoint-metadata.json" >"$FREEZE_WRONG_SOURCE/new"
+  mv "$FREEZE_WRONG_SOURCE/new" "$FREEZE_WRONG_SOURCE/checkpoint-metadata.json"
+  : >"$FREEZE_WRONG_SOURCE/SHA256SUMS"
+  while IFS= read -r artifact; do
+    printf '%s  %s\n' "$(sha256_digest "$FREEZE_WRONG_SOURCE/$artifact")" "$artifact" \
+      >>"$FREEZE_WRONG_SOURCE/SHA256SUMS"
+  done < <(
+    source "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+    recovery_freeze_bundle_artifacts "$STAMP"
+  )
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_failure 'freeze bundle binds inventory to source Namespace identity' '' bash -c '
+    source "$1"
+    recovery_verify_freeze_bundle_directory "$2" "$3"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$FREEZE_WRONG_SOURCE" "$STAMP"
+
+  if grep -R -Fq 'fixture-secret-sentinel' "$FREEZE_BUNDLE"; then
+    fail 'freeze bundle contains no secret-value sentinel' 'sentinel leaked'
+  else
+    pass 'freeze bundle contains no secret-value sentinel'
+  fi
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused freeze-bundle test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused freeze-bundle tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == preflight-greenfield ]]; then
+  GREENFIELD_BUNDLE="$TMP_DIR/greenfield-bundle"
+  GREENFIELD_RECEIPT="$TMP_DIR/greenfield-receipt.json"
+  GREENFIELD_VALUES="$TMP_DIR/greenfield-values.yaml"
+  make_freeze_bundle "$GREENFIELD_BUNDLE"
+  jq --arg root "$(git -C "$ROOT_DIR" rev-parse HEAD)" \
+    --arg hubs "$(git -C "$ROOT_DIR/hubs" rev-parse HEAD)" \
+    --arg cloud "$(git -C "$ROOT_DIR/hubs-cloud" rev-parse HEAD)" '
+    .repositories.root.commit=$root | .repositories.hubs.commit=$hubs |
+    .repositories.hubs_cloud.commit=$cloud | .gitlinks.hubs=$hubs |
+    .gitlinks.hubs_cloud=$cloud
+  ' "$GREENFIELD_BUNDLE/git-state.json" >"$GREENFIELD_BUNDLE/new"
+  mv "$GREENFIELD_BUNDLE/new" "$GREENFIELD_BUNDLE/git-state.json"
+  chmod 600 "$GREENFIELD_BUNDLE/git-state.json"
+  refresh_freeze_manifest "$GREENFIELD_BUNDLE"
+  make_freeze_receipt "$GREENFIELD_BUNDLE" "$GREENFIELD_RECEIPT"
+  cp "$VALUES_PROCESS_LOCAL_FIXTURE" "$GREENFIELD_VALUES"
+  cat >>"$GREENFIELD_VALUES" <<'YAML'
+HUB_DOMAIN: hubs.fixture.invalid
+ADM_EMAIL: fixture@example.invalid
+DB_USER: fixture-db-user
+DB_PASS: fixture-secret-sentinel
+SMTP_SERVER: smtp.fixture.invalid
+SMTP_PORT: 2525
+SMTP_USER: fixture-smtp-user
+SMTP_PASS: fixture-secret-sentinel
+NODE_COOKIE: fixture-secret-sentinel
+GUARDIAN_KEY: fixture-secret-sentinel
+PHX_KEY: fixture-secret-sentinel
+PERMS_KEY: fixture-secret-sentinel
+BOT_ACCESS_KEY: fixture-secret-sentinel
+OPENAI_API_KEY: fixture-secret-sentinel
+YAML
+  chmod 600 "$GREENFIELD_VALUES"
+  expect_success 'greenfield preflight validates bundle and dossier without a cluster' \
+    env VALUES_FILE="$GREENFIELD_VALUES" \
+    "$ROOT_DIR/deployment/preflight-greenfield.sh" \
+    "$GREENFIELD_BUNDLE" "$GREENFIELD_RECEIPT"
+  if [[ "$LAST_OUTPUT" == *'PASS offline'* &&
+        "$LAST_OUTPUT" == *'no autoriza crear recursos'* ]]; then
+    pass 'greenfield preflight remains offline and preserves the cost gate'
+  else
+    fail 'greenfield preflight result is explicit' "$LAST_OUTPUT"
+  fi
+
+  GREENFIELD_BAD_RECEIPT="$TMP_DIR/greenfield-receipt-wrong.json"
+  jq '.copies[1].reference=.copies[0].reference' "$GREENFIELD_RECEIPT" \
+    >"$GREENFIELD_BAD_RECEIPT"
+  chmod 600 "$GREENFIELD_BAD_RECEIPT"
+  expect_failure 'greenfield preflight rejects two references to the same copy' \
+    'recibo externo no liga exactamente' env VALUES_FILE="$GREENFIELD_VALUES" \
+    "$ROOT_DIR/deployment/preflight-greenfield.sh" \
+    "$GREENFIELD_BUNDLE" "$GREENFIELD_BAD_RECEIPT"
+
+  GREENFIELD_MISSING_VALUES="$TMP_DIR/greenfield-values-missing.yaml"
+  sed '/^OPENAI_API_KEY:/d' "$GREENFIELD_VALUES" >"$GREENFIELD_MISSING_VALUES"
+  chmod 600 "$GREENFIELD_MISSING_VALUES"
+  expect_failure 'greenfield preflight rejects a missing declared credential key' \
+    'Faltan claves privadas declaradas' env VALUES_FILE="$GREENFIELD_MISSING_VALUES" \
+    "$ROOT_DIR/deployment/preflight-greenfield.sh" \
+    "$GREENFIELD_BUNDLE" "$GREENFIELD_RECEIPT"
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused greenfield preflight test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused greenfield preflight tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
 
 SIZE_FIXTURE="$TMP_DIR/file-size-fixture"
 printf '1234' >"$SIZE_FIXTURE"
@@ -2056,11 +2342,12 @@ emit_checkpoint_writer_replicasets() {
       metadata:{resourceVersion:$list_rv},
       items:[.items[] |
         .metadata.name as $name |
+        .metadata.uid as $deployment_uid |
         {apiVersion:"apps/v1",kind:"ReplicaSet",metadata:{
         name:($name+"-rs"),namespace:"hcce",uid:($name+"-rs-uid"),
         resourceVersion:("rv-"+$name+"-rs-1"),generation:1,
         labels:{app:$name},ownerReferences:[{apiVersion:"apps/v1",kind:"Deployment",
-          name:$name,uid:("uid-"+$name),controller:true}]},
+          name:$name,uid:$deployment_uid,controller:true}]},
         spec:{replicas:(if ["reticulum","pgbouncer","pgbouncer-t",
           "bot-orchestrator","coturn"] | index($name) then 0 else 1 end),
           selector:{matchLabels:{app:$name}},
@@ -2191,7 +2478,7 @@ emit_stub_deployment_json() {
       .spec.template.metadata.annotations["yenhubs.org/bot-runner-recovery-epoch"] =
         $recovery_epoch
     else . end |
-    .status = {observedGeneration:1,replicas:$replicas,readyReplicas:$replicas,
+    .status = {observedGeneration:$generation,replicas:$replicas,readyReplicas:$replicas,
       availableReplicas:$replicas,updatedReplicas:$replicas,unavailableReplicas:0}
   ' "$STUB_DEPLOYMENTS_JSON")" || return 1
   receipt_file="$STUB_STATE_DIR/checkpoint-resume-receipt-$deployment"
@@ -3860,6 +4147,32 @@ if [[ "$joined" == "get deployment -n hcce -o json" ]]; then
   fi
   exit 0
 fi
+if [[ "$joined" == "get persistentvolumeclaim -n hcce -o json" ]]; then
+  jq -cn --arg ret_uid "${STUB_PVC_UID:-fixture-pvc-uid}" '
+    {apiVersion:"v1",kind:"PersistentVolumeClaimList",items:[
+      {apiVersion:"v1",kind:"PersistentVolumeClaim",metadata:{name:"pgsql-pvc",
+        namespace:"hcce",uid:"target-pgsql-pvc-uid",resourceVersion:"pvc-rv-1"}},
+      {apiVersion:"v1",kind:"PersistentVolumeClaim",metadata:{name:"ret-pvc",
+        namespace:"hcce",uid:$ret_uid,resourceVersion:"pvc-rv-2"}}]}
+  '
+  exit 0
+fi
+if [[ "$joined" == "get job -n hcce -o json" ]]; then
+  printf '%s' '{"apiVersion":"batch/v1","kind":"JobList","items":[]}'
+  exit 0
+fi
+if [[ "$joined" == "get cronjob -n hcce -o json" ]]; then
+  printf '%s' '{"apiVersion":"batch/v1","kind":"CronJobList","items":[]}'
+  exit 0
+fi
+if [[ "$joined" == "get daemonset -n hcce -o json" ]]; then
+  printf '%s' '{"apiVersion":"apps/v1","kind":"DaemonSetList","items":[]}'
+  exit 0
+fi
+if [[ "$joined" == "get statefulset -n hcce -o json" ]]; then
+  printf '%s' '{"apiVersion":"apps/v1","kind":"StatefulSetList","items":[]}'
+  exit 0
+fi
 if [[ "$joined" == "get horizontalpodautoscaler -n hcce -o json" ]]; then
   printf '%s' '{"apiVersion":"autoscaling/v2","kind":"HorizontalPodAutoscalerList","items":[]}'
   exit 0
@@ -3869,20 +4182,29 @@ if [[ "$joined" == "get service lb -n hcce -o jsonpath={.status.loadBalancer.ing
   exit 0
 fi
 if [[ "$joined" == "get replicaset -n hcce -o json" ]]; then
-  jq -cn '
-    {apiVersion:"v1",kind:"ReplicaSetList",items:
-      ["reticulum","pgbouncer","pgbouncer-t","bot-orchestrator","coturn"] |
-      map({apiVersion:"apps/v1",kind:"ReplicaSet",metadata:{name:(.+"-rs"),
-        namespace:"hcce",uid:(.+"-rs-uid"),ownerReferences:[{
-          apiVersion:"apps/v1",kind:"Deployment",name:.,uid:("uid-"+.),controller:true}]}})}
-  '
+  jq -c '
+    {apiVersion:"v1",kind:"ReplicaSetList",items:[.items[] |
+      .metadata.name as $name |
+      select(["reticulum","pgbouncer","pgbouncer-t","bot-orchestrator","coturn"] |
+        index($name)) |
+      .metadata.uid as $deployment_uid |
+      {apiVersion:"apps/v1",kind:"ReplicaSet",metadata:{name:($name+"-rs"),
+        namespace:"hcce",uid:($name+"-rs-uid"),ownerReferences:[{
+          apiVersion:"apps/v1",kind:"Deployment",name:$name,
+          uid:$deployment_uid,controller:true}]}}]}
+  ' "$STUB_DEPLOYMENTS_JSON"
   exit 0
 fi
 if [[ "$joined" == get\ replicaset\ *"-o json" ]]; then
   replica_set="${3:-}"
   deployment="${replica_set%-rs}"
   jq -cn --arg rs "$replica_set" --arg deployment "$deployment" \
-    '{apiVersion:"apps/v1",kind:"ReplicaSet",metadata:{name:$rs,namespace:"hcce",uid:($rs+"-uid"),ownerReferences:[{apiVersion:"apps/v1",kind:"Deployment",name:$deployment,uid:("uid-"+$deployment),controller:true}]}}'
+    --arg deployment_uid "$(jq -er --arg deployment "$deployment" \
+      '.items[] | select(.metadata.name == $deployment) | .metadata.uid' \
+      "$STUB_DEPLOYMENTS_JSON")" \
+    '{apiVersion:"apps/v1",kind:"ReplicaSet",metadata:{name:$rs,namespace:"hcce",
+      uid:($rs+"-uid"),ownerReferences:[{apiVersion:"apps/v1",kind:"Deployment",
+      name:$deployment,uid:$deployment_uid,controller:true}]}}'
   exit 0
 fi
 if [[ "$joined" == get\ deployment\ *"jsonpath={.spec.replicas}"* ]]; then
@@ -3996,7 +4318,9 @@ if [[ "$joined" == patch\ deployment\ * ]]; then
   current=1; [[ ! -f "$replica_file" ]] || current="$(cat "$replica_file")"
   rv_number=1; [[ ! -f "$rv_file" ]] || rv_number="$(cat "$rv_file")"
   [[ "$joined" == *" -n hcce --type=json "* && -n "$patch_json" ]] || exit 1
-  expected_patch_uid="uid-$deployment"
+  expected_patch_uid="$(jq -er --arg deployment "$deployment" \
+    '.items[] | select(.metadata.name == $deployment) | .metadata.uid' \
+    "$STUB_DEPLOYMENTS_JSON")" || exit 1
   if [[ "${STUB_MODE:-}" == finalizer-failclose-drift &&
         -e "$STUB_STATE_DIR/finalizer-failclose-triggered" &&
         "$deployment" == pgbouncer ]]; then
@@ -4058,6 +4382,16 @@ if [[ "$joined" == patch\ deployment\ * ]]; then
   if [[ "${STUB_MODE:-}" == prepare-parent-scale-fail &&
         "$deployment" == bot-orchestrator && "$replicas" == 0 ]]; then
     exit 1
+  fi
+  if [[ "$replicas" == 1 && -n "${STUB_CHECKPOINT_OUTPUT_PATH:-}" ]]; then
+    if [[ -d "$STUB_CHECKPOINT_OUTPUT_PATH" &&
+          ! -e "$STUB_CHECKPOINT_OUTPUT_PATH/.yenhubs-incomplete" &&
+          -s "$STUB_CHECKPOINT_OUTPUT_PATH/SHA256SUMS" &&
+          -s "$STUB_CHECKPOINT_OUTPUT_PATH/checkpoint-metadata.json" ]]; then
+      : >"$STUB_STATE_DIR/checkpoint-publication-before-resume"
+    else
+      : >"$STUB_STATE_DIR/checkpoint-resume-before-publication"
+    fi
   fi
   printf '%s' "$replicas" >"$replica_file"
   printf '%s' "$((rv_number + 1))" >"$rv_file"
@@ -4763,7 +5097,18 @@ chmod 700 "$TMP_DIR/bin/kubectl-checkpoint-writer"
 cat >"$TMP_DIR/bin/doctl" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '[]\n'
+case "$*" in
+  'kubernetes cluster get hubs-ce --context yenhubs --output json')
+    printf '%s\n' '{"id":"fixture-cluster-id","name":"hubs-ce","region":"ams3","ha":false,"node_pools":[{"size":"s-4vcpu-8gb","count":1}]}'
+    ;;
+  'compute load-balancer list --context yenhubs --output json')
+    printf '%s\n' '[{"id":"fixture-lb-id","type":"REGIONAL_NETWORK"}]'
+    ;;
+  'compute volume list --context yenhubs --output json')
+    printf '%s\n' '[{"id":"fixture-pgsql-volume"},{"id":"fixture-ret-volume"}]'
+    ;;
+  *) printf '[]\n' ;;
+esac
 STUB
 chmod 700 "$TMP_DIR/bin/doctl"
 cat >"$TMP_DIR/bin/date" <<STUB
@@ -4899,10 +5244,20 @@ set -euo pipefail
 [[ "${EXPECTED_KUBE_CONTEXT:-}" == fixture-context &&
    "${EXPECTED_NAMESPACE_UID:-}" == fixture-uid &&
    "${EXPECTED_RET_PVC_UID:-}" == fixture-pvc-uid &&
-   "${VALUES_FILE:-}" == "${STUB_LIVE_REACTIVATION_VALUES_FILE:?}" &&
    "${HCCE_MANIFEST_PATH:-}" == "${STUB_LIVE_REACTIVATION_MANIFEST_FILE:?}" &&
    -f "$VALUES_FILE" && ! -L "$VALUES_FILE" &&
    -f "$HCCE_MANIFEST_PATH" && ! -L "$HCCE_MANIFEST_PATH" ]]
+if [[ -n "${STUB_LIVE_REACTIVATION_VALUES_CONTENT_FILE:-}" ]]; then
+  [[ -f "$STUB_LIVE_REACTIVATION_VALUES_CONTENT_FILE" &&
+     ! -L "$STUB_LIVE_REACTIVATION_VALUES_CONTENT_FILE" ]] &&
+    cmp -s "$VALUES_FILE" "$STUB_LIVE_REACTIVATION_VALUES_CONTENT_FILE"
+else
+  [[ "$VALUES_FILE" == "${STUB_LIVE_REACTIVATION_VALUES_FILE:?}" ]]
+fi
+if [[ "${STUB_MODE:-}" == cold-rebind-live-verifier-fail ]]; then
+  printf 'live_reactivation_verifier_failed_fixture\n' >&2
+  exit 1
+fi
 count_path="${STUB_STATE_DIR:?}/live-reactivation-verifier-count"
 count=0
 [[ ! -f "$count_path" ]] || count="$(cat "$count_path")"
@@ -12973,6 +13328,269 @@ run_storage_helper_pod_snapshot_race_test() (
     "$final_list_path" >/dev/null || return 1
   [[ ! -e "$STUB_STATE_DIR/storage-helper-pod-live.json" ]]
 )
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == freeze-bundle-create ]]; then
+  freeze_values="$TMP_DIR/freeze-bundle-values.yaml"
+  freeze_output="$TMP_DIR/freeze-bundle-created"
+  cp "$VALUES_PROCESS_LOCAL_FIXTURE" "$freeze_values"
+  cat >>"$freeze_values" <<'YAML'
+HUB_DOMAIN: hubs.fixture.invalid
+ADM_EMAIL: fixture@example.invalid
+DB_USER: fixture-db-user
+DB_PASS: fixture-secret-sentinel
+SMTP_SERVER: smtp.fixture.invalid
+SMTP_PORT: 2525
+SMTP_USER: fixture-smtp-user
+SMTP_PASS: fixture-secret-sentinel
+NODE_COOKIE: fixture-secret-sentinel
+GUARDIAN_KEY: fixture-secret-sentinel
+PHX_KEY: fixture-secret-sentinel
+PERMS_KEY: fixture-secret-sentinel
+BOT_ACCESS_KEY: fixture-secret-sentinel
+OPENAI_API_KEY: fixture-secret-sentinel
+GENERATE_PERSISTENT_VOLUMES: true
+PERSISTENT_VOLUME_STORAGE_CLASS: do-block-storage
+PERSISTENT_VOLUME_SIZE: 10Gi
+YAML
+  chmod 600 "$freeze_values"
+  reset_stub
+  expect_success 'freeze checkpoint publishes the exact v1 bundle and then resumes writers' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 CHECKPOINT_FORMAT=freeze-bundle-v1 \
+    CLIENT_INSTANCE_ID=fixture-client-001 \
+    FREEZE_DNS_PROVIDER=fixture-dns FREEZE_SMTP_PROVIDER=fixture-smtp \
+    FREEZE_ROOM_ID=VJopCY3 FREEZE_SCENE_ID=f6VKtim \
+    FREEZE_SPOKE_PROJECT_ID=qa3U3Ke FREEZE_RESPONSIBLE_OWNER=fixture-owner \
+    FREEZE_COST_GATE_CHECKED_AT=2026-08-09T12:00:00Z \
+    FREEZE_ESTIMATED_MONTHLY_USD=65 \
+    EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+    EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$freeze_values" \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
+    STUB_CHECKPOINT_OUTPUT_PATH="$freeze_output" \
+    RECOVERY_STREAM_POLL_SECONDS=0.01 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" "$freeze_output"
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_success 'published freeze checkpoint passes the standalone exact validator' bash -c '
+    set -euo pipefail
+    source "$1"
+    recovery_verify_freeze_bundle_directory "$2" "$3"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$freeze_output" "$STAMP"
+  if [[ -e "$STUB_STATE_DIR/checkpoint-publication-before-resume" &&
+        ! -e "$STUB_STATE_DIR/checkpoint-resume-before-publication" ]]; then
+    pass 'freeze publication is complete before the first writer resumes'
+  else
+    fail 'freeze publication precedes writer resume' "$(cat "$KUBECTL_LOG")"
+  fi
+  if [[ "$(find "$freeze_output" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" == 9 ]] &&
+     ! grep -R -Fq 'fixture-secret-sentinel' "$freeze_output"; then
+    pass 'created freeze bundle has nine direct files and no secret sentinel'
+  else
+    fail 'created freeze bundle exact redaction' \
+      "$(find "$freeze_output" -mindepth 1 -maxdepth 1 -print)"
+  fi
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused freeze creation test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused freeze creation tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == freeze-materialize ]]; then
+  FREEZE_BUNDLE="$TMP_DIR/freeze-bundle-materialize"
+  make_freeze_bundle "$FREEZE_BUNDLE"
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_success 'freeze bundle materializes one private byte-invariant restore snapshot' \
+    bash -c '
+      set -euo pipefail
+      source "$1"
+      recovery_materialize_checkpoint "$2/retdb-$3.sql.gz" "$4"
+      [[ "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 &&
+         "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == legacy-absent &&
+         "$RECOVERY_FREEZE_ID" == "99999999999999999999999999999999" &&
+         "$RECOVERY_FREEZE_CLIENT_INSTANCE_ID" == fixture-client-001 &&
+         "$RECOVERY_FREEZE_SOURCE_CLUSTER_UID" == source-cluster-uid &&
+         "$RECOVERY_CHECKPOINT_NAMESPACE_UID" == source-namespace-uid &&
+         "$RECOVERY_CHECKPOINT_PVC_UID" == source-pvc-uid &&
+         "$RECOVERY_FREEZE_MANIFEST_SHA256" =~ ^[a-f0-9]{64}$ ]]
+      [[ "$(find "$(dirname "$RECOVERY_CHECKPOINT_METADATA_COPY")" \
+          -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d "[:space:]")" == 9 ]]
+      recovery_verify_freeze_bundle_directory \
+        "$(dirname "$RECOVERY_CHECKPOINT_METADATA_COPY")" "$3"
+      private_dir="$RECOVERY_MATERIALIZED_DIR"
+      recovery_cleanup_materialized_checkpoint
+      [[ ! -e "$private_dir" && "$RECOVERY_MATERIALIZED_OWNED" == 0 ]]
+    ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$FREEZE_BUNDLE" \
+      "$STAMP" "$ROOT_DIR/deployment/validate-checkpoint.sh"
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused freeze materialization test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused freeze materialization tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == cold-rebind-preflight ]]; then
+  FREEZE_BUNDLE="$TMP_DIR/freeze-bundle-cold-preflight"
+  FREEZE_RECEIPT="$TMP_DIR/freeze-receipt-cold-preflight.json"
+  COLD_DEPLOYMENTS="$TMP_DIR/cold-target-deployments.json"
+  make_freeze_bundle "$FREEZE_BUNDLE"
+  make_freeze_receipt "$FREEZE_BUNDLE" "$FREEZE_RECEIPT"
+  make_cold_rebind_target_deployments "$COLD_DEPLOYMENTS"
+  reset_stub
+  for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+    printf '0\n' >"$STUB_STATE_DIR/replicas-$deployment"
+  done
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_success 'cold rebind binds source content and distinct target identities read-only' \
+    env RESTORE_TARGET_MODE=cold-rebind EXPECTED_KUBE_CONTEXT=fixture-context \
+      EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+      STUB_DEPLOYMENTS_JSON="$COLD_DEPLOYMENTS" \
+      bash -c '
+        set -euo pipefail
+        NAMESPACE=hcce
+        source "$1"
+        recovery_materialize_checkpoint "$2/retdb-$3.sql.gz" "$4"
+        VALUES_FILE="$5"
+        recovery_require_cluster_identity
+        recovery_require_pvc_identity ret-pvc
+        recovery_require_cold_rebind_target_bootstrap "$VALUES_FILE"
+        RECOVERY_COLD_REBIND_OPERATION_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        confirmation="$(recovery_restore_rebind_confirmation_value)"
+        [[ "$confirmation" == cold-rebind:fixture-context:hcce:99999999999999999999999999999999:* &&
+           "$confirmation" == *:source-cluster-uid:source-namespace-uid:source-pvc-uid:fixture-cluster-anchor-uid:fixture-uid:fixture-pvc-uid:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:fixture-client-001 ]]
+        recovery_cleanup_materialized_checkpoint
+      ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$FREEZE_BUNDLE" \
+        "$STAMP" "$ROOT_DIR/deployment/validate-checkpoint.sh" \
+        "$VALUES_PROCESS_LOCAL_FIXTURE"
+  : >"$KUBECTL_LOG"
+  expect_success 'target reactivation preflight accepts the exact cold bootstrap without mutation' \
+    env RESTORE_TARGET_MODE=cold-rebind BACKUP_DIR="$FREEZE_BUNDLE" \
+      FREEZE_RECEIPT_PATH="$FREEZE_RECEIPT" VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+      EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+      EXPECTED_RET_PVC_UID=fixture-pvc-uid STUB_DEPLOYMENTS_JSON="$COLD_DEPLOYMENTS" \
+      "$ROOT_DIR/deployment/preflight-reactivation.sh"
+  if grep -Eq '(^| )(create|patch|replace|delete|apply|exec)( |$)' "$KUBECTL_LOG"; then
+    fail 'cold target preflight is strictly read-only' "$(cat "$KUBECTL_LOG")"
+  else
+    pass 'cold target preflight is strictly read-only'
+  fi
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_failure 'cold rebind rejects reuse of the source PVC UID' \
+    'new Namespace/PVC UIDs' env RESTORE_TARGET_MODE=cold-rebind \
+      EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+      EXPECTED_RET_PVC_UID=source-pvc-uid STUB_PVC_UID=source-pvc-uid \
+      STUB_DEPLOYMENTS_JSON="$COLD_DEPLOYMENTS" \
+      bash -c '
+        set -euo pipefail
+        NAMESPACE=hcce
+        source "$1"
+        recovery_materialize_checkpoint "$2/retdb-$3.sql.gz" "$4"
+        VALUES_FILE="$5"
+        recovery_require_cluster_identity
+        recovery_require_pvc_identity ret-pvc
+        recovery_require_cold_rebind_target_bootstrap "$VALUES_FILE"
+      ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$FREEZE_BUNDLE" \
+        "$STAMP" "$ROOT_DIR/deployment/validate-checkpoint.sh" \
+        "$VALUES_PROCESS_LOCAL_FIXTURE"
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused cold-rebind preflight test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused cold-rebind preflight tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == cold-rebind-execute ]]; then
+  FREEZE_BUNDLE="$TMP_DIR/freeze-bundle-cold-execute"
+  FREEZE_RECEIPT="$TMP_DIR/freeze-receipt-cold-execute.json"
+  COLD_DEPLOYMENTS="$TMP_DIR/cold-execute-target-deployments.json"
+  COLD_OPERATION_ID=88888888888888888888888888888888
+  make_freeze_bundle "$FREEZE_BUNDLE"
+  make_freeze_receipt "$FREEZE_BUNDLE" "$FREEZE_RECEIPT"
+  make_cold_rebind_target_deployments "$COLD_DEPLOYMENTS"
+  cold_manifest_sha="$(sha256_digest "$FREEZE_BUNDLE/SHA256SUMS")"
+  cold_dump_sha="$(sha256_digest "$FREEZE_BUNDLE/retdb-$STAMP.sql.gz")"
+  cold_storage_sha="$(sha256_digest "$FREEZE_BUNDLE/ret-storage-$STAMP.tar.gz")"
+  cold_inventory_sha="$(sha256_digest "$FREEZE_BUNDLE/deployment-images.json")"
+  COLD_CONFIRMATION="cold-rebind:fixture-context:hcce:99999999999999999999999999999999:$cold_manifest_sha:$cold_dump_sha:$cold_storage_sha:$cold_inventory_sha:source-cluster-uid:source-namespace-uid:source-pvc-uid:fixture-cluster-anchor-uid:fixture-uid:fixture-pvc-uid:$COLD_OPERATION_ID:fixture-client-001"
+  reset_stub
+  for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+    printf '0\n' >"$STUB_STATE_DIR/replicas-$deployment"
+  done
+  expect_success 'cold rebind restores DB and media together then resumes the exact target' \
+    env RESTORE_TARGET_MODE=cold-rebind RESTORE_CHECKPOINT_COLD_REBIND=1 \
+      COLD_REBIND_OPERATION_ID="$COLD_OPERATION_ID" \
+      CONFIRM_COLD_REBIND_RESTORE="$COLD_CONFIRMATION" \
+      FREEZE_RECEIPT_PATH="$FREEZE_RECEIPT" \
+      EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+      EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+      STUB_DEPLOYMENTS_JSON="$COLD_DEPLOYMENTS" \
+      STUB_RUNNER_NAMESPACE='' STUB_RUNNER_POD_PROFILE='' \
+      KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer" \
+      STUB_CHECKPOINT_WRITER_DISCOVER_MONITOR=1 \
+      STUB_LIVE_REACTIVATION_VALUES_CONTENT_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+      HCCE_MANIFEST_PATH="$RUNNER_CONTROL_PLANE_MANIFEST_FIXTURE" \
+      STUB_LIVE_REACTIVATION_MANIFEST_FILE="$RUNNER_CONTROL_PLANE_MANIFEST_FIXTURE" \
+      RECOVERY_STREAM_POLL_SECONDS=0.01 \
+      "$ROOT_DIR/deployment/restore-checkpoint.sh" "$FREEZE_BUNDLE"
+  if checkpoint_all_writers_at 1 && checkpoint_all_writer_rollouts_observed &&
+     checkpoint_resume_receipts_absent &&
+     [[ ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+     [[ "$(cat "$STUB_STATE_DIR/live-reactivation-verifier-count" \
+       2>/dev/null || printf 0)" == 1 ]]; then
+    pass 'cold rebind ends with five writers live, verified and lock-free'
+  else
+    fail 'cold rebind exact terminal state' "$(tail -n 160 "$KUBECTL_LOG")"
+  fi
+  reset_stub
+  for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+    printf '0\n' >"$STUB_STATE_DIR/replicas-$deployment"
+  done
+  expect_failure 'cold rebind live-verifier failure returns to five zero writers' \
+    'Cold rebind external live verification failed.' \
+    env RESTORE_TARGET_MODE=cold-rebind RESTORE_CHECKPOINT_COLD_REBIND=1 \
+      COLD_REBIND_OPERATION_ID="$COLD_OPERATION_ID" \
+      CONFIRM_COLD_REBIND_RESTORE="$COLD_CONFIRMATION" \
+      FREEZE_RECEIPT_PATH="$FREEZE_RECEIPT" \
+      EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+      EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+      STUB_DEPLOYMENTS_JSON="$COLD_DEPLOYMENTS" \
+      STUB_RUNNER_NAMESPACE='' STUB_RUNNER_POD_PROFILE='' \
+      STUB_MODE=cold-rebind-live-verifier-fail \
+      KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer" \
+      STUB_CHECKPOINT_WRITER_DISCOVER_MONITOR=1 \
+      STUB_LIVE_REACTIVATION_VALUES_CONTENT_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+      HCCE_MANIFEST_PATH="$RUNNER_CONTROL_PLANE_MANIFEST_FIXTURE" \
+      STUB_LIVE_REACTIVATION_MANIFEST_FILE="$RUNNER_CONTROL_PLANE_MANIFEST_FIXTURE" \
+      RECOVERY_STREAM_POLL_SECONDS=0.01 \
+      "$ROOT_DIR/deployment/restore-checkpoint.sh" "$FREEZE_BUNDLE"
+  if checkpoint_all_writers_at 0 && checkpoint_resume_receipts_absent &&
+     [[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+     [[ "$LAST_OUTPUT" == *'consumers remain at zero'* ]] &&
+     [[ "$LAST_OUTPUT" != *'Automatic fail-closed quiesce could not be completed.'* ]]; then
+    pass 'cold rebind failure retains its lock after exact automatic fail-close'
+  else
+    cold_failure_states=""
+    for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+      cold_failure_states+="$deployment=$(cat \
+        "$STUB_STATE_DIR/replicas-$deployment" 2>/dev/null || printf missing) "
+    done
+    cold_failure_lock=absent
+    [[ ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]] || cold_failure_lock=present
+    fail 'cold rebind exact failure boundary' \
+      "states=$cold_failure_states lock=$cold_failure_lock output=$LAST_OUTPUT"
+  fi
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused cold-rebind execute test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused cold-rebind execute tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
 
 if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == storage-helper-pod-snapshot-race ]]; then
   expect_success 'atomic helper Pod snapshot survives LIST/delete open races without diagnostics' \

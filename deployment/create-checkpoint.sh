@@ -14,6 +14,7 @@ VALUES_INPUT_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 MANIFEST_INPUT_FILE="${HCCE_MANIFEST_PATH:-$ROOT_DIR/hubs-cloud/community-edition/hcce.yaml}"
 CUTOVER_KEY_INPUT_FILE="${PROCESS_LOCAL_CUTOVER_KEY_PATH:-}"
 VALUES_SOURCE_FILE=""
+CHECKPOINT_FORMAT="${CHECKPOINT_FORMAT:-legacy}"
 TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
 FINAL_OUTPUT_DIR="${1:-$ROOT_DIR/output/checkpoints/$TIMESTAMP}"
 OUTPUT_PARENT="$(dirname "$FINAL_OUTPUT_DIR")"
@@ -36,6 +37,31 @@ FINAL_PUBLICATION_COMMITTED=0
 FINAL_INCOMPLETE_MARKER=""
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
+
+case "$CHECKPOINT_FORMAT" in
+  legacy | freeze-bundle-v1) ;;
+  *)
+    printf 'CHECKPOINT_FORMAT must be legacy or freeze-bundle-v1.\n' >&2
+    exit 2
+    ;;
+esac
+
+checkpoint_artifacts() {
+  if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
+    recovery_freeze_bundle_artifacts "$TIMESTAMP"
+  else
+    recovery_checkpoint_artifacts "$TIMESTAMP" 3
+  fi
+}
+
+checkpoint_validate_manifest() {
+  local directory="$1"
+  if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
+    recovery_validate_freeze_bundle_manifest "$directory" "$TIMESTAMP"
+  else
+    recovery_validate_sha256_manifest "$directory" "$TIMESTAMP" 3
+  fi
+}
 
 [[ "$ALLOW_DOWNTIME" == 1 ]] || {
   printf 'Checkpoint creation causes a coordinated workload pause; set ALLOW_CHECKPOINT_DOWNTIME=1.\n' >&2
@@ -113,6 +139,7 @@ CHECKPOINT_WRITER_MONITOR_JOINED=0
 CHECKPOINT_WRITER_MONITOR_VERIFIED_STOPPED=0
 CHECKPOINT_RUNNER_MODE=""
 CHECKPOINT_RUNNER_GENERATION=""
+FREEZE_SOURCE_CLUSTER_UID=""
 CHECKPOINT_VALUES_SNAPSHOT=""
 CHECKPOINT_MANIFEST_SNAPSHOT=""
 CHECKPOINT_CUTOVER_KEY_SNAPSHOT=""
@@ -1081,7 +1108,7 @@ checkpoint_directory_cleanup_allowlist() {
   local artifact
   while IFS= read -r artifact; do
     printf 'f:%s\n' "$artifact"
-  done < <(recovery_checkpoint_artifacts "$TIMESTAMP" 3)
+  done < <(checkpoint_artifacts)
   printf '%s\n' f:SHA256SUMS
 }
 
@@ -1154,13 +1181,17 @@ cleanup_checkpoint_final_claim() {
 
 verify_checkpoint_staging_directory() {
   local actual expected
-  recovery_validate_sha256_manifest "$OUTPUT_DIR" "$TIMESTAMP" 3 &&
-    recovery_checkpoint_metadata_is_acceptable \
-      "$OUTPUT_DIR/checkpoint-metadata.json" "$TIMESTAMP" &&
-    recovery_checkpoint_generation_is_acceptable "$OUTPUT_DIR" || return 1
+  if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
+    recovery_verify_freeze_bundle_contents "$OUTPUT_DIR" "$TIMESTAMP" || return 1
+  else
+    recovery_validate_sha256_manifest "$OUTPUT_DIR" "$TIMESTAMP" 3 &&
+      recovery_checkpoint_metadata_is_acceptable \
+        "$OUTPUT_DIR/checkpoint-metadata.json" "$TIMESTAMP" &&
+      recovery_checkpoint_generation_is_acceptable "$OUTPUT_DIR" || return 1
+  fi
   actual="$(find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print |
     while IFS= read -r path; do basename "$path"; done | LC_ALL=C sort)"
-  expected="$({ recovery_checkpoint_artifacts "$TIMESTAMP" 3; printf '%s\n' \
+  expected="$({ checkpoint_artifacts; printf '%s\n' \
     SHA256SUMS .yenhubs-staging-owner; } | LC_ALL=C sort)"
   [[ "$actual" == "$expected" ]]
 }
@@ -2014,6 +2045,28 @@ CHECKPOINT_RUNNER_MODE="$(
   printf 'Checkpoint runner mode changed while binding immutable local inputs.\n' >&2
   exit 1
 }
+if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
+  [[ "$CHECKPOINT_RUNNER_MODE" == process-local ]] || {
+    printf 'freeze-bundle-v1 is limited to the accepted process-local baseline.\n' >&2
+    exit 1
+  }
+  [[ "${CLIENT_INSTANCE_ID:-}" =~ ^[a-z0-9][a-z0-9-]{2,62}$ ]] || {
+    printf 'CLIENT_INSTANCE_ID must be one stable lowercase client identifier.\n' >&2
+    exit 1
+  }
+  freeze_cluster_anchor="$(recovery_kubectl get namespace kube-system -o json)" || {
+    printf 'Could not capture the source cluster anchor UID.\n' >&2
+    exit 1
+  }
+  FREEZE_SOURCE_CLUSTER_UID="$(jq -er '
+    select(.apiVersion == "v1" and .kind == "Namespace" and
+      .metadata.name == "kube-system") |
+    .metadata.uid | select(type == "string" and length > 0)
+  ' <<<"$freeze_cluster_anchor")" || {
+    printf 'Source cluster anchor UID is missing or malformed.\n' >&2
+    exit 1
+  }
+fi
 RECOVERY_CHECKPOINT_STAMP="$TIMESTAMP"
 RECOVERY_DUMP_SHA256="$(printf '0%.0s' {1..64})"
 RECOVERY_STORAGE_SHA256="$RECOVERY_DUMP_SHA256"
@@ -2040,7 +2093,7 @@ fi
 # Capture the exact live image/infrastructure inventory while the deployments
 # still have their pre-downtime scale, then prove those immutable contracts
 # again as each writer is stopped.
-VALUES_FILE="$VALUES_SOURCE_FILE" \
+VALUES_FILE="$VALUES_SOURCE_FILE" CAPTURE_STATE_FORMAT="$CHECKPOINT_FORMAT" \
   "$SCRIPT_DIR/capture-instance-state.sh" "$OUTPUT_DIR"
 captured_runner_mode="$(jq -er '.bot_runner_runtime.mode' \
   "$OUTPUT_DIR/deployment-images.json")"
@@ -2055,28 +2108,30 @@ CHECKPOINT_RUNNER_GENERATION="$(jq -er '
 }
 
 QUIESCE_STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-jq -n \
-  --arg stamp "$TIMESTAMP" \
-  --arg created_at_utc "$QUIESCE_STARTED_AT" \
-  --argjson created_at_epoch "$(date -u '+%s')" \
-  --arg kube_context "$EXPECTED_KUBE_CONTEXT" \
-  --arg namespace "$NAMESPACE" \
-  --arg namespace_uid "$RECOVERY_NAMESPACE_UID" \
-  --arg pvc_uid "$RECOVERY_PVC_UID" \
-  --arg operation_id "$RECOVERY_OPERATION_ID" \
-  --arg runtime_generation "$CHECKPOINT_RUNNER_GENERATION" \
-  --arg evidence_sha256 "$(printf '0%.0s' {1..64})" '
-  {
-    schema_version:3,
-    provenance:{generator:"yenhubs-local-coordinated-checkpoint-v3",external_import:false},
-    stamp:$stamp,created_at_utc:$created_at_utc,created_at_epoch:$created_at_epoch,
-    kube_context:$kube_context,namespace:$namespace,namespace_uid:$namespace_uid,
-    ret_pvc_uid:$pvc_uid,operation_id:$operation_id,
-    runtime_generation:$runtime_generation,
-    runner_cutover_evidence_sha256:$evidence_sha256,
-    writer_quiescence:{required:true,started_at_utc:$created_at_utc}
-  }' >"$OUTPUT_DIR/checkpoint-metadata.json"
-chmod 600 "$OUTPUT_DIR/checkpoint-metadata.json"
+if [[ "$CHECKPOINT_FORMAT" == legacy ]]; then
+  jq -n \
+    --arg stamp "$TIMESTAMP" \
+    --arg created_at_utc "$QUIESCE_STARTED_AT" \
+    --argjson created_at_epoch "$(date -u '+%s')" \
+    --arg kube_context "$EXPECTED_KUBE_CONTEXT" \
+    --arg namespace "$NAMESPACE" \
+    --arg namespace_uid "$RECOVERY_NAMESPACE_UID" \
+    --arg pvc_uid "$RECOVERY_PVC_UID" \
+    --arg operation_id "$RECOVERY_OPERATION_ID" \
+    --arg runtime_generation "$CHECKPOINT_RUNNER_GENERATION" \
+    --arg evidence_sha256 "$(printf '0%.0s' {1..64})" '
+    {
+      schema_version:3,
+      provenance:{generator:"yenhubs-local-coordinated-checkpoint-v3",external_import:false},
+      stamp:$stamp,created_at_utc:$created_at_utc,created_at_epoch:$created_at_epoch,
+      kube_context:$kube_context,namespace:$namespace,namespace_uid:$namespace_uid,
+      ret_pvc_uid:$pvc_uid,operation_id:$operation_id,
+      runtime_generation:$runtime_generation,
+      runner_cutover_evidence_sha256:$evidence_sha256,
+      writer_quiescence:{required:true,started_at_utc:$created_at_utc}
+    }' >"$OUTPUT_DIR/checkpoint-metadata.json"
+  chmod 600 "$OUTPUT_DIR/checkpoint-metadata.json"
+fi
 
 checkpoint_set_failure_context quiescence writers
 quiesce_writers
@@ -2090,29 +2145,31 @@ if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
   evidence_manifest="$CHECKPOINT_MANIFEST_SNAPSHOT"
   evidence_fence_state=active
 fi
-checkpoint_set_failure_context quiescence evidence-capture
-recovery_capture_runner_cutover_evidence \
-  "$VALUES_SOURCE_FILE" "$OUTPUT_DIR/runner-cutover-evidence.json" \
-  "$OUTPUT_DIR/deployment-images.json" "$evidence_fence_state" \
-  "$evidence_manifest"
-checkpoint_set_failure_context quiescence evidence-contract
-[[ "$(jq -er '.runtime_generation' "$OUTPUT_DIR/runner-cutover-evidence.json")" == \
-   "$CHECKPOINT_RUNNER_GENERATION" ]]
-EVIDENCE_SHA256="$(recovery_sha256_digest \
-  "$OUTPUT_DIR/runner-cutover-evidence.json")"
-checkpoint_set_failure_context quiescence evidence-metadata
-metadata_tmp="$OUTPUT_DIR/.checkpoint-metadata.next"
-[[ ! -e "$metadata_tmp" && ! -L "$metadata_tmp" ]]
-(umask 077; set -C; jq --arg digest "$EVIDENCE_SHA256" \
-  '.runner_cutover_evidence_sha256 = $digest' \
-  "$OUTPUT_DIR/checkpoint-metadata.json" >"$metadata_tmp") 2>/dev/null
-mv "$metadata_tmp" "$OUTPUT_DIR/checkpoint-metadata.json"
-chmod 600 "$OUTPUT_DIR/checkpoint-metadata.json"
-checkpoint_set_failure_context quiescence evidence-live
-recovery_verify_runner_cutover_evidence_live \
-  "$VALUES_SOURCE_FILE" "$OUTPUT_DIR/runner-cutover-evidence.json" \
-  "$OUTPUT_DIR/deployment-images.json" "$evidence_fence_state" \
-  "$evidence_manifest" checkpoint
+if [[ "$CHECKPOINT_FORMAT" == legacy ]]; then
+  checkpoint_set_failure_context quiescence evidence-capture
+  recovery_capture_runner_cutover_evidence \
+    "$VALUES_SOURCE_FILE" "$OUTPUT_DIR/runner-cutover-evidence.json" \
+    "$OUTPUT_DIR/deployment-images.json" "$evidence_fence_state" \
+    "$evidence_manifest"
+  checkpoint_set_failure_context quiescence evidence-contract
+  [[ "$(jq -er '.runtime_generation' "$OUTPUT_DIR/runner-cutover-evidence.json")" == \
+     "$CHECKPOINT_RUNNER_GENERATION" ]]
+  EVIDENCE_SHA256="$(recovery_sha256_digest \
+    "$OUTPUT_DIR/runner-cutover-evidence.json")"
+  checkpoint_set_failure_context quiescence evidence-metadata
+  metadata_tmp="$OUTPUT_DIR/.checkpoint-metadata.next"
+  [[ ! -e "$metadata_tmp" && ! -L "$metadata_tmp" ]]
+  (umask 077; set -C; jq --arg digest "$EVIDENCE_SHA256" \
+    '.runner_cutover_evidence_sha256 = $digest' \
+    "$OUTPUT_DIR/checkpoint-metadata.json" >"$metadata_tmp") 2>/dev/null
+  mv "$metadata_tmp" "$OUTPUT_DIR/checkpoint-metadata.json"
+  chmod 600 "$OUTPUT_DIR/checkpoint-metadata.json"
+  checkpoint_set_failure_context quiescence evidence-live
+  recovery_verify_runner_cutover_evidence_live \
+    "$VALUES_SOURCE_FILE" "$OUTPUT_DIR/runner-cutover-evidence.json" \
+    "$OUTPUT_DIR/deployment-images.json" "$evidence_fence_state" \
+    "$evidence_manifest" checkpoint
+fi
 checkpoint_set_failure_context quiescence monitor-health
 require_checkpoint_monitors_healthy
 checkpoint_durable_control_baseline_path=""
@@ -2196,20 +2253,53 @@ require_checkpoint_monitors_healthy
 # durable process stays live and revalidates its active-fence capability.
 checkpoint_set_failure_context storage-backup runner-handoff
 handoff_runner_monitor
-checkpoint_set_failure_context storage-backup cutover-evidence
-recovery_verify_runner_cutover_evidence_live \
-  "$VALUES_SOURCE_FILE" "$OUTPUT_DIR/runner-cutover-evidence.json" \
-  "$OUTPUT_DIR/deployment-images.json" "$evidence_fence_state" \
-  "$evidence_manifest" checkpoint
+if [[ "$CHECKPOINT_FORMAT" == legacy ]]; then
+  checkpoint_set_failure_context storage-backup cutover-evidence
+  recovery_verify_runner_cutover_evidence_live \
+    "$VALUES_SOURCE_FILE" "$OUTPUT_DIR/runner-cutover-evidence.json" \
+    "$OUTPUT_DIR/deployment-images.json" "$evidence_fence_state" \
+    "$evidence_manifest" checkpoint
+fi
 checkpoint_set_failure_context storage-backup monitor-health
 require_checkpoint_monitors_healthy
 checkpoint_set_failure_context storage-backup metadata
 SNAPSHOT_COMPLETED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 metadata_tmp="$OUTPUT_DIR/.checkpoint-metadata.next"
 [[ ! -e "$metadata_tmp" && ! -L "$metadata_tmp" ]]
-(umask 077; set -C; jq --arg completed "$SNAPSHOT_COMPLETED_AT" \
-  '.writer_quiescence.completed_at_utc = $completed' \
-  "$OUTPUT_DIR/checkpoint-metadata.json" >"$metadata_tmp") 2>/dev/null
+if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
+  dump_digest="$(recovery_sha256_digest "$OUTPUT_DIR/retdb-$TIMESTAMP.sql.gz")"
+  storage_digest="$(recovery_sha256_digest "$OUTPUT_DIR/ret-storage-$TIMESTAMP.tar.gz")"
+  dump_size="$(recovery_file_size_bytes "$OUTPUT_DIR/retdb-$TIMESTAMP.sql.gz")"
+  storage_size="$(recovery_file_size_bytes "$OUTPUT_DIR/ret-storage-$TIMESTAMP.tar.gz")"
+  (umask 077; set -C; jq -n --arg stamp "$TIMESTAMP" \
+    --arg client_instance_id "$CLIENT_INSTANCE_ID" \
+    --arg freeze_id "$RECOVERY_OPERATION_ID" \
+    --arg created "$QUIESCE_STARTED_AT" --arg completed "$SNAPSHOT_COMPLETED_AT" \
+    --arg context "$EXPECTED_KUBE_CONTEXT" --arg cluster_name "${CLUSTER_NAME:-hubs-ce}" \
+    --arg cluster_uid "$FREEZE_SOURCE_CLUSTER_UID" --arg namespace "$NAMESPACE" \
+    --arg namespace_uid "$RECOVERY_NAMESPACE_UID" --arg pvc_uid "$RECOVERY_PVC_UID" \
+    --arg dump_digest "$dump_digest" --arg storage_digest "$storage_digest" \
+    --argjson dump_size "$dump_size" --argjson storage_size "$storage_size" '{
+      schema:"freeze-bundle-v1",client_instance_id:$client_instance_id,
+      freeze_id:$freeze_id,stamp:$stamp,created_at_utc:$created,
+      source:{kube_context:$context,cluster:{name:$cluster_name,uid:$cluster_uid},
+        namespace:{name:$namespace,uid:$namespace_uid},
+        pvc:{name:"ret-pvc",uid:$pvc_uid}},
+      operation:{id:$freeze_id,quiescence:{started_at_utc:$created,
+        completed_at_utc:$completed}},
+      payloads:{database:{filename:("retdb-"+$stamp+".sql.gz"),
+        size_bytes:$dump_size,sha256:$dump_digest},
+        storage:{filename:("ret-storage-"+$stamp+".tar.gz"),
+        size_bytes:$storage_size,sha256:$storage_digest}},
+      runtime_generation:"legacy-absent",runner_mode:"process-local",
+      provenance:{generator:"yenhubs-freeze-bundle-v1",external_import:false},
+      minimum_restore_version:1,publication_state:"complete"
+    }' >"$metadata_tmp") 2>/dev/null
+else
+  (umask 077; set -C; jq --arg completed "$SNAPSHOT_COMPLETED_AT" \
+    '.writer_quiescence.completed_at_utc = $completed' \
+    "$OUTPUT_DIR/checkpoint-metadata.json" >"$metadata_tmp") 2>/dev/null
+fi
 mv "$metadata_tmp" "$OUTPUT_DIR/checkpoint-metadata.json"
 chmod 600 "$OUTPUT_DIR/checkpoint-metadata.json"
 
@@ -2226,7 +2316,7 @@ checkpoint_set_failure_context checksum-manifest build
   while IFS= read -r artifact; do
     digest="$(recovery_sha256_digest "$OUTPUT_DIR/$artifact")"
     printf '%s  %s\n' "$digest" "$artifact"
-  done < <(recovery_checkpoint_artifacts "$TIMESTAMP") >"$CHECKSUM_TMP"
+  done < <(checkpoint_artifacts) >"$CHECKSUM_TMP"
 ) 2>/dev/null
 checkpoint_set_failure_context checksum-manifest commit
 mv "$CHECKSUM_TMP" "$OUTPUT_DIR/SHA256SUMS"
@@ -2250,24 +2340,26 @@ claim_final_output_directory
 checkpoint_set_failure_context artifact-transfer move
 while IFS= read -r artifact; do
   mv "$OUTPUT_DIR/$artifact" "$FINAL_OUTPUT_DIR/$artifact"
-done < <({ recovery_checkpoint_artifacts "$TIMESTAMP"; printf 'SHA256SUMS\n'; } | LC_ALL=C sort)
+done < <({ checkpoint_artifacts; printf 'SHA256SUMS\n'; } | LC_ALL=C sort)
 checkpoint_set_failure_context claimed-verification checksum
-recovery_validate_sha256_manifest "$FINAL_OUTPUT_DIR" "$TIMESTAMP"
+checkpoint_validate_manifest "$FINAL_OUTPUT_DIR"
 checkpoint_set_failure_context claimed-verification layout
 actual_with_marker="$(find "$FINAL_OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print |
   while IFS= read -r path; do basename "$path"; done | LC_ALL=C sort)"
-expected_with_marker="$({ recovery_checkpoint_artifacts "$TIMESTAMP"; printf '%s\n' SHA256SUMS .yenhubs-incomplete; } | LC_ALL=C sort)"
+expected_with_marker="$({ checkpoint_artifacts; printf '%s\n' SHA256SUMS .yenhubs-incomplete; } | LC_ALL=C sort)"
 [[ "$actual_with_marker" == "$expected_with_marker" ]]
 # Rebind the same generation-specific guard before the terminal joins. Legacy
 # hands off another watcher; durable-v2 keeps the same PID and exact capability
 # alive through publication.
 checkpoint_set_failure_context terminal-boundary runner-handoff
 handoff_runner_monitor
-checkpoint_set_failure_context terminal-boundary cutover-evidence
-recovery_verify_runner_cutover_evidence_live \
-  "$VALUES_SOURCE_FILE" "$FINAL_OUTPUT_DIR/runner-cutover-evidence.json" \
-  "$FINAL_OUTPUT_DIR/deployment-images.json" "$evidence_fence_state" \
-  "$evidence_manifest" checkpoint
+if [[ "$CHECKPOINT_FORMAT" == legacy ]]; then
+  checkpoint_set_failure_context terminal-boundary cutover-evidence
+  recovery_verify_runner_cutover_evidence_live \
+    "$VALUES_SOURCE_FILE" "$FINAL_OUTPUT_DIR/runner-cutover-evidence.json" \
+    "$FINAL_OUTPUT_DIR/deployment-images.json" "$evidence_fence_state" \
+    "$evidence_manifest" checkpoint
+fi
 checkpoint_set_failure_context terminal-boundary writer-monitor
 require_checkpoint_writer_monitor_healthy
 if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
@@ -2286,7 +2378,7 @@ recovery_require_operation_serialization
 checkpoint_set_failure_context precommit operation-lock
 recovery_require_operation_lock
 checkpoint_set_failure_context precommit checksum
-recovery_validate_sha256_manifest "$FINAL_OUTPUT_DIR" "$TIMESTAMP"
+checkpoint_validate_manifest "$FINAL_OUTPUT_DIR"
 checkpoint_set_failure_context precommit layout
 actual_with_marker="$(find "$FINAL_OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print |
   while IFS= read -r path; do basename "$path"; done | LC_ALL=C sort)"

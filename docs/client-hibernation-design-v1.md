@@ -1,11 +1,12 @@
 # Diseno minimo de hibernacion de clientes v1
 
-Estado: **APROBADO para H1, sin implementacion ni mutacion de produccion**
+Estado: **H2 IMPLEMENTADO Y VALIDADO LOCALMENTE; H3 PENDIENTE**
 Fecha: **9 de agosto de 2026**
 
 Este documento convierte el objetivo comercial en un contrato tecnico finito.
-No sustituye el runbook ejecutable de `deployment/README.md`; H2 debera
-implementar lo aqui aprobado y actualizar ese runbook.
+No sustituye el runbook ejecutable de `deployment/README.md`. H2 implemento el
+contrato local; H3 debe demostrarlo en Namespace/PVC realmente aislados antes
+de cualquier integracion o uso comercial.
 
 ## 1. Problema que resolvemos
 
@@ -210,7 +211,7 @@ validado. Cualquier extra o dato de aplicacion previo es FAIL.
 - `verify-live-reactivation.sh`, aceptacion de navegador y lifecycle por cliente;
 - commits, gitlinks, digests y features ya integradas en los forks.
 
-### Reimplementar de forma minima en H2
+### Implementado de forma minima en H2
 
 - el layout/validador de `freeze-bundle-v1` y su recibo externo;
 - las dos proyecciones redactadas de configuracion e infraestructura;
@@ -248,8 +249,9 @@ necesidad demostrada. El tiempo ya invertido no es criterio de incorporacion.
 
 Freeze es PASS solo con los nueve artefactos exactos, validadores completos,
 stamp DB/storage comun, pares fisicos completos, quiescencia correcta,
-publicacion previa a reanudacion, custodia demostrada de los 13 digests y dos
-copias cifradas cuyo descifrado/rehash coincide con el expediente protegido.
+publicacion previa a reanudacion y un recibo exacto que pueda demostrar la
+custodia de los 13 digests y dos copias cifradas. H2 implementa y prueba ese
+contrato; la creacion y comprobacion real de las dos copias pertenece a H5.
 
 Cold restore es PASS solo con bundle byte-invariante, source/target ligados por
 separado, UID target nuevos, bootstrap exacto, consumidores a cero
@@ -267,6 +269,7 @@ monitorizacion ni dependencia. Su allowlist maxima inicial es:
 
 ```text
 deployment/create-checkpoint.sh
+deployment/capture-instance-state.sh
 deployment/lib/recovery-safety.sh
 deployment/restore-checkpoint.sh
 deployment/preflight-greenfield.sh
@@ -281,11 +284,22 @@ docs/estado-sencillo.md
 docs/session-changelog.md
 ```
 
-No se cambian inicialmente `restore-retdb.sh`, `restore-ret-storage.sh`, los
-dos monitores ni los capturadores. Si una prueba causal demuestra que un hijo o
-capturador concreto necesita cambiar, se anade solo ese fichero y se revisa el
-alcance antes de editarlo.
+No se cambian `restore-retdb.sh`, `restore-ret-storage.sh` ni los dos monitores.
+`capture-instance-state.sh` queda incorporado de forma causal al alcance H2:
+es el productor actual de los inventarios, y su modo `freeze-bundle-v1` debe
+emitir directamente las cuatro proyecciones portables sin crear volcados crudos
+que despues hubiera que borrar. No cambia su modo historico. Si otra prueba
+causal demuestra que un hijo concreto necesita cambiar, se anade solo ese
+fichero y se revisa el alcance antes de editarlo.
 
 Si el cold-rebind exige ampliar esta frontera o aparece el mismo fallo dos
 veces sin nueva evidencia causal, H2 se detiene para auditoria en vez de abrir
 otra matriz.
+
+### Evidencia de cierre H2
+
+Sobre el candidato local pasan bundle `5/5`, materializacion `46/46`, preflight
+greenfield `4/4`, preflight target `49/49`, creacion `49/49` y cold restore con
+fail-close `49/49`. Tambien pasan Bash syntax, ShellCheck y `51/51` regresiones
+de seguridad. No se ejecuto el full, GitHub, un cluster real ni produccion; esa
+frontera corresponde a H3/H4.

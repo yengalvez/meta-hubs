@@ -2117,6 +2117,37 @@ rehashes and jointly validates those copies, then has both restore children
 consume only their own independently revalidated copies:
 
 ```bash
+# Hibernation path: validate the bundle and protected receipt before creating
+# any target infrastructure. This gate is offline and never calls kubectl/doctl.
+VALUES_FILE=/private/path/to/input-values.yaml \
+  ./deployment/preflight-greenfield.sh \
+    /absolute/path/to/freeze-bundle \
+    /private/path/to/freeze-bundle-receipt.json
+
+# After creating the new target with five writers at zero, bind the new
+# context/Namespace/PVC UIDs and prove the bootstrap read-only.
+RESTORE_TARGET_MODE=cold-rebind \
+BACKUP_DIR=/absolute/path/to/freeze-bundle \
+FREEZE_RECEIPT_PATH=/private/path/to/freeze-bundle-receipt.json \
+VALUES_FILE=/private/path/to/input-values.yaml \
+  ./deployment/preflight-reactivation.sh
+
+# Use a fresh 32-hex operation ID. The first refusal prints the exact
+# confirmation before acquiring the Lease or mutating the target.
+RESTORE_TARGET_MODE=cold-rebind \
+RESTORE_CHECKPOINT_COLD_REBIND=1 \
+COLD_REBIND_OPERATION_ID='<new-lowercase-32-hex>' \
+FREEZE_RECEIPT_PATH=/private/path/to/freeze-bundle-receipt.json \
+VALUES_FILE=/private/path/to/input-values.yaml \
+  ./deployment/restore-checkpoint.sh /absolute/path/to/freeze-bundle
+RESTORE_TARGET_MODE=cold-rebind \
+RESTORE_CHECKPOINT_COLD_REBIND=1 \
+COLD_REBIND_OPERATION_ID='<new-lowercase-32-hex>' \
+FREEZE_RECEIPT_PATH=/private/path/to/freeze-bundle-receipt.json \
+VALUES_FILE=/private/path/to/input-values.yaml \
+CONFIRM_COLD_REBIND_RESTORE='<exact value printed above>' \
+  ./deployment/restore-checkpoint.sh /absolute/path/to/freeze-bundle
+
 # Legacy read-only preflight; it does not execute or rehearse the restore.
 export EXPECTED_RET_PVC_UID="$(kubectl --context "$EXPECTED_KUBE_CONTEXT" \
   get pvc ret-pvc -n "$NAMESPACE" -o jsonpath='{.metadata.uid}')"
@@ -2169,10 +2200,11 @@ Standalone destructive calls to `restore-retdb.sh` and
 only in their read-only `*_PREFLIGHT=1` modes. Esos preflights también
 materializan values y, para `durable-v2`, la clave indicada por
 `PROCESS_LOCAL_CUTOVER_KEY_PATH` dentro de directorios privados antes de
-verificar la evidencia live. `RESTORE_TARGET_MODE=cold-rebind`
-is rejected before materialization, Lease acquisition or mutation: replacing a
-Namespace/PVC identity requires a separately designed authenticated
-`namespace-epoch` campaign.
+verificar la evidencia live. `RESTORE_TARGET_MODE=cold-rebind` is accepted only
+for a complete `freeze-bundle-v1` plus its separately protected exact receipt.
+It authenticates source content and new target cluster/Namespace/PVC identities
+separately; legacy and durable checkpoints remain bound to their in-place
+identity and cannot be relabelled as cold rebind.
 
 The legacy operation records the original replicas and keeps Reticulum, both
 Pgbouncers, bot-orchestrator and Coturn at zero continuously from before the DB
@@ -2317,21 +2349,25 @@ this abbreviated sequence unless the complete checkpoint has passed both
 restore preflights and exists in a second encrypted location.
 
 ```bash
-# 1. Confirm a matching DB dump and ret-pvc archive both exist and validate.
-gzip -t /path/to/retdb-YYYYMMDD-HHMMSS.sql.gz
-./deployment/validate-checkpoint.sh \
-  /path/to/retdb-YYYYMMDD-HHMMSS.sql.gz /path/to/ret-storage-YYYYMMDD-HHMMSS.tar.gz
-RESTORE_CHECKPOINT_PREFLIGHT=1 ./deployment/restore-checkpoint.sh \
-  /path/to/checkpoint
+# 1. Create the commercial freeze bundle using the metadata inputs documented
+# in deployment/client-instance-lifecycle.md.
+ALLOW_CHECKPOINT_DOWNTIME=1 CHECKPOINT_FORMAT=freeze-bundle-v1 \
+  ./deployment/create-checkpoint.sh /path/to/freeze-bundle
 
-# 2. Confirm cluster and LB that will be removed
+# 2. After making and decrypt/rehash-verifying two encrypted copies, validate
+# the exact separately protected receipt offline.
+VALUES_FILE=/private/path/to/input-values.yaml \
+  ./deployment/preflight-greenfield.sh \
+    /path/to/freeze-bundle /private/path/to/freeze-bundle-receipt.json
+
+# 3. Confirm cluster and LB that will be removed
 doctl kubernetes cluster list
 doctl compute load-balancer list
 
-# 3. Delete the DOKS cluster (this also removes the managed LB and cluster-attached volumes)
+# 4. Only after an explicit owner approval, delete the named DOKS cluster.
 doctl kubernetes cluster delete hubs-ce --force
 
-# 4. Verify there is no cluster left
+# 5. Verify the residual resources and billing surface; never assume cascade.
 doctl kubernetes cluster list
 doctl compute load-balancer list
 doctl compute volume list
@@ -2341,24 +2377,29 @@ Expected result:
 
 - the site goes offline until rebuilt
 - DOKS node, managed LB, and attached block storage stop billing
-- local backups and docs remain the source of truth for future recovery
+- two verified encrypted bundle copies plus the protected receipt remain the
+  source of truth for future recovery
 
 ## Rebuild After The Freeze
 
 When resuming the project:
 
-1. Recreate the DOKS cluster in AMS3 with one 8GB / 4vCPU node and no HA.
-2. Restore kubeconfig with `doctl kubernetes cluster kubeconfig save hubs-ce`.
-3. Reinstall cert-manager and reapply `/Users/Shared/Gits/YenHubs/deployment/ingress-class.yaml` plus `/Users/Shared/Gits/YenHubs/deployment/cluster-issuer.yaml`.
-4. Copy the local `input-values.local.yaml` back into `hubs-cloud/community-edition/input-values.yaml`.
-5. Run `npm ci && npm run gen-hcce`; the command verifies TLS, ingress class, RBAC and the single-LB invariant.
-6. Complete the tracked `bootstrap` -> `admission` -> `active` generation,
-   context-pinned diff and `npm run apply` sequence documented above; never
-   hand-edit or apply `hcce.yaml` directly.
-7. Restore DB and the matching fresh/empty `ret-pvc` only through
-   `deployment/restore-checkpoint.sh`; never resume between the two halves.
-8. Confirm the driver brings proxies and Reticulum Ready before bot-orchestrator.
-9. Validate `meta-hubs.org`, TLS, room entry, avatar flow, and bots (`ghost` backend).
+1. Run `preflight-greenfield.sh` against the bundle, protected receipt and
+   private values before approving any target cost.
+2. Recreate the approved DOKS topology and kubeconfig, then reinstall
+   cert-manager, ingress and DNS.
+3. Regenerate the tracked manifest with the five writers at zero; review the
+   context-pinned diff and use the guarded apply path. Never hand-edit
+   `hcce.yaml`.
+4. Capture the new target context/Namespace/PVC UIDs. They must differ from the
+   source identities recorded in the bundle.
+5. Run `RESTORE_TARGET_MODE=cold-rebind ./deployment/preflight-reactivation.sh`
+   with the bundle, receipt and private values.
+6. Run the confirmed `RESTORE_CHECKPOINT_COLD_REBIND=1` operation shown above.
+   It restores DB and the matching fresh/empty `ret-pvc` as one coordinated
+   operation; never resume between the two halves.
+7. Require the live verifier to finish with zero failures/warnings, then cold
+   test login, room entry, audio, cameras, avatar, Admin and Spoke.
 
 The full lifecycle checklist for this rebuild is maintained in:
 

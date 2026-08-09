@@ -66,8 +66,9 @@ No se borra el trabajo avanzado. Queda preservado en su rama como investigacion,
 pero deja de bloquear el producto.
 
 Los tres ficheros tecnicos sin commit del recovery anterior siguen intactos y
-no se consideran parte del nuevo candidato. El siguiente hito crea un worktree
-limpio desde `origin/main` antes de seleccionar cualquier pieza reutilizable.
+no se consideran parte del nuevo candidato. El worktree limpio
+`codex/client-hibernation` ya parte de `origin/main` y H2 solo reutilizo las
+piezas incluidas en el contrato minimo aprobado.
 
 ## Donde estamos
 
@@ -78,8 +79,8 @@ limpio desde `origin/main` antes de seleccionar cualquier pieza reutilizable.
 [HECHO] Preservar la rama antigua y partir limpio de main
 [HECHO] Fijar el bundle minimo y el mapa de piezas que se conservan
 [HECHO] Aceptacion real: login, dos usuarios, audio, camara, avatar, Admin y Spoke
-[AHORA] H2: implementar freeze y restore sobre identidades nuevas
-[LUEGO] Ensayarlo sin crear recursos DO nuevos
+[HECHO] H2: bundle y restore sobre identidades nuevas implementados localmente
+[AHORA] H3: ensayarlo con Namespace/PVC aislados sin crear recursos DO nuevos
 [DESPUES] Un full local y un unico GitHub final
 [FINAL] Hibernacion real, reconstruccion, aceptacion y vuelta a features
 ```
@@ -89,11 +90,18 @@ sala con dos presencias, el avatar, primera/tercera persona y los dos microfonos
 Silenciar y reactivar cada cliente se reflejo en el otro en tiempo real. No se
 guardo ni publico contenido y no se toco DigitalOcean.
 
-La unica fase activa es **H2**: implementar el bundle de hibernacion y permitir
-restaurarlo sobre Namespace/PVC nuevos. Quedan H2-H6; cada hito tiene un cierre
-binario y el trabajo antiguo de recovery permanece congelado. No se dara otro
-porcentaje cambiante: el avance se comunica como hitos completos y evidencia
-pendiente concreta.
+**H2 esta terminado localmente.** El sistema produce los nueve ficheros exactos
+de `freeze-bundle-v1`, valida un recibo externo, separa el preflight sin cluster
+del preflight del target y puede restaurar DB y medios juntos sobre Namespace y
+PVC con UID nuevos. Si la comprobacion live falla despues de escribir, vuelve a
+dejar los cinco consumidores a cero y conserva el lock para no fingir exito.
+
+La unica fase activa es **H3**: repetir ese cold-rebind en un entorno realmente
+aislado con Namespace/PVC nuevos, sin comprar infraestructura DigitalOcean. Lo
+local ya probo los contratos y el comportamiento fail-closed, pero no sustituye
+ese ensayo real. Quedan H3-H6; cada hito tiene un cierre binario y el trabajo
+antiguo de recovery permanece congelado. No se dara otro porcentaje cambiante:
+el avance se comunica como hitos completos y evidencia pendiente concreta.
 
 El diseno tecnico corto esta en `docs/client-hibernation-design-v1.md`. Define
 nueve artefactos exactos, separa los UID antiguos de los UID nuevos y limita H2
@@ -106,7 +114,10 @@ No se esta repitiendo la matriz antigua:
 
 - no se han ejecutado sus 28 casos pendientes, full ni GitHub;
 - la rama antigua sigue preservada, pero el nuevo candidato parte de `main`;
-- H1 solo ha hecho una comprobacion publica y una revision estatica por tema;
+- H2 ejecuto una sola vez cada foco relevante sobre sus bytes finales: `5/5`,
+  `46/46`, `4/4`, `49/49`, `49/49` y `49/49`;
+- sintaxis, ShellCheck y los 51 gates de seguridad pasan;
+- no se ejecuto el full ni GitHub y no se importo el coordinador HMAC/keyring;
 - cada evidencia queda ligada a una casilla concreta;
 - si el mismo fallo reaparece dos veces sin causa nueva, el plan obliga a parar.
 

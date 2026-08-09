@@ -22,9 +22,10 @@ de Kubernetes. Era poder detener una instancia de cliente durante semanas o
 meses, eliminar los recursos facturables de DigitalOcean y reactivarla despues
 sin una reconstruccion artesanal.
 
-El runbook documenta `freeze -> borrar DOKS -> recrear`, pero el restore actual
-rechaza `cold-rebind` y exige los UID originales del Namespace y del PVC. Esos
-UID cambian al recrear el cluster. Cerrar esa brecha es ahora la prioridad.
+Al abrir esta meta, el runbook documentaba `freeze -> borrar DOKS -> recrear`,
+pero el restore de partida rechazaba `cold-rebind` y exigia los UID originales
+del Namespace y del PVC. H2 ya cierra esa brecha localmente; H3 debe demostrarla
+en un target aislado real.
 
 ## Resultado buscado
 
@@ -106,7 +107,8 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
   - Confirmado: el baseline productivo sigue listo a nivel de Deployments; la
     aceptacion funcional completa mas reciente es historica y debe refrescarse.
   - Confirmado: el objetivo comercial es hibernar/reactivar clientes, no HA.
-  - Confirmado: el restore actual es in-place y `cold-rebind` esta deshabilitado.
+  - Confirmado al abrir H0: el restore era in-place y `cold-rebind` estaba
+    deshabilitado.
   - Resultado: recovery avanzado congelado y este plan sustituye su continuacion.
 
 - [x] **H1. Congelar un baseline funcional y el contrato minimo.**
@@ -137,19 +139,24 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
   - [x] Revisar una sola vez `docs/client-hibernation-design-v1.md`: GO sin
     P0/P1/P2 residual tras corregir hashes, custodia, digests y bootstrap.
   - [x] Cierre: lista funcional aceptada sin mutar produccion, sala, Admin ni
-    Spoke. H2 pasa a ser la unica fase activa.
+    Spoke. H2 paso a ser la unica fase activa.
 
-- [ ] **H2. Implementar freeze y cold-rebind minimos.**
-  - Preservar con una prueba enfocada el orden ya correcto de `origin/main`: el
+- [x] **H2. Implementar freeze y cold-rebind minimos.**
+  - [x] El capturador conserva su salida historica y anade un modo
+    `freeze-bundle-v1` que emite directamente inventarios portables; esta
+    ampliacion causal evita generar y borrar volcados crudos dentro del bundle.
+  - [x] Preservar con una prueba enfocada el orden ya correcto de `origin/main`: el
     bundle valido se publica antes de intentar reanudar los writers.
-  - Mantener un rollback automatico unico solo para resultados inequivocos;
+  - [x] Mantener un rollback automatico unico solo para resultados inequivocos;
     ante ambiguedad, parar con diagnostico y runbook manual corto.
-  - Permitir restaurar un checkpoint de origen sobre Namespace/PVC nuevos,
+  - [x] Permitir restaurar un checkpoint de origen sobre Namespace/PVC nuevos,
     autenticando por separado identidad de origen, identidad de destino y
     contenido, sin fingir que sus UID deben coincidir.
-  - Separar `preflight-greenfield` de `preflight-reactivation`.
-  - Cierre: cambios pequenos, revisados y con pruebas enfocadas; sin GitHub ni
-    produccion.
+  - [x] Separar `preflight-greenfield` de `preflight-reactivation`.
+  - [x] Cierre: sintaxis, ShellCheck y 51 gates de seguridad verdes. Focos:
+    bundle `5/5`, materializacion `46/46`, greenfield `4/4`, target preflight
+    `49/49`, creacion `49/49` y cold restore/fail-close `49/49`. No se ejecuto
+    full ni GitHub y no se toco produccion, DigitalOcean o secretos.
 
 - [ ] **H3. Ensayar reactivacion sin crear recursos DO nuevos.**
   - Restaurar el bundle en Namespace/PVC nuevos y aislados sobre la capacidad ya
