@@ -195,8 +195,17 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     amplio: `ip-address 10.2.0 -> 10.3.1` y `postgrex 0.22.3 -> 0.22.4`.
     Ambos auditores quedan verdes y se repitieron solo sus componentes
     afectados. Hubs Cloud queda en `b0701ebdfef57ce3597ffaee7124b508b511c8c2`.
-  - [ ] Un PR coherente y un unico CI GitHub autoritativo, solo si el cost gate
-    confirma importe facturable posible de USD 0.
+  - [x] Cost gate GitHub comprobado el 11 de agosto: plan GitHub Free, Actions
+    billable USD 0, uso bruto USD 12.91 compensado integramente por el descuento
+    incluido y `0/2000` minutos facturables. No se amplio el token ni se cambio
+    ningun presupuesto.
+  - [x] Publicar sin duplicar gates: PR Hubs Cloud `#23` y PR raiz `#16`, ambos
+    draft, mediante commits `[skip ci]`; no se inicio ningun workflow automatico.
+  - [ ] Obtener un unico CI GitHub autoritativo terminal. El run manual
+    `31518137826` no es evidencia roja de producto: PostgreSQL 12/14 paso, pero
+    ShellCheck fue cancelado sin diagnostico dos veces mientras el mismo loop
+    local termina verde. No modificar el workflow por hipotesis ni relanzar ese
+    intento; iniciar una sola ejecucion nueva y observarla solo con lecturas.
   - [ ] Fusionar por orden Hubs Cloud y despues el puntero raiz; no cambia Hubs.
   - [ ] Cierre: `main` limpio, documentacion sincronizada e imagenes necesarias por
     digest.
@@ -232,7 +241,9 @@ ret-pvc exactos y aceptacion funcional real. No continues el recovery avanzado
 congelado, no repitas evidencia verde y no añadas protocolos, matrices, HMAC,
 monitores o infraestructura que no sean imprescindibles para ese ciclo.
 Actualiza el plan y docs/estado-sencillo.md al cerrar cada hito. GitHub se usa
-una sola vez para confirmar el candidato final. Detente antes de tocar
+solo para una confirmacion terminal del candidato; una ejecucion cancelada sin
+diagnostico no se convierte en un loop de parches ni cuenta como fallo del
+producto. Detente antes de tocar
 produccion, borrar recursos, exponer secretos o generar un posible coste y pide
 confirmacion concreta para esa frontera.
 ```

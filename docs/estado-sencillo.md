@@ -84,7 +84,7 @@ piezas incluidas en el contrato minimo aprobado.
 [HECHO] H2: bundle y restore sobre identidades nuevas implementados localmente
 [HECHO] H3: DB y medios restaurados juntos en K3s con UID nuevos, 14/14 verde
 [HECHO] H4 local: gate integral, builds y pruebas de todos los componentes
-[AHORA] H4 remoto: comprobar coste GitHub, un unico CI y fusion ordenada
+[AHORA] H4 remoto: una confirmacion CI terminal y fusion ordenada
 [FINAL] Hibernacion real, reconstruccion, aceptacion y vuelta a features
 ```
 
@@ -122,10 +122,22 @@ actualizaron solo los pins transitivos afectados: `ip-address` a `10.3.1` y
 `postgrex` a `0.22.4`; sus auditores y suites quedaron verdes. No se hizo un
 `audit fix`, no se modernizo el stack y no se cambio funcionalidad.
 
-Ahora falta comprobar que el uso facturable de GitHub sigue en USD 0, publicar
-un unico candidato y obtener un unico CI autoritativo. Despues quedan H5 —la
-unica prueba que toca una instancia comercial y necesita autorizacion
-concreta— y H6, que cierra recovery y devuelve el proyecto a features.
+El coste GitHub ya esta comprobado: la cuenta sigue en GitHub Free, Actions
+muestra USD 0 facturados y el uso bruto de USD 12.91 esta compensado por el
+descuento incluido. Los PR draft `hubs-cloud #23` y raiz `#16` se publicaron con
+`[skip ci]`, por lo que no duplicaron jobs.
+
+La primera confirmacion manual, run `31518137826`, dejo PostgreSQL 12 y 14
+verdes. El job estatico fue cancelado sin diagnostico mientras ejecutaba
+ShellCheck, tanto en el intento inicial como en su unico retry. El mismo loop
+ShellCheck termina verde localmente; por eso no se cambia codigo ni workflow a
+ciegas y esos intentos no se cuentan como un fallo del producto. La siguiente
+accion es una sola ejecucion nueva, seguida mediante consultas de solo lectura.
+
+Cuando esa confirmacion termine verde, solo quedan la fusion ordenada de Hubs
+Cloud y del root, y H5 —la unica prueba que toca una instancia comercial y
+necesita autorizacion concreta—. H6 cierra recovery y devuelve el proyecto a
+features.
 
 El diseno tecnico corto esta en `docs/client-hibernation-design-v1.md`. Define
 nueve artefactos exactos, separa los UID antiguos de los UID nuevos y limita H2
@@ -151,7 +163,11 @@ No se esta repitiendo la matriz antigua:
   comun de cuatro horas;
 - las dos correcciones posteriores fueron dependencias de seguridad con causa
   nueva y solo repitieron los componentes afectados;
-- no se uso GitHub y no se importo el coordinador HMAC/keyring;
+- GitHub se uso una vez para publicar los dos PR sin CI automatico y una vez
+  para la confirmacion manual; sus dos intentos terminaron cancelados sin un
+  diagnostico de codigo, por lo que no se han convertido en parches repetidos;
+- el mismo ShellCheck termino verde localmente y no se importo el coordinador
+  HMAC/keyring;
 - cada evidencia queda ligada a una casilla concreta;
 - si el mismo fallo reaparece dos veces sin causa nueva, el plan obliga a parar.
 
