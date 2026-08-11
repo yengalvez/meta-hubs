@@ -137,8 +137,13 @@ lineas; la medicion local llego a unos 16,2 GB RSS.
 Esto no es un fallo del metaverso ni abre otro proyecto. La correccion queda
 limitada al CI: el arnes se analiza sin reabrir fuentes externas y la libreria
 se sigue analizando completa, por separado, con `-x`. Solo se silencian en ese
-arnes cuatro diagnosticos falsos que dependen de seguir el source. Falta validar
+arnes cinco diagnosticos falsos que dependen de seguir el source. Falta validar
 una vez ese gate corregido y, si queda verde, fusionar.
+
+Tambien se corrigio una contradiccion de tiempo: el workflow permitia solo 75
+minutos aunque su suite secuencial completa tarda alrededor de cuatro horas. Se
+mantienen todas las pruebas y se restaura un limite de 360 minutos; no se
+acorta ni se fragmenta la suite para fabricar un verde.
 
 Cuando esa confirmacion termine verde, solo quedan la fusion ordenada de Hubs
 Cloud y del root, y H5 —la unica prueba que toca una instancia comercial y

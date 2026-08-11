@@ -207,8 +207,11 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     estatico perdio comunicacion durante ShellCheck porque `-x` cargaba muchas
     veces la libreria desde el arnes de 17.000 lineas; la medicion local alcanzo
     `16.214.080 KiB` RSS. Validar una vez el gate corregido: el arnes conserva
-    todas las reglas salvo cuatro falsos positivos de source-following y la
+    todas las reglas salvo cinco diagnosticos de source-following y la
     libreria sigue analizandose completa y separadamente con `-x`.
+    El job debe conservar las regresiones completas y un timeout de `360`
+    minutos: `75` minutos era incompatible con la suite secuencial de unas
+    cuatro horas y garantizaba un falso rojo aun despues de arreglar memoria.
   - [ ] Fusionar por orden Hubs Cloud y despues el puntero raiz; no cambia Hubs.
   - [ ] Cierre: `main` limpio, documentacion sincronizada e imagenes necesarias por
     digest.
