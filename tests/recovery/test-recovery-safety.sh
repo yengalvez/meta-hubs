@@ -2910,7 +2910,17 @@ if [[ "$joined" == "get deployments -n hcce -o json" ]]; then
         ;;
     esac
   fi
-  emit_checkpoint_writer_deployments
+  if [[ "${STUB_MODE:-}" == preflight-final-image-drift &&
+        "$(atomic_stub_counter preflight-deployment-list-count)" -ge 2 ]]; then
+    emit_checkpoint_writer_deployments |
+      jq -c '
+        (.items[] | select(.metadata.name == "reticulum") |
+          .spec.template.spec.containers[] | select(.name == "reticulum") |
+          .image) = ("ghcr.io/yengalvez/reticulum@sha256:" + ("9" * 64))
+      '
+  else
+    emit_checkpoint_writer_deployments
+  fi
   exit 0
 fi
 if [[ "$joined" == "get replicasets -n hcce -o json" ]]; then
@@ -4227,16 +4237,7 @@ if [[ "$joined" == "-n hcce get deployment bot-orchestrator -o json" ]]; then
   exit 0
 fi
 if [[ "$joined" == "get deployment -n hcce -o json" ]]; then
-  if [[ "${STUB_MODE:-}" == preflight-final-image-drift &&
-        "$(atomic_stub_counter preflight-deployment-list-count)" -ge 2 ]]; then
-    jq -c '
-      (.items[] | select(.metadata.name == "reticulum") |
-        .spec.template.spec.containers[] | select(.name == "reticulum") |
-        .image) = ("ghcr.io/yengalvez/reticulum@sha256:" + ("9" * 64))
-    ' "$STUB_DEPLOYMENTS_JSON"
-  else
-    cat "$STUB_DEPLOYMENTS_JSON"
-  fi
+  cat "$STUB_DEPLOYMENTS_JSON"
   exit 0
 fi
 if [[ "$joined" == "get persistentvolumeclaim -n hcce -o json" ]]; then
