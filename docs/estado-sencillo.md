@@ -1,6 +1,6 @@
 # Estado sencillo de YenHubs
 
-Ultima actualizacion: **9 de agosto de 2026**
+Ultima actualizacion: **11 de agosto de 2026**
 
 ## Respuesta corta
 
@@ -83,7 +83,8 @@ piezas incluidas en el contrato minimo aprobado.
 [HECHO] Aceptacion real: login, dos usuarios, audio, camara, avatar, Admin y Spoke
 [HECHO] H2: bundle y restore sobre identidades nuevas implementados localmente
 [HECHO] H3: DB y medios restaurados juntos en K3s con UID nuevos, 14/14 verde
-[AHORA] H4: congelar el candidato, un full local y una unica confirmacion GitHub
+[HECHO] H4 local: gate integral, builds y pruebas de todos los componentes
+[AHORA] H4 remoto: comprobar coste GitHub, un unico CI y fusion ordenada
 [FINAL] Hibernacion real, reconstruccion, aceptacion y vuelta a features
 ```
 
@@ -108,11 +109,23 @@ La reactivacion local medida tardo `11 s`, pero eso no incluye comprar/recrear
 DOKS, descargar imagenes, DNS, certificados ni la aceptacion de navegador. Por
 tanto es evidencia tecnica, no una promesa comercial de RTO.
 
-La unica fase activa es **H4**: congelar estos bytes, ejecutar una sola vez el
-gate local completo y usar GitHub solo como confirmacion final si el cost gate
-demuestra importe facturable posible de USD 0. Despues quedan H5 —la unica
-prueba que toca una instancia comercial y necesita autorizacion concreta— y H6,
-que cierra recovery y devuelve el proyecto a features.
+La unica fase activa sigue siendo **H4**, pero su parte local ya esta terminada.
+El gate comun paso recovery `865/865`, seguridad, PostgreSQL real y los demas
+bloques. La configuracion local de los remotos detuvo el comando despues de ese
+tramo; se corrigio el entorno y se continuo solo con el tramo pendiente, sin
+repetir cuatro horas verdes. Pasaron Hubs y Admin, navegador, capacidad
+`115/115`, Hubs CE, bots `154/154`, Dialog, Photomnemonic, Coturn, Spoke y
+Reticulum con `461` tests y `5` propiedades.
+
+El gate encontro dos avisos de seguridad publicados recientemente. Se
+actualizaron solo los pins transitivos afectados: `ip-address` a `10.3.1` y
+`postgrex` a `0.22.4`; sus auditores y suites quedaron verdes. No se hizo un
+`audit fix`, no se modernizo el stack y no se cambio funcionalidad.
+
+Ahora falta comprobar que el uso facturable de GitHub sigue en USD 0, publicar
+un unico candidato y obtener un unico CI autoritativo. Despues quedan H5 —la
+unica prueba que toca una instancia comercial y necesita autorizacion
+concreta— y H6, que cierra recovery y devuelve el proyecto a features.
 
 El diseno tecnico corto esta en `docs/client-hibernation-design-v1.md`. Define
 nueve artefactos exactos, separa los UID antiguos de los UID nuevos y limita H2
@@ -123,7 +136,7 @@ commits funcionales del recovery avanzado.
 
 No se esta repitiendo la matriz antigua:
 
-- no se han ejecutado sus 28 casos pendientes, full ni GitHub;
+- no se han ejecutado sus 28 casos pendientes ni GitHub;
 - la rama antigua sigue preservada, pero el nuevo candidato parte de `main`;
 - H2 ejecuto una sola vez cada foco relevante sobre sus bytes finales y H3 solo
   repitio los focos afectados por cambios causales;
@@ -133,7 +146,12 @@ No se esta repitiendo la matriz antigua:
 - H3a, H3b y H3c no fueron repeticiones: cada uno encontro una causa diferente
   y genero bytes nuevos. H3d fue el unico candidato aceptado;
 - sintaxis, ShellCheck y diff-check pasan sobre los componentes afectados;
-- no se ejecuto el full ni GitHub y no se importo el coordinador HMAC/keyring;
+- el full se ejecuto una sola vez; al detenerse por configuracion local se
+  completo exclusivamente su tramo aun pendiente y no se repitio el bloque
+  comun de cuatro horas;
+- las dos correcciones posteriores fueron dependencias de seguridad con causa
+  nueva y solo repitieron los componentes afectados;
+- no se uso GitHub y no se importo el coordinador HMAC/keyring;
 - cada evidencia queda ligada a una casilla concreta;
 - si el mismo fallo reaparece dos veces sin causa nueva, el plan obliga a parar.
 

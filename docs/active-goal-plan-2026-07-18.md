@@ -1,6 +1,6 @@
 # Meta activa: hibernar y reactivar una instancia de cliente
 
-Ultima revision: **9 de agosto de 2026 (Europe/Madrid)**
+Ultima revision: **11 de agosto de 2026 (Europe/Madrid)**
 
 Este fichero es la unica fuente de orden y estado. La explicacion para el
 propietario esta en `docs/estado-sencillo.md`.
@@ -8,8 +8,10 @@ propietario esta en `docs/estado-sencillo.md`.
 ## Decision de la auditoria
 
 La plataforma funcional de YenHubs no se rehace. Produccion conserva el
-baseline `process-local`, los gitlinks de Hubs/Hubs Cloud no se cambian y el PR
-raiz `#15` permanece congelado, sin fusionar.
+baseline `process-local`, los forks se mantienen sobre sus releases estables y
+el PR raiz `#15` permanece congelado, sin fusionar. H4 solo ha actualizado dos
+pins transitivos vulnerables dentro de Hubs Cloud, sin mezclar un upstream ni
+una feature.
 
 La linea local de recovery avanzado tambien queda **congelada**. No ejecutar sus
 grupos drift, TERM, redaccion, terminal, full o GitHub; no publicar ni desplegar
@@ -180,12 +182,23 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     fingir limpieza.
 
 - [ ] **H4. Validar e integrar una sola vez.**
-  - Focos aplicables, ShellCheck/Actionlint/Gitleaks y un unico
-    `verify-project.sh --full` sobre el candidato congelado.
-  - Un PR coherente y un unico CI GitHub autoritativo, solo si el cost gate
+  - [x] Focos aplicables, ShellCheck/Actionlint/Gitleaks y gate local integral.
+    La unica invocacion `verify-project.sh --full` completo el bloque comun con
+    recovery `865/865`, AUD-065, PostgreSQL real, Gitleaks y el resto de suites;
+    se detuvo despues por faltar los remotos locales `upstream`, no por codigo.
+    Tras corregir solo ese entorno se ejecuto una vez el tramo full-only exacto,
+    sin repetir las cuatro horas ya verdes: Hubs `100/100` y build, navegador,
+    capacidad `115/115`, manifiesto HCCE `68` recursos, bot orchestrator
+    `154/154`, Dialog `2/2`, Photomnemonic `7/7`, Coturn, Spoke `68/68` y build,
+    y Reticulum `461` tests + `5` propiedades, cero fallos.
+  - [x] Resolver dos advisories nuevos descubiertos por el gate sin upgrade
+    amplio: `ip-address 10.2.0 -> 10.3.1` y `postgrex 0.22.3 -> 0.22.4`.
+    Ambos auditores quedan verdes y se repitieron solo sus componentes
+    afectados. Hubs Cloud queda en `b0701ebdfef57ce3597ffaee7124b508b511c8c2`.
+  - [ ] Un PR coherente y un unico CI GitHub autoritativo, solo si el cost gate
     confirma importe facturable posible de USD 0.
-  - Fusionar por orden subrepositorios y punteros solo si realmente cambian.
-  - Cierre: `main` limpio, documentacion sincronizada e imagenes necesarias por
+  - [ ] Fusionar por orden Hubs Cloud y despues el puntero raiz; no cambia Hubs.
+  - [ ] Cierre: `main` limpio, documentacion sincronizada e imagenes necesarias por
     digest.
 
 - [ ] **H5. Demostrar una hibernacion comercial completa.**

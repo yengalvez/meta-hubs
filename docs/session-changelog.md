@@ -1,5 +1,11 @@
 # Session Changelog
 
+## 2026-08-11 (H4 local integral)
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-08-11 | H4 ejecuto una sola invocacion del gate local integral. El bloque comun completo paso recovery `865/865`, seguridad, AUD-065, PostgreSQL real y las suites auxiliares; el comando se detuvo despues por faltar los remotos publicos `upstream` en este worktree. Tras registrar y auditar esos remotos se ejecuto solo el tramo full-only aun pendiente: Hubs `100/100` y build, navegador, capacidad `115/115`, HCCE `68` recursos, bot orchestrator `154/154`, Dialog `2/2`, Photomnemonic `7/7`, Coturn, Spoke `68/68` y build, y Reticulum `461` tests + `5` propiedades. | El gate descubrio dos advisories nuevos y se aplicaron solo los pins compatibles `ip-address 10.3.1` y `postgrex 0.22.4`; npm/Hex audit y las suites afectadas quedan verdes. Hubs Cloud queda en `b0701eb`. No se repitio el bloque comun, no hubo GitHub, produccion, DigitalOcean, secretos ni coste. H4 local queda cerrado; cost gate, un unico CI y fusion ordenada siguen pendientes. |
+
 ## 2026-02-09 (Third-Person Camera + Deploy Work)
 
 Time reference: UTC (local CET noted where relevant).

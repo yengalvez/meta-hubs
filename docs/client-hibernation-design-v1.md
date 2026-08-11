@@ -1,7 +1,7 @@
 # Diseno minimo de hibernacion de clientes v1
 
-Estado: **H3 DEMOSTRADO EN K3S LOCAL; H4 PENDIENTE**
-Fecha: **9 de agosto de 2026**
+Estado: **H4 LOCAL VERDE; CI E INTEGRACION PENDIENTES**
+Fecha: **11 de agosto de 2026**
 
 Este documento convierte el objetivo comercial en un contrato tecnico finito.
 No sustituye el runbook ejecutable de `deployment/README.md`. H2 implemento el
@@ -326,3 +326,24 @@ La ejecucion tambien justifico una ampliacion causal del alcance H3: los hijos
 DB/storage y los dos watchers debian distinguir identidad source de target y
 usar endpoints de listas Kubernetes tipados. No se incorporo el recovery
 avanzado congelado ni se anadio servicio, CRD, protocolo o dependencia.
+
+## 10. Evidencia local H4
+
+La unica invocacion del gate completo termino todo el bloque comun —incluido
+recovery `865/865`, seguridad, AUD-065 y PostgreSQL real— y se detuvo despues
+porque este worktree no tenia registrados los remotos `upstream`. Se copio la
+configuracion publica correcta de esos remotos y la auditoria de releases paso;
+no cambio ningun byte del candidato.
+
+Para no repetir cuatro horas verdes, se ejecuto exactamente una vez el tramo
+full-only que aun no habia comenzado. Pasaron Hubs `100/100` y su build, Admin,
+contratos de navegador, capacidad `115/115`, generador Hubs CE con `68`
+recursos, bot orchestrator `154/154`, Dialog `2/2`, Photomnemonic `7/7`, Coturn,
+Spoke `68/68` y build, y Reticulum con `461` tests, `5` propiedades y cero
+fallos.
+
+El recorrido descubrio dos advisories posteriores al lock original. La
+correccion quedo limitada a `ip-address 10.3.1` y `postgrex 0.22.4`; no se
+modifico codigo funcional ni otra dependencia. Los auditores npm/Hex y las
+suites afectadas pasan. Esta evidencia cierra H4 local, pero no sustituye el
+unico CI sobre el SHA raiz final ni autoriza produccion o DigitalOcean.
