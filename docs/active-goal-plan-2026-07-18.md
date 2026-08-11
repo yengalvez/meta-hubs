@@ -202,10 +202,13 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
   - [x] Publicar sin duplicar gates: PR Hubs Cloud `#23` y PR raiz `#16`, ambos
     draft, mediante commits `[skip ci]`; no se inicio ningun workflow automatico.
   - [ ] Obtener un unico CI GitHub autoritativo terminal. El run manual
-    `31518137826` no es evidencia roja de producto: PostgreSQL 12/14 paso, pero
-    ShellCheck fue cancelado sin diagnostico dos veces mientras el mismo loop
-    local termina verde. No modificar el workflow por hipotesis ni relanzar ese
-    intento; iniciar una sola ejecucion nueva y observarla solo con lecturas.
+    `31518137826` fue cancelado externamente sin diagnostico. El run nuevo
+    `31520065425` demostro la causa real: PostgreSQL 12/14 verde y el runner
+    estatico perdio comunicacion durante ShellCheck porque `-x` cargaba muchas
+    veces la libreria desde el arnes de 17.000 lineas; la medicion local alcanzo
+    `16.214.080 KiB` RSS. Validar una vez el gate corregido: el arnes conserva
+    todas las reglas salvo cuatro falsos positivos de source-following y la
+    libreria sigue analizandose completa y separadamente con `-x`.
   - [ ] Fusionar por orden Hubs Cloud y despues el puntero raiz; no cambia Hubs.
   - [ ] Cierre: `main` limpio, documentacion sincronizada e imagenes necesarias por
     digest.

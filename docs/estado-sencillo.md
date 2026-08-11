@@ -128,11 +128,17 @@ descuento incluido. Los PR draft `hubs-cloud #23` y raiz `#16` se publicaron con
 `[skip ci]`, por lo que no duplicaron jobs.
 
 La primera confirmacion manual, run `31518137826`, dejo PostgreSQL 12 y 14
-verdes. El job estatico fue cancelado sin diagnostico mientras ejecutaba
-ShellCheck, tanto en el intento inicial como en su unico retry. El mismo loop
-ShellCheck termina verde localmente; por eso no se cambia codigo ni workflow a
-ciegas y esos intentos no se cuentan como un fallo del producto. La siguiente
-accion es una sola ejecucion nueva, seguida mediante consultas de solo lectura.
+verdes, pero fue cancelada externamente sin diagnostico. Una ejecucion nueva
+observada solo con lecturas, `31520065425`, encontro la causa real: el runner
+perdio comunicacion mientras ShellCheck consumia mas memoria de la disponible.
+`-x` seguia muchas veces la misma libreria desde el arnes de recovery de 17.000
+lineas; la medicion local llego a unos 16,2 GB RSS.
+
+Esto no es un fallo del metaverso ni abre otro proyecto. La correccion queda
+limitada al CI: el arnes se analiza sin reabrir fuentes externas y la libreria
+se sigue analizando completa, por separado, con `-x`. Solo se silencian en ese
+arnes cuatro diagnosticos falsos que dependen de seguir el source. Falta validar
+una vez ese gate corregido y, si queda verde, fusionar.
 
 Cuando esa confirmacion termine verde, solo quedan la fusion ordenada de Hubs
 Cloud y del root, y H5 —la unica prueba que toca una instancia comercial y
@@ -163,9 +169,10 @@ No se esta repitiendo la matriz antigua:
   comun de cuatro horas;
 - las dos correcciones posteriores fueron dependencias de seguridad con causa
   nueva y solo repitieron los componentes afectados;
-- GitHub se uso una vez para publicar los dos PR sin CI automatico y una vez
-  para la confirmacion manual; sus dos intentos terminaron cancelados sin un
-  diagnostico de codigo, por lo que no se han convertido en parches repetidos;
+- GitHub se uso para publicar los dos PR sin CI automatico y para dos runs
+  causales: el primero fue cancelado sin diagnostico y el segundo demostro
+  agotamiento de memoria del runner; no se han convertido en parches de
+  producto ni en repeticiones de recovery;
 - el mismo ShellCheck termino verde localmente y no se importo el coordinador
   HMAC/keyring;
 - cada evidencia queda ligada a una casilla concreta;
