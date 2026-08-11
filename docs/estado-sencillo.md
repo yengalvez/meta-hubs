@@ -1,6 +1,6 @@
 # Estado sencillo de YenHubs
 
-Ultima actualizacion: **11 de agosto de 2026**
+Ultima actualizacion: **12 de agosto de 2026**
 
 ## Respuesta corta
 
@@ -145,6 +145,21 @@ minutos aunque su suite secuencial completa tarda alrededor de cuatro horas. Se
 mantienen todas las pruebas y se restaura un limite de 360 minutos; no se
 acorta ni se fragmenta la suite para fabricar un verde.
 
+El siguiente candidato, `d0fc186`, confirmo que esa correccion de memoria
+funciona: PostgreSQL 12 y 14, Gitleaks, Actionlint y ShellCheck quedaron verdes,
+y la regresion completa termino con `860/865`. Los cinco rojos eran exactamente
+los cinco casos Linux antiguos que el plan ya habia congelado; ninguno pertenece
+al bundle nuevo, al cold-rebind ni al ensayo H3.
+
+La causa era una contradiccion en las expectativas: aun exigian reanudar y
+borrar el lock automaticamente, aunque el objetivo nuevo ordena parar de forma
+segura cuando el resultado no se puede demostrar. No se ha tocado el producto.
+Se ha corregido solo el oraculo para aceptar dos finales seguros y exactos:
+rollback demostrado, o writers confirmados a cero con el lock retenido. Cualquier
+estado intermedio sigue fallando. Los focos afectados pasan `47/47`, `54/54` y
+`89/89`, y ShellCheck/sintaxis estan verdes. Falta una unica confirmacion remota
+de estos bytes y, si queda verde, fusionar los dos PR.
+
 Cuando esa confirmacion termine verde, solo quedan la fusion ordenada de Hubs
 Cloud y del root, y H5 —la unica prueba que toca una instancia comercial y
 necesita autorizacion concreta—. H6 cierra recovery y devuelve el proyecto a
@@ -174,10 +189,10 @@ No se esta repitiendo la matriz antigua:
   comun de cuatro horas;
 - las dos correcciones posteriores fueron dependencias de seguridad con causa
   nueva y solo repitieron los componentes afectados;
-- GitHub se uso para publicar los dos PR sin CI automatico y para dos runs
-  causales: el primero fue cancelado sin diagnostico y el segundo demostro
-  agotamiento de memoria del runner; no se han convertido en parches de
-  producto ni en repeticiones de recovery;
+- GitHub se uso para publicar los dos PR sin CI automatico y para runs causales:
+  primero se aislo el agotamiento de memoria de ShellCheck y despues el run
+  completo demostro que los unicos cinco rojos eran expectativas congeladas,
+  no fallos de H2/H3; no se han convertido en parches de producto;
 - el mismo ShellCheck termino verde localmente y no se importo el coordinador
   HMAC/keyring;
 - cada evidencia queda ligada a una casilla concreta;

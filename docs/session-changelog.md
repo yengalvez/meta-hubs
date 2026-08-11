@@ -1,5 +1,11 @@
 # Session Changelog
 
+## 2026-08-12 (H4 CI final: baseline fail-closed)
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-08-12 | Se inspecciono el run autoritativo `31525770598` sobre `d0fc186`. PostgreSQL 12/14, Gitleaks, Actionlint y ShellCheck quedaron verdes; la regresion ejecuto los `865` casos y termino `860` verdes con exactamente los cinco rojos Linux historicos. | Los cinco pertenecian a expectativas antiguas de rollback/reentrada automatica ya congeladas, no a H2/H3. Se corrigio solo el oraculo: acepta rollback exacto o parada fail-closed exacta con lock retenido, writers confirmados y cero publicacion; cualquier estado intermedio sigue rojo. Producto, produccion y DigitalOcean no cambiaron. Focos `47/47`, `54/54`, `89/89`, sintaxis y ShellCheck verdes; queda una unica confirmacion CI de los bytes nuevos. |
+
 ## 2026-08-11 (H4 local integral)
 
 | Time | Action | Result |

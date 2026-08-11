@@ -1,6 +1,6 @@
 # Meta activa: hibernar y reactivar una instancia de cliente
 
-Ultima revision: **11 de agosto de 2026 (Europe/Madrid)**
+Ultima revision: **12 de agosto de 2026 (Europe/Madrid)**
 
 Este fichero es la unica fuente de orden y estado. La explicacion para el
 propietario esta en `docs/estado-sencillo.md`.
@@ -212,6 +212,15 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     El job debe conservar las regresiones completas y un timeout de `360`
     minutos: `75` minutos era incompatible con la suite secuencial de unas
     cuatro horas y garantizaba un falso rojo aun despues de arreglar memoria.
+    El candidato `d0fc186` demostro que PostgreSQL 12/14, Gitleaks, Actionlint,
+    ShellCheck y `860/865` regresiones eran verdes. Los cinco rojos eran las
+    cinco expectativas antiguas ya congeladas: exigian reentrada/rollback
+    automaticos incluso cuando Linux solo podia demostrar una parada segura
+    con writers a cero y lock retenido. No se cambio producto ni se reabrio ese
+    coordinador. El oraculo ahora acepta exclusivamente rollback exacto o el
+    estado fail-closed exacto, nunca una combinacion intermedia. Los tres focos
+    afectados pasan `47/47`, `54/54` y `89/89`, mas sintaxis y ShellCheck. Falta
+    una sola confirmacion remota de estos bytes nuevos; sera el ultimo run H4.
   - [ ] Fusionar por orden Hubs Cloud y despues el puntero raiz; no cambia Hubs.
   - [ ] Cierre: `main` limpio, documentacion sincronizada e imagenes necesarias por
     digest.

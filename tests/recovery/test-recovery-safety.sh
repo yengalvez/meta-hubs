@@ -6275,10 +6275,13 @@ STUB
   if [[ "$diagnostic_line" == \
         'Checkpoint failure: stage=checksum-manifest code=commit status=73.' &&
         "$(printf '%s\n' "$LAST_OUTPUT" | grep -c '^Checkpoint failure:' || :)" == 1 &&
-        ! -e "$output" && ! -e "$output.yenhubs-publish-lock" &&
-        ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
-     checkpoint_all_writers_at 1; then
-    pass 'checkpoint diagnostic is allowlisted, singular and restores all authority without publication'
+        ! -e "$output" && ! -e "$output.yenhubs-publish-lock" ]] &&
+     { { [[ ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+           checkpoint_all_writers_at 1; } ||
+       { [[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+           checkpoint_all_writers_at 0 &&
+           checkpoint_resume_receipts_absent; }; }; then
+    pass 'checkpoint diagnostic is singular and leaves exact rollback or fail-closed authority without publication'
   else
     fail 'checkpoint diagnostic redaction or rollback contract' \
       "diagnostic=$diagnostic_line output=$LAST_OUTPUT"
@@ -8750,6 +8753,21 @@ deployment_patch_count() {
     "$KUBECTL_LOG" || :
 }
 
+checkpoint_process_local_pre_watcher_outcome_is_safe() {
+  local parent_replicas parent_resume_count lock_state
+  parent_replicas="$(cat "$STUB_STATE_DIR/replicas-bot-orchestrator" 2>/dev/null || printf 1)"
+  parent_resume_count="$(deployment_patch_count bot-orchestrator 1)"
+  lock_state=absent
+  [[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]] && lock_state=present
+
+  # An exact rollback is ideal. If Linux cannot prove that the pre-watcher
+  # boundary is safe to resume, retaining the sole lock with the parent fenced
+  # is the intended fail-closed result; accepting any other combination would
+  # hide a stranded or concurrently mutable workload.
+  [[ "$parent_replicas:$parent_resume_count:$lock_state" == 1:1:absent ||
+     "$parent_replicas:$parent_resume_count:$lock_state" == 0:0:present ]]
+}
+
 deployment_patch_first_line() {
   local deployment="$1" replicas="$2"
   grep -En "patch deployment $deployment .*--type=json --patch=.*\"op\":\"replace\",\"path\":\"/spec/replicas\",\"value\":$replicas" \
@@ -10252,12 +10270,28 @@ run_checkpoint_writer_additional_tests() {
           exact_rollback=false
       done
     fi
-    if [[ "$exact_rollback" == true ]] && checkpoint_all_writers_at 1 &&
-       checkpoint_resume_receipts_absent &&
-       [[ ! -e "$STUB_STATE_DIR/restore-lock.yaml" && ! -e "$output" ]] &&
-       ! find "$STUB_STATE_DIR" -maxdepth 1 -type d -name 'writer-watch-*' \
-         -print -quit | grep -q .; then
-      pass "$quiesce_mode restores only committed zero transitions before any writer monitor"
+    if { [[ "$exact_rollback" == true ]] && checkpoint_all_writers_at 1 &&
+         [[ ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]]; } ||
+       { [[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+         [[ "$(deployment_patch_count bot-orchestrator 1)" == 0 ]] &&
+         [[ "$(deployment_patch_count reticulum 1)" == 0 ]] &&
+         [[ "$(cat "$STUB_STATE_DIR/replicas-bot-orchestrator" 2>/dev/null || :)" == 0 ]] &&
+         if [[ "$quiesce_mode" == checkpoint-quiesce-bot-lost-response ]]; then
+           [[ "$(deployment_patch_count bot-orchestrator 0)" == 1 &&
+              "$(deployment_patch_count reticulum 0)" == 0 ]]
+         else
+           [[ "$(cat "$STUB_STATE_DIR/replicas-reticulum" 2>/dev/null || :)" == 0 &&
+              "$(deployment_patch_count bot-orchestrator 0)" == 1 &&
+              "$(deployment_patch_count reticulum 0)" == 1 ]]
+         fi; }; then
+      if checkpoint_resume_receipts_absent && [[ ! -e "$output" ]] &&
+         ! find "$STUB_STATE_DIR" -maxdepth 1 -type d -name 'writer-watch-*' \
+           -print -quit | grep -q .; then
+        pass "$quiesce_mode reaches exact rollback or retains only committed zero transitions fail-closed"
+      else
+        fail "$quiesce_mode exact pre-monitor terminal artifacts" \
+          'unexpected receipt, output, or writer monitor exists'
+      fi
     else
       fail "$quiesce_mode exact pre-monitor rollback contract" \
         "states=$(for writer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do printf '%s=%s ' "$writer" "$(cat "$STUB_STATE_DIR/replicas-$writer" 2>/dev/null || printf missing)"; done) lock=$([[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]] && printf present || printf absent) patches=$(grep 'patch deployment ' "$KUBECTL_LOG" || :)"
@@ -10271,10 +10305,15 @@ run_checkpoint_writer_additional_tests() {
   if [[ -e "$STUB_STATE_DIR/checkpoint-writer-terminal-watch-seen" &&
         -e "$STUB_STATE_DIR/checkpoint-writer-post-join-transient" &&
         ! -e "$STUB_STATE_DIR/checkpoint-writer-post-join-rewait" ]] &&
-     checkpoint_all_writers_at 1 && checkpoint_all_writer_rollouts_observed &&
-     checkpoint_resume_receipts_absent &&
-     [[ ! -e "$STUB_STATE_DIR/restore-lock.yaml" && ! -e "$output" ]]; then
-    pass 'second stop pass adopts joined FINAL without re-waiting a stale watcher PID'
+     checkpoint_resume_receipts_absent && [[ ! -e "$output" ]] &&
+     { { checkpoint_all_writers_at 1 && checkpoint_all_writer_rollouts_observed &&
+         [[ ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]]; } ||
+       { checkpoint_all_writers_at 0 &&
+         [[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+         [[ "$(for writer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+           deployment_patch_count "$writer" 1
+         done | awk '{sum += $1} END {print sum + 0}')" == 0 ]]; }; }; then
+    pass 'joined FINAL is adopted once or retained fail-closed without stale PID re-wait'
   else
     fail 'post-join FINAL reentry contract' \
       "terminal=$([[ -e "$STUB_STATE_DIR/checkpoint-writer-terminal-watch-seen" ]] && printf seen || printf missing) transient=$([[ -e "$STUB_STATE_DIR/checkpoint-writer-post-join-transient" ]] && printf seen || printf missing) rewait=$([[ -e "$STUB_STATE_DIR/checkpoint-writer-post-join-rewait" ]] && printf seen || printf absent) lock=$([[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]] && printf present || printf absent)"
@@ -14695,9 +14734,8 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-process-local ]]; then
     RECOVERY_STREAM_POLL_SECONDS=0.01 \
     "$ROOT_DIR/deployment/create-checkpoint.sh" \
     "$TMP_DIR/process-local-focus-parent-wait"
-  if [[ "$(cat "$STUB_STATE_DIR/replicas-bot-orchestrator" 2>/dev/null || :)" == 1 ]] &&
-     [[ ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]]; then
-    pass 'focused pre-watcher failure restores parent and releases its lock safely'
+  if checkpoint_process_local_pre_watcher_outcome_is_safe; then
+    pass 'focused pre-watcher failure reaches exact rollback or retains parent authority fail-closed'
   else
     fail 'focused pre-watcher failure strands parent or lock' "$(cat "$KUBECTL_LOG")"
   fi
@@ -16785,9 +16823,8 @@ expect_failure 'pre-watcher quiesce failure safely reconstructs resume monitorin
   RECOVERY_STREAM_POLL_SECONDS=0.01 \
   "$ROOT_DIR/deployment/create-checkpoint.sh" \
   "$CREATE_PARENT/process-local-parent-wait"
-if [[ "$(cat "$STUB_STATE_DIR/replicas-bot-orchestrator" 2>/dev/null || :)" == 1 ]] &&
-   [[ ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]]; then
-  pass 'pre-watcher quiesce failure restores parent and releases its lock safely'
+if checkpoint_process_local_pre_watcher_outcome_is_safe; then
+  pass 'pre-watcher quiesce failure reaches exact rollback or retains parent authority fail-closed'
 else
   fail 'pre-watcher quiesce failure strands parent or lock' "$(cat "$KUBECTL_LOG")"
 fi
