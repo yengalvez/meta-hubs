@@ -5337,15 +5337,19 @@ set -euo pipefail
 [[ "${EXPECTED_KUBE_CONTEXT:-}" == fixture-context &&
    "${EXPECTED_NAMESPACE_UID:-}" == fixture-uid &&
    "${EXPECTED_RET_PVC_UID:-}" == fixture-pvc-uid &&
-   "${HCCE_MANIFEST_PATH:-}" == "${STUB_LIVE_REACTIVATION_MANIFEST_FILE:?}" &&
    -f "$VALUES_FILE" && ! -L "$VALUES_FILE" &&
-   -f "$HCCE_MANIFEST_PATH" && ! -L "$HCCE_MANIFEST_PATH" ]]
+   -f "$HCCE_MANIFEST_PATH" && ! -L "$HCCE_MANIFEST_PATH" &&
+   -f "${STUB_LIVE_REACTIVATION_MANIFEST_FILE:?}" &&
+   ! -L "$STUB_LIVE_REACTIVATION_MANIFEST_FILE" ]]
+cmp -s "$HCCE_MANIFEST_PATH" "$STUB_LIVE_REACTIVATION_MANIFEST_FILE"
 if [[ -n "${STUB_LIVE_REACTIVATION_VALUES_CONTENT_FILE:-}" ]]; then
   [[ -f "$STUB_LIVE_REACTIVATION_VALUES_CONTENT_FILE" &&
      ! -L "$STUB_LIVE_REACTIVATION_VALUES_CONTENT_FILE" ]] &&
     cmp -s "$VALUES_FILE" "$STUB_LIVE_REACTIVATION_VALUES_CONTENT_FILE"
 else
-  [[ "$VALUES_FILE" == "${STUB_LIVE_REACTIVATION_VALUES_FILE:?}" ]]
+  [[ -f "${STUB_LIVE_REACTIVATION_VALUES_FILE:?}" &&
+     ! -L "$STUB_LIVE_REACTIVATION_VALUES_FILE" ]] &&
+    cmp -s "$VALUES_FILE" "$STUB_LIVE_REACTIVATION_VALUES_FILE"
 fi
 if [[ "${STUB_MODE:-}" == cold-rebind-live-verifier-fail ]]; then
   printf 'live_reactivation_verifier_failed_fixture\n' >&2
