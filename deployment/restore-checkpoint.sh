@@ -19,11 +19,13 @@ PREPARE_FENCE="${RESTORE_CHECKPOINT_PREPARE_FENCE:-0}"
 EXECUTE_FENCED="${RESTORE_CHECKPOINT_EXECUTE_FENCED:-0}"
 FINALIZE_REACTIVATION="${RESTORE_CHECKPOINT_FINALIZE_REACTIVATION:-0}"
 LEGACY_IN_PLACE="${RESTORE_CHECKPOINT_LEGACY_IN_PLACE:-0}"
+COLD_REBIND="${RESTORE_CHECKPOINT_COLD_REBIND:-0}"
 NAMESPACE="${NAMESPACE:-hcce}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VALUES_INPUT_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 MANIFEST_INPUT_FILE="${HCCE_MANIFEST_PATH:-$SCRIPT_DIR/../hubs-cloud/community-edition/hcce.yaml}"
 CUTOVER_KEY_INPUT_FILE="${PROCESS_LOCAL_CUTOVER_KEY_PATH:-}"
+FREEZE_RECEIPT_INPUT_FILE="${FREEZE_RECEIPT_PATH:-}"
 VALUES_SOURCE_FILE=""
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
@@ -40,12 +42,18 @@ fi
 if [[ "$PREPARE_FENCE" != "0" && "$PREPARE_FENCE" != "1" ]] ||
    [[ "$EXECUTE_FENCED" != "0" && "$EXECUTE_FENCED" != "1" ]] ||
    [[ "$FINALIZE_REACTIVATION" != "0" && "$FINALIZE_REACTIVATION" != "1" ]] ||
-   [[ "$LEGACY_IN_PLACE" != "0" && "$LEGACY_IN_PLACE" != "1" ]]; then
+   [[ "$LEGACY_IN_PLACE" != "0" && "$LEGACY_IN_PLACE" != "1" ]] ||
+   [[ "$COLD_REBIND" != "0" && "$COLD_REBIND" != "1" ]]; then
   printf 'Restore fence phase flags must be 0 or 1.\n' >&2
   exit 2
 fi
-if (( PREFLIGHT + CLEAR_STALE_LOCK + PREPARE_FENCE + EXECUTE_FENCED + FINALIZE_REACTIVATION + LEGACY_IN_PLACE > 1 )); then
-  printf 'Preflight, stale-lock clearance, legacy in-place restore and durable fence phases are separate operations.\n' >&2
+if (( PREFLIGHT + CLEAR_STALE_LOCK + PREPARE_FENCE + EXECUTE_FENCED + FINALIZE_REACTIVATION + LEGACY_IN_PLACE + COLD_REBIND > 1 )); then
+  printf 'Preflight, stale-lock clearance, in-place/cold restore and durable fence phases are separate operations.\n' >&2
+  exit 2
+fi
+if [[ "$COLD_REBIND" == 1 && "${RESTORE_TARGET_MODE:-in-place}" != cold-rebind ]] ||
+   [[ "$LEGACY_IN_PLACE" == 1 && "${RESTORE_TARGET_MODE:-in-place}" != in-place ]]; then
+  printf 'The selected restore operation does not match RESTORE_TARGET_MODE.\n' >&2
   exit 2
 fi
 if [[ ! -d "$CHECKPOINT_DIR" || -L "$CHECKPOINT_DIR" ]] ||
@@ -136,6 +144,8 @@ RESTORE_CLEANUP_IN_PROGRESS=0
 # first restore mutation begins. Locks adopted from an earlier restore phase
 # are never treated as locally disposable.
 RESTORE_LOCK_RELEASE_ON_INTERRUPT=0
+RECOVERY_COLD_REBIND_OPERATION_ID=""
+RECOVERY_TARGET_CLUSTER_UID=""
 
 restore_record_pending_signal() {
   local status="$1"
@@ -2167,14 +2177,22 @@ require_fixed_deployment_zero_failclose() {
 
 require_no_pods_owned_by_fixed_deployment() {
   local deployment="$1" replica_sets_json pods_json
-  replica_sets_json="$(recovery_kubectl get replicaset -n "$NAMESPACE" -o json)" || return 1
-  pods_json="$(recovery_kubectl get pod -n "$NAMESPACE" -o json)" || return 1
+  replica_sets_json="$(
+    recovery_kubectl_get_namespaced_list replicasets "$NAMESPACE"
+  )" || return 1
+  pods_json="$(
+    recovery_kubectl_get_namespaced_list pods "$NAMESPACE"
+  )" || return 1
   jq -e --arg deployment "$deployment" '
     .[0] as $replicasets | .[1] as $pods |
-    if ($replicasets.apiVersion == "v1" and
+    if ($replicasets.apiVersion == "apps/v1" and
         $replicasets.kind == "ReplicaSetList" and
+        ($replicasets.metadata.resourceVersion | type) == "string" and
+        $replicasets.metadata.resourceVersion != "" and
         ($replicasets.items | type) == "array" and
         $pods.apiVersion == "v1" and $pods.kind == "PodList" and
+        ($pods.metadata.resourceVersion | type) == "string" and
+        $pods.metadata.resourceVersion != "" and
         ($pods.items | type) == "array") then
       ([ $replicasets.items[]
          | select(.metadata.uid | type == "string" and length > 0)
@@ -2209,7 +2227,8 @@ quiesce_after_failure() {
      "$RESTORE_PHASE" == "validating-live" ||
      "$RESTORE_PHASE" == "completing-fenced" ||
      "$RESTORE_PHASE" == "finalizing-reactivation" ||
-     "$RESTORE_PHASE" == "legacy-in-place" ]] || return 0
+     "$RESTORE_PHASE" == "legacy-in-place" ||
+     "$RESTORE_PHASE" == "cold-rebind" ]] || return 0
   if ! recovery_require_operation_serialization; then
     printf 'The global serialization Lease was lost; fail-close mutation is unsafe.\n' >&2
     return 1
@@ -2565,6 +2584,220 @@ run_legacy_in_place_restore() {
     "$stamp" "$NAMESPACE"
 }
 
+run_cold_rebind_restore() {
+  local index db_confirmation storage_confirmation expected_confirmation
+  local materialized_bundle
+  local -a resume_order=(1 2 0 4)
+  [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind &&
+     "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 &&
+     "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == legacy-absent ]] || return 2
+  materialized_bundle="$(dirname "$RECOVERY_CHECKPOINT_METADATA_COPY")"
+  if ! recovery_private_values_file_is_acceptable "$FREEZE_RECEIPT_INPUT_FILE" ||
+     ! recovery_freeze_bundle_receipt_is_acceptable \
+       "$FREEZE_RECEIPT_INPUT_FILE" "$materialized_bundle"; then
+    printf 'Cold rebind requires the separately protected exact freeze receipt.\n' >&2
+    return 1
+  fi
+  RECOVERY_FENCE_PRE_EPOCH=""
+  RECOVERY_FENCE_TARGET_EPOCH=""
+  RECOVERY_OPERATION_STATE=cold-rebind
+  RECOVERY_OPERATION_ID="${COLD_REBIND_OPERATION_ID:-}"
+  if [[ ! "$RECOVERY_OPERATION_ID" =~ ^[a-f0-9]{32}$ ||
+        "$RECOVERY_OPERATION_ID" == "$RECOVERY_FREEZE_ID" ]]; then
+    printf 'COLD_REBIND_OPERATION_ID must be a new lowercase 32-hex identifier.\n' >&2
+    return 1
+  fi
+  if ! RECOVERY_OPERATION_TOKEN="$(
+      od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]'
+    )" || [[ ! "$RECOVERY_OPERATION_TOKEN" =~ ^[a-f0-9]{32}$ ]]; then
+    printf 'Could not create the private cold-rebind operation token.\n' >&2
+    return 1
+  fi
+  RECOVERY_OPERATION_IDENTITY_PREBOUND=1
+  RECOVERY_COLD_REBIND_OPERATION_ID="$RECOVERY_OPERATION_ID"
+  recovery_require_cluster_identity
+  recovery_require_pvc_identity ret-pvc
+  recovery_require_cold_rebind_target_bootstrap "$VALUES_SOURCE_FILE"
+  expected_confirmation="$(recovery_restore_rebind_confirmation_value)" || return 1
+  [[ "${CONFIRM_COLD_REBIND_RESTORE:-}" == "$expected_confirmation" ]] || {
+    printf 'Refusing cold rebind. Set CONFIRM_COLD_REBIND_RESTORE=%q for this exact source, content, target and operation.\n' \
+      "$expected_confirmation" >&2
+    return 1
+  }
+
+  RESTORE_PHASE=locking
+  acquire_restore_serialization
+  recovery_require_cluster_identity
+  recovery_require_pvc_identity ret-pvc
+  recovery_require_cold_rebind_target_bootstrap "$VALUES_SOURCE_FILE"
+  recovery_freeze_bundle_receipt_is_acceptable \
+    "$FREEZE_RECEIPT_INPUT_FILE" "$materialized_bundle"
+  [[ "$(recovery_restore_rebind_confirmation_value)" == \
+     "$expected_confirmation" ]] || {
+    printf 'Cold rebind binding drifted after serialization.\n' >&2
+    return 1
+  }
+  acquire_restore_lock
+  [[ "$RESTORE_OPERATION_ID" == "$RECOVERY_COLD_REBIND_OPERATION_ID" ]] || return 1
+  RESTORE_PHASE=cold-rebind
+  capture_consumer_contracts_at_replicas 0 1
+  for index in "${!CONSUMERS[@]}"; do
+    recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
+      "deployment/${CONSUMERS[$index]}" 180s
+    recovery_require_consumer_contract_entry \
+      "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" 0 \
+      "$RESTORE_OPERATION_ID"
+  done
+  recovery_require_exact_pvc_consumers ret-pvc
+  reconcile_checkpoint_runner_quiescence
+  start_restore_writer_monitor
+  require_restore_writer_monitor_healthy
+  # From this boundary onward DB/media bytes can change. A later failure must
+  # retain the exact lock and keep all five writers quiescent for diagnosis.
+  RESTORE_LOCK_RELEASE_ON_INTERRUPT=0
+
+  db_confirmation="$(recovery_confirmation_value retdb)" || return 1
+  storage_confirmation="$(
+    recovery_confirmation_value ret-pvc "$RECOVERY_PVC_UID"
+  )" || return 1
+  require_owned_restore_lock
+  require_restore_writer_monitor_healthy
+  VALUES_FILE="$VALUES_SOURCE_FILE" RESTORE_TARGET_MODE=cold-rebind \
+  RESTORE_COORDINATED=1 RESTORE_ALREADY_FENCED=1 \
+  CONFIRM_RESTORE="$db_confirmation" \
+  YENHUBS_PARENT_LEASE_HOLDER="$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
+  YENHUBS_PARENT_LEASE_UID="$RECOVERY_SERIALIZATION_LEASE_UID" \
+  YENHUBS_PARENT_PROCESS_PID="$RECOVERY_SERIALIZATION_PARENT_PID" \
+  YENHUBS_PARENT_PROCESS_START_IDENTITY="$RECOVERY_SERIALIZATION_PARENT_START_IDENTITY" \
+  YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_PATH="$RESTORE_WRITER_MONITOR_CONTRACT" \
+  YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_SHA256="$RESTORE_WRITER_MONITOR_CONTRACT_SHA256" \
+  YENHUBS_PARENT_WRITER_MONITOR_BASELINE_PATH="$RESTORE_WRITER_MONITOR_BASELINE" \
+  YENHUBS_PARENT_WRITER_MONITOR_BASELINE_SHA256="$RESTORE_WRITER_MONITOR_BASELINE_SHA256" \
+  YENHUBS_PARENT_WRITER_MONITOR_FAILURE_PATH="$RESTORE_WRITER_MONITOR_FAILURE" \
+  YENHUBS_PARENT_WRITER_MONITOR_READY_PATH="$RESTORE_WRITER_MONITOR_READY" \
+  YENHUBS_PARENT_WRITER_MONITOR_PROGRESS_PATH="$RESTORE_WRITER_MONITOR_PROGRESS" \
+  YENHUBS_PARENT_WRITER_MONITOR_AUTHORITY_SHA256="$RESTORE_WRITER_MONITOR_AUTHORITY_SHA256" \
+  YENHUBS_PARENT_WRITER_MONITOR_PID="$RESTORE_WRITER_MONITOR_PID" \
+  YENHUBS_PARENT_WRITER_MONITOR_START_IDENTITY="$RESTORE_WRITER_MONITOR_START_IDENTITY" \
+    "$SCRIPT_DIR/restore-retdb.sh" "$DUMP_PATH"
+  recovery_require_operation_serialization
+  require_owned_restore_lock
+  require_restore_writer_monitor_healthy
+  VALUES_FILE="$VALUES_SOURCE_FILE" RESTORE_TARGET_MODE=cold-rebind \
+  RESTORE_COORDINATED=1 CONFIRM_RESTORE_STORAGE="$storage_confirmation" \
+  YENHUBS_PARENT_LEASE_HOLDER="$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
+  YENHUBS_PARENT_LEASE_UID="$RECOVERY_SERIALIZATION_LEASE_UID" \
+  YENHUBS_PARENT_PROCESS_PID="$RECOVERY_SERIALIZATION_PARENT_PID" \
+  YENHUBS_PARENT_PROCESS_START_IDENTITY="$RECOVERY_SERIALIZATION_PARENT_START_IDENTITY" \
+  YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_PATH="$RESTORE_WRITER_MONITOR_CONTRACT" \
+  YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_SHA256="$RESTORE_WRITER_MONITOR_CONTRACT_SHA256" \
+  YENHUBS_PARENT_WRITER_MONITOR_BASELINE_PATH="$RESTORE_WRITER_MONITOR_BASELINE" \
+  YENHUBS_PARENT_WRITER_MONITOR_BASELINE_SHA256="$RESTORE_WRITER_MONITOR_BASELINE_SHA256" \
+  YENHUBS_PARENT_WRITER_MONITOR_FAILURE_PATH="$RESTORE_WRITER_MONITOR_FAILURE" \
+  YENHUBS_PARENT_WRITER_MONITOR_READY_PATH="$RESTORE_WRITER_MONITOR_READY" \
+  YENHUBS_PARENT_WRITER_MONITOR_PROGRESS_PATH="$RESTORE_WRITER_MONITOR_PROGRESS" \
+  YENHUBS_PARENT_WRITER_MONITOR_AUTHORITY_SHA256="$RESTORE_WRITER_MONITOR_AUTHORITY_SHA256" \
+  YENHUBS_PARENT_WRITER_MONITOR_PID="$RESTORE_WRITER_MONITOR_PID" \
+  YENHUBS_PARENT_WRITER_MONITOR_START_IDENTITY="$RESTORE_WRITER_MONITOR_START_IDENTITY" \
+    "$SCRIPT_DIR/restore-ret-storage.sh" "$STORAGE_PATH"
+  recovery_require_operation_serialization
+  require_owned_restore_lock
+  require_restore_writer_monitor_healthy
+  recovery_require_exact_pvc_consumers ret-pvc
+  for index in "${!CONSUMERS[@]}"; do
+    recovery_require_consumer_contract_entry \
+      "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" 0 \
+      "$RESTORE_OPERATION_ID"
+  done
+  validate_restored_database_contract
+  recovery_verify_freeze_bundle_directory \
+    "$materialized_bundle" "$RECOVERY_CHECKPOINT_STAMP"
+  stop_restore_writer_monitor_after_restore
+  start_runner_resume_monitor
+  require_runner_resume_monitor_healthy
+
+  for index in "${resume_order[@]}"; do
+    if ! require_owned_restore_lock; then
+      printf 'Cold rebind lost its exact restore lock before resuming %s.\n' \
+        "${CONSUMERS[$index]}" >&2
+      return 1
+    fi
+    if ! require_runner_resume_monitor_healthy; then
+      printf 'Cold rebind lost runner-absence coverage before resuming %s.\n' \
+        "${CONSUMERS[$index]}" >&2
+      return 1
+    fi
+    if ! DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
+        "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
+        "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" 0 1 \
+        "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")"; then
+      printf 'Cold rebind could not scale %s from its exact frozen contract.\n' \
+        "${CONSUMERS[$index]}" >&2
+      return 1
+    fi
+    if ! recovery_wait_for_deployment_rollout "${CONSUMERS[$index]}" 300; then
+      printf 'Cold rebind rollout did not become ready: %s.\n' \
+        "${CONSUMERS[$index]}" >&2
+      return 1
+    fi
+    if ! recovery_require_consumer_contract_entry \
+        "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" 1 \
+        "$RESTORE_OPERATION_ID"; then
+      printf 'Cold rebind post-resume contract changed: %s.\n' \
+        "${CONSUMERS[$index]}" >&2
+      return 1
+    fi
+  done
+  if ! stop_runner_resume_monitor_before_parent; then
+    printf 'Cold rebind could not close runner-absence coverage before the parent.\n' >&2
+    return 1
+  fi
+  index=3
+  if ! require_owned_restore_lock; then
+    printf 'Cold rebind lost its exact restore lock before resuming the parent.\n' >&2
+    return 1
+  fi
+  if ! DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
+      "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
+      "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" 0 1 \
+      "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")"; then
+    printf 'Cold rebind could not scale the parent from its exact frozen contract.\n' >&2
+    return 1
+  fi
+  if ! recovery_wait_for_deployment_rollout "${CONSUMERS[$index]}" 300; then
+    printf 'Cold rebind parent rollout did not become ready.\n' >&2
+    return 1
+  fi
+  if ! recovery_require_consumer_contract_entry \
+      "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" 1 \
+      "$RESTORE_OPERATION_ID"; then
+    printf 'Cold rebind parent post-resume contract changed.\n' >&2
+    return 1
+  fi
+  if ! verify_legacy_live_reactivation; then
+    printf 'Cold rebind local live verification failed.\n' >&2
+    return 1
+  fi
+  if ! run_restore_live_reactivation_verifier; then
+    printf 'Cold rebind external live verification failed.\n' >&2
+    return 1
+  fi
+  recovery_require_cluster_identity || return 1
+  recovery_require_pvc_identity ret-pvc || return 1
+  recovery_require_restore_target_binding || return 1
+  if ! require_owned_restore_lock; then
+    printf 'Cold rebind lost its exact restore lock before terminal release.\n' >&2
+    return 1
+  fi
+  release_restore_lock
+  RESTORE_PHASE=complete
+  release_restore_serialization
+  trap - ERR
+  printf 'Cold rebind completed from freeze=%s into new cluster=%s namespace_uid=%s pvc_uid=%s.\n' \
+    "$RECOVERY_FREEZE_ID" "$RECOVERY_TARGET_CLUSTER_UID" \
+    "$RECOVERY_NAMESPACE_UID" "$RECOVERY_PVC_UID"
+}
+
 driver_failed() {
   local status=$?
   local quiesced=1
@@ -2594,7 +2827,8 @@ driver_failed() {
           "$RESTORE_PHASE" == "validating-live" ||
           "$RESTORE_PHASE" == "completing-fenced" ||
           "$RESTORE_PHASE" == "finalizing-reactivation" ||
-          "$RESTORE_PHASE" == "legacy-in-place" ]]; then
+          "$RESTORE_PHASE" == "legacy-in-place" ||
+          "$RESTORE_PHASE" == "cold-rebind" ]]; then
       if [[ "$quiesced" == "1" ]]; then
         printf 'The owned restore lock is retained for inspection; consumers remain at zero.\n' >&2
       else
@@ -2634,6 +2868,8 @@ trap 'driver_interrupted 143' TERM
 # This validation and private materialization happens before any Kubernetes
 # read, and is repeated by each child immediately before its own operation.
 recovery_materialize_checkpoint "$DUMP_PATH" "$SCRIPT_DIR/validate-checkpoint.sh"
+DUMP_PATH="$RECOVERY_DUMP_COPY"
+STORAGE_PATH="$RECOVERY_STORAGE_COPY"
 export RECOVERY_CHECKPOINT_METADATA_SCHEMA RECOVERY_CHECKPOINT_RUNNER_GENERATION \
   RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256 RECOVERY_RUNNER_RUNTIME_GENERATION \
   RECOVERY_CHECKPOINT_OPERATION_ID
@@ -2645,6 +2881,16 @@ fi
 if [[ "$LEGACY_IN_PLACE" == 1 &&
       "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" != legacy-absent ]]; then
   printf 'The one-shot legacy in-place operation accepts only legacy-absent checkpoints.\n' >&2
+  exit 1
+fi
+if [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind &&
+      "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" != freeze-bundle-v1 ]]; then
+  printf 'Cold rebind accepts only a complete freeze-bundle-v1.\n' >&2
+  exit 1
+fi
+if [[ "${RESTORE_TARGET_MODE:-in-place}" == in-place &&
+      "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 ]]; then
+  printf 'freeze-bundle-v1 requires RESTORE_TARGET_MODE=cold-rebind.\n' >&2
   exit 1
 fi
 snapshot_restore_private_file RESTORE_VALUES_SNAPSHOT "$VALUES_INPUT_FILE" values
@@ -2675,7 +2921,9 @@ fi
 
 if [[ "$PREFLIGHT" == 1 || "$PREPARE_FENCE" == 1 ]]; then
   recovery_require_restore_target_binding
-  if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
+  if [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind ]]; then
+    recovery_require_cold_rebind_target_bootstrap "$VALUES_SOURCE_FILE"
+  elif [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
     if ! recovery_require_durable_checkpoint_source_matches_live \
       "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"; then
       printf 'The live runner control-plane identity does not match the checkpoint source.\n' >&2
@@ -2685,8 +2933,9 @@ if [[ "$PREFLIGHT" == 1 || "$PREPARE_FENCE" == 1 ]]; then
     recovery_require_checkpoint_generation_matches_live \
       "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" "$VALUES_SOURCE_FILE"
   fi
-  if ! recovery_require_live_runner_control_plane_matches_checkpoint \
-    "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"; then
+  if [[ "${RESTORE_TARGET_MODE:-in-place}" != cold-rebind ]] &&
+     ! recovery_require_live_runner_control_plane_matches_checkpoint \
+       "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"; then
     printf 'The live runner control-plane identity does not match the checkpoint inventory.\n' >&2
     exit 1
   fi
@@ -2695,7 +2944,9 @@ if [[ "$PREFLIGHT" == 1 || "$PREPARE_FENCE" == 1 ]]; then
     printf 'The live workload image inventory does not exactly match the checkpoint.\n' >&2
     exit 1
   fi
-  require_durable_checkpoint_evidence_live active-source dormant
+  if [[ "${RESTORE_TARGET_MODE:-in-place}" != cold-rebind ]]; then
+    require_durable_checkpoint_evidence_live active-source dormant
+  fi
   if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
     recovery_require_restore_epoch_candidate \
       "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" "$VALUES_SOURCE_FILE"
@@ -2705,11 +2956,22 @@ if [[ "$PREFLIGHT" == 1 || "$PREPARE_FENCE" == 1 ]]; then
 fi
 
 if [[ "$PREFLIGHT" == "1" ]]; then
-  VALUES_FILE="$VALUES_SOURCE_FILE" RESTORE_PREFLIGHT=1 \
+  CHILD_PREFLIGHT_COORDINATED=0
+  [[ "${RESTORE_TARGET_MODE:-in-place}" != cold-rebind ]] ||
+    CHILD_PREFLIGHT_COORDINATED=1
+  VALUES_FILE="$VALUES_SOURCE_FILE" \
+    RESTORE_COORDINATED="$CHILD_PREFLIGHT_COORDINATED" RESTORE_PREFLIGHT=1 \
     "$SCRIPT_DIR/restore-retdb.sh" "$DUMP_PATH"
-  VALUES_FILE="$VALUES_SOURCE_FILE" RESTORE_STORAGE_PREFLIGHT=1 \
+  VALUES_FILE="$VALUES_SOURCE_FILE" \
+    RESTORE_COORDINATED="$CHILD_PREFLIGHT_COORDINATED" \
+    RESTORE_STORAGE_PREFLIGHT=1 \
     "$SCRIPT_DIR/restore-ret-storage.sh" "$STORAGE_PATH"
   printf 'Coordinated checkpoint preflight passed without mutation: checkpoint=%s\n' "$stamp"
+  exit 0
+fi
+
+if [[ "$COLD_REBIND" == "1" ]]; then
+  run_cold_rebind_restore
   exit 0
 fi
 
@@ -2829,7 +3091,7 @@ if [[ "$EXECUTE_FENCED" == "1" ]]; then
   require_restore_monitors_healthy
 else
   if [[ "$FINALIZE_REACTIVATION" != "1" ]]; then
-    printf 'A destructive restore requires either RESTORE_CHECKPOINT_LEGACY_IN_PLACE=1 for a legacy checkpoint or RESTORE_CHECKPOINT_PREPARE_FENCE=1 for durable-v2.\n' >&2
+    printf 'A destructive restore requires RESTORE_CHECKPOINT_COLD_REBIND=1 for freeze-bundle-v1, RESTORE_CHECKPOINT_LEGACY_IN_PLACE=1 for a legacy checkpoint, or RESTORE_CHECKPOINT_PREPARE_FENCE=1 for durable-v2.\n' >&2
     exit 2
   fi
 fi

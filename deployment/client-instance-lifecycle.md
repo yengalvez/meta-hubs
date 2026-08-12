@@ -39,7 +39,7 @@ Baseline YenHubs actual:
 - un nodo Basic 4 vCPU / 8 GiB;
 - un LB regional;
 - dos PVC de 10 GiB;
-- coste base aproximado de 62 USD/mes.
+- coste base aproximado de 65 USD/mes antes de impuestos y overages.
 
 ### 2. Preparar identidad
 
@@ -58,12 +58,17 @@ Baseline YenHubs actual:
    respaldado por Llavero, que crea y elimina un `DOCKER_CONFIG` efímero
    (`0700`, `config.json` `0600`) sin pasar `GHCR_TOKEN` por argv/entorno ni
    mostrarlo.
-6. Ejecutar el preflight antes de crear recursos:
+6. Para un cliente realmente nuevo, que aun no tiene checkpoint, validar los
+   values locales sin usar un preflight de reactivacion:
 
    ```bash
-   BACKUP_DIR=/ruta/absoluta/checkpoint-fresco \
-     ./deployment/preflight-reactivation.sh
+   VALUES_FILE=/ruta/privada/input-values.yaml \
+     node deployment/parse-local-values.mjs \
+       /ruta/privada/input-values.yaml --validate
    ```
+
+   `preflight-greenfield.sh` se reserva para recrear una instancia hibernada:
+   exige su bundle y recibo; no se inventa un checkpoint para un alta nueva.
 
 ### 3. Crear infraestructura
 
@@ -202,44 +207,38 @@ bloqueado.
 ### 1. Crear checkpoint completo
 
 ```bash
-./deployment/create-checkpoint.sh
+export CLIENT_INSTANCE_ID='<id-estable-minusculas>'
+export FREEZE_DNS_PROVIDER='<proveedor-dns>'
+export FREEZE_SMTP_PROVIDER='<proveedor-smtp>'
+export FREEZE_ROOM_ID='<id-sala-principal>'
+export FREEZE_SCENE_ID='<id-escena-publicada>'
+export FREEZE_SPOKE_PROJECT_ID='<id-proyecto-spoke>'
+export FREEZE_RESPONSIBLE_OWNER='<responsable-operativo>'
+export FREEZE_COST_GATE_CHECKED_AT='<AAAA-MM-DDTHH:MM:SSZ>'
+export FREEZE_ESTIMATED_MONTHLY_USD='<importe-no-negativo>'
+
+ALLOW_CHECKPOINT_DOWNTIME=1 CHECKPOINT_FORMAT=freeze-bundle-v1 \
+  ./deployment/create-checkpoint.sh /ruta/absoluta/freeze-bundle
 ```
 
-Debe contener:
+El bundle comercial contiene exactamente nueve ficheros:
 
 - `retdb-*.sql.gz`;
 - `ret-storage-*.tar.gz`;
-- `database-contract.json` con schemas, relaciones, migraciones, SID de salas,
-  UUID/estado de `owned_files` y conteos exactos;
-- `SHA256SUMS`;
 - `checkpoint-metadata.json`;
-- commits y submodulos;
+- `database-contract.json`;
 - `deployment-images.json` con los 12 Deployments, 13 pares exactos, ningun
-  `initContainer` ni contenedor efimero y todas las imagenes por digest. Su
-  schema 3 incluye `bot_runner_runtime`: modo legacy `process-local` con imagen
-  nula o modo `kubernetes-pod` con el digest exacto del runner;
-- `k8s-hcce-structure.json` e inventario DigitalOcean;
-- presencia de claves configuradas, nunca sus valores.
+  `initContainer` ni contenedor efimero y todas las imagenes por digest;
+- `git-state.json`;
+- `external-config-redacted.json`;
+- `infrastructure-recipe.json`;
+- `SHA256SUMS`, que cubre exactamente los otros ocho.
 
-Antes de leer DB o PVC, checkpoint y restore deben mantener a cero Reticulum,
-ambos Pgbouncers, bot-orchestrator y Coturn, y además esperar/monitorizar cero
-Pods dinámicos gestionados de `bot-runner`. La reaparición de uno bloquea la
-operación y la reanudación de escritores.
-
-El checkpoint autoriza antes de mutar exactamente una frontera: el baseline
-legacy `process-local` completo, sin autoridad ni namespace Kubernetes de
-runners, o el runtime `kubernetes-pod` con fase `active`, manifiesto,
-admission y RBAC exactos. Un binding parcial, una anotación unilateral o un
-namespace runner residual no pueden hacer fallback a legacy. El driver liga el
-modo al inventario y al fingerprint del Deployment y vuelve a validarlo antes
-de reanudar; una deriva deja el parent a cero y conserva el lock.
-
-Los inputs de values y, cuando corresponde, del manifiesto se copian antes del
-downtime a snapshots privados `0600` ligados a la ejecución. Los gates consumen
-solo esos snapshots. Checkpoint y restore reservan además la recuperación
-autoritativa al driver principal: un subshell puede devolver un error, pero no
-reanudar writers, duplicar el fencing ni liberar el lock. El contrato completo
-se documenta en `deployment/README.md`.
+Este modo acepta el baseline comercial `process-local`. Detiene coordinadamente
+los cinco consumidores, captura DB y medios del mismo instante, valida pares y
+contratos y publica el bundle antes de intentar reanudar. Ante una respuesta
+ambigua no se debe improvisar otra reentrada: conservar el diagnostico, el lock
+y los consumidores a cero hasta revisar el estado exacto.
 
 ### 2. Validar recuperabilidad
 
@@ -250,9 +249,10 @@ gzip -t /ruta/retdb-*.sql.gz
 RESTORE_PREFLIGHT=1 ./deployment/restore-retdb.sh /ruta/retdb-*.sql.gz
 EXPECTED_RET_PVC_UID='<uid-exacto-ret-pvc>' RESTORE_STORAGE_PREFLIGHT=1 \
   ./deployment/restore-ret-storage.sh /ruta/ret-storage-*.tar.gz
-RESTORE_CHECKPOINT_PREFLIGHT=1 \
-  ./deployment/restore-checkpoint.sh /ruta/checkpoint
-BACKUP_DIR=/ruta/checkpoint ./deployment/preflight-reactivation.sh
+
+VALUES_FILE=/ruta/privada/input-values.yaml \
+  ./deployment/preflight-greenfield.sh \
+    /ruta/freeze-bundle /ruta/protegida/freeze-receipt.json
 ```
 
 `create-checkpoint.sh` ejecuta el validador de contenido antes de crear
@@ -263,27 +263,15 @@ incompletos. Tambien exige que `database-contract.json` coincida exactamente
 con el DDL, las versiones de migracion y los conteos del dump. El checkpoint se
 construye en staging privado y solo se publica atomicamente tras validar todo;
 una colision o fallo no sobrescribe ni deja un directorio final parcial. Los
-modos `*_PREFLIGHT=1` son solo lectura; no crean una base temporal ni ensayan el
+modos de preflight son solo lectura; no crean una base temporal ni ensayan el
 restore real.
 
-La restauracion destructiva solo se permite mediante
-`deployment/restore-checkpoint.sh`: mantiene Reticulum, ambos Pgbouncers,
-bot-orchestrator y Coturn a cero desde antes del drop hasta validar juntos DB y
-PVC. No ejecutar los dos hijos destructivos por separado. Si falla, los
-consumidores permanecen a cero y conserva un lock global create-only ligado al
-checkpoint y al destino. Un segundo restore no puede cruzarlo. Al completar,
-el driver inicia proxies, Reticulum y despues bot/Coturn en orden de
-dependencia, y solo entonces elimina su lock. El pod temporal tambien es
-create-only: UID, token privado, spec admitida y montaje directo
-`ret-pvc` -> `/storage` deben coincidir exactamente durante toda la extraccion.
-
-Tras revisar un fallo, el lock retenido solo se elimina con
-`RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1`, los cinco consumidores a cero, ningun
-pod usando el PVC y `CONFIRM_CLEAR_RESTORE_LOCK` ligado al UID exacto del lock y
-del PVC. Ese modo no escala ni reanuda nada.
-
-Copiar el checkpoint a una segunda ubicacion cifrada. No borrar DigitalOcean
-hasta validar ambas copias.
+Antes de borrar DigitalOcean, copiar el bundle completo a dos ubicaciones
+cifradas independientes y crear fuera del bundle un recibo privado `0600` con
+schema `freeze-bundle-receipt-v1`. El recibo liga el SHA-256 de `SHA256SUMS`,
+ambas pruebas de descifrado/rehash, custodia de las 13 imagenes y referencias
+opacas al escrow de clave y credenciales. El schema exacto esta en
+`docs/client-hibernation-design-v1.md`; ninguna referencia contiene secretos.
 
 ### 3. Capturar dependencias externas
 
@@ -311,24 +299,76 @@ que borrar el cluster elimina cualquier recurso de la cuenta.
 
 ## Restauracion
 
-1. Recuperar los tres repos y el checkpoint.
-2. Confirmar los commits y digests del expediente.
-3. Renovar tokens caducados antes de crear el cluster.
-4. Ejecutar `BACKUP_DIR=/ruta/checkpoint deployment/preflight-reactivation.sh`.
-5. Recrear DOKS, cert-manager, ingress y DNS.
-6. Generar y aplicar el manifest.
-7. Volver a capturar `EXPECTED_NAMESPACE_UID` para el namespace recien creado.
-8. Restaurar primero PostgreSQL con confirmacion ligada a
-   `retdb:<contexto>:<namespace>:<uid>:<stamp>:<db-sha>:<storage-sha>`.
-9. Restaurar despues el archive correspondiente de `ret-pvc`, con confirmacion
-   ligada a `ret-pvc:<contexto>:<namespace>:<uid>:<stamp>:<db-sha>:<storage-sha>:<pvc-uid>`.
-10. Confirmar cero Pods runner dinámicos durante toda la restauración.
-11. Reiniciar servicios dependientes en el orden compatible: proxies,
-    Reticulum Ready y después Coturn/parent; los nuevos runner Pods solo pueden
-    aparecer tras abrir el control-plane.
-12. Validar migrations, active owned files, pares fisicos y el
-    `bot_runner_runtime` schema 3 contra el digest privado esperado.
-13. Ejecutar el verificador y la aceptacion funcional completa.
+### Ensayo local aceptado antes de H4
+
+El 9 de agosto de 2026 se completo el ensayo `20260809-h3d` en Ubuntu 24.04
+ARM64 con K3s `v1.35.5+k3s1`. Origen y destino usaron identidades distintas de
+cluster, Namespace y ambos PVC; DB y medios se restauraron juntos y los cinco
+consumidores terminaron `1/1`, sin lock residual. El harness paso `14/14` y el
+segmento local de reactivacion midio `11 s`.
+
+Esta evidencia demuestra el contrato cold-rebind y no toca DigitalOcean. No
+sustituye el ensayo comercial: no incluye provisionamiento DOKS, DNS,
+certificados, pulls remotos ni aceptacion de navegador. Los recursos y el
+expediente privado del laboratorio se preservan para auditoria; no se reutiliza
+el mismo `RUN_ID` ni se borra evidencia para repetir un verde.
+
+1. Recuperar los tres repos, el bundle, el recibo separado y los values
+   privados. Confirmar commits y digests.
+2. Antes de crear infraestructura, ejecutar el gate offline:
+
+   ```bash
+   VALUES_FILE=/ruta/privada/input-values.yaml \
+     ./deployment/preflight-greenfield.sh \
+       /ruta/freeze-bundle /ruta/protegida/freeze-receipt.json
+   ```
+
+3. Solo tras aprobar el coste, recrear DOKS, cert-manager, ingress y DNS.
+4. Generar el manifest target con los cinco consumidores a replicas cero. El
+   Namespace, `ret-pvc`, `pgsql-pvc` y sus UID deben ser nuevos; no introducir
+   Jobs, Pods, workloads o datos extra.
+5. Capturar `EXPECTED_KUBE_CONTEXT`, `EXPECTED_NAMESPACE_UID` y
+   `EXPECTED_RET_PVC_UID` del target y ejecutar el preflight read-only:
+
+   ```bash
+   RESTORE_TARGET_MODE=cold-rebind \
+   BACKUP_DIR=/ruta/freeze-bundle \
+   FREEZE_RECEIPT_PATH=/ruta/protegida/freeze-receipt.json \
+   VALUES_FILE=/ruta/privada/input-values.yaml \
+     ./deployment/preflight-reactivation.sh
+   ```
+
+6. Crear un `COLD_REBIND_OPERATION_ID` nuevo de 32 hex minusculas. Ejecutar una
+   primera vez sin confirmacion para obtener el valor exacto; esa negativa es
+   anterior al Lease y a cualquier mutacion. Revisarlo y repetir:
+
+   ```bash
+   RESTORE_TARGET_MODE=cold-rebind \
+   RESTORE_CHECKPOINT_COLD_REBIND=1 \
+   COLD_REBIND_OPERATION_ID='<32-hex-nuevo>' \
+   FREEZE_RECEIPT_PATH=/ruta/protegida/freeze-receipt.json \
+   VALUES_FILE=/ruta/privada/input-values.yaml \
+     ./deployment/restore-checkpoint.sh /ruta/freeze-bundle
+
+   RESTORE_TARGET_MODE=cold-rebind \
+   RESTORE_CHECKPOINT_COLD_REBIND=1 \
+   COLD_REBIND_OPERATION_ID='<32-hex-nuevo>' \
+   FREEZE_RECEIPT_PATH=/ruta/protegida/freeze-receipt.json \
+   VALUES_FILE=/ruta/privada/input-values.yaml \
+   CONFIRM_COLD_REBIND_RESTORE='<valor-exacto-impreso>' \
+     ./deployment/restore-checkpoint.sh /ruta/freeze-bundle
+   ```
+
+7. El driver restaura DB y `ret-pvc` juntos, valida contrato/UUID/pares, reanuda
+   en orden y ejecuta el verificador live. Nunca ejecutar los hijos destructivos
+   por separado ni combinar DB y storage de fechas distintas.
+8. Completar carga fria, login, sala, audio, camaras, avatar, Admin y Spoke. Los
+   bots solo se aceptan si forman parte del baseline comercial de esa instancia.
+
+Si falla despues de empezar a escribir, el driver intenta dejar los cinco
+consumidores a cero y conserva el lock exacto. No borrar el lock, escalar a mano
+ni repetir a ciegas: guardar el primer diagnostico, comprobar Lease/lock,
+replicas y consumidor de PVC, y abrir una recuperacion manual separada.
 
 Nunca combinar un dump de una fecha con un storage de otra.
 
@@ -349,6 +389,7 @@ Ademas de la congelacion:
 [ ] checkpoint DB + storage
 [ ] checksums y dry-run correctos
 [ ] segunda copia cifrada
+[ ] recibo externo privado verificado
 [ ] commits y digests registrados
 [ ] values/secrets custodiados fuera de Git
 [ ] DNS/SMTP/OpenAI/GHCR documentados

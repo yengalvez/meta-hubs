@@ -183,6 +183,72 @@ check_registry_image() {
   esac
 }
 
+run_cold_rebind_preflight() {
+  local receipt_path="${FREEZE_RECEIPT_PATH:-}" stamp bundle_copy
+  printf 'YenHubs cold-rebind target preflight (read-only)\n\n'
+  for command_name in node kubectl jq gzip tar; do
+    check_command "$command_name"
+  done
+  if [[ ! -d "$BACKUP_DIR" || -L "$BACKUP_DIR" ]] ||
+     recovery_path_has_symlink_component "$BACKUP_DIR"; then
+    fail 'BACKUP_DIR no es un freeze-bundle-v1 directo'
+  elif ! stamp="$(jq -er '.stamp | select(type == "string" and
+      test("^[0-9]{8}-[0-9]{6}$"))' \
+      "$BACKUP_DIR/checkpoint-metadata.json" 2>/dev/null)"; then
+    fail 'El bundle no contiene un stamp valido'
+  elif recovery_materialize_checkpoint \
+      "$BACKUP_DIR/retdb-$stamp.sql.gz" "$SCRIPT_DIR/validate-checkpoint.sh" &&
+      [[ "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 ]]; then
+    pass 'freeze-bundle-v1 materializado y rehasheado en privado'
+  else
+    fail 'El freeze-bundle-v1 no supera materializacion e integridad conjunta'
+  fi
+  if recovery_private_values_file_is_acceptable "$receipt_path" &&
+     [[ -n "${RECOVERY_CHECKPOINT_METADATA_COPY:-}" ]] &&
+     recovery_freeze_bundle_receipt_is_acceptable \
+       "$receipt_path" "$(dirname "$RECOVERY_CHECKPOINT_METADATA_COPY")"; then
+    pass 'Recibo externo exacto, privado y separado disponible'
+  else
+    fail 'Falta el recibo externo exacto y privado del bundle'
+  fi
+  if recovery_private_values_file_is_acceptable "$VALUES_SOURCE_FILE" &&
+     node "$SCRIPT_DIR/parse-local-values.mjs" \
+       "$VALUES_SOURCE_FILE" --validate >/dev/null; then
+    VALUES_FILE="$VALUES_SOURCE_FILE"
+    pass 'Valores privados target validos'
+  else
+    fail 'VALUES_FILE target no es privado o valido'
+  fi
+  if [[ -n "${RECOVERY_CHECKPOINT_METADATA_COPY:-}" && -n "$VALUES_FILE" ]] &&
+     recovery_require_cluster_identity &&
+     recovery_require_pvc_identity ret-pvc &&
+     recovery_require_cold_rebind_target_bootstrap "$VALUES_FILE"; then
+    pass 'Target nuevo, exacto, vacio y con los cinco consumidores a cero'
+  else
+    fail 'El target no cumple el bootstrap cold-rebind exacto'
+  fi
+  if [[ -n "${RECOVERY_CHECKPOINT_METADATA_COPY:-}" ]]; then
+    bundle_copy="$(dirname "$RECOVERY_CHECKPOINT_METADATA_COPY")"
+    if recovery_verify_freeze_bundle_directory \
+        "$bundle_copy" "$RECOVERY_CHECKPOINT_STAMP"; then
+      pass 'El snapshot privado del bundle permanece byte-invariante'
+    else
+      fail 'El snapshot privado del bundle cambio durante el preflight'
+    fi
+  fi
+  if ((failures > 0)); then
+    printf '\nResultado: FAIL (%s comprobaciones fallidas). No restaurar.\n' \
+      "$failures" >&2
+    exit 1
+  fi
+  printf '\nResultado: PASS read-only. Target listo para confirmacion cold-rebind; no se escribio nada.\n'
+  exit 0
+}
+
+if [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind ]]; then
+  run_cold_rebind_preflight
+fi
+
 printf 'YenHubs reactivation preflight\n'
 printf 'Root: %s\n\n' "$ROOT_DIR"
 
