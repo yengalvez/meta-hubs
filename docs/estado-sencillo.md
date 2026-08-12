@@ -157,8 +157,10 @@ segura cuando el resultado no se puede demostrar. No se ha tocado el producto.
 Se ha corregido solo el oraculo para aceptar dos finales seguros y exactos:
 rollback demostrado, o writers confirmados a cero con el lock retenido. Cualquier
 estado intermedio sigue fallando. Los focos afectados pasan `47/47`, `54/54` y
-`89/89`, y ShellCheck/sintaxis estan verdes. Falta una unica confirmacion remota
-de estos bytes y, si queda verde, fusionar los dos PR.
+`89/89`, y ShellCheck/sintaxis estan verdes. La confirmacion remota final,
+run `31546745988` sobre `09af04f`, termino completamente verde: las `865`
+regresiones, seguridad y PostgreSQL 12/14. Solo queda fusionar Hubs Cloud y
+despues el repositorio raiz para cerrar H4.
 
 Cuando esa confirmacion termine verde, solo quedan la fusion ordenada de Hubs
 Cloud y del root, y H5 —la unica prueba que toca una instancia comercial y

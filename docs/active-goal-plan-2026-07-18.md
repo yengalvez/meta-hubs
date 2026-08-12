@@ -201,7 +201,7 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     ningun presupuesto.
   - [x] Publicar sin duplicar gates: PR Hubs Cloud `#23` y PR raiz `#16`, ambos
     draft, mediante commits `[skip ci]`; no se inicio ningun workflow automatico.
-  - [ ] Obtener un unico CI GitHub autoritativo terminal. El run manual
+  - [x] Obtener un unico CI GitHub autoritativo terminal. El run manual
     `31518137826` fue cancelado externamente sin diagnostico. El run nuevo
     `31520065425` demostro la causa real: PostgreSQL 12/14 verde y el runner
     estatico perdio comunicacion durante ShellCheck porque `-x` cargaba muchas
@@ -220,7 +220,9 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     coordinador. El oraculo ahora acepta exclusivamente rollback exacto o el
     estado fail-closed exacto, nunca una combinacion intermedia. Los tres focos
     afectados pasan `47/47`, `54/54` y `89/89`, mas sintaxis y ShellCheck. Falta
-    una sola confirmacion remota de estos bytes nuevos; sera el ultimo run H4.
+    La unica confirmacion remota de estos bytes nuevos, run `31546745988` sobre
+    `09af04f`, termino verde el 12 de agosto: static-security, las `865`
+    regresiones y PostgreSQL 12/14, sin cancelacion ni repeticion adicional.
   - [ ] Fusionar por orden Hubs Cloud y despues el puntero raiz; no cambia Hubs.
   - [ ] Cierre: `main` limpio, documentacion sincronizada e imagenes necesarias por
     digest.
