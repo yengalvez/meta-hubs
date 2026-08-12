@@ -175,6 +175,13 @@ esperar. Se divide en dos partes:
 
 H5-A ya es la fase activa en `codex/h5-preflight`. Produccion sigue intacta.
 
+La primera lectura H5-A ya esta hecha: produccion mantiene `12/12`
+Deployments, `13/13` contenedores por digest, un Load Balancer y dos volumenes
+que suman `20 GiB`; no hay recovery lock. El productor de checkpoint tambien
+demostro que, sin la bandera explicita de downtime, se detiene antes de crear
+un artefacto o parar servicios. El paquete comprensible y sus casillas viven en
+`docs/h5-window-package.md`.
+
 Cuando esa confirmacion termine verde, solo quedan la fusion ordenada de Hubs
 Cloud y del root, y H5 —la unica prueba que toca una instancia comercial y
 necesita autorizacion concreta—. H6 cierra recovery y devuelve el proyecto a
