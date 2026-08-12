@@ -181,7 +181,7 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     fecha. La evidencia privada queda preservada en la VM; no se borra para
     fingir limpieza.
 
-- [ ] **H4. Validar e integrar una sola vez.**
+- [x] **H4. Validar e integrar una sola vez.**
   - [x] Focos aplicables, ShellCheck/Actionlint/Gitleaks y gate local integral.
     La unica invocacion `verify-project.sh --full` completo el bloque comun con
     recovery `865/865`, AUD-065, PostgreSQL real, Gitleaks y el resto de suites;
@@ -223,9 +223,13 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     La unica confirmacion remota de estos bytes nuevos, run `31546745988` sobre
     `09af04f`, termino verde el 12 de agosto: static-security, las `865`
     regresiones y PostgreSQL 12/14, sin cancelacion ni repeticion adicional.
-  - [ ] Fusionar por orden Hubs Cloud y despues el puntero raiz; no cambia Hubs.
-  - [ ] Cierre: `main` limpio, documentacion sincronizada e imagenes necesarias por
-    digest.
+  - [x] Fusionar por orden Hubs Cloud PR `#23` en `7de73e9` y despues el puntero
+    raiz PR `#16` en `45faaf6`; no cambia Hubs.
+  - [x] Cierre: candidato integrado en `origin/main`, documentacion sincronizada
+    y ninguna mutacion de produccion. El checkout oficial no se sincronizo
+    porque contiene la rama de investigacion y cambios locales preservados; no
+    se sobrescribieron. La construccion de imagenes por digest pertenece al
+    preflight de H5 inmediatamente anterior a cualquier rollout autorizado.
 
 - [ ] **H5. Demostrar una hibernacion comercial completa.**
   - Con ventana expresamente aprobada: checkpoint, segunda copia cifrada,

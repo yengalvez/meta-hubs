@@ -5,6 +5,7 @@
 | Time | Action | Result |
 |------|--------|--------|
 | 2026-08-12 | Se inspecciono el run autoritativo `31525770598` sobre `d0fc186`. PostgreSQL 12/14, Gitleaks, Actionlint y ShellCheck quedaron verdes; la regresion ejecuto los `865` casos y termino `860` verdes con exactamente los cinco rojos Linux historicos. | Los cinco pertenecian a expectativas antiguas de rollback/reentrada automatica ya congeladas, no a H2/H3. Se corrigio solo el oraculo: acepta rollback exacto o parada fail-closed exacta con lock retenido, writers confirmados y cero publicacion; cualquier estado intermedio sigue rojo. Producto, produccion y DigitalOcean no cambiaron. Focos `47/47`, `54/54`, `89/89`, sintaxis y ShellCheck verdes. La confirmacion final `31546745988` sobre `09af04f` paso static-security, las `865` regresiones y PostgreSQL 12/14. |
+| 2026-08-12 | Tras el CI verde se fusiono Hubs Cloud PR `#23` (`7de73e9`) y despues root PR `#16` (`45faaf6`), ambos con mensajes `[skip ci]`. | H4 cerrado sin duplicar gates ni tocar produccion/DO. El checkout oficial `/Users/Shared/Gits/YenHubs` no se sincronizo porque no estaba limpio y conserva la investigacion avanzada; se preservo sin sobrescrituras. H5 queda expresamente detenido ante la frontera de produccion y coste. |
 
 ## 2026-08-11 (H4 local integral)
 
