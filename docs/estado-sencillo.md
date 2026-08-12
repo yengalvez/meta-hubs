@@ -118,14 +118,15 @@ fusionados en ese orden. Los detalles tecnicos e intentos anteriores estan en
 El siguiente paso es H5, pero ya no se trata como un unico bloque que obliga a
 esperar. Se divide en dos partes:
 
-- **H5-A, ahora:** preparacion local y de solo lectura. Inventario de costes y
+- **H5-A, cerrada:** preparacion local y de solo lectura. Inventario de costes y
   recursos, preflights, checkpoint/segunda copia, digests, escrow, orden de la
   ventana y rollback. No apaga nada, no crea recursos y no depende de GitHub.
 - **H5-B, despues:** la ventana real que borra y recrea recursos DigitalOcean.
   Solo esta segunda parte requiere una autorizacion concreta sobre una lista
   exacta de efectos y costes.
 
-H5-A ya es la fase activa en `codex/h5-preflight`. Produccion sigue intacta.
+H5-A se cerro en `codex/h5-preflight`. Produccion sigue intacta; H5-B espera la
+autorizacion exacta del propietario.
 
 La primera lectura H5-A ya esta hecha: produccion mantiene `12/12`
 Deployments, `13/13` contenedores por digest, un Load Balancer y dos volumenes
@@ -144,12 +145,14 @@ uso, por lo que no se ha abierto un riesgo de cobro.
 
 Para este primer ciclo no hace falta una tercera ubicacion: una copia cifrada
 local fuera de Dropbox y otra cifrada dentro de Dropbox son las dos copias
-operativas. Un disco externo o segundo cloud queda como mejora opcional. Para
-cerrar H5-A solo falta confirmar que Google Password Manager sincroniza fuera
-de este Mac y usar referencias opacas para los accesos y la clave del bundle.
-No falta otra prueba larga ni otro gate GitHub. Despues vendra H5-B: una sola
-ventana real, con autorizacion sobre cluster/nodo, Load Balancer y los dos
-volumenes. Hasta entonces produccion sigue intacta.
+operativas. Un disco externo o segundo cloud queda como mejora opcional. Google
+Password Manager ya se comprobo accesible desde la cuenta Google sin abrir
+ninguna contraseña, y las referencias opacas quedaron definidas.
+
+**H5-A esta cerrada 10/10.** No falta otra prueba larga ni otro gate GitHub. El
+siguiente paso es H5-B: una sola ventana real, con autorizacion exacta sobre
+cluster/nodo, Load Balancer y los dos volumenes. Hasta recibir ese texto,
+produccion sigue intacta.
 
 Tras cerrar H5 con una unica ventana comercial, H6 cierra recovery y devuelve
 el proyecto a features.

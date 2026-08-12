@@ -232,7 +232,7 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     preflight de H5 inmediatamente anterior a cualquier rollout autorizado.
 
 - [ ] **H5. Demostrar una hibernacion comercial completa.**
-  - [ ] **H5-A. Preparar la ventana sin mutar produccion ni generar coste.**
+  - [x] **H5-A. Preparar la ventana sin mutar produccion ni generar coste.**
     - Trabajar localmente desde `codex/h5-preflight`; GitHub no es un bloqueo y
       no se abre CI durante la preparacion.
     - Inventariar en modo lectura la instancia, DNS y recursos facturables;
@@ -251,10 +251,11 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
       de los `13` contenedores estan en un layout OCI local; `214/214` blobs
       rehasheados y `12/12` referencias offline. GitHub Packages figura con USD
       `0` facturados y presupuesto USD `0` con parada de uso. Pendiente solo:
-      confirmar Google Password Manager sincronizado/recuperable y fijar alli
-      referencias opacas de escrow. La copia local fuera de Dropbox mas la
-      copia Dropbox cumplen el primer ciclo; un tercer destino es opcional.
-      Produccion no cambio y no se ejecuto CI.
+      Google Password Manager quedo confirmado como almacenamiento de cuenta,
+      no solo local, y se fijaron referencias opacas de escrow. La copia local
+      fuera de Dropbox mas la copia Dropbox cumplen el primer ciclo; un tercer
+      destino es opcional. H5-A queda `10/10`; produccion no cambio y no se
+      ejecuto CI.
   - [ ] **H5-B. Ejecutar la ventana comercial autorizada.**
     - Con autorizacion expresa sobre el paquete H5-A: crear checkpoint fresco,
       segunda copia cifrada y expediente; eliminar solo los recursos DO

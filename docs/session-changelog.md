@@ -8,6 +8,7 @@
 | 2026-08-12 | Se ensayo cifrado/descifrado y rehash con un artefacto no sensible entre local y Dropbox; despues se archivo el runtime por digests exactos usando ORAS `1.3.3` verificado por SHA-256. | Layout OCI privado de `1,378,619,392` bytes: `12/12` digests vivos presentes, `12/12` referencias legibles offline y `214/214` blobs SHA-256 validos. La credencial temporal GHCR se retiro del config. GitHub Packages llevaba USD `0` facturados y presupuesto USD `0` con `Stop usage: Yes`; no hubo CI ni coste facturado. |
 | 2026-08-12 | Se preparo la lista de efectos H5-B. | Retirar solo cluster/nodo, Load Balancer y los dos volumenes; conservar DNS externo y recursos ajenos, y reconciliar los firewalls gestionados por DOKS. |
 | 2026-08-12 | Se reviso el requisito de custodia para evitar sobreingenieria. | Para el primer ciclo se aceptan dos ubicaciones: copia cifrada local fuera de Dropbox y copia cifrada externa en Dropbox. Un tercer destino es opcional. Google Password Manager sincronizado se usara para accesos y clave del bundle; el plan solo conserva referencias opacas. |
+| 2026-08-12 | El propietario confirmo Google Password Manager y se comprobo en lectura que el gestor es accesible desde la cuenta Google, sin abrir contraseñas. | H5-A queda cerrada `10/10`. Se fijaron solo referencias opacas y se preparo el texto exacto de autorizacion H5-B. Produccion y DigitalOcean permanecen intactos. |
 
 ## 2026-08-12 (H4 CI final: baseline fail-closed)
 

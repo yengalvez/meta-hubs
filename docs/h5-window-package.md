@@ -1,6 +1,6 @@
 # Paquete de ventana H5: hibernacion comercial
 
-Estado: **H5-A avanzada; falta confirmar el escrow sincronizado, sin autorizacion para H5-B**
+Estado: **H5-A cerrada 10/10; paquete listo, sin autorizacion para H5-B**
 Ultima lectura: **12 de agosto de 2026 (Europe/Madrid)**
 
 ## Decision sencilla
@@ -52,10 +52,10 @@ bloquear el uso en vez de facturarlo.
   fuera de cualquier carpeta sincronizada y otra copia externa en Dropbox.
   Esto basta para el primer ciclo comercial. Un disco externo o segundo cloud
   seria una tercera copia opcional, no un bloqueador de H5.
-- [ ] Confirmar que Google Password Manager esta sincronizado con una cuenta
-  recuperable y usarlo para los accesos de GitHub, IONOS, Mailtrap y OpenAI,
-  mas una entrada dedicada para la clave del bundle. El documento solo guarda
-  referencias opacas, nunca secretos.
+- [x] Confirmar que Google Password Manager es accesible desde la cuenta Google
+  y no depende solo del almacenamiento local del Mac. Se usara para los accesos
+  de GitHub, IONOS, Mailtrap y OpenAI, mas una entrada dedicada para la clave
+  del bundle. No se abrio ni mostro ninguna contraseña.
 - [x] Comprobar con un artefacto no sensible el cifrado AES-256-CBC/PBKDF2, la
   lectura por streaming, el descifrado y el rehash desde la copia local y la
   copia Dropbox. Ambos hashes coincidieron; esto prueba la receta, no la
@@ -84,6 +84,18 @@ bloquear el uso en vez de facturarlo.
 7. Lista exacta de recursos autorizados por el propietario.
 
 Si falta cualquiera, el resultado es **STOP**: no se borra nada.
+
+Las referencias opacas aprobadas son:
+
+- `GPM:github.com/YenHubs`;
+- `GPM:ionos.com/YenHubs-DNS`;
+- `GPM:mailtrap.io/YenHubs-SMTP`;
+- `GPM:platform.openai.com/YenHubs`;
+- `GPM:meta-hubs.org/YenHubs-H5-bundle-key`.
+
+La presencia recuperable de cada entrada se confirma de forma redactada al
+inicio de H5-B. La clave nueva del bundle se genera y guarda entonces; nunca se
+escribe en Git, en este documento ni en el log.
 
 ### Efectos propuestos para autorizacion
 
@@ -132,7 +144,21 @@ acumulado antes del apagado. DNS externo y recursos ajenos no cambian.
 
 ## Proxima accion segura
 
-Confirmar que Google Password Manager sincroniza fuera de este Mac y que la
-cuenta Google tiene recuperacion y segundo factor. Despues se fijan referencias
-opacas para cifrado, DNS, GHCR, SMTP y OpenAI. No hace falta contratar otro
-cloud ni comprar un disco para este primer ciclo.
+Presentar la autorizacion exacta de H5-B. Hasta recibirla, no se detiene el
+metaverso, no se crea el checkpoint con downtime y no se retira ni crea ningun
+recurso DigitalOcean.
+
+Texto exacto que puede aprobar el propietario:
+
+```text
+Autorizo ejecutar H5-B sobre la instancia actual de meta-hubs.org. La
+autorizacion permite crear un checkpoint conjunto DB + ret-pvc con downtime,
+validarlo, guardar una copia cifrada local fuera de Dropbox y otra cifrada en
+Dropbox, y despues retirar exclusivamente el cluster DOKS con su nodo, el Load
+Balancer y los dos volumenes de 10 GiB asociados a pgsql-pvc y ret-pvc. Se
+conservan DNS/IONOS, el firewall voice-chat y todo recurso ajeno. Cualquier
+recurso nuevo, copia no verificable, credencial no recuperable o coste distinto
+produce STOP y requiere una nueva autorizacion. Tras verificar la hibernacion,
+autorizo recrear la misma topologia de bajo coste, restaurar el bundle y validar
+el metaverso en navegador real.
+```
