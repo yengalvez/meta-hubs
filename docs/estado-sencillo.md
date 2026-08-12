@@ -163,10 +163,17 @@ run `31546745988` sobre `09af04f`, termino completamente verde: las `865`
 regresiones, seguridad y PostgreSQL 12/14. Hubs Cloud `#23` y el repositorio
 raiz `#16` quedaron fusionados, en ese orden. **H4 esta cerrado.**
 
-El siguiente paso es H5, la demostracion comercial real que puede borrar y
-recrear recursos DigitalOcean. No se ha iniciado: requiere una autorizacion
-concreta y un preflight de coste, checkpoint, copia cifrada e imagenes por
-digest. Produccion sigue intacta.
+El siguiente paso es H5, pero ya no se trata como un unico bloque que obliga a
+esperar. Se divide en dos partes:
+
+- **H5-A, ahora:** preparacion local y de solo lectura. Inventario de costes y
+  recursos, preflights, checkpoint/segunda copia, digests, escrow, orden de la
+  ventana y rollback. No apaga nada, no crea recursos y no depende de GitHub.
+- **H5-B, despues:** la ventana real que borra y recrea recursos DigitalOcean.
+  Solo esta segunda parte requiere una autorizacion concreta sobre una lista
+  exacta de efectos y costes.
+
+H5-A ya es la fase activa en `codex/h5-preflight`. Produccion sigue intacta.
 
 Cuando esa confirmacion termine verde, solo quedan la fusion ordenada de Hubs
 Cloud y del root, y H5 —la unica prueba que toca una instancia comercial y

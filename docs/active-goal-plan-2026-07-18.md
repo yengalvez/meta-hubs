@@ -232,13 +232,27 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     preflight de H5 inmediatamente anterior a cualquier rollout autorizado.
 
 - [ ] **H5. Demostrar una hibernacion comercial completa.**
-  - Con ventana expresamente aprobada: checkpoint, segunda copia cifrada,
-    expediente separado, custodia recuperable de los 13 digests, inventario de
-    DNS/recursos, escrow opaco del conjunto completo de credenciales con prueba
-    fechada de lectura y prueba de descifrado/restaurabilidad.
-  - Eliminar solo los recursos DO aprobados y verificar el coste residual real;
-    nunca asumir que borrar el cluster elimina todo.
-  - Recrear, restaurar y ejecutar verificador live mas navegador frio.
+  - [ ] **H5-A. Preparar la ventana sin mutar produccion ni generar coste.**
+    - Trabajar localmente desde `codex/h5-preflight`; GitHub no es un bloqueo y
+      no se abre CI durante la preparacion.
+    - Inventariar en modo lectura la instancia, DNS y recursos facturables;
+      separar claramente lo que se conserva, lo que se elimina y el coste
+      residual esperado.
+    - Comprobar que el procedimiento puede producir el checkpoint conjunto, el
+      recibo y la segunda copia cifrada; validar custodia recuperable de los 13
+      digests y del escrow opaco sin imprimir secretos.
+    - Ejecutar solo preflights y dry-runs no mutantes. Entregar un paquete de
+      ventana con orden, tiempos, rollback, criterio GO/STOP y lista exacta de
+      recursos DigitalOcean afectados.
+    - Cierre: paquete H5-B completo y comprensible. Solo entonces pedir una
+      autorizacion concreta; no esperar a GitHub mientras se prepara.
+  - [ ] **H5-B. Ejecutar la ventana comercial autorizada.**
+    - Con autorizacion expresa sobre el paquete H5-A: crear checkpoint fresco,
+      segunda copia cifrada y expediente; eliminar solo los recursos DO
+      aprobados y comprobar el coste residual real.
+    - Recrear, restaurar y ejecutar verificador live mas navegador frio.
+    - Si hiciera falta construir una imagen, GitHub se usa una vez para ese
+      artefacto por digest; el resto de la operacion no espera gates remotos.
   - Cierre: metaverso funcional con datos y medios exactos, tiempo medido,
     inventario economico y runbook ejecutable por otra sesion.
 
