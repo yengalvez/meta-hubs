@@ -6,7 +6,8 @@
 |------|--------|--------|
 | 2026-08-12 | Se separo H5 en preparacion local H5-A y ventana mutante H5-B. Se inventariaron en solo lectura runtime, DNS, DOKS, nodo, Load Balancer, volumenes y costes; se comprobo tambien el rechazo del checkpoint sin autorizacion de downtime. | Produccion quedo intacta. Los `12/12` Deployments estaban disponibles, `13/13` contenedores por digest, un Load Balancer y dos PVC/volumenes `10 GiB` con reclaim `Delete`; DNS externo apunta al Load Balancer actual. |
 | 2026-08-12 | Se ensayo cifrado/descifrado y rehash con un artefacto no sensible entre local y Dropbox; despues se archivo el runtime por digests exactos usando ORAS `1.3.3` verificado por SHA-256. | Layout OCI privado de `1,378,619,392` bytes: `12/12` digests vivos presentes, `12/12` referencias legibles offline y `214/214` blobs SHA-256 validos. La credencial temporal GHCR se retiro del config. GitHub Packages llevaba USD `0` facturados y presupuesto USD `0` con `Stop usage: Yes`; no hubo CI ni coste facturado. |
-| 2026-08-12 | Se preparo la lista de efectos H5-B. | Retirar solo cluster/nodo, Load Balancer y los dos volumenes; conservar DNS externo y recursos ajenos, y reconciliar los firewalls gestionados por DOKS. H5-A queda pendiente unicamente de segundo destino independiente y escrow opaco. |
+| 2026-08-12 | Se preparo la lista de efectos H5-B. | Retirar solo cluster/nodo, Load Balancer y los dos volumenes; conservar DNS externo y recursos ajenos, y reconciliar los firewalls gestionados por DOKS. |
+| 2026-08-12 | Se reviso el requisito de custodia para evitar sobreingenieria. | Para el primer ciclo se aceptan dos ubicaciones: copia cifrada local fuera de Dropbox y copia cifrada externa en Dropbox. Un tercer destino es opcional. Google Password Manager sincronizado se usara para accesos y clave del bundle; el plan solo conserva referencias opacas. |
 
 ## 2026-08-12 (H4 CI final: baseline fail-closed)
 

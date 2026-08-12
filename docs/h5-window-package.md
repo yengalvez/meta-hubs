@@ -1,6 +1,6 @@
 # Paquete de ventana H5: hibernacion comercial
 
-Estado: **H5-A avanzada; faltan destino externo independiente y escrow, sin autorizacion para H5-B**
+Estado: **H5-A avanzada; falta confirmar el escrow sincronizado, sin autorizacion para H5-B**
 Ultima lectura: **12 de agosto de 2026 (Europe/Madrid)**
 
 ## Decision sencilla
@@ -48,12 +48,14 @@ bloquear el uso en vez de facturarlo.
 - [x] Comprobar la frontera read-only del productor: sin
   `ALLOW_CHECKPOINT_DOWNTIME=1` devuelve el rechazo exacto antes de crear un
   artefacto o detener writers.
-- [ ] Preparar dos destinos realmente independientes para copias cifradas. En
-  este Mac solo se ha encontrado Dropbox como destino externo; una carpeta
-  local y Dropbox prueban el mecanismo, pero no cuentan como dos custodios
-  independientes.
-- [ ] Fijar referencias opacas y recuperables para la clave de cifrado y el
-  escrow de credenciales; ninguna clave o secreto entra en este documento.
+- [x] Preparar dos ubicaciones separadas para copias cifradas: una copia local
+  fuera de cualquier carpeta sincronizada y otra copia externa en Dropbox.
+  Esto basta para el primer ciclo comercial. Un disco externo o segundo cloud
+  seria una tercera copia opcional, no un bloqueador de H5.
+- [ ] Confirmar que Google Password Manager esta sincronizado con una cuenta
+  recuperable y usarlo para los accesos de GitHub, IONOS, Mailtrap y OpenAI,
+  mas una entrada dedicada para la clave del bundle. El documento solo guarda
+  referencias opacas, nunca secretos.
 - [x] Comprobar con un artefacto no sensible el cifrado AES-256-CBC/PBKDF2, la
   lectura por streaming, el descifrado y el rehash desde la copia local y la
   copia Dropbox. Ambos hashes coincidieron; esto prueba la receta, no la
@@ -74,7 +76,8 @@ bloquear el uso en vez de facturarlo.
 1. Produccion estable y sin operacion concurrente.
 2. Checkpoint fresco conjunto DB + `ret-pvc`, nueve artefactos exactos y
    `SHA256SUMS` verde.
-3. Dos copias cifradas independientes reabiertas, descifradas y rehasheadas.
+3. Copia local cifrada fuera de Dropbox y copia cifrada externa en Dropbox,
+   ambas reabiertas, descifradas y rehasheadas.
 4. Recibo externo privado `0600` y referencias de escrow recuperables.
 5. Los 13 digests disponibles o archivados de forma recuperable.
 6. Inventario DNS/SMTP/OpenAI/GHCR y receta de infraestructura completos.
@@ -129,7 +132,7 @@ acumulado antes del apagado. DNS externo y recursos ajenos no cambian.
 
 ## Proxima accion segura
 
-Elegir un segundo destino realmente independiente de Dropbox y el Mac, y fijar
-las referencias opacas del escrow de cifrado, DNS, GHCR, SMTP y OpenAI. Todo lo
-demas de H5-A ya puede cerrarse localmente; no requiere GitHub ni tocar
-DigitalOcean.
+Confirmar que Google Password Manager sincroniza fuera de este Mac y que la
+cuenta Google tiene recuperacion y segundo factor. Despues se fijan referencias
+opacas para cifrado, DNS, GHCR, SMTP y OpenAI. No hace falta contratar otro
+cloud ni comprar un disco para este primer ciclo.

@@ -251,8 +251,10 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
       de los `13` contenedores estan en un layout OCI local; `214/214` blobs
       rehasheados y `12/12` referencias offline. GitHub Packages figura con USD
       `0` facturados y presupuesto USD `0` con parada de uso. Pendiente solo:
-      segundo destino independiente y referencias opacas de escrow. Produccion
-      no cambio y no se ejecuto CI.
+      confirmar Google Password Manager sincronizado/recuperable y fijar alli
+      referencias opacas de escrow. La copia local fuera de Dropbox mas la
+      copia Dropbox cumplen el primer ciclo; un tercer destino es opcional.
+      Produccion no cambio y no se ejecuto CI.
   - [ ] **H5-B. Ejecutar la ventana comercial autorizada.**
     - Con autorizacion expresa sobre el paquete H5-A: crear checkpoint fresco,
       segunda copia cifrada y expediente; eliminar solo los recursos DO

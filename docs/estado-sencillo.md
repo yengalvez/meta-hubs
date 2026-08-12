@@ -142,12 +142,14 @@ las `12` referencias se abren offline y `214/214` blobs pasan SHA-256. GitHub
 Packages muestra USD `0` facturados y tiene presupuesto USD `0` con parada de
 uso, por lo que no se ha abierto un riesgo de cobro.
 
-Quedan exactamente dos decisiones humanas para cerrar H5-A: elegir una segunda
-ubicacion que sea realmente independiente del Mac y de Dropbox, y decidir donde
-se custodian las referencias opacas de las claves/credenciales. No falta otra
-prueba larga ni otro gate GitHub. Despues vendra H5-B: una sola ventana real,
-con autorizacion sobre cluster/nodo, Load Balancer y los dos volumenes. Hasta
-entonces produccion sigue intacta.
+Para este primer ciclo no hace falta una tercera ubicacion: una copia cifrada
+local fuera de Dropbox y otra cifrada dentro de Dropbox son las dos copias
+operativas. Un disco externo o segundo cloud queda como mejora opcional. Para
+cerrar H5-A solo falta confirmar que Google Password Manager sincroniza fuera
+de este Mac y usar referencias opacas para los accesos y la clave del bundle.
+No falta otra prueba larga ni otro gate GitHub. Despues vendra H5-B: una sola
+ventana real, con autorizacion sobre cluster/nodo, Load Balancer y los dos
+volumenes. Hasta entonces produccion sigue intacta.
 
 Tras cerrar H5 con una unica ventana comercial, H6 cierra recovery y devuelve
 el proyecto a features.
