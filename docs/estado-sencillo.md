@@ -84,8 +84,9 @@ piezas incluidas en el contrato minimo aprobado.
 [HECHO] H2: bundle y restore sobre identidades nuevas implementados localmente
 [HECHO] H3: DB y medios restaurados juntos en K3s con UID nuevos, 14/14 verde
 [HECHO] H4 local: gate integral, builds y pruebas de todos los componentes
-[AHORA] H4 remoto: una confirmacion CI terminal y fusion ordenada
-[FINAL] Hibernacion real, reconstruccion, aceptacion y vuelta a features
+[HECHO] H4 remoto: CI terminal verde y fusion ordenada
+[SIGUIENTE, CON AUTORIZACION] H5: hibernacion real y reconstruccion
+[FINAL] Cerrar recovery y volver a features
 ```
 
 **H1 esta terminado.** Se comprobaron login real, Admin, el proyecto Spoke, la
@@ -159,8 +160,13 @@ rollback demostrado, o writers confirmados a cero con el lock retenido. Cualquie
 estado intermedio sigue fallando. Los focos afectados pasan `47/47`, `54/54` y
 `89/89`, y ShellCheck/sintaxis estan verdes. La confirmacion remota final,
 run `31546745988` sobre `09af04f`, termino completamente verde: las `865`
-regresiones, seguridad y PostgreSQL 12/14. Solo queda fusionar Hubs Cloud y
-despues el repositorio raiz para cerrar H4.
+regresiones, seguridad y PostgreSQL 12/14. Hubs Cloud `#23` y el repositorio
+raiz `#16` quedaron fusionados, en ese orden. **H4 esta cerrado.**
+
+El siguiente paso es H5, la demostracion comercial real que puede borrar y
+recrear recursos DigitalOcean. No se ha iniciado: requiere una autorizacion
+concreta y un preflight de coste, checkpoint, copia cifrada e imagenes por
+digest. Produccion sigue intacta.
 
 Cuando esa confirmacion termine verde, solo quedan la fusion ordenada de Hubs
 Cloud y del root, y H5 —la unica prueba que toca una instancia comercial y
