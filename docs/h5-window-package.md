@@ -1,6 +1,6 @@
 # Paquete de ventana H5: hibernacion comercial
 
-Estado: **H5-A en preparacion, sin autorizacion para H5-B**  
+Estado: **H5-A avanzada; faltan destino externo independiente y escrow, sin autorizacion para H5-B**
 Ultima lectura: **12 de agosto de 2026 (Europe/Madrid)**
 
 ## Decision sencilla
@@ -20,13 +20,24 @@ que detenga el metaverso y retire o cree recursos DigitalOcean.
 - DigitalOcean: `1` DOKS, `1` nodo `s-4vcpu-8gb`, `1` Load Balancer y
   `2` volumenes de `10 GiB`; no hay snapshots, Managed Databases, Reserved IPs,
   zonas DNS de DigitalOcean ni registry DigitalOcean;
-- los dos PV usan politica `Delete`: no se puede borrar el cluster antes de
-  validar el bundle y sus dos copias externas.
+- `pgsql-pvc` y `ret-pvc` coinciden uno a uno con esos dos volumenes
+  DigitalOcean; ambos PV usan politica `Delete`;
+- DNS: `meta-hubs.org` y `assets.meta-hubs.org` apuntan al Load Balancer actual;
+  la zona esta delegada fuera de DigitalOcean mediante IONOS;
+- por la politica `Delete`, no se puede borrar el cluster antes de validar el
+  bundle y sus dos copias externas.
 
 La factura provisional generada a las `2026-08-12T04:49:05Z` llevaba USD
 `26.21` de uso total del mes. De los recursos Hubs visibles: nodo USD `18.86`,
 Load Balancer USD `5.89` y volumenes USD `0.78`. Son importes acumulados hasta
 esa hora, no una tarifa mensual ni una promesa del ahorro final.
+
+GitHub no es un riesgo de cobro para esta preparacion: el panel del `12 de
+agosto` muestra Packages con USD `0.19` brutos y USD `0` facturados, y existe
+un presupuesto Packages de USD `0` con `Stop usage: Yes`. GitHub documenta
+ademas que el almacenamiento y ancho de banda de Container registry son
+actualmente gratuitos. Si deja de entrar en lo gratuito, el presupuesto debe
+bloquear el uso en vez de facturarlo.
 
 ## H5-A: trabajo permitido ahora
 
@@ -37,15 +48,23 @@ esa hora, no una tarifa mensual ni una promesa del ahorro final.
 - [x] Comprobar la frontera read-only del productor: sin
   `ALLOW_CHECKPOINT_DOWNTIME=1` devuelve el rechazo exacto antes de crear un
   artefacto o detener writers.
-- [ ] Preparar dos destinos realmente independientes para copias cifradas.
+- [ ] Preparar dos destinos realmente independientes para copias cifradas. En
+  este Mac solo se ha encontrado Dropbox como destino externo; una carpeta
+  local y Dropbox prueban el mecanismo, pero no cuentan como dos custodios
+  independientes.
 - [ ] Fijar referencias opacas y recuperables para la clave de cifrado y el
   escrow de credenciales; ninguna clave o secreto entra en este documento.
-- [ ] Comprobar, con un artefacto de prueba no sensible, lectura, descifrado y
-  rehash desde ambos destinos.
-- [ ] Confirmar custodia durante toda la hibernacion de las 13 imagenes por
-  digest o, si GHCR no ofrece esa garantia, preparar archivo OCI cifrado con
-  cost gate separado.
-- [ ] Preparar la hoja final de efectos con la seleccion explicita de recursos
+- [x] Comprobar con un artefacto no sensible el cifrado AES-256-CBC/PBKDF2, la
+  lectura por streaming, el descifrado y el rehash desde la copia local y la
+  copia Dropbox. Ambos hashes coincidieron; esto prueba la receta, no la
+  independencia fisica pendiente.
+- [x] Confirmar custodia de las imagenes: las `12` imagenes unicas que sirven a
+  los `13` contenedores fueron copiadas por digest a un layout OCI local de
+  `1,378,619,392` bytes. Los `12` digests vivos estan presentes, las `12`
+  referencias se leen offline y `214` blobs pasaron SHA-256 con cero fallos.
+  El archivo queda local y privado; su copia cifrada externa se hara junto al
+  bundle real en H5-B.
+- [x] Preparar la hoja final de efectos con la seleccion explicita de recursos
   a retirar y el coste residual esperado.
 
 ## H5-B: ventana real, aun no autorizada
@@ -65,17 +84,26 @@ Si falta cualquiera, el resultado es **STOP**: no se borra nada.
 
 ### Efectos propuestos para autorizacion
 
-El paquete final presentara, por separado:
+La autorizacion H5-B presentara y reconciliara por separado:
 
-- DOKS y su nodo;
-- Load Balancer;
-- volumen PostgreSQL de `10 GiB`;
-- volumen `ret-pvc` de `10 GiB`;
-- cualquier recurso nuevo descubierto antes de la ventana.
+- **retirar:** el cluster DOKS y su nodo `s-4vcpu-8gb`;
+- **retirar:** el unico Load Balancer, despues de confirmar que el bundle y sus
+  copias ya no dependen de el;
+- **retirar:** el volumen de `pgsql-pvc` de `10 GiB`;
+- **retirar:** el volumen de `ret-pvc` de `10 GiB`;
+- **conservar:** la zona y registros DNS externos en IONOS para poder
+  reorientarlos al Load Balancer nuevo durante la reactivacion;
+- **conservar:** el firewall ajeno `voice-chat`;
+- **reconciliar, no borrar manualmente por defecto:** los dos firewalls
+  gestionados por DOKS; se comprobara su estado despues de retirar el cluster;
+- **releer antes de actuar:** cualquier recurso nuevo descubierto en la
+  ventana invalida la lista y produce STOP hasta nueva autorizacion.
 
 No se asumira que borrar DOKS elimina los otros elementos. Cada recurso se
-reconciliara por lectura despues de la operacion. Firewalls y DNS externos no se
-retiran salvo que aparezcan expresamente en la autorizacion.
+reconciliara por lectura despues de la operacion. El coste residual esperado de
+la instancia Hubs en DigitalOcean es USD `0` una vez retirados cluster/nodo,
+Load Balancer y ambos volumenes; la factura seguira mostrando el consumo ya
+acumulado antes del apagado. DNS externo y recursos ajenos no cambian.
 
 ### Reactivacion
 
@@ -101,6 +129,7 @@ retiran salvo que aparezcan expresamente en la autorizacion.
 
 ## Proxima accion segura
 
-Completar el preflight local de checkpoint/cifrado y demostrar dos destinos
-recuperables con datos de prueba. No requiere downtime ni autorizacion de
+Elegir un segundo destino realmente independiente de Dropbox y el Mac, y fijar
+las referencias opacas del escrow de cifrado, DNS, GHCR, SMTP y OpenAI. Todo lo
+demas de H5-A ya puede cerrarse localmente; no requiere GitHub ni tocar
 DigitalOcean.

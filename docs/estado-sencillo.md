@@ -110,58 +110,10 @@ La reactivacion local medida tardo `11 s`, pero eso no incluye comprar/recrear
 DOKS, descargar imagenes, DNS, certificados ni la aceptacion de navegador. Por
 tanto es evidencia tecnica, no una promesa comercial de RTO.
 
-La unica fase activa sigue siendo **H4**, pero su parte local ya esta terminada.
-El gate comun paso recovery `865/865`, seguridad, PostgreSQL real y los demas
-bloques. La configuracion local de los remotos detuvo el comando despues de ese
-tramo; se corrigio el entorno y se continuo solo con el tramo pendiente, sin
-repetir cuatro horas verdes. Pasaron Hubs y Admin, navegador, capacidad
-`115/115`, Hubs CE, bots `154/154`, Dialog, Photomnemonic, Coturn, Spoke y
-Reticulum con `461` tests y `5` propiedades.
-
-El gate encontro dos avisos de seguridad publicados recientemente. Se
-actualizaron solo los pins transitivos afectados: `ip-address` a `10.3.1` y
-`postgrex` a `0.22.4`; sus auditores y suites quedaron verdes. No se hizo un
-`audit fix`, no se modernizo el stack y no se cambio funcionalidad.
-
-El coste GitHub ya esta comprobado: la cuenta sigue en GitHub Free, Actions
-muestra USD 0 facturados y el uso bruto de USD 12.91 esta compensado por el
-descuento incluido. Los PR draft `hubs-cloud #23` y raiz `#16` se publicaron con
-`[skip ci]`, por lo que no duplicaron jobs.
-
-La primera confirmacion manual, run `31518137826`, dejo PostgreSQL 12 y 14
-verdes, pero fue cancelada externamente sin diagnostico. Una ejecucion nueva
-observada solo con lecturas, `31520065425`, encontro la causa real: el runner
-perdio comunicacion mientras ShellCheck consumia mas memoria de la disponible.
-`-x` seguia muchas veces la misma libreria desde el arnes de recovery de 17.000
-lineas; la medicion local llego a unos 16,2 GB RSS.
-
-Esto no es un fallo del metaverso ni abre otro proyecto. La correccion queda
-limitada al CI: el arnes se analiza sin reabrir fuentes externas y la libreria
-se sigue analizando completa, por separado, con `-x`. Solo se silencian en ese
-arnes cinco diagnosticos falsos que dependen de seguir el source. Falta validar
-una vez ese gate corregido y, si queda verde, fusionar.
-
-Tambien se corrigio una contradiccion de tiempo: el workflow permitia solo 75
-minutos aunque su suite secuencial completa tarda alrededor de cuatro horas. Se
-mantienen todas las pruebas y se restaura un limite de 360 minutos; no se
-acorta ni se fragmenta la suite para fabricar un verde.
-
-El siguiente candidato, `d0fc186`, confirmo que esa correccion de memoria
-funciona: PostgreSQL 12 y 14, Gitleaks, Actionlint y ShellCheck quedaron verdes,
-y la regresion completa termino con `860/865`. Los cinco rojos eran exactamente
-los cinco casos Linux antiguos que el plan ya habia congelado; ninguno pertenece
-al bundle nuevo, al cold-rebind ni al ensayo H3.
-
-La causa era una contradiccion en las expectativas: aun exigian reanudar y
-borrar el lock automaticamente, aunque el objetivo nuevo ordena parar de forma
-segura cuando el resultado no se puede demostrar. No se ha tocado el producto.
-Se ha corregido solo el oraculo para aceptar dos finales seguros y exactos:
-rollback demostrado, o writers confirmados a cero con el lock retenido. Cualquier
-estado intermedio sigue fallando. Los focos afectados pasan `47/47`, `54/54` y
-`89/89`, y ShellCheck/sintaxis estan verdes. La confirmacion remota final,
-run `31546745988` sobre `09af04f`, termino completamente verde: las `865`
-regresiones, seguridad y PostgreSQL 12/14. Hubs Cloud `#23` y el repositorio
-raiz `#16` quedaron fusionados, en ese orden. **H4 esta cerrado.**
+**H4 esta cerrado.** El candidato final paso las `865` regresiones, seguridad y
+PostgreSQL 12/14. Hubs Cloud `#23` y el repositorio raiz `#16` quedaron
+fusionados en ese orden. Los detalles tecnicos e intentos anteriores estan en
+`docs/session-changelog.md`; ya no son trabajo activo ni un punto de reanudacion.
 
 El siguiente paso es H5, pero ya no se trata como un unico bloque que obliga a
 esperar. Se divide en dos partes:
@@ -182,10 +134,23 @@ demostro que, sin la bandera explicita de downtime, se detiene antes de crear
 un artefacto o parar servicios. El paquete comprensible y sus casillas viven en
 `docs/h5-window-package.md`.
 
-Cuando esa confirmacion termine verde, solo quedan la fusion ordenada de Hubs
-Cloud y del root, y H5 —la unica prueba que toca una instancia comercial y
-necesita autorizacion concreta—. H6 cierra recovery y devuelve el proyecto a
-features.
+La preparacion ha avanzado sin volver a CI. Ya estan terminados el inventario,
+la hoja exacta de efectos, el ensayo de cifrado y la custodia local de las
+imagenes. Las `12` imagenes unicas de los `13` contenedores ocupan
+`1,378,619,392` bytes en un layout OCI: los `12` digests vivos estan presentes,
+las `12` referencias se abren offline y `214/214` blobs pasan SHA-256. GitHub
+Packages muestra USD `0` facturados y tiene presupuesto USD `0` con parada de
+uso, por lo que no se ha abierto un riesgo de cobro.
+
+Quedan exactamente dos decisiones humanas para cerrar H5-A: elegir una segunda
+ubicacion que sea realmente independiente del Mac y de Dropbox, y decidir donde
+se custodian las referencias opacas de las claves/credenciales. No falta otra
+prueba larga ni otro gate GitHub. Despues vendra H5-B: una sola ventana real,
+con autorizacion sobre cluster/nodo, Load Balancer y los dos volumenes. Hasta
+entonces produccion sigue intacta.
+
+Tras cerrar H5 con una unica ventana comercial, H6 cierra recovery y devuelve
+el proyecto a features.
 
 El diseno tecnico corto esta en `docs/client-hibernation-design-v1.md`. Define
 nueve artefactos exactos, separa los UID antiguos de los UID nuevos y limita H2

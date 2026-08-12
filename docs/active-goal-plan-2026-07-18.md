@@ -246,6 +246,13 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
       recursos DigitalOcean afectados.
     - Cierre: paquete H5-B completo y comprensible. Solo entonces pedir una
       autorizacion concreta; no esperar a GitHub mientras se prepara.
+    - Progreso `2026-08-12`: inventario runtime/DO/DNS, frontera de downtime,
+      ensayo de cifrado y hoja de efectos completados. Los `12` digests unicos
+      de los `13` contenedores estan en un layout OCI local; `214/214` blobs
+      rehasheados y `12/12` referencias offline. GitHub Packages figura con USD
+      `0` facturados y presupuesto USD `0` con parada de uso. Pendiente solo:
+      segundo destino independiente y referencias opacas de escrow. Produccion
+      no cambio y no se ejecuto CI.
   - [ ] **H5-B. Ejecutar la ventana comercial autorizada.**
     - Con autorizacion expresa sobre el paquete H5-A: crear checkpoint fresco,
       segunda copia cifrada y expediente; eliminar solo los recursos DO
