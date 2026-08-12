@@ -257,6 +257,9 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
       destino es opcional. H5-A queda `10/10`; produccion no cambio y no se
       ejecuto CI.
   - [ ] **H5-B. Ejecutar la ventana comercial autorizada.**
+    - Autorizacion recibida el `2026-08-12`. Estado: preflight previo al primer
+      efecto; falta confirmacion manual de Google y guardar la clave H5 del
+      portapapeles en Google Password Manager. Produccion sigue intacta.
     - Con autorizacion expresa sobre el paquete H5-A: crear checkpoint fresco,
       segunda copia cifrada y expediente; eliminar solo los recursos DO
       aprobados y comprobar el coste residual real.

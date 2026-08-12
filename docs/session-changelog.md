@@ -10,6 +10,7 @@
 | 2026-08-12 | Se reviso el requisito de custodia para evitar sobreingenieria. | Para el primer ciclo se aceptan dos ubicaciones: copia cifrada local fuera de Dropbox y copia cifrada externa en Dropbox. Un tercer destino es opcional. Google Password Manager sincronizado se usara para accesos y clave del bundle; el plan solo conserva referencias opacas. |
 | 2026-08-12 | El propietario confirmo Google Password Manager y se comprobo en lectura que el gestor es accesible desde la cuenta Google, sin abrir contraseñas. | H5-A queda cerrada `10/10`. Se fijaron solo referencias opacas y se preparo el texto exacto de autorizacion H5-B. Produccion y DigitalOcean permanecen intactos. |
 | 2026-08-12 | Google Password Manager mostro una alerta general de credenciales expuestas; no se abrio la lista ni se inspeccionaron secretos. | H5-B incorpora un STOP previo: comprobar de forma redactada las entradas H5 y rotar cualquier afectada antes del primer efecto. |
+| 2026-08-12 | El propietario autorizo continuar con H5-B. Se completaron inventario y preflight read-only; Google solicito confirmar una llave de acceso y Chrome bloqueo por politica la automatizacion de su pagina interna de altas. | Se genero una clave H5 de 256 bits solo en memoria y se coloco en el portapapeles para que el propietario la guarde manualmente. Se aplico STOP antes del downtime: `12/12` Deployments disponibles, sin recovery lock y DigitalOcean intacto. |
 
 ## 2026-08-12 (H4 CI final: baseline fail-closed)
 

@@ -1,6 +1,6 @@
 # Paquete de ventana H5: hibernacion comercial
 
-Estado: **H5-A cerrada 10/10; paquete listo, sin autorizacion para H5-B**
+Estado: **H5-A cerrada 10/10; H5-B autorizada, detenida antes del primer efecto para confirmar escrow**
 Ultima lectura: **12 de agosto de 2026 (Europe/Madrid)**
 
 ## Decision sencilla
@@ -69,7 +69,13 @@ bloquear el uso en vez de facturarlo.
 - [x] Preparar la hoja final de efectos con la seleccion explicita de recursos
   a retirar y el coste residual esperado.
 
-## H5-B: ventana real, aun no autorizada
+## H5-B: ventana real autorizada, aun sin primer efecto
+
+Autorizacion recibida: **12 de agosto de 2026**. Todavia no se ha aplicado el
+primer efecto. Google exige una confirmacion de llave de acceso para la revision
+de credenciales y Chrome requiere que el propietario guarde manualmente la
+clave H5 generada en memoria. Hasta que ambos pasos se confirmen, no se pausa el
+metaverso y no se crea el checkpoint.
 
 ### GO antes de cualquier borrado
 
@@ -146,9 +152,10 @@ acumulado antes del apagado. DNS externo y recursos ajenos no cambian.
 
 ## Proxima accion segura
 
-Presentar la autorizacion exacta de H5-B. Hasta recibirla, no se detiene el
-metaverso, no se crea el checkpoint con downtime y no se retira ni crea ningun
-recurso DigitalOcean.
+Confirmar la llave de acceso de Google y guardar la clave que ya esta en el
+portapapeles como entrada `YenHubs H5 bundle key` para `meta-hubs.org` en Google
+Password Manager. Despues se verifica de forma redactada y comienza el
+checkpoint. Hasta entonces no se detiene el metaverso ni se toca DigitalOcean.
 
 Texto exacto que puede aprobar el propietario:
 

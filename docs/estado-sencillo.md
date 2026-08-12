@@ -149,10 +149,11 @@ operativas. Un disco externo o segundo cloud queda como mejora opcional. Google
 Password Manager ya se comprobo accesible desde la cuenta Google sin abrir
 ninguna contraseña, y las referencias opacas quedaron definidas.
 
-**H5-A esta cerrada 10/10.** No falta otra prueba larga ni otro gate GitHub. El
-siguiente paso es H5-B: una sola ventana real, con autorizacion exacta sobre
-cluster/nodo, Load Balancer y los dos volumenes. Hasta recibir ese texto,
-produccion sigue intacta.
+**H5-A esta cerrada 10/10 y H5-B ya esta autorizada.** La ejecucion esta
+detenida antes del primer efecto porque Google pide confirmar la llave de acceso
+y Chrome obliga al propietario a guardar manualmente la nueva clave H5 que ya
+esta en el portapapeles. Produccion sigue `12/12` y no se ha tocado
+DigitalOcean.
 
 El gestor mostro una alerta general de contraseñas expuestas, sin identificar
 cuentas. Antes de H5-B se comprobara de forma redactada si afecta a Google,
