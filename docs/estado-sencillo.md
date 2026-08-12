@@ -154,6 +154,11 @@ siguiente paso es H5-B: una sola ventana real, con autorizacion exacta sobre
 cluster/nodo, Load Balancer y los dos volumenes. Hasta recibir ese texto,
 produccion sigue intacta.
 
+El gestor mostro una alerta general de contraseñas expuestas, sin identificar
+cuentas. Antes de H5-B se comprobara de forma redactada si afecta a Google,
+GitHub, IONOS, Mailtrap u OpenAI; cualquier entrada afectada se rota antes del
+checkpoint y no se imprime.
+
 Tras cerrar H5 con una unica ventana comercial, H6 cierra recovery y devuelve
 el proyecto a features.
 

@@ -260,6 +260,9 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
     - Con autorizacion expresa sobre el paquete H5-A: crear checkpoint fresco,
       segunda copia cifrada y expediente; eliminar solo los recursos DO
       aprobados y comprobar el coste residual real.
+    - Antes del primer efecto, comprobar de forma redactada que la alerta
+      general de Google Password Manager no afecta a las entradas H5; rotar
+      cualquier entrada afectada o aplicar STOP.
     - Recrear, restaurar y ejecutar verificador live mas navegador frio.
     - Si hiciera falta construir una imagen, GitHub se usa una vez para ese
       artefacto por digest; el resto de la operacion no espera gates remotos.

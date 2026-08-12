@@ -78,7 +78,9 @@ bloquear el uso en vez de facturarlo.
    `SHA256SUMS` verde.
 3. Copia local cifrada fuera de Dropbox y copia cifrada externa en Dropbox,
    ambas reabiertas, descifradas y rehasheadas.
-4. Recibo externo privado `0600` y referencias de escrow recuperables.
+4. Recibo externo privado `0600` y referencias de escrow recuperables. La
+   revision de seguridad de Google Password Manager no debe marcar como
+   comprometida ninguna entrada H5; si marca una, se rota antes de continuar.
 5. Los 13 digests disponibles o archivados de forma recuperable.
 6. Inventario DNS/SMTP/OpenAI/GHCR y receta de infraestructura completos.
 7. Lista exacta de recursos autorizados por el propietario.
