@@ -69,8 +69,9 @@ integracion final.
 - [x] Ejecutar `bash -n`, ShellCheck, Gitleaks y `git diff --check` sobre la
   superficie modificada. No habia JavaScript modificado que requiriese otro
   Node check.
-- [ ] Versionar `PLAN_ACTUAL.md`, la auditoria, los fixes de fixture y la salida
-  terminal de `h5-final`. Congelar los SHA root/Hubs/Hubs Cloud.
+- [x] Versionar `PLAN_ACTUAL.md`, la auditoria, los fixes de fixture y la salida
+  terminal de `h5-final`. Candidato de codigo root `3b36cbd`, Hubs
+  `ce8390a` y Hubs Cloud `7e56f90`.
 
 **Cierre:** candidato reproducible y sin procesos locales residuales.
 

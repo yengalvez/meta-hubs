@@ -4,6 +4,7 @@
 
 | Time | Action | Result |
 |------|--------|--------|
+| 2026-08-20 | Se congelo el candidato local auditado de H5. | Commit de codigo/documentacion `3b36cbd`; submodulos Hubs `ce8390a` y Hubs Cloud `7e56f90`; arbol sin procesos recovery residuales. F1 cerrada y el unico siguiente gate es `./scripts/verify-project.sh --full`. |
 | 2026-08-20 | Auditoria final independiente y local del ciclo H5, sus repos, bundle, recibo, gate y estado live. | El trabajo comercial se conserva y el avance razonado queda en 85 %. Se confirma sobretrabajo en recovery y una duplicacion real del full. El intento 855/16 murio antes de las suites full-only; no era aceptable como full parcial. Estado live fail-closed exacto y preflight cold-rebind read-only PASS. |
 | 2026-08-20 | Se corrigieron solo las dos familias rojas conocidas y el despacho duplicado del gate. | Stale/helper 75/75 y writer-monitor 55/55 PASS; el monitor se recoge al agotar su handoff y `h5-final` termina antes de repetir la bateria default. Produccion no cambio. `PLAN_ACTUAL.md` v2 reduce el cierre a un full valido, una limpieza, un restore, aceptacion comercial e integracion. |
 | 2026-08-13 | El gate de catalogo previo a H5-B19 comprobo version, region y nodo antes de crear. | `ams3` y `s-4vcpu-8gb` disponibles; `1.34.8-do.2` retirada. La opcion minima es `1.34.10-do.1` (misma minor). STOP sin recursos ni coste nuevo hasta autorizacion explicita del cambio de parche. |
