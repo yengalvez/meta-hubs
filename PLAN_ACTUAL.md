@@ -70,7 +70,7 @@ integracion final.
   superficie modificada. No habia JavaScript modificado que requiriese otro
   Node check.
 - [x] Versionar `PLAN_ACTUAL.md`, la auditoria, los fixes de fixture y la salida
-  terminal de `h5-final`. Candidato de codigo root `42a4142`, Hubs
+  terminal de `h5-final`. Candidato de codigo root `9377986`, Hubs
   `ce8390a` y Hubs Cloud `7e56f90`.
 
 **Cierre:** candidato reproducible y sin procesos locales residuales.
@@ -96,6 +96,16 @@ uso el mismo temporal desde varios watchers. No fue un fallo live ni de
 produccion. El refresco queda limitado a los modos unitarios que lo necesitan;
 el camino con heartbeat real pasa `49/49`, writer-monitor `55/55` y
 stale/helper `75/75` en `42a4142`.
+
+**Segundo intento invalidado y cerrado:** el candidato `42a4142` cruzo la
+carrera anterior y acumulo 672 checks recovery verdes. El primer fallo fue el
+673, en el positivo standalone del writer monitor. La causa completa estaba en
+el arnes: el proceso de fondo heredaba el canal de `expect_success`, impedia que
+el helper enviase el boundary y envejecia la Lease; ademas, su asercion seguia
+esperando el baseline anterior a H5 (12 ReplicaSets y Pods sin
+`admission_fingerprint`). Produccion no cambio. En `9377986` pasan los dos
+positivos `46/46` por owner, stale Lease `46/46`, negativos writer `55/55`,
+concurrencia restore `49/49` y el bloque writer-fence completo `100/100`.
 
 ### F3. Completar una unica restauracion productiva
 

@@ -22,8 +22,8 @@ una aceptacion real. Avance razonado: **85 %**.
 
 ### Repos y producto
 
-- Root: rama `codex/h5-preflight`, HEAD `2390c71`, seis commits locales sobre
-  su remoto.
+- Root: rama `codex/h5-preflight`; candidato actual `9377986`, con el trabajo
+  H5 congelado en commits locales revisables.
 - Hubs: `ce8390a`, exactamente el baseline ya aceptado; no contiene cambios H5.
 - Hubs Cloud: `7e56f90`, un commit H5 sobre su remoto y descendiente de `2.1.0`.
 - La modificacion Cloud se limita al perfil target cold-rebind, su generacion,
@@ -104,6 +104,19 @@ watchers escribian `serialization-lease.next`. La correccion no toca producto;
 el refresco sintetico queda limitado a los modos unitarios. La reproduccion
 dirigida del camino con heartbeat real pasa `49/49`, y las dos familias
 adyacentes vuelven a pasar `55/55` y `75/75`.
+
+El segundo full sobre `42a4142` cruzo esa frontera y alcanzo 672 checks verdes.
+El primer fallo, el 673, seguia siendo del arnes: el monitor standalone heredaba
+la captura de salida de `expect_success`, de modo que el helper no podia
+continuar hasta su boundary; al envejecer la Lease aparecia un diagnostico
+secundario de watch. La asercion positiva tambien conservaba la forma anterior
+al fence H5: 12 ReplicaSets y Pods sin `admission_fingerprint`, frente a los 13
+ReplicaSets validos (12 actuales mas uno historico inerte) y la huella admission
+actual. El candidato `9377986` separa el log del proceso, usa temporales unicos
+solo en refrescos sinteticos y actualiza esas formas. Evidencia final dirigida:
+positivos backup/restore `46/46`, stale `46/46`, writer negativos `55/55`,
+concurrencia padre `49/49` y contrato fence completo `100/100`; Bash, ShellCheck
+y diff-check pasan. Aun falta el unico full completo, no otra arquitectura.
 
 ### P1 — resultado live pendiente
 
