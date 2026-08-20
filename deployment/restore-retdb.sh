@@ -125,6 +125,8 @@ DB_STREAM_GUARD_MAX_STALE_SECONDS=""
 DB_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=""
 DB_QUIESCE_MONITOR_POLL_SECONDS=""
 RESTORE_PHASE="validating"
+DATABASE_RESTORE_STAGE="validation"
+DATABASE_RESTORE_QUIESCENCE_GUARD="entry"
 cleanup_restore() {
   if [[ -n "$QUIESCE_MONITOR_PID" ]]; then
     [[ -z "$QUIESCE_MONITOR_STOP" ]] || : >"$QUIESCE_MONITOR_STOP"
@@ -179,6 +181,21 @@ restore_interrupted() {
   exit "$status"
 }
 restore_failed() {
+  case "$DATABASE_RESTORE_STAGE" in
+    validation|target|guards|quiescence|database-reset|database-stream|counts|active-files|contract|monitor-stop) ;;
+    *) DATABASE_RESTORE_STAGE=other ;;
+  esac
+  printf 'database_restore_stage:%s\n' "$DATABASE_RESTORE_STAGE" >&2
+  if [[ "$DATABASE_RESTORE_STAGE" == "quiescence" ]]; then
+    case "$DATABASE_RESTORE_QUIESCENCE_GUARD" in
+      target-identity|writer-pod-drain|writer-contract|runner-absence|\
+        consumer-recheck|pgsql-source|local-monitor-start|\
+        local-monitor-progress|parent-writer-guard|runner-watch-start) ;;
+      *) DATABASE_RESTORE_QUIESCENCE_GUARD=other ;;
+    esac
+    printf 'database_restore_quiescence_guard:%s\n' \
+      "$DATABASE_RESTORE_QUIESCENCE_GUARD" >&2
+  fi
   if [[ "$RESTORE_PHASE" == "quiescing" || "$RESTORE_PHASE" == "restoring" ]]; then
     printf 'Database restore stopped. Any scaled DB consumers remain at zero for safety.\n' >&2
   fi
@@ -252,6 +269,7 @@ SQL_CHECK_PATH=""
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 recovery_require_restore_target_binding
+DATABASE_RESTORE_STAGE="target"
 if [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind ]]; then
   recovery_require_cold_rebind_target_bootstrap "$VALUES_SOURCE_FILE"
 elif ! recovery_require_live_runner_control_plane_matches_checkpoint \
@@ -516,6 +534,7 @@ initialize_parent_restore_guards || {
   printf 'Destructive DB restore lacks the exact parent monitor capabilities.\n' >&2
   exit 1
 }
+DATABASE_RESTORE_STAGE="guards"
 
 RESTORE_DEPLOYMENTS=()
 DEPLOYMENT_SELECTORS=()
@@ -546,7 +565,9 @@ for deployment in "${CONSUMERS[@]}"; do
 done
 
 RESTORE_PHASE="quiescing"
+DATABASE_RESTORE_STAGE="quiescence"
 # Target identity is checked immediately before the first Kubernetes mutation.
+DATABASE_RESTORE_QUIESCENCE_GUARD="target-identity"
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 if [[ "$ALREADY_FENCED" != "1" ]]; then
@@ -563,9 +584,11 @@ if [[ "$ALREADY_FENCED" != "1" ]]; then
 fi
 
 for index in "${!RESTORE_DEPLOYMENTS[@]}"; do
+  DATABASE_RESTORE_QUIESCENCE_GUARD="writer-pod-drain"
   recovery_require_operation_lock
   recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
     "deployment/${RESTORE_DEPLOYMENTS[$index]}" 180s
+  DATABASE_RESTORE_QUIESCENCE_GUARD="writer-contract"
   recovery_require_operation_lock
   recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
     "${RESTORE_DEPLOYMENTS[$index]}" 0
@@ -573,8 +596,10 @@ done
 initialize_runner_quiescence() {
   case "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" in
     legacy-absent)
-      recovery_wait_for_no_managed_bot_runner_pods 180s &&
-        require_parent_restore_guards
+      DATABASE_RESTORE_QUIESCENCE_GUARD="runner-absence"
+      recovery_wait_for_no_managed_bot_runner_pods 180s || return 1
+      DATABASE_RESTORE_QUIESCENCE_GUARD="parent-writer-guard"
+      require_parent_restore_guards
       ;;
     durable-v2)
       recovery_require_checkpoint_runner_quiescence_exact durable-v2 \
@@ -591,8 +616,10 @@ initialize_runner_quiescence() {
 require_runner_quiescence() {
   case "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" in
     legacy-absent)
-      recovery_require_no_managed_bot_runner_pods &&
-        require_parent_restore_guards
+      DATABASE_RESTORE_QUIESCENCE_GUARD="runner-absence"
+      recovery_require_no_managed_bot_runner_pods || return 1
+      DATABASE_RESTORE_QUIESCENCE_GUARD="parent-writer-guard"
+      require_parent_restore_guards
       ;;
     durable-v2)
       recovery_require_checkpoint_runner_quiescence_exact durable-v2 \
@@ -610,6 +637,7 @@ initialize_runner_quiescence
 
 require_quiesced_consumers() {
   local deployment selector pods
+  DATABASE_RESTORE_QUIESCENCE_GUARD="consumer-recheck"
   recovery_require_operation_lock || return 1
   for deployment in "${CONSUMERS[@]}"; do
     recovery_require_consumer_contract_entry \
@@ -621,11 +649,14 @@ require_quiesced_consumers() {
     pods="$(recovery_kubectl get pod -n "$NAMESPACE" -l "app=$selector" -o name)" || return 1
     [[ -z "$pods" ]] || return 1
   done
+  DATABASE_RESTORE_QUIESCENCE_GUARD="runner-absence"
   require_runner_quiescence || return 1
+  DATABASE_RESTORE_QUIESCENCE_GUARD="pgsql-source"
   require_pgsql_source
 }
 
 start_quiesce_monitor() {
+  DATABASE_RESTORE_QUIESCENCE_GUARD="local-monitor-start"
   [[ -z "$RUNNER_WATCH_PID" &&
      -z "$RUNNER_WATCH_START_IDENTITY" ]] || return 2
   QUIESCE_MONITOR_STOP="$(mktemp "${TMPDIR:-/tmp}/yenhubs-db-quiesce-stop.XXXXXX")"
@@ -665,10 +696,20 @@ start_quiesce_monitor() {
     return 1
   fi
   if ! DB_STREAM_GUARD_MAX_STALE_SECONDS="$(
-    recovery_stream_guard_max_stale_seconds
-  )" || ! DB_STREAM_GUARD_INITIAL_DEADLINE_SECONDS="$(
-    recovery_stream_guard_initial_deadline_seconds
-  )" || ! recovery_wait_for_stream_guard_initial_progress \
+      recovery_stream_guard_max_stale_seconds
+    )" || ! DB_STREAM_GUARD_INITIAL_DEADLINE_SECONDS="$(
+      recovery_stream_guard_initial_deadline_seconds
+    )"; then
+    : >"$QUIESCE_MONITOR_STOP"
+    wait "$QUIESCE_MONITOR_PID" 2>/dev/null || :
+    QUIESCE_MONITOR_PID=""
+    QUIESCE_MONITOR_START_IDENTITY=""
+    DB_STREAM_GUARD_MAX_STALE_SECONDS=""
+    DB_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=""
+    return 1
+  fi
+  DATABASE_RESTORE_QUIESCENCE_GUARD="local-monitor-progress"
+  if ! recovery_wait_for_stream_guard_initial_progress \
     "$QUIESCE_MONITOR_PID" "$QUIESCE_MONITOR_START_IDENTITY" \
     "$QUIESCE_MONITOR_FAILURE" "$QUIESCE_MONITOR_PROGRESS" \
     "$DB_STREAM_GUARD_INITIAL_DEADLINE_SECONDS"; then
@@ -685,6 +726,7 @@ start_quiesce_monitor() {
     "$QUIESCE_MONITOR_FAILURE" "$QUIESCE_MONITOR_PROGRESS"
     "$DB_STREAM_GUARD_MAX_STALE_SECONDS"
   )
+  DATABASE_RESTORE_QUIESCENCE_GUARD="parent-writer-guard"
   require_runner_quiescence || return 1
   DB_STREAM_GUARD_ARGS+=("${PARENT_WRITER_STREAM_GUARD_ARGS[@]}")
   if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
@@ -692,6 +734,7 @@ start_quiesce_monitor() {
     return 0
   fi
   [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == legacy-absent ]] || return 1
+  DATABASE_RESTORE_QUIESCENCE_GUARD="runner-watch-start"
   RUNNER_WATCH_STOP="$(mktemp "${TMPDIR:-/tmp}/yenhubs-db-runner-stop.XXXXXX")"
   RUNNER_WATCH_FAILURE="$(mktemp "${TMPDIR:-/tmp}/yenhubs-db-runner-failure.XXXXXX")"
   RUNNER_WATCH_READY="$(mktemp "${TMPDIR:-/tmp}/yenhubs-db-runner-ready.XXXXXX")"
@@ -744,11 +787,13 @@ stop_quiesce_monitor() {
 
 RESTORE_PHASE="restoring"
 # Revalidate immediately before the destructive drop/create transaction.
+DATABASE_RESTORE_QUIESCENCE_GUARD="target-identity"
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 require_quiesced_consumers
 require_pgsql_source
 start_quiesce_monitor
+DATABASE_RESTORE_STAGE="database-reset"
 # pg_dump does not include cluster-level roles. The restored grants require
 # ret_admin even though it is a NOLOGIN role.
 # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
@@ -776,7 +821,9 @@ SQL
 # shellcheck disable=SC2016
 require_quiesced_consumers
 require_pgsql_source
+DATABASE_RESTORE_STAGE="database-stream"
 gzip -cd "$RECOVERY_DUMP_COPY" |
+  RECOVERY_STREAM_DIAGNOSTIC_CONTEXT=database-restore \
   recovery_kubectl_stream_mutate 3600 "${DB_STREAM_GUARD_ARGS[@]}" -- \
     exec -i -n "$NAMESPACE" "$PGSQL_POD" -- \
       sh -ec 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d retdb' >/dev/null
@@ -784,6 +831,7 @@ gzip -cd "$RECOVERY_DUMP_COPY" |
 require_quiesced_consumers
 require_pgsql_source
 
+DATABASE_RESTORE_STAGE="counts"
 require_quiesced_consumers
 require_pgsql_source
 if ! RESTORE_COUNTS="$(
@@ -817,6 +865,7 @@ fi
 # shellcheck disable=SC2016
 require_quiesced_consumers
 require_pgsql_source
+DATABASE_RESTORE_STAGE="active-files"
 if ! recovery_kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
   'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d retdb -Atc "select owned_file_uuid from ret0.owned_files where state = '\''active'\'' order by owned_file_uuid"' \
   | tr -d '\r' | LC_ALL=C sort >"$RESTORED_ACTIVE_SORTED"; then
@@ -830,6 +879,7 @@ fi
 
 require_quiesced_consumers
 require_pgsql_source
+DATABASE_RESTORE_STAGE="contract"
 if ! recovery_capture_live_database_contract "$PGSQL_POD" "$LIVE_CONTRACT_PATH" ||
    ! recovery_database_contracts_match "$RECOVERY_DATABASE_CONTRACT_COPY" "$LIVE_CONTRACT_PATH"; then
   printf 'Restored database contract does not exactly match the checksummed checkpoint contract.\n' >&2
@@ -838,6 +888,7 @@ fi
 require_quiesced_consumers
 require_pgsql_source
 
+DATABASE_RESTORE_STAGE="monitor-stop"
 if ! stop_quiesce_monitor; then
   printf 'A DB consumer resumed during the destructive restore window.\n' >&2
   exit 1

@@ -275,9 +275,18 @@ if [[ "$runtime_bot_runner_count" == "0" ]]; then
     printf 'Process-local bot runtime has partial Kubernetes runner bindings.\n' >&2
     exit 1
   fi
-  if ! recovery_require_live_process_local_runner_exact "$VALUES_SOURCE_FILE"; then
-    printf 'Process-local inventory capture requires the exact accepted legacy runtime boundary.\n' >&2
-    exit 1
+  if [[ "$CAPTURE_STATE_FORMAT" == freeze-bundle-v1 &&
+        "${RECOVERY_CHECKPOINT_CAPTURE_RUNNER_MODE:-}" == process-local ]]; then
+    if ! recovery_require_live_process_local_freeze_checkpoint_exact \
+        "$VALUES_SOURCE_FILE" "$CAPTURE_STATE_FORMAT" process-local; then
+      printf 'Process-local inventory capture requires the exact freeze runtime boundary.\n' >&2
+      exit 1
+    fi
+  else
+    if ! recovery_require_live_process_local_runner_exact "$VALUES_SOURCE_FILE"; then
+      printf 'Process-local inventory capture requires the exact accepted legacy runtime boundary.\n' >&2
+      exit 1
+    fi
   fi
   bot_runner_runtime='{"generation":"legacy-absent","mode":"process-local","image":null}'
   bot_runner_control_plane='{"state":"legacy-absent"}'
@@ -489,10 +498,11 @@ if [[ "$CAPTURE_STATE_FORMAT" == freeze-bundle-v1 ]]; then
   volumes_raw="$(doctl compute volume list --context "$DOCTL_CONTEXT" --output json)"
   cluster_recipe="$(jq -ce --arg name "$CLUSTER_NAME" '
     (if type == "array" then select(length == 1) | .[0] else . end) |
-    select(type == "object" and .name == $name and .ha == false) |
+    select(type == "object" and .name == $name) |
+    select((has("ha") | not) or .ha == null or .ha == false) |
     select(.region | type == "string" and length > 0) |
     select(.node_pools | type == "array" and length > 0) |
-    {name:.name,region:.region,ha_control_plane:.ha,
+    {name:.name,region:.region,ha_control_plane:false,
       node_pools:[.node_pools[] | {size:.size,count:.count}] | sort_by(.size)} |
     select(all(.node_pools[]; (.size | type == "string" and length > 0) and
       (.count | type == "number" and floor == . and . > 0)))

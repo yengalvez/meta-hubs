@@ -83,6 +83,13 @@ jq_check() {
 capture_bot_runner_pods() {
   local destination="$1"
   chmod 600 "$destination"
+  if [[ "${reactivation_profile:-durable-active}" == \
+        cold-rebind-legacy-absent-v1 ]]; then
+    recovery_require_no_managed_bot_runner_pods || return 1
+    printf '{"apiVersion":"v1","kind":"PodList","metadata":{"resourceVersion":"legacy-absent"},"items":[]}\n' \
+      >"$destination"
+    return 0
+  fi
   recovery_kubectl_get_namespaced_list pods "$RUNNER_NAMESPACE" \
     >"$destination" || return 1
   jq -e --arg namespace "$RUNNER_NAMESPACE" '
@@ -117,6 +124,24 @@ bot_auth_can_i_matches() {
   fi
 }
 
+verify_final_runner_profile_snapshot() {
+  if [[ "$reactivation_profile" == cold-rebind-legacy-absent-v1 ]]; then
+    reactivation_legacy_live_runtime_is_exact \
+      "$VALUES_FILE" "$NAMESPACE" "$legacy_pull_secret" "$legacy_pull_config"
+    return
+  fi
+  node "$SCRIPT_DIR/verify-bot-runner-pods.mjs" \
+    --values "$VALUES_FILE" \
+    --namespace "$NAMESPACE" \
+    --runner-namespace "$RUNNER_NAMESPACE" \
+    --deployment "$bot_orchestrator_deployment_file" \
+    --parent "$runner_parent_file" \
+    --pods-before "$runner_pods_before_file" \
+    --pods-after "$runner_pods_after_file" \
+    --health "$runner_health_file" \
+    --readiness "$runner_readiness_file"
+}
+
 printf 'YenHubs live reactivation verification\n\n'
 
 for command_name in kubectl jq node curl dig gzip tar; do
@@ -137,6 +162,14 @@ if ! recovery_require_cluster_identity; then
   printf '\nSummary: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
   exit 1
 fi
+if ! reactivation_profile="$(reactivation_target_profile \
+    "${RESTORE_TARGET_MODE:-in-place}" \
+    "${RECOVERY_CHECKPOINT_RUNNER_GENERATION:-}")"; then
+  fail "El perfil live no es durable-active ni cold-rebind legacy-absent exacto"
+  printf '\nSummary: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+  exit 1
+fi
+pass "Perfil live exacto: $reactivation_profile"
 if ! domain="$(yaml_value HUB_DOMAIN)" || [[ -z "$domain" ]]; then
   fail "HUB_DOMAIN no esta configurado"
   printf '\nSummary: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
@@ -149,8 +182,13 @@ bot_runner_image="$(yaml_value OVERRIDE_BOT_RUNNER_IMAGE)"
 if ! reactivation_image_override_is_exact hubs "$hubs_image" ||
    ! reactivation_image_override_is_exact reticulum "$reticulum_image" ||
    ! reactivation_image_override_is_exact bot-orchestrator "$bot_image" ||
-   ! reactivation_image_override_is_exact bot-runner "$bot_runner_image"; then
+   ! reactivation_runner_image_matches_profile \
+       "$reactivation_profile" "$bot_runner_image"; then
   fail "Los overrides core no usan repositorios confiables y digests exactos"
+fi
+pgsql_container=pgsql
+if [[ "$reactivation_profile" == cold-rebind-legacy-absent-v1 ]]; then
+  pgsql_container=postgresql
 fi
 expected_images_json="$(jq -cn \
   --arg bot "$bot_image" \
@@ -162,6 +200,7 @@ expected_images_json="$(jq -cn \
   --arg pgbouncer "$(yaml_value OVERRIDE_PGBOUNCER_IMAGE)" \
   --arg photomnemonic "$(yaml_value OVERRIDE_PHOTOMNEMONIC_IMAGE)" \
   --arg postgres "$(yaml_value OVERRIDE_POSTGRES_IMAGE)" \
+  --arg pgsql_container "$pgsql_container" \
   --arg postgrest "$(yaml_value OVERRIDE_POSTGREST_IMAGE)" \
   --arg reticulum "$reticulum_image" \
   --arg spoke "$(yaml_value OVERRIDE_SPOKE_IMAGE)" '
@@ -175,7 +214,7 @@ expected_images_json="$(jq -cn \
     "pgbouncer/pgbouncer": $pgbouncer,
     "pgbouncer-t/pgbouncer-t": $pgbouncer,
     "photomnemonic/photomnemonic": $photomnemonic,
-    "pgsql/pgsql": $postgres,
+    ("pgsql/" + $pgsql_container): $postgres,
     "reticulum/postgrest": $postgrest,
     "reticulum/reticulum": $reticulum,
     "spoke/spoke": $spoke
@@ -241,8 +280,8 @@ fi
 
 if reactivation_deployments_are_acceptable "$deployments_json" \
   "$hubs_image" "$reticulum_image" "$bot_image" "$expected_images_json" \
-  "$bot_runner_image"; then
-  pass "Los 13 pares Deployment/contenedor y la imagen runner coinciden con el candidato"
+  "$bot_runner_image" "$reactivation_profile"; then
+  pass "Los 13 pares Deployment/contenedor coinciden con el perfil candidato"
 else
   fail "Inventario live, digests o procedencia no coinciden con el candidato exacto"
 fi
@@ -263,50 +302,51 @@ else
   fail "No se pudo excluir un HPA dirigido a Reticulum"
 fi
 
-runner_control_plane_verifier="$SCRIPT_DIR/../hubs-cloud/community-edition/apply/verify-live-runner-control-plane.js"
-runner_manifest_path="${HCCE_MANIFEST_PATH:-$SCRIPT_DIR/../hubs-cloud/community-edition/hcce.yaml}"
-if [[ -f "$runner_control_plane_verifier" && ! -L "$runner_control_plane_verifier" &&
-      -f "$runner_manifest_path" && ! -L "$runner_manifest_path" ]] &&
-   HCCE_INPUT_VALUES_PATH="$VALUES_FILE" \
-   HCCE_MANIFEST_PATH="$runner_manifest_path" \
-   KUBECTL_CONTEXT="$EXPECTED_KUBE_CONTEXT" \
-     node "$runner_control_plane_verifier"; then
-  pass "Control-plane runner, VAP, RBAC y namespace dedicado coinciden con el manifiesto"
-else
-  fail "Control-plane runner, VAP, RBAC o namespace dedicado contienen drift"
-fi
-
-bot_pull_secret_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-pull-secret.XXXXXX")"
-bot_runner_pull_secret_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-runner-pull-secret.XXXXXX")"
-bot_deployments_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-deployments.XXXXXX")"
-reactivation_register_temp_path "$bot_pull_secret_file"
-reactivation_register_temp_path "$bot_runner_pull_secret_file"
-reactivation_register_temp_path "$bot_deployments_file"
-chmod 600 "$bot_pull_secret_file" "$bot_runner_pull_secret_file" \
-  "$bot_deployments_file"
-if recovery_kubectl get secret bot-images-pull -n "$NAMESPACE" -o json \
-     >"$bot_pull_secret_file" &&
-   recovery_kubectl get secret bot-images-pull -n "$RUNNER_NAMESPACE" -o json \
-     >"$bot_runner_pull_secret_file" &&
-   printf '%s' "$deployments_json" | jq -e '.' >"$bot_deployments_file" &&
-   node "$SCRIPT_DIR/verify-bot-image-pull-config.mjs" \
-     --values "$VALUES_FILE" --secret "$bot_pull_secret_file" --namespace "$NAMESPACE" \
-     --runner-secret "$bot_runner_pull_secret_file" --runner-namespace "$RUNNER_NAMESPACE" \
-     --deployments "$bot_deployments_file" --verify-registry; then
-  pass "Ambos Pull Secrets/namespaces y checksums bot coinciden con la snapshot privada"
-else
-  fail "Pull Secret, checksums o dominios de credencial bot tienen drift"
-fi
-
-bot_rbac_exact=true
-for allowed_rule in "create pods" "delete pods" "get pods" "list pods"; do
-  read -r allowed_verb allowed_resource <<<"$allowed_rule"
-  if ! bot_auth_can_i_matches "$NAMESPACE" bot-orchestrator "$RUNNER_NAMESPACE" \
-    "$allowed_verb" "$allowed_resource" yes; then
-    bot_rbac_exact=false
+if [[ "$reactivation_profile" == durable-active ]]; then
+  runner_control_plane_verifier="$SCRIPT_DIR/../hubs-cloud/community-edition/apply/verify-live-runner-control-plane.js"
+  runner_manifest_path="${HCCE_MANIFEST_PATH:-$SCRIPT_DIR/../hubs-cloud/community-edition/hcce.yaml}"
+  if [[ -f "$runner_control_plane_verifier" && ! -L "$runner_control_plane_verifier" &&
+        -f "$runner_manifest_path" && ! -L "$runner_manifest_path" ]] &&
+     HCCE_INPUT_VALUES_PATH="$VALUES_FILE" \
+     HCCE_MANIFEST_PATH="$runner_manifest_path" \
+     KUBECTL_CONTEXT="$EXPECTED_KUBE_CONTEXT" \
+       node "$runner_control_plane_verifier"; then
+    pass "Control-plane runner, VAP, RBAC y namespace dedicado coinciden con el manifiesto"
+  else
+    fail "Control-plane runner, VAP, RBAC o namespace dedicado contienen drift"
   fi
-done
-dangerous_denied_rules=(
+
+  bot_pull_secret_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-pull-secret.XXXXXX")"
+  bot_runner_pull_secret_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-runner-pull-secret.XXXXXX")"
+  bot_deployments_file="$(mktemp "${TMPDIR:-/tmp}/yenhubs-bot-deployments.XXXXXX")"
+  reactivation_register_temp_path "$bot_pull_secret_file"
+  reactivation_register_temp_path "$bot_runner_pull_secret_file"
+  reactivation_register_temp_path "$bot_deployments_file"
+  chmod 600 "$bot_pull_secret_file" "$bot_runner_pull_secret_file" \
+    "$bot_deployments_file"
+  if recovery_kubectl get secret bot-images-pull -n "$NAMESPACE" -o json \
+       >"$bot_pull_secret_file" &&
+     recovery_kubectl get secret bot-images-pull -n "$RUNNER_NAMESPACE" -o json \
+       >"$bot_runner_pull_secret_file" &&
+     printf '%s' "$deployments_json" | jq -e '.' >"$bot_deployments_file" &&
+     node "$SCRIPT_DIR/verify-bot-image-pull-config.mjs" \
+       --values "$VALUES_FILE" --secret "$bot_pull_secret_file" --namespace "$NAMESPACE" \
+       --runner-secret "$bot_runner_pull_secret_file" --runner-namespace "$RUNNER_NAMESPACE" \
+       --deployments "$bot_deployments_file" --verify-registry; then
+    pass "Ambos Pull Secrets/namespaces y checksums bot coinciden con la snapshot privada"
+  else
+    fail "Pull Secret, checksums o dominios de credencial bot tienen drift"
+  fi
+
+  bot_rbac_exact=true
+  for allowed_rule in "create pods" "delete pods" "get pods" "list pods"; do
+    read -r allowed_verb allowed_resource <<<"$allowed_rule"
+    if ! bot_auth_can_i_matches "$NAMESPACE" bot-orchestrator "$RUNNER_NAMESPACE" \
+      "$allowed_verb" "$allowed_resource" yes; then
+      bot_rbac_exact=false
+    fi
+  done
+  dangerous_denied_rules=(
   "watch pods" "patch pods" "update pods" "deletecollection pods"
   "get pods/log" "create pods/exec" "create pods/attach" "create pods/portforward"
   "create pods/eviction" "update pods/ephemeralcontainers" "patch pods/ephemeralcontainers"
@@ -328,13 +368,13 @@ dangerous_denied_rules=(
   "escalate clusterroles.rbac.authorization.k8s.io"
   "impersonate users" "impersonate groups" "impersonate serviceaccounts"
 )
-rbac_principal_targets=(
+  rbac_principal_targets=(
   "$NAMESPACE bot-orchestrator $RUNNER_NAMESPACE parent-runner"
   "$NAMESPACE bot-orchestrator $NAMESPACE parent-parent"
   "$RUNNER_NAMESPACE bot-runner $RUNNER_NAMESPACE runner-runner"
   "$RUNNER_NAMESPACE bot-runner $NAMESPACE runner-parent"
 )
-for principal_target in "${rbac_principal_targets[@]}"; do
+  for principal_target in "${rbac_principal_targets[@]}"; do
   read -r principal_namespace service_account target_namespace target_kind \
     <<<"$principal_target"
   for denied_rule in "${dangerous_denied_rules[@]}"; do
@@ -355,11 +395,29 @@ for principal_target in "${rbac_principal_targets[@]}"; do
       fi
     done
   fi
-done
-if [[ "$bot_rbac_exact" == true ]]; then
-  pass "SelfSubjectAccessReview confirma parent minimo y runner sin autoridad API"
+  done
+  if [[ "$bot_rbac_exact" == true ]]; then
+    pass "SelfSubjectAccessReview confirma parent minimo y runner sin autoridad API"
+  else
+    fail "El RBAC efectivo concede de mas o niega una operacion minima del parent"
+  fi
 else
-  fail "El RBAC efectivo concede de mas o niega una operacion minima del parent"
+  legacy_pull_secret=""
+  legacy_pull_config=""
+  legacy_profile_inputs_ready=true
+  if ! legacy_pull_secret="$(
+       recovery_kubectl get secret bot-images-pull -n "$NAMESPACE" -o json
+     )" ||
+     ! legacy_pull_config="$(yaml_value BOT_IMAGE_PULL_CONFIG_JSON_BASE64)"; then
+    legacy_profile_inputs_ready=false
+  fi
+  if [[ "$legacy_profile_inputs_ready" == true ]] &&
+     reactivation_legacy_live_runtime_is_exact \
+       "$VALUES_FILE" "$NAMESPACE" "$legacy_pull_secret" "$legacy_pull_config"; then
+    pass "Perfil legacy exacto: namespace, RBAC, Pull Secret runner y control-plane durable ausentes"
+  else
+    fail "El perfil legacy contiene bindings, Pods o recursos durable residuales"
+  fi
 fi
 
 # jq variables are intentionally evaluated by jq, not by this shell.
@@ -403,7 +461,9 @@ if bot_orchestrator_deployment_file="$(
   reactivation_register_temp_path "$bot_orchestrator_deployment_file"
   chmod 600 "$bot_orchestrator_deployment_file"
 fi
-if [[ -n "$bot_orchestrator_deployment_file" ]] &&
+if [[ "$reactivation_profile" == cold-rebind-legacy-absent-v1 ]]; then
+  pass "Bot orchestrator process-local ya fue validado por el contrato legacy exacto"
+elif [[ -n "$bot_orchestrator_deployment_file" ]] &&
    jq -e '[.items[] | select(.metadata.name == "bot-orchestrator")] |
      select(length == 1) | .[0]' <<<"$deployments_json" >"$bot_orchestrator_deployment_file" &&
    node "$SCRIPT_DIR/verify-bot-orchestrator-deployment.mjs" \
@@ -454,15 +514,24 @@ jq_check "$deployments_json" \
   all(.items[] | select(.metadata.name != "haproxy" and .metadata.name != "bot-orchestrator");
     .spec.template.spec.automountServiceAccountToken == false) and
   ([.items[] | select(.metadata.name == "bot-orchestrator") |
-    .spec.template.spec.automountServiceAccountToken] == [true]) and
+    .spec.template.spec.automountServiceAccountToken] | length) == 1 and
   ([.items[] | select(.metadata.name == "haproxy") | .spec.template.spec.serviceAccountName] == ["haproxy-sa"]) and
   all(.items[] | select(.metadata.name == "coturn") | .spec.template.spec.containers[];
     .image != "docker.io/mozillareality/coturn@sha256:8380269c7bb2dc369f4126251199f0d603711debe8537b22cb7be470a50c51ce")'
+if jq -e --arg profile "$reactivation_profile" '
+  [.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.automountServiceAccountToken] ==
+    [if $profile == "durable-active" then true else false end]
+' >/dev/null <<<"$deployments_json"; then
+  pass "Bot orchestrator usa el automount exacto de su perfil"
+else
+  fail "Bot orchestrator no usa el automount exacto de su perfil"
+fi
 
 printf '\nNetworkPolicy\n'
 if policies_json="$(recovery_kubectl get networkpolicy -n "$NAMESPACE" -o json)" &&
-   reactivation_network_policies_are_exact "$policies_json"; then
-  pass "Las seis NetworkPolicies de aplicacion son exactas; el runner dedicado se valido aparte"
+   reactivation_network_policies_are_exact "$policies_json" "$reactivation_profile"; then
+  pass "Las NetworkPolicies de aplicacion son exactas para el perfil"
 else
   fail "NetworkPolicies ausentes, adicionales o con ingress/egress no auditado"
 fi
@@ -754,7 +823,10 @@ if printf '%s' "$deployments_json" | jq -e '
       else
         health=""
       fi
-      if reactivation_capture_output readiness_candidate curl -fsS --connect-timeout 1 --max-time 1 \
+      if [[ "$reactivation_profile" == cold-rebind-legacy-absent-v1 ]]; then
+        readiness='{}'
+      elif reactivation_capture_output readiness_candidate curl -fsS \
+        --connect-timeout 1 --max-time 1 \
         "http://127.0.0.1:$forwarded_port/ready"; then
         readiness="$readiness_candidate"
       else
@@ -768,12 +840,15 @@ if printf '%s' "$deployments_json" | jq -e '
       fail "El port-forward no seguia vivo al aceptar las respuestas"
       health=""; readiness=""
     fi
-    if reactivation_bot_health_is_acceptable "$health"; then
+    if reactivation_bot_health_matches_profile \
+         "$health" "$reactivation_profile"; then
       pass "Orchestrator live confirma ghost/navmesh/modelo y limites"
     else
       fail "El endpoint /health no confirma el contrato auditado"
     fi
-    if reactivation_bot_readiness_is_acceptable "$readiness"; then
+    if [[ "$reactivation_profile" == cold-rebind-legacy-absent-v1 ]]; then
+      pass "El runtime process-local historico se valida por /health y ausencia durable exacta"
+    elif reactivation_bot_readiness_is_acceptable "$readiness"; then
       pass "Orchestrator readiness autoritativa, fresca y exacta"
     else
       fail "El endpoint /ready no confirma todos los runners configurados"
@@ -800,19 +875,10 @@ if printf '%s' "$deployments_json" | jq -e '
        capture_bot_runner_pods "$runner_pods_after_file" &&
        printf '%s' "$health" | jq -e '.' >"$runner_health_file" &&
        printf '%s' "$readiness" | jq -e '.' >"$runner_readiness_file" &&
-       node "$SCRIPT_DIR/verify-bot-runner-pods.mjs" \
-         --values "$VALUES_FILE" \
-         --namespace "$NAMESPACE" \
-         --runner-namespace "$RUNNER_NAMESPACE" \
-         --deployment "$bot_orchestrator_deployment_file" \
-         --parent "$runner_parent_file" \
-         --pods-before "$runner_pods_before_file" \
-         --pods-after "$runner_pods_after_file" \
-         --health "$runner_health_file" \
-         --readiness "$runner_readiness_file"; then
-      pass "Cada sala usa un Pod runner estable, Ready, aislado y ligado al padre/digest"
+       verify_final_runner_profile_snapshot; then
+      pass "El runtime runner conserva identidad y aislamiento exactos para el perfil"
     else
-      fail "Los Pods runner no cumplen identidad, aislamiento, digest o estabilidad exactos"
+      fail "El runtime runner no cumple identidad, aislamiento o estabilidad exactos"
     fi
   elif [[ -n "$port_forward_pid" ]]; then
     fail "El port-forward no anuncio un puerto efimero valido"

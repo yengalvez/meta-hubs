@@ -29,6 +29,7 @@ PARENT_LEASE_HOLDER="${YENHUBS_PARENT_LEASE_HOLDER:-}"
 PARENT_LEASE_UID="${YENHUBS_PARENT_LEASE_UID:-}"
 PARENT_PROCESS_PID="${YENHUBS_PARENT_PROCESS_PID:-}"
 PARENT_PROCESS_START_IDENTITY="${YENHUBS_PARENT_PROCESS_START_IDENTITY:-}"
+PARENT_FREEZE_FENCE_CAPABILITY="${YENHUBS_PARENT_FREEZE_FENCE_CAPABILITY:-}"
 PARENT_WRITER_MONITOR_CONTRACT_PATH="${YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_PATH:-}"
 PARENT_WRITER_MONITOR_CONTRACT_SHA256="${YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_SHA256:-}"
 PARENT_WRITER_MONITOR_BASELINE_PATH="${YENHUBS_PARENT_WRITER_MONITOR_BASELINE_PATH:-}"
@@ -64,6 +65,7 @@ OUTPUT_PUBLISHED_IDENTITY=""
 BACKUP_SETUP_PENDING_SIGNAL_STATUS=0
 STORAGE_SETUP_STATUS=0
 STORAGE_PENDING_SIGNAL_STATUS=0
+STORAGE_FAILURE_STAGE="initialization"
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
 unset YENHUBS_PARENT_WRITER_MONITOR_PID \
@@ -85,7 +87,8 @@ unset YENHUBS_PARENT_WRITER_MONITOR_PID \
   YENHUBS_PARENT_DURABLE_MONITOR_PROGRESS_PATH \
   YENHUBS_PARENT_DURABLE_MONITOR_CAPABILITY_SHA256 \
   YENHUBS_PARENT_DURABLE_MONITOR_AUTHORITY_SHA256 \
-  YENHUBS_PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY
+  YENHUBS_PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY \
+  YENHUBS_PARENT_FREEZE_FENCE_CAPABILITY
 RECOVERY_CHECKPOINT_STAMP="$PARENT_CHECKPOINT_STAMP"
 RECOVERY_DUMP_SHA256="$PARENT_DUMP_SHA256"
 RECOVERY_STORAGE_SHA256="$PARENT_STORAGE_SHA256"
@@ -120,6 +123,20 @@ require_parent_writer_monitor_capability() {
       "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" >/dev/null
 }
 
+require_parent_freeze_fence_capability() {
+  local deployment
+  [[ "$CHECKPOINT_RUNNER_GENERATION" == legacy-absent &&
+     -n "$PARENT_FREEZE_FENCE_CAPABILITY" &&
+     -z "$PARENT_WRITER_MONITOR_PID" &&
+     -z "$PARENT_WRITER_MONITOR_CONTRACT_PATH" &&
+     -z "$PARENT_WRITER_MONITOR_BASELINE_PATH" ]] || return 1
+  recovery_require_freeze_checkpoint_fence "$PARENT_FREEZE_FENCE_CAPABILITY" || return 1
+  for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+    recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
+      "$deployment" 0 || return 1
+  done
+}
+
 require_parent_durable_monitor_capability() {
   [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 &&
      -n "$PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY" &&
@@ -150,24 +167,31 @@ require_parent_durable_monitor_capability() {
       "$PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY"
 }
 
-if ! require_parent_writer_monitor_capability ||
-   ! PARENT_WRITER_MONITOR_MAX_STALE_SECONDS="$(
-     recovery_stream_guard_max_stale_seconds
-   )"; then
-  printf 'Quiesced storage backup requires the live parent writer monitor guard.\n' >&2
-  exit 1
+if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then
+  require_parent_freeze_fence_capability || {
+    printf 'Quiesced storage backup requires the exact freeze admission fence.\n' >&2
+    exit 1
+  }
+else
+  if ! require_parent_writer_monitor_capability ||
+     ! PARENT_WRITER_MONITOR_MAX_STALE_SECONDS="$(
+       recovery_stream_guard_max_stale_seconds
+     )"; then
+    printf 'Quiesced storage backup requires the live parent writer monitor guard.\n' >&2
+    exit 1
+  fi
+  PARENT_STREAM_GUARD_ARGS=(
+    --guard-process-capability checkpoint-writer-monitor
+    "$PARENT_WRITER_MONITOR_PID"
+    "$PARENT_WRITER_MONITOR_START_IDENTITY"
+    "$PARENT_WRITER_MONITOR_FAILURE_PATH"
+    "$PARENT_WRITER_MONITOR_READY_PATH"
+    "$PARENT_WRITER_MONITOR_PROGRESS_PATH"
+    "${PARENT_WRITER_MONITOR_READY_PATH}.authority.json"
+    "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256"
+    "$PARENT_WRITER_MONITOR_MAX_STALE_SECONDS"
+  )
 fi
-PARENT_STREAM_GUARD_ARGS=(
-  --guard-process-capability checkpoint-writer-monitor
-  "$PARENT_WRITER_MONITOR_PID"
-  "$PARENT_WRITER_MONITOR_START_IDENTITY"
-  "$PARENT_WRITER_MONITOR_FAILURE_PATH"
-  "$PARENT_WRITER_MONITOR_READY_PATH"
-  "$PARENT_WRITER_MONITOR_PROGRESS_PATH"
-  "${PARENT_WRITER_MONITOR_READY_PATH}.authority.json"
-  "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256"
-  "$PARENT_WRITER_MONITOR_MAX_STALE_SECONDS"
-)
 if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
   if ! require_parent_durable_monitor_capability ||
      ! PARENT_DURABLE_MONITOR_MAX_STALE_SECONDS="$(
@@ -205,7 +229,11 @@ fi
 
 require_parent_checkpoint_guards() {
   recovery_require_operation_lock || return 1
-  require_parent_writer_monitor_capability || return 1
+  if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then
+    require_parent_freeze_fence_capability || return 1
+  else
+    require_parent_writer_monitor_capability || return 1
+  fi
   recovery_require_checkpoint_runner_quiescence_exact \
     "$CHECKPOINT_RUNNER_GENERATION" \
     "$CHECKPOINT_DURABLE_FENCE_BASELINE_PATH" \
@@ -518,7 +546,9 @@ helper_pod_is_exact() {
   local pod_uid="${2:-$HELPER_POD_UID}"
   [[ -n "$pod_uid" ]] &&
     recovery_storage_helper_pod_is_exact "$pod_json" "$HELPER_POD" \
-      "$pod_uid" ret-storage-backup "$RET_IMAGE" true
+      "$pod_uid" ret-storage-backup "$RET_IMAGE" true \
+      "$([[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]] && \
+        printf freeze-fence || printf legacy)"
 }
 
 helper_policy_is_exact() {
@@ -649,7 +679,12 @@ delete_helper_pod() {
   recovery_require_operation_lock || return 1
   recovery_require_exact_pvc_consumers ret-pvc "$HELPER_POD" || return 1
   require_helper_pod || return 1
-  recovery_delete_namespaced_with_uid pod "$HELPER_POD" "$HELPER_POD_UID" 180 || return 1
+  # This standalone Pod has no dependents. Foreground cascading deletion adds
+  # a GC finalizer that is unnecessary here and can outlive the otherwise
+  # completed helper. Background still performs normal graceful Pod deletion;
+  # UID pinning and the NotFound/same-name reconciliation remain unchanged.
+  recovery_delete_namespaced_with_uid \
+    pod "$HELPER_POD" "$HELPER_POD_UID" 180 Background || return 1
   HELPER_POD_CREATED=0
   HELPER_POD_UID=""
   recovery_require_exact_pvc_consumers ret-pvc
@@ -669,6 +704,15 @@ cleanup() {
   local status="$?" cleanup_status=0 pod_status=0
   trap - EXIT ERR
   trap '' INT TERM
+  if [[ "$status" != 0 ]]; then
+    case "$STORAGE_FAILURE_STAGE" in
+      initialization|authority|helper-policy|helper-pod|source-inventory|\
+      stream-launch|stream-boundary|archive-validation|database-postcheck|\
+      helper-cleanup|publication) ;;
+      *) STORAGE_FAILURE_STAGE="initialization" ;;
+    esac
+    printf 'storage_backup_child_stage:%s\n' "$STORAGE_FAILURE_STAGE" >&2
+  fi
   if [[ "$BACKUP_SUCCEEDED" != 1 && "$OUTPUT_PUBLISHED" == 1 ]] &&
      ! remove_owned_storage_backup_file \
        "$OUTPUT_PUBLISHED_IDENTITY" "$OUTPUT_PATH"; then
@@ -719,6 +763,7 @@ trap cleanup EXIT
 trap 'interrupted 130' INT
 trap 'interrupted 143' TERM
 
+STORAGE_FAILURE_STAGE="authority"
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 recovery_require_operation_lock
@@ -799,7 +844,16 @@ then
 fi
 
 recovery_require_operation_lock
+STORAGE_FAILURE_STAGE="helper-policy"
 require_helper_policy
+if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then
+  HELPER_OPERATION_ANNOTATION_KEY='yenhubs.org/operation-id'
+  HELPER_OPERATION_ANNOTATION_VALUE="$RECOVERY_OPERATION_ID"
+else
+  HELPER_OPERATION_ANNOTATION_KEY='yenhubs.org/operation-token'
+  HELPER_OPERATION_ANNOTATION_VALUE="$RECOVERY_OPERATION_TOKEN"
+fi
+STORAGE_FAILURE_STAGE="helper-pod"
 if ! acquire_helper_pod <<EOF
 apiVersion: v1
 kind: Pod
@@ -811,11 +865,12 @@ metadata:
     yenhubs.org/operation-id: "$RECOVERY_OPERATION_ID"
   annotations:
     yenhubs.org/operation-lock-uid: "$RECOVERY_OPERATION_LOCK_UID"
-    yenhubs.org/operation-token: "$RECOVERY_OPERATION_TOKEN"
+    $HELPER_OPERATION_ANNOTATION_KEY: "$HELPER_OPERATION_ANNOTATION_VALUE"
 spec:
   automountServiceAccountToken: false
   enableServiceLinks: false
   restartPolicy: Never
+  terminationGracePeriodSeconds: 1
   activeDeadlineSeconds: 3600
   securityContext:
     runAsNonRoot: true
@@ -854,11 +909,15 @@ require_helper_pod || {
   exit 1
 }
 recovery_require_exact_pvc_consumers ret-pvc "$HELPER_POD"
+STORAGE_FAILURE_STAGE="source-inventory"
 
 monitor() {
   local progress=0
   while [[ ! -e "$MONITOR_STOP" ]]; do
-    if [[ "$CHECKPOINT_RUNNER_GENERATION" == legacy-absent ]] &&
+    if ! require_parent_checkpoint_guards; then
+      printf 'parent_checkpoint_guard_failed\n' >"$MONITOR_FAILURE"
+      return 1
+    elif [[ "$CHECKPOINT_RUNNER_GENERATION" == legacy-absent ]] &&
        ! recovery_require_checkpoint_runner_quiescence_exact \
         "$CHECKPOINT_RUNNER_GENERATION" \
         "$CHECKPOINT_DURABLE_FENCE_BASELINE_PATH" \
@@ -885,6 +944,15 @@ monitor() {
     fi
     sleep "$MONITOR_POLL_SECONDS"
   done
+}
+
+require_freeze_storage_stream_boundary() {
+  [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]] || return 2
+  require_parent_checkpoint_guards &&
+    recovery_require_pvc_identity ret-pvc &&
+    require_helper_policy &&
+    require_helper_pod &&
+    recovery_require_exact_pvc_consumers ret-pvc "$HELPER_POD"
 }
 
 recovery_kubectl exec -n "$NAMESPACE" "$HELPER_POD" -- sh -ec \
@@ -916,63 +984,86 @@ require_parent_checkpoint_guards || {
   printf 'Checkpoint authority changed before the storage monitor launch.\n' >&2
   exit 1
 }
-MONITOR_POLL_SECONDS="$(recovery_stream_poll_seconds)" || {
-  printf 'Could not derive the attested storage monitor poll interval.\n' >&2
-  exit 1
-}
+LOCAL_STORAGE_STREAM_GUARD_ARGS=()
+if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then
+  # The freeze admission fence rejects every Pod CREATE/UPDATE except this
+  # exact read-only helper. A deleted helper makes tar fail and cannot be
+  # replaced by another consumer. Pin the full boundary immediately before and
+  # after the stream; legacy/durable lanes retain their continuous monitor.
+  require_freeze_storage_stream_boundary || {
+    printf 'Freeze storage boundary changed before the archive stream.\n' >&2
+    exit 1
+  }
+else
+  MONITOR_POLL_SECONDS="$(recovery_stream_poll_seconds)" || {
+    printf 'Could not derive the attested storage monitor poll interval.\n' >&2
+    exit 1
+  }
 
-(
-  # Bash 3.2 may tail-exec an external command reached through an async
-  # function (`monitor &`), replacing the long-lived shell with one kubectl
-  # LIST. An EXIT trap makes the shell retain ownership of the monitor PID and
-  # preserves the original status after every nested command returns.
-  backup_monitor_exit_status=0
-  trap 'backup_monitor_exit_status=$?; trap - EXIT; exit "$backup_monitor_exit_status"' EXIT
-  monitor
-) &
-MONITOR_PID=$!
-if ! MONITOR_START_IDENTITY="$(
-  recovery_process_start_identity "$MONITOR_PID"
-)"; then
-  : >"$MONITOR_STOP"
-  wait "$MONITOR_PID" 2>/dev/null || :
-  MONITOR_PID=""
-  MONITOR_START_IDENTITY=""
-  printf 'Could not bind the read-only storage monitor to its exact process identity.\n' >&2
-  exit 1
-fi
-if ! MONITOR_MAX_STALE_SECONDS="$(recovery_stream_guard_max_stale_seconds)" ||
-   ! MONITOR_INITIAL_DEADLINE_SECONDS="$(
-     recovery_stream_guard_initial_deadline_seconds
-   )" ||
-   ! recovery_wait_for_stream_guard_initial_progress \
-     "$MONITOR_PID" "$MONITOR_START_IDENTITY" "$MONITOR_FAILURE" \
-     "$MONITOR_PROGRESS" "$MONITOR_INITIAL_DEADLINE_SECONDS"; then
-  : >"$MONITOR_STOP"
-  wait "$MONITOR_PID" 2>/dev/null || :
-  MONITOR_PID=""
-  MONITOR_START_IDENTITY=""
-  MONITOR_MAX_STALE_SECONDS=""
-  MONITOR_INITIAL_DEADLINE_SECONDS=""
-  monitor_failure_reason="unknown_failure"
-  if [[ -s "$MONITOR_FAILURE" ]]; then
-    monitor_failure_reason="$(<"$MONITOR_FAILURE")"
+  (
+    # Bash 3.2 may tail-exec an external command reached through an async
+    # function (`monitor &`), replacing the long-lived shell with one kubectl
+    # LIST. An EXIT trap makes the shell retain ownership of the monitor PID and
+    # preserves the original status after every nested command returns.
+    backup_monitor_exit_status=0
+    trap 'backup_monitor_exit_status=$?; trap - EXIT; exit "$backup_monitor_exit_status"' EXIT
+    monitor
+  ) &
+  MONITOR_PID=$!
+  if ! MONITOR_START_IDENTITY="$(
+    recovery_process_start_identity "$MONITOR_PID"
+  )"; then
+    : >"$MONITOR_STOP"
+    wait "$MONITOR_PID" 2>/dev/null || :
+    MONITOR_PID=""
+    MONITOR_START_IDENTITY=""
+    printf 'Could not bind the read-only storage monitor to its exact process identity.\n' >&2
+    exit 1
   fi
-  printf 'Read-only storage monitor did not complete its initial exact safety sweep: %s.\n' \
-    "$monitor_failure_reason" >&2
-  exit 1
+  if ! MONITOR_MAX_STALE_SECONDS="$(recovery_stream_guard_max_stale_seconds)" ||
+     ! MONITOR_INITIAL_DEADLINE_SECONDS="$(
+       recovery_stream_guard_initial_deadline_seconds
+     )" ||
+     ! recovery_wait_for_stream_guard_initial_progress \
+       "$MONITOR_PID" "$MONITOR_START_IDENTITY" "$MONITOR_FAILURE" \
+       "$MONITOR_PROGRESS" "$MONITOR_INITIAL_DEADLINE_SECONDS"; then
+    : >"$MONITOR_STOP"
+    wait "$MONITOR_PID" 2>/dev/null || :
+    MONITOR_PID=""
+    MONITOR_START_IDENTITY=""
+    MONITOR_MAX_STALE_SECONDS=""
+    MONITOR_INITIAL_DEADLINE_SECONDS=""
+    monitor_failure_reason="unknown_failure"
+    if [[ -s "$MONITOR_FAILURE" ]]; then
+      monitor_failure_reason="$(<"$MONITOR_FAILURE")"
+    fi
+    printf 'Read-only storage monitor did not complete its initial exact safety sweep: %s.\n' \
+      "$monitor_failure_reason" >&2
+    exit 1
+  fi
+  LOCAL_STORAGE_STREAM_GUARD_ARGS=(
+    --guard-process "$MONITOR_PID" "$MONITOR_START_IDENTITY"
+    "$MONITOR_FAILURE" "$MONITOR_PROGRESS" "$MONITOR_MAX_STALE_SECONDS"
+  )
 fi
+STORAGE_FAILURE_STAGE="stream-launch"
 if recovery_kubectl_stream_guarded 3600 \
   "${PARENT_STREAM_GUARD_ARGS[@]}" \
-  --guard-process "$MONITOR_PID" "$MONITOR_START_IDENTITY" "$MONITOR_FAILURE" \
-    "$MONITOR_PROGRESS" "$MONITOR_MAX_STALE_SECONDS" -- \
+  "${LOCAL_STORAGE_STREAM_GUARD_ARGS[@]}" -- \
   exec -n "$NAMESPACE" "$HELPER_POD" -- tar -C /storage -cf - owned |
   gzip -c >"$PARTIAL_PATH"; then
   archive_status=0
 else
   archive_status=$?
 fi
-if stop_monitor; then monitor_status=0; else monitor_status=1; fi
+STORAGE_FAILURE_STAGE="stream-boundary"
+if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then
+  if require_freeze_storage_stream_boundary; then monitor_status=0; else monitor_status=1; fi
+elif stop_monitor; then
+  monitor_status=0
+else
+  monitor_status=1
+fi
 [[ "$archive_status" == 0 && "$monitor_status" == 0 ]] || {
   monitor_failure_reason="none"
   if [[ -s "$MONITOR_FAILURE" ]]; then
@@ -982,6 +1073,7 @@ if stop_monitor; then monitor_status=0; else monitor_status=1; fi
     "$archive_status" "$monitor_status" "$monitor_failure_reason" >&2
   exit 1
 }
+STORAGE_FAILURE_STAGE="archive-validation"
 chmod 600 "$PARTIAL_PATH"
 gzip -t "$PARTIAL_PATH"
 gzip -cd "$PARTIAL_PATH" | tar -tvf - | awk '
@@ -1008,6 +1100,7 @@ recovery_require_operation_lock
 require_pgsql_source
 recovery_capture_live_database_contract "$PGSQL_POD" "$CONTRACT_AFTER"
 # shellcheck disable=SC2016
+STORAGE_FAILURE_STAGE="database-postcheck"
 recovery_kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
   'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d retdb -Atc "select owned_file_uuid from ret0.owned_files where state::text = '\''active'\'' order by owned_file_uuid"' \
   | tr -d '\r' | LC_ALL=C sort >"$DB_ACTIVE_AFTER"
@@ -1017,10 +1110,12 @@ if ! recovery_database_contracts_match "$CONTRACT_BEFORE" "$CONTRACT_AFTER" ||
   exit 1
 fi
 
+STORAGE_FAILURE_STAGE="helper-cleanup"
 require_parent_checkpoint_guards
 delete_helper_pod
 delete_helper_policy
 PAIR_COUNT="$(wc -l <"$WORK_DIR/archive-blobs" | tr -d ' ')"
+STORAGE_FAILURE_STAGE="publication"
 OUTPUT_PUBLISHED_IDENTITY="$(
   storage_backup_private_file_identity "$PARTIAL_PATH"
 )"

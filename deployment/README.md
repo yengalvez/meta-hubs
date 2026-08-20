@@ -2315,7 +2315,10 @@ deletes the owned helper Pod, its exact deny-all NetworkPolicy and then the
 owned lock; it never resumes a workload or transitions the fifth fence:
 
 ```bash
+RESTORE_TARGET_MODE=cold-rebind \
 RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1 \
+FREEZE_RECEIPT_PATH=/private/path/to/freeze-bundle-receipt.json \
+VALUES_FILE=/private/path/to/input-values.yaml \
 CONFIRM_CLEAR_RESTORE_LOCK="restore-lock:${EXPECTED_KUBE_CONTEXT}:${NAMESPACE}:${EXPECTED_NAMESPACE_UID}:${STAMP}:${DUMP_SHA}:${STORAGE_SHA}:<LOCK_UID>:${EXPECTED_RET_PVC_UID}" \
   ./deployment/restore-checkpoint.sh /absolute/path/to/checkpoint
 ```

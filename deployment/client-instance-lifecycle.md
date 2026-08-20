@@ -368,6 +368,10 @@ el mismo `RUN_ID` ni se borra evidencia para repetir un verde.
 Si falla despues de empezar a escribir, el driver intenta dejar los cinco
 consumidores a cero y conserva el lock exacto. No borrar el lock, escalar a mano
 ni repetir a ciegas: guardar el primer diagnostico, comprobar Lease/lock,
+usar siempre `RESTORE_TARGET_MODE=cold-rebind` tambien en la limpieza confirmada
+del lock y ejecutar de nuevo el coordinador completo solo sobre una causa nueva
+ya corregida. El modo de limpieza sin ese target se rechaza y no es un atajo
+valido para esta reconstruccion.
 replicas y consumidor de PVC, y abrir una recuperacion manual separada.
 
 Nunca combinar un dump de una fecha con un storage de otra.

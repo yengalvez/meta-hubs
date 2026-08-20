@@ -1,6 +1,30 @@
 # Meta activa: hibernar y reactivar una instancia de cliente
 
-Ultima revision: **12 de agosto de 2026 (Europe/Madrid)**
+Ultima revision: **20 de agosto de 2026 (Europe/Madrid)**
+
+Version: **v29**. Estado activo: **H5-B19 en reactivacion. La topologia exacta
+ya esta recreada con Kubernetes `1.34.10-do.1`: `ams3`, HA desactivada, un nodo
+`s-4vcpu-8gb`, un balanceador regional y dos volumenes de 10 GiB. El target
+greenfield esta `12/12` exacto, con los cinco writers a cero. El preflight real
+cold-rebind pasa completo. DNS y certificados ya estan cerrados `4/4`. El
+restore supero el baseline y alcanzo la fase DB, pero no pudo demostrar la
+quietud continua antes del reset en el ultimo intento. Estado fail-closed:
+lock `cold-rebind` retenido, Lease existente pero libre/sin holder, cinco
+writers `0`, cero Pods writer y DB target vacia. La lectura posterior confirma
+contratos `5/5`, runner ausente, LIST/WATCH runner y PostgreSQL Ready; el fallo
+restante fue temporal en la cadena de capacidades. El diagnostico por subetapa
+queda implementado y su foco pasa `51/51`. La revision independiente del
+candidato encontro tres incompatibilidades de integracion finitas. Ya estan
+corregidas: el verificador live separa durable de cold-rebind process-local, el
+gate full convoca una sola bateria agregada H5 y las suites oficiales Cloud, y
+el runbook contiene el target exacto de limpieza. Sus focos finales pasan
+`120/120`, `57/57` y `49/49`; el unico riesgo no simulado es la aceptacion live
+real de DNS/TLS/HTTP/DB/medios. Siguiente accion exacta: fijar primero Cloud y
+root en commits limpios y ejecutar una sola validacion
+`./scripts/verify-project.sh --full`. Solo si queda verde se
+limpia el lock por el procedimiento confirmado y se ejecuta un unico restore;
+cualquier nueva parada debe traer el guard cerrado exacto y no autoriza otro
+retry.
 
 Este fichero es la unica fuente de orden y estado. La explicacion para el
 propietario esta en `docs/estado-sencillo.md`.
@@ -257,15 +281,372 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
       destino es opcional. H5-A queda `10/10`; produccion no cambio y no se
       ejecuto CI.
   - [ ] **H5-B. Ejecutar la ventana comercial autorizada.**
-    - Autorizacion recibida el `2026-08-12`. Estado: preflight previo al primer
-      efecto; falta confirmacion manual de Google y guardar la clave H5 del
-      portapapeles en Google Password Manager. Produccion sigue intacta.
-    - Con autorizacion expresa sobre el paquete H5-A: crear checkpoint fresco,
-      segunda copia cifrada y expediente; eliminar solo los recursos DO
-      aprobados y comprobar el coste residual real.
-    - Antes del primer efecto, comprobar de forma redactada que la alerta
-      general de Google Password Manager no afecta a las entradas H5; rotar
-      cualquier entrada afectada o aplicar STOP.
+    - Autorizacion y confirmacion manual de custodia recibidas el `2026-08-12`.
+      La clave H5 se guardo en Google Password Manager. Produccion esta
+      recuperada y verificada `12/12`, sin recovery lock; DigitalOcean no se
+      ha retirado ni recreado.
+    - [x] **H5-B0. Cerrar localmente las brechas del primer checkpoint real.**
+      - El preflight completo `freeze-bundle-v1` quedo verde sobre el runtime
+        live, incluida la excepcion checkpoint-only para el unico
+        `RollingUpdate`, el bloque Reticulum process-local, repos historicos,
+        `HA=false` y GVK/ReplicaSet reales. El generador opt-in
+        `cold-rebind-legacy-absent-v1` produce el target greenfield legacy sin
+        control plane durable; sus `32/32` tests estan verdes.
+      - El primer checkpoint que entro en downtime escalo los cinco writers a
+        cero y fallo antes del handshake `ready` del monitor. No produjo DB ni
+        copia storage. Se reanudaron exactamente los cinco writers, se
+        verificaron `12/12` Deployments y se retiro el lock exacto; no se toco
+        infraestructura DO ni datos.
+      - Evidencia causal: los LIST reales conservan GVK superior, pero omiten
+        `apiVersion/kind` en `12/12` items Deployment, `67/67` ReplicaSet y
+        `12/12` Pod. El monitor exigia esos campos por item y fallaba primero
+        como `replicaset_inventory`. Ahora acepta solo el par ausente/null bajo
+        un LIST tipado, mantiene WATCH/GET estrictos y rechaza cualquier GVK
+        explicito falso. Positivo `46/46`, negativos `48/48`, sintaxis,
+        ShellCheck y diff-check verdes; revision independiente GO.
+      - Regla anti-loop cumplida: no hubo segundo checkpoint sobre los mismos
+        bytes. El siguiente intento solo esta permitido por esta evidencia y
+        el cambio causal verificado; si reaparece el mismo fallo, STOP.
+    - [x] **H5-B1. Resolver el STOP del checkpoint sin otra tentativa.**
+      - La unica repeticion causal se ejecuto con los ocho metadatos
+        `FREEZE_*` completos. La captura redactada termino, pero el monitor
+        volvio a fallar antes de `ready`, ahora con diagnostico allowlisted
+        `checkpoint_writer_monitor_stage:baseline`; no se copiaron DB ni
+        `ret-pvc` y no se publico ningun bundle.
+      - El rollback automatico restauro exactamente los cinco writers. La
+        reconciliacion posterior confirma `12/12` Deployments disponibles,
+        recovery lock ausente y Lease libre. DigitalOcean, datos y DNS no se
+        retiraron ni recrearon.
+      - Esta evidencia invalida el GO operativo de H5-B0 aunque sus pruebas
+        enfocadas sigan siendo validas: aceptar GVK omitido no era suficiente
+        para que el monitor real completara todo su baseline.
+      - **Hard stop:** no ejecutar otro checkpoint, no cifrar una copia
+        incompleta y no borrar recursos DO. La siguiente accion admisible es
+        una sola autopsia read-only del fallo `baseline` que produzca evidencia
+        causal nueva y una decision `reparar estrechamente` o `simplificar la
+        ruta`; no se autoriza otra hipotesis seguida de retry.
+      - La autopsia read-only encontro una unica diferencia estructural en los
+        siete Pods no writers: Kubernetes materializa `enableServiceLinks=true`
+        y copia `imagePullSecrets` del ServiceAccount aunque ambas claves se
+        omitan en el PodTemplate. Los `7/7` Pods coincidieron exactamente con
+        sus ServiceAccounts; ownership, selectores y ReplicaSets eran exactos.
+      - La reparacion solo normaliza el default booleano y separa la comparacion
+        Template-Pod de la huella completa del Pod. La proyeccion
+        ServiceAccount+imagePullSecrets se valida contra el objeto live, queda
+        ligada al baseline por ReplicaSet y se exige tambien en LIST y WATCH.
+        Un `false`, un secreto inicial distinto o un reemplazo con deriva
+        fallan cerrado. Microfoco `49/49`, sintaxis, ShellCheck y diff-check
+        verdes; revision adversarial final GO, cero P0/P1/P2.
+      - Se descarto retirar el watcher: checks puntuales no detectarian una
+        excursion `0 -> 1 -> 0` durante DB/storage. El watcher continuo se
+        conserva. La autopsia cierra H5-B1 y autoriza un unico candidato final
+        sobre estos bytes. Cualquier fallo de ese candidato produce STOP de la
+        ruta automatica, sin otro parche/retry dentro de H5.
+    - [x] **H5-B2. Ejecutar el candidato final y cerrar la ruta automatica.**
+      - El candidato final completo de nuevo la captura redactada, pero el
+        monitor volvio a fallar antes de `ready` con el mismo stage
+        `baseline`. No se copiaron DB ni `ret-pvc`, no se publico bundle y no
+        hubo borrado o recreacion de DigitalOcean.
+      - El rollback restauro exactamente los cinco writers. Estado terminal:
+        `12/12` Deployments disponibles, recovery lock ausente, Lease libre y
+        cero bundles visibles.
+      - Decision anti-loop: se cierra esta ruta, incluso aunque una autopsia
+        adicional pudiera descubrir otra incompatibilidad. Las correcciones de
+        GVK y defaults son validas, pero seguir normalizando el monitor no es
+        una via finita para la necesidad comercial.
+    - [x] **H5-B3. Implementar y validar la barrera temporal elegida.**
+      - Decision del propietario: opcion segura `1`. Ventana de mantenimiento
+        exclusiva con una barrera temporal que impida crear Pods writers,
+        seguida de copia DB + `ret-pvc`, verificacion, retirada exacta de la
+        barrera y resume controlado.
+      - Reutilizar el contrato de admision existente; no crear otro subsistema
+        ni reabrir el watcher que ya quedo cerrado por la regla anti-loop.
+      - La barrera debe quedar ligada a Lease, lock, Namespace y operacion;
+        demostrar server-side que rechaza un Pod writer antes del primer
+        scale-down; mantenerse comprobable durante ambos streams y la
+        publicacion; y quedar ausente con identidad exacta antes del resume.
+      - Respuesta perdida, deriva, señal o retirada ambigua fallan cerrado. No
+        se publica un bundle incompleto ni se reanuda si no puede demostrarse
+        que la barrera dejo de aplicar de forma segura.
+      - Implementacion local cerrada: policy y binding dedicados con
+        `failurePolicy=Fail`, rechazo de `Pod CREATE`, `Pod UPDATE` y
+        `pods/ephemeralcontainers UPDATE`, salvo el helper storage exacto y de
+        solo lectura. La barrera se liga a Namespace, operacion, lock y Lease;
+        los hijos revalidan esa capacidad durante DB y storage.
+      - Dos latches armados antes de CREATE impiden liberar lock o Lease si el
+        servidor pudo crear policy/binding pero falla el GET posterior. Solo
+        objeto exacto o `NotFound` demostrado permiten limpiar; deriva o lectura
+        ambigua quedan fail-closed.
+      - Evidencia final sobre los bytes locales: matriz H5-B3 `73/73`, helper
+        puro `8/8`, Bash/Node syntax, ShellCheck y diff-check verdes. La revision
+        adversarial final dio GO con cero P0/P1/P2 y considero proporcionales los
+        dos latches y la reconciliacion central.
+      - No se ejecuto full, GitHub, Kubernetes real ni produccion: no eran gates
+        de esta unidad local y no se repiten antes de una autorizacion concreta.
+    - [x] **H5-B4. Ejecutar una unica ventana productiva con la barrera.**
+      - Autorizacion expresa recibida el 12 de agosto de 2026 para crear y
+        retirar temporalmente la policy/binding de admision, pausar los cinco
+        writers, crear/validar el bundle y reanudar. No autoriza borrar DO.
+      - Secuencia unica: preflight live -> crear/probar barrera server-side ->
+        pausar cinco writers -> copiar DB y `ret-pvc` -> validar/publicar bundle
+        -> retirar barrera por UID/RV -> confirmar ausencia -> reanudar.
+      - Cualquier respuesta ambigua, deriva, señal o perdida de Lease/lock
+        produce STOP fail-closed. En esta ventana no se borran aun recursos DO.
+      - El primer preflight autorizado paro antes de Lease/lock/barrera porque
+        se selecciono la copia privada historica de julio, que no contiene el
+        discriminador `OVERRIDE_BOT_RUNNER_IMAGE`. Produccion permanecio
+        `12/12`, sin Lease, lock, barrera ni bundle. No cuenta como ventana de
+        downtime ni como fallo ambiguo.
+      - Evidencia causal nueva: se reconstruyo un snapshot privado `0600` desde
+        la fuente canonica, cambiando solo dominio, runner `No` y pins de imagen
+        no secretos; valida `13/13` pares exactos contra el runtime live. Esta
+        precondicion distinta autoriza un unico intento operativo, no otro ciclo
+        de hipotesis.
+      - Un segundo preflight con ese snapshot paro tambien antes de Lease porque
+        el comando no incluia los UID esperados de Namespace y `ret-pvc`. Una
+        auditoria estatica congelo el paquete completo y ambos UID se capturaron
+        en el mismo contexto inmediatamente antes de la invocacion operativa.
+      - La invocacion operativa capturo el inventario redactado y creo solo la
+        policy; Kubernetes materializo defaults de API que el comparador no
+        normalizaba y produjo `stage=quiescence code=fence-create`. El binding
+        nunca existio, los writers nunca se escalaron y no hubo bundle.
+      - Reconciliacion live: policy sin binding e inerte, lock inmutable presente
+        y Lease ausente. Un rollback revisado adquirio Lease, revalido policy y
+        lock, borro ambos exclusivamente por UID/RV, confirmo `NotFound` y dejo
+        la Lease libre. Estado final `12/12`, cinco writers `1/1`, cero residuos.
+      - Correccion local posterior: el comparador elimina solo los defaults
+        exactos del API para policy (`Equivalent`, selectores `{}`, `paramKind`
+        null y `reason` null); alternativas siguen rojas y binding sigue
+        estricto. Node/test `15/15`, diff-check y revision adversarial GO, cero
+        P0/P1/P2. No se hizo otro checkpoint.
+    - [x] **H5-B5. Ejecutar el candidato corregido y reconciliar su STOP.**
+      - Autorizacion continua recibida el 12 de agosto de 2026 para completar
+        todo H5 dentro del paquete ya documentado. H5-B4 termino segura, pero
+        sin bundle; H5-B5 reutilizo el snapshot privado validado `13/13` y los
+        UID capturados inmediatamente antes.
+      - El servidor acepto la policy, pero materializo tambien defaults en la
+        binding (`matchPolicy=Equivalent` y `objectSelector={}`); el validador
+        la rechazo con `stage=quiescence code=fence-create`. Los cinco writers
+        permanecieron `1/1` y no se creo bundle.
+      - La reconciliacion exacta retiro primero binding, despues policy y lock,
+        y libero la Lease. Estado terminal confirmado: `12/12`, sin barrera,
+        lock, Lease, bundle ni cambios DigitalOcean.
+    - [x] **H5-B6. Ejecutar un unico candidato con preflight server-side.**
+      - Cambio de metodo anti-loop: antes de cualquier CREATE persistente, el
+        API server recibe policy y binding con `--dry-run=server`; las dos
+        respuestas canonicalizadas deben pasar el validador exacto. Solo
+        entonces se vuelve a probar ausencia y puede empezar el CREATE real.
+      - Los tests focales pasan `49/49`; la regresion H5-B3 pasa `77/77`, mas
+        Node, sintaxis, ShellCheck y diff-check. El API real devolvio
+        `server_dry_run=pass` y policy/binding siguieron ausentes.
+      - Ejecutar una sola vez con el snapshot `13/13` y UID live capturados en
+        la misma invocacion. Una firma nueva produce STOP y reconciliacion, no
+        otra cadena de defaults o retries.
+      - Resultado: el preflight paso, policy y binding se crearon y limpiaron,
+        pero el candidato paro en `probe`. Estado terminal `12/12`, cinco
+        writers `1/1`, sin barrera, lock, Lease, bundle ni cambios DO.
+      - Un smoke acotado demostro `probe-helper-denied`: la barrera bloqueaba
+        tambien el helper permitido porque el API omite `request.subResource`
+        en el CREATE base. Se corrigio con la forma CEL ya usada por el watcher:
+        `!has(request.subResource) || request.subResource == ''`.
+    - [x] **H5-B7. Ejecutar el candidato con la barrera probada live.**
+      - Evidencia previa: helper puro `17/17`, smoke live completo PASS sin tocar
+        writers, regresion H5-B3 `77/77`, sintaxis, ShellCheck y diff-check.
+      - Ejecutar una sola vez. Una nueva firma conserva el STOP anti-loop; no
+        borrar DigitalOcean hasta que el bundle y las dos copias esten verdes.
+      - Resultado: supero barrera, probe y scale-down de los cinco writers; paro
+        antes de iniciar `pg_dump` porque el monitor PostgreSQL no publico su
+        primer barrido dentro de los 10 segundos de arranque. El rollback
+        restauro cada writer y termino `12/12`, sin barrera, lock, Lease o bundle.
+    - [x] **H5-B8. Ejecutar con plazo inicial separado de la frescura.**
+      - El primer barrido recibe 30 segundos; despues de arrancar, la frescura
+        sigue limitada a 10 segundos. El monitor emite solo una etapa enumerada
+        si falla: identidad, Lease, lock, guard o fuente PostgreSQL.
+      - Foco `stream-guards` `81/81`, sintaxis, ShellCheck y diff-check verdes.
+        Ejecutar una sola vez; nueva firma produce STOP, no otro retry.
+      - Resultado: el monitor completo su arranque, pero fallo durante el
+        stream de `pg_dump`. El rollback exacto restauro los cinco writers y
+        termino `12/12`, sin barrera, lock, Lease, bundle ni cambios DO.
+    - [x] **H5-B9. Ejecutar la ruta freeze sin monitor PostgreSQL redundante.**
+      - La barrera `failurePolicy=Fail` ya impide CREATE/UPDATE de Pods durante
+        DB y storage, salvo el helper storage exacto. Si PostgreSQL desaparece,
+        `pg_dump` falla y no hay bundle; no puede recrearse bajo la barrera.
+      - La ruta freeze comprueba fuente PostgreSQL, Lease, lock y guard
+        inmediatamente antes y despues del stream. Las rutas legacy/durable
+        conservan su monitor continuo y sus regresiones.
+      - Evidencia previa: H5-B3 `77/77`, hijos checkpoint `161/161`, sintaxis,
+        ShellCheck y diff-check verdes. Ejecutar una sola vez; una firma nueva
+        produce STOP, no H5-B10 automatico.
+      - Resultado: el dump completo el stream, pero el validador agregado
+        rechazo el contrato SQL critico. No se publico bundle. El rollback
+        restauro los cinco writers y termino `12/12`, sin barrera, lock o Lease.
+      - La autopsia read-only posterior confirmo PostgreSQL `12.19`, los tres
+        schemas, `356` DDL, los tres COPY, marcador completo y hashes iguales
+        para migraciones, relaciones, hubs, owned files y activos. Como el dump
+        rechazado ya fue retirado y el error agregado no identifica el
+        predicado, no existe evidencia para repetir el downtime.
+    - [x] **H5-B10. Discriminar el predicado SQL sin otro checkpoint.**
+      - Añadir solo diagnostico enumerado/redactado o una reproduccion
+        read-only que conserve cero filas/valores. No ejecutar otro checkpoint
+        productivo hasta identificar una diferencia concreta y probar su fix.
+      - Resultado: PostgreSQL `12.19` termina el dump con el marcador seguido
+        por un unico comentario vacio canonico `--`. El parser exigia que el
+        marcador fuera la ultima linea no vacia y rechazaba el dump correcto.
+      - El parser acepta solo cero o un footer canonico en la posicion exacta y
+        sigue rechazando duplicados, tokens desparejados y SQL posterior. Foco
+        `7/7`, dump real read-only completo PASS, Bash/ShellCheck/diff-check
+        verdes. El temporal privado se retiro por borrado recuperable.
+    - [x] **H5-B11. Ejecutar un checkpoint con el parser PostgreSQL 12 corregido.**
+      - Un unico candidato bajo la autorizacion continua. Nueva firma produce
+        STOP; no existe H5-B12 automatico.
+      - Resultado: DB real verde con `356` relaciones, `94` migraciones, `18`
+        hubs y `33` ficheros activos. Storage paro antes de crear su Pod porque
+        el API omite las listas vacias `ingress` y `egress` del NetworkPolicy.
+        Rollback `12/12`, writers `5/5`, cero barrera, lock, Lease o bundle.
+    - [x] **H5-B12. Ejecutar tras el corte productivo y la canonicalizacion storage.**
+      - El comparador acepta solo ambas listas vacias explicitas o ambas
+        omitidas por el API. Rechaza omision parcial, `null` y reglas no vacias.
+      - Evidencia: dry-run server-side real y foco storage `88/88`, mas Bash,
+        ShellCheck y diff-check verdes. Reanudar desde preflight limpio bajo la
+        autorizacion vigente, no dentro de la misma cadena productiva H5-B11.
+      - No volver a pedir confirmacion entre hitos previstos. Solo STOP ante
+        recurso nuevo, coste/topologia distintos, secreto no recuperable,
+        perdida/ambiguedad de estado o riesgo para datos/recursos ajenos.
+      - Resultado: DB real verde; storage creo su helper exacto pero su monitor
+        local no completo el barrido inicial. Rollback exacto `12/12`, writers
+        `5/5`, lock/Lease ausentes y cero bundle. Dos policies huerfanas exactas
+        de B11/B12, sin Pods consumidores, se retiraron por UID/RV y quedaron
+        `NotFound`; DigitalOcean no cambio.
+    - [x] **H5-B13. Ejecutar la ruta freeze sin monitor storage redundante.**
+      - La barrera ya impide CREATE/UPDATE de todo Pod salvo el helper exacto de
+        solo lectura. La ruta freeze exige helper, policy, PVC y consumidores
+        exactos inmediatamente antes y despues del tar; legacy/durable conservan
+        su monitor continuo.
+      - Evidencia local final: barrera `77/77`, hijos checkpoint `161/161`,
+        Bash, ShellCheck y diff-check verdes. Ejecutar un unico checkpoint desde
+        preflight limpio y continuar automaticamente si publica bundle valido.
+      - Resultado: DB verde; storage termino con `stream status=1`. Rollback
+        `12/12`, writers `5/5`, barrera/lock/Lease ausentes y cero bundle. La
+        policy deny-all residual sin Pods se retiro por UID/RV y quedo NotFound.
+        Un `tar|gzip` read-only sobre el mismo `ret-pvc` termino `0/0`, por lo
+        que los bytes no son la causa.
+    - [x] **H5-B14. Discriminar supervisor frente a limite post-stream.**
+      - El hijo emite solo `storage_backup_child_stage:<enum>` al fallar; no
+        incluye objetos, nombres, valores ni errores crudos. Bash, ShellCheck y
+        diff-check pasan. Un unico candidato puede usar esta evidencia; no se
+        permite otra hipotesis ni retry sin cambiar el diagnostico causal.
+      - Resultado: enum exacto `helper-cleanup`. DB, stream, archivo y postcheck
+        ya habian pasado; el DELETE Foreground del Pod supero 180 s. Rollback
+        `12/12`, policy residual exacta retirada y DO intacto.
+    - [x] **H5-B15. Ejecutar con borrado normal acotado del helper.**
+      - Solo el helper sin dependientes usa `Background`, UID preconditionado,
+        espera NotFound y `terminationGracePeriodSeconds=1`; no usa force. Todos
+        los demas borrados siguen Foreground.
+      - Smoke live sin downtime: NotFound en `4 s`, cero residuos y writers
+        `5/5`. Helper puro `17/17`, matriz H5-B3 `77/77`, Bash, ShellCheck y
+        diff-check verdes.
+      - Resultado: STOP pre-downtime en `probe-helper-denied`. El constructor
+        shell del probe no incluia el grace=1 ya presente en policy/Pod/helper
+        Node. Cero writer mutation y estado final `12/12` sin residuos.
+    - [x] **H5-B16. Ejecutar con ambos constructores exactos.**
+      - Regresion explicita del probe shell y matriz final `78/78`; helper Node
+        `17/17`, Bash, ShellCheck y diff-check verdes. Un unico candidato; si
+        publica, continuar a las dos copias cifradas sin pedir confirmacion.
+      - Resultado: bundle conjunto publicado en
+        `output/checkpoints/h5-b16-20260813-022800`. Contiene el inventario
+        exacto de 9 ficheros, DB validada (356 relaciones, 94 migraciones,
+        18 hubs y 33 activos) y storage validado (33 pares completos, cero
+        diferidos). La validacion final del manifiesto paso; estado live
+        `12/12`, writers `5/5`, barrera/lock/Lease/helper/policy ausentes.
+    - [x] Demostrar tambien una receta estandar, generada y aplicable para el
+      target greenfield compatible con `runtime_generation=legacy-absent`.
+      El perfil opt-in parte del template actual, conserva los controles
+      comunes y retira solo los recursos durable incompatibles; no se ha
+      aplicado aun a DOKS porque eso pertenece a la ventana posterior al bundle.
+    - [x] **H5-B17. Crear y verificar dos copias cifradas independientes.**
+      Ligar ambas a hash/tamano, reabrirlas y probar
+      que Dropbox informa `isUploaded=1`, una revision remota y una lectura
+      posterior completa. Congelar tambien cuenta y UUID exactos del cluster,
+      Load Balancer y dos volumenes; nunca borrar por nombre ni asumir cascada.
+      - Inventario live refrescado y congelado en expediente privado `0600`:
+        coincide exactamente con una cuenta, un cluster/nodo en `ams3`, un
+        Load Balancer, dos volumenes de `10 GiB`, un firewall ajeno a conservar
+        y dos firewalls DOKS solo para reconciliar. Los destinos local fuera de
+        Dropbox y Dropbox estan preparados; falta recuperar la clave H5 para
+        cifrar, reabrir y rehashear ambas copias.
+      - Progreso: paquete cifrado de `1,455,943,712` bytes creado con bundle y
+        custodia OCI. La copia local descifra y rehashea; Dropbox confirma
+        `isUploaded=1`, `isUploading=0`, identificador y version remotos, y la
+        lectura completa posterior coincide byte a byte. Google vacio el
+        portapapeles durante esa lectura: falta solo repetir el descifrado
+        post-upload con la clave recopiada y emitir/validar el recibo `0600`.
+      - Cierre: ambas copias descifraron y rehashearon; Dropbox confirmo
+        `isUploaded=1`, `isUploading=0`, identidad/version y readback completo.
+        Recibo externo `freeze-bundle-receipt-v1` valido, privado `0600`, con
+        dos copias y `13/13` imagenes. `preflight-greenfield.sh` PASS completo.
+    - [x] **H5-B18. Retirar solo los recursos DigitalOcean inventariados.**
+      - Gate final: `12/12`, writers `5/5`, lock ausente, Lease libre, endpoint
+        DOKS asociado exactamente a un LB, dos volumenes y cero snapshots.
+      - `delete-selective` retiro cluster/nodo y LB. Tras espera finita, los dos
+        volumenes seguian exactos y desconectados; se borraron manualmente por
+        sus UUID autorizados. Resultado reconciliado: cluster `0`, Droplets `0`,
+        LB `0`, volumenes `0`, firewalls DOKS `0`; `voice-chat` sigue presente.
+    - [ ] **H5-B19. Recrear, restaurar y aceptar la instancia.**
+      - Reusar exactamente `ams3`, HA false, un nodo `s-4vcpu-8gb`, LB
+        `REGIONAL_NETWORK` y dos PVC de `10 GiB`; coste mensual estimado USD 65.
+        Cualquier diferencia produce STOP antes de crear o continuar.
+      - [x] Version sustituta autorizada: `1.34.10-do.1`, misma rama minor que
+        la retirada `1.34.8-do.2`.
+      - [x] Cluster recreado con la topologia exacta autorizada. Cert-manager,
+        IngressClass e Issuer instalados; LB regional activo y PVC nuevos Bound.
+      - [x] Perfil greenfield legacy generado/aplicado: `12/12` Deployments
+        exactos, activos no-writer `1/1`, cinco writers `0/0`, sin lock ni Lease.
+      - [x] Preflight cold-rebind real PASS. La excepcion de pull secret queda
+        limitada al target frio y conserva el contrato estricto anterior;
+        focos `52/52` y `89/89` verdes.
+      - [x] Actualizar en IONOS los cuatro A (`meta-hubs.org`, `stream`,
+        `assets`, `cors`) de `143.244.196.227` a `165.245.201.85`; esperar
+        certificados Ready y cero Pods `cm-acme-http-solver-*`.
+        - Los cuatro A autoritativos y publicos apuntan al LB nuevo. El
+          hairpin del LB regional se resolvio solo para cert-manager mediante
+          el Service interno; resultado `4/4` certificados Ready y cero solver
+          Pods, sin cambiar el trafico publico.
+      - [ ] Consolidar una unica version final H5 de root y Hubs Cloud, revisar
+        el diff completo y ejecutar exactamente una vez
+        `./scripts/verify-project.sh --full` sobre esos bytes. No ejecutar antes
+        el gate normal ni repetir bloques verdes. Este gate es dependencia del
+        siguiente restore productivo.
+      - [ ] Repetir el restore coordinado con confirmacion nueva y ejecutar
+        verificador live mas navegador frio. El intento previo no escribio DB
+        ni medios: fallo en `baseline`, libero lock/Lease y dejo writers `0/0`.
+        - El baseline live se cerro sin relajar seguridad: Pods con pull secret
+          declarado por su ReplicaSet quedan ligados a esa plantilla, y las
+          huellas `GET/LIST` se comparan canonicalmente sin cambiar el contrato
+          historico. Foco `51/51` y diagnostico live PASS.
+        - Un intento alcanzo el reset de PostgreSQL pero el stream no comenzo;
+          dejo la DB vacia y lock retenido. El limpiador stale se amplio de
+          forma estrecha para `cold-rebind` y retiro ese lock sin reanudar.
+        - El candidato posterior paro antes del reset con
+          `database_restore_stage:quiescence`. Estado actual exacto: DB vacia,
+          cinco writers `0`, cero Pods writer/helper, siete servicios auxiliares
+          `1/1`, certificados `4/4`, Lease libre/sin holder y lock `cold-rebind`
+          retenido. La autopsia read-only confirma contratos `5/5`, cero runner,
+          LIST/WATCH runner valido y PostgreSQL Ready; no existe deriva material
+          persistente. El hijo emite ahora una unica subetapa allowlisted de
+          quiescence y el foco dirigido pasa `51/51`. Tras consolidar y pasar
+          el unico full se permite un solo candidato nuevo, precedido por la
+          limpieza exacta del lock; cualquier nueva firma produce STOP con su
+          guard concreto, sin tercer intento.
+    - [ ] Antes de recrear, fijar region, `HA=false`, nodo, LB, volumenes y un
+      techo mensual aprobado; cualquier diferencia produce STOP.
+    - La autorizacion expresa sobre el paquete H5-A ya esta recibida: crear
+      checkpoint fresco, segunda copia cifrada y expediente; eliminar solo los
+      recursos DO aprobados y comprobar el coste residual real. No volver a
+      pedirla mientras no cambien recursos, cuenta, region, coste o efectos.
+    - La clave H5 es una entrada nueva y su custodia de cuenta quedo confirmada.
+      La alerta general de Google Password Manager no se convierte en un
+      bloqueo ajeno a este ciclo; si el propio gestor identifica la entrada H5
+      como comprometida, rotarla antes del checkpoint sin imprimirla.
     - Recrear, restaurar y ejecutar verificador live mas navegador frio.
     - Si hiciera falta construir una imagen, GitHub se usa una vez para ese
       artefacto por digest; el resto de la operacion no espera gates remotos.
@@ -284,7 +665,7 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
 ```text
 Retoma YenHubs exclusivamente desde
 /Users/Shared/Gits/YenHubs-client-hibernation/docs/active-goal-plan-2026-07-18.md
-en el worktree `codex/client-hibernation` y ejecuta la primera casilla
+en el worktree `codex/h5-preflight` y ejecuta la primera casilla
 pendiente. El objetivo es demostrar un ciclo comercial finito
 de hibernar una instancia, eliminar sus recursos facturables de DigitalOcean y
 reactivarla despues en infraestructura nueva con Namespace/PVC nuevos, DB y
@@ -294,7 +675,16 @@ monitores o infraestructura que no sean imprescindibles para ese ciclo.
 Actualiza el plan y docs/estado-sencillo.md al cerrar cada hito. GitHub se usa
 solo para una confirmacion terminal del candidato; una ejecucion cancelada sin
 diagnostico no se convierte en un loop de parches ni cuenta como fallo del
-producto. Detente antes de tocar
-produccion, borrar recursos, exponer secretos o generar un posible coste y pide
-confirmacion concreta para esa frontera.
+producto. La autorizacion H5-B ya cubre el checkpoint con downtime, las dos
+copias cifradas, la retirada por UUID del DOKS/nodo, Load Balancer y dos
+volumenes actuales, y la recreacion de la misma topologia de bajo coste. No
+vuelvas a solicitarla si el paquete coincide exactamente; aplica STOP y pide
+una nueva confirmacion solo si cambia algun recurso, cuenta, region, precio,
+efecto o frontera de secretos.
+El runtime live esta `12/12`, sin recovery lock, Lease ni barrera. H5-B11
+confirmo la DB completa y aislo el default storage sin publicar bundle. La
+canonicalizacion pasa `88/88`; H5-B12 queda pendiente tras este corte
+productivo. No borres
+recursos DigitalOcean; primero deben existir bundle valido, hashes, recibo y dos
+copias cifradas verificadas.
 ```

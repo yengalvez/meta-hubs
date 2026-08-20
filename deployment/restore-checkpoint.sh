@@ -1346,11 +1346,21 @@ clear_stale_restore_lock() {
   case "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" in
     legacy-absent)
       [[ "$RECOVERY_RUNNER_RUNTIME_GENERATION" == legacy-absent &&
-         "$lock_state" == legacy-in-place &&
          -z "$pre_epoch" && -z "$target_epoch" &&
          "$inventory_sha" == "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256" ]] ||
         return 1
-      RECOVERY_OPERATION_STATE=legacy-in-place
+      case "$lock_state" in
+        legacy-in-place)
+          [[ "${RESTORE_TARGET_MODE:-in-place}" != cold-rebind ]] || return 1
+          ;;
+        cold-rebind)
+          [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind &&
+             "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 ]] ||
+            return 1
+          ;;
+        *) return 1 ;;
+      esac
+      RECOVERY_OPERATION_STATE="$lock_state"
       RECOVERY_FENCE_PRE_EPOCH=""
       RECOVERY_FENCE_TARGET_EPOCH=""
       ;;

@@ -137,8 +137,16 @@ CHECKPOINT_WRITER_MONITOR_AUTHORITY_SHA256=""
 CHECKPOINT_WRITER_MONITOR_STARTED=0
 CHECKPOINT_WRITER_MONITOR_JOINED=0
 CHECKPOINT_WRITER_MONITOR_VERIFIED_STOPPED=0
+CHECKPOINT_FREEZE_FENCE_ACTIVE=0
+CHECKPOINT_FREEZE_FENCE_CLEANUP_FAILED=0
+CHECKPOINT_FREEZE_FENCE_HELPER_IMAGE=""
 CHECKPOINT_RUNNER_MODE=""
 CHECKPOINT_RUNNER_GENERATION=""
+CHECKPOINT_PROCESS_LOCAL_STRATEGY_SCOPE=strict-recreate
+CHECKPOINT_PROCESS_LOCAL_ROLLING=0
+CHECKPOINT_PROCESS_LOCAL_PARENT_PRELOCK_CONTRACT=""
+CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT=""
+CHECKPOINT_PROCESS_LOCAL_ROLLING_PRELOCK_CONTRACT=""
 FREEZE_SOURCE_CLUSTER_UID=""
 CHECKPOINT_VALUES_SNAPSHOT=""
 CHECKPOINT_MANIFEST_SNAPSHOT=""
@@ -155,6 +163,7 @@ checkpoint_failure_context_is_safe() {
     content-validation:validate|\
     checksum-manifest:precondition|checksum-manifest:build|\
     checksum-manifest:commit|checksum-manifest:permissions|\
+    quiescence:fence-create|quiescence:fence-probe|\
     quiescence:writers|quiescence:serialization|quiescence:monitor-health|\
     quiescence:evidence-capture|quiescence:evidence-contract|\
     quiescence:evidence-metadata|quiescence:evidence-live|\
@@ -174,7 +183,7 @@ checkpoint_failure_context_is_safe() {
     precommit:checksum|precommit:layout|\
     publication:commit-marker|publication:staging-cleanup|\
     resume:preflight|resume:adopt-parent|resume:monitor-prepare|\
-    resume:fence-deactivation|resume:fence-continuity|\
+    resume:fence-deactivation|resume:fence-continuity|resume:freeze-fence-delete|\
     resume:writer-precheck|resume:writer-contract|resume:writer-cas|\
     resume:writer-rollout|resume:receipt|resume:operation-lock|\
     lock-release:fence-continuity|lock-release:operation-lock|\
@@ -183,6 +192,85 @@ checkpoint_failure_context_is_safe() {
       ;;
     *) return 1 ;;
   esac
+}
+
+checkpoint_uses_freeze_admission_fence() {
+  [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 &&
+     "$CHECKPOINT_RUNNER_MODE" == process-local ]]
+}
+
+require_checkpoint_freeze_fence_zero_boundary() {
+  local deployment
+  checkpoint_uses_freeze_admission_fence || return 2
+  [[ "$CHECKPOINT_FREEZE_FENCE_ACTIVE" == 1 &&
+     -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY" ]] || return 1
+  recovery_require_freeze_checkpoint_fence \
+    "$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY" || return 1
+  for deployment in "${CONSUMERS[@]}"; do
+    recovery_require_consumer_contract_entry \
+      "$RECOVERY_CONSUMER_CONTRACT_JSON" "$deployment" 0 || return 1
+  done
+  recovery_require_operation_serialization && recovery_require_operation_lock
+}
+
+establish_checkpoint_freeze_fence() {
+  local acquisition_status=0
+  checkpoint_uses_freeze_admission_fence || return 2
+  [[ "$CHECKPOINT_FREEZE_FENCE_ACTIVE" == 0 ]] || return 2
+  if CHECKPOINT_FREEZE_FENCE_HELPER_IMAGE="$(recovery_checkpoint_image_for_pair \
+      "$OUTPUT_DIR/deployment-images.json" reticulum/reticulum \
+      ghcr.io/yengalvez/reticulum)"; then
+    :
+  else
+    CHECKPOINT_FREEZE_FENCE_HELPER_IMAGE="$(recovery_checkpoint_image_for_pair \
+      "$OUTPUT_DIR/deployment-images.json" reticulum/reticulum \
+      docker.io/mozillareality/postgrest)" || return 1
+  fi
+  CHECKPOINT_PENDING_SIGNAL_STATUS=0
+  trap 'checkpoint_record_pending_signal 130' INT
+  trap 'checkpoint_record_pending_signal 143' TERM
+  if recovery_create_freeze_checkpoint_fence \
+      "$CHECKPOINT_FREEZE_FENCE_HELPER_IMAGE"; then
+    CHECKPOINT_FREEZE_FENCE_ACTIVE=1
+    recovery_probe_freeze_checkpoint_fence \
+      "$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY" || acquisition_status=1
+  else
+    acquisition_status=1
+    printf 'Checkpoint admission fence setup stopped at %s.\n' \
+      "${RECOVERY_FREEZE_CHECKPOINT_FENCE_FAILURE_STAGE:-unknown}" >&2
+  fi
+  finish_checkpoint_local_capability_boundary "$acquisition_status"
+}
+
+remove_checkpoint_freeze_fence_before_resume() {
+  local index deployment contract uid resource_version replicas selector fingerprint
+  checkpoint_uses_freeze_admission_fence || return 2
+  require_checkpoint_freeze_fence_zero_boundary || return 1
+  for index in "${!CONSUMERS[@]}"; do
+    deployment="${CONSUMERS[$index]}"
+    contract="$(recovery_capture_deployment_contract "$deployment")" || return 1
+    IFS=$'\t' read -r uid resource_version replicas selector fingerprint <<<"$contract"
+    [[ "$uid" == "${DEPLOYMENT_UIDS[$index]}" && "$replicas" == 0 &&
+       "$selector" == "${DEPLOYMENT_SELECTORS[$index]}" &&
+       "$fingerprint" == "${DEPLOYMENT_FINGERPRINTS[$index]}" ]] || return 1
+    DEPLOYMENT_RESOURCE_VERSIONS[index]="$resource_version"
+  done
+  CHECKPOINT_PENDING_SIGNAL_STATUS=0
+  if [[ "$CHECKPOINT_INTERRUPT_IN_PROGRESS" == 1 ]]; then
+    trap '' INT TERM
+  else
+    trap 'checkpoint_record_pending_signal 130' INT
+    trap 'checkpoint_record_pending_signal 143' TERM
+  fi
+  recovery_delete_freeze_checkpoint_fence \
+    "$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY" || {
+      CHECKPOINT_FREEZE_FENCE_CLEANUP_FAILED=1
+      restore_checkpoint_signal_traps
+      return 1
+    }
+  CHECKPOINT_FREEZE_FENCE_ACTIVE=0
+  CHECKPOINT_WRITER_MONITOR_VERIFIED_STOPPED=1
+  finish_checkpoint_local_capability_boundary 0
 }
 
 checkpoint_set_failure_context() {
@@ -449,6 +537,16 @@ require_checkpoint_writer_monitor_healthy() {
 stop_checkpoint_writer_monitor_before_resume() {
   local final_json="" deployment index expected_uid resource_version
   local stop_status=0 pending_signal_status=0
+  if checkpoint_uses_freeze_admission_fence; then
+    if [[ "$CHECKPOINT_WRITER_MONITOR_VERIFIED_STOPPED" == 1 ]]; then
+      [[ "$CHECKPOINT_FREEZE_FENCE_ACTIVE" == 0 &&
+         -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY" ]]
+      return
+    fi
+    checkpoint_set_failure_context resume freeze-fence-delete
+    remove_checkpoint_freeze_fence_before_resume
+    return
+  fi
   if [[ "$CHECKPOINT_WRITER_MONITOR_VERIFIED_STOPPED" == 1 ]]; then
     [[ -z "$CHECKPOINT_WRITER_MONITOR_PID" &&
        -z "$CHECKPOINT_WRITER_MONITOR_START_IDENTITY" ]]
@@ -708,7 +806,11 @@ require_checkpoint_durable_monitor_healthy() {
 }
 
 require_checkpoint_monitors_healthy() {
-  require_checkpoint_writer_monitor_healthy || return 1
+  if checkpoint_uses_freeze_admission_fence; then
+    require_checkpoint_freeze_fence_zero_boundary || return 1
+  else
+    require_checkpoint_writer_monitor_healthy || return 1
+  fi
   if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
     require_checkpoint_durable_monitor_healthy
   fi
@@ -852,6 +954,11 @@ checkpoint_runner_mode_from_values() {
       return 1
       ;;
   esac
+}
+
+checkpoint_require_runner_mode_exact() {
+  recovery_require_checkpoint_runner_mode_exact \
+    "$VALUES_SOURCE_FILE" "$1" "$CHECKPOINT_PROCESS_LOCAL_STRATEGY_SCOPE"
 }
 
 cleanup_runner_monitor() {
@@ -1226,7 +1333,13 @@ cleanup_local_artifacts() {
     rmdir "$PUBLISH_LOCK" 2>/dev/null || :
   fi
   PUBLISH_LOCK_OWNED=0
-  if [[ "$SERIALIZATION_LEASE_OWNED" == 1 ]]; then
+  if [[ "$SERIALIZATION_LEASE_OWNED" == 1 &&
+        "$CHECKPOINT_FREEZE_FENCE_CLEANUP_FAILED" == 0 &&
+        -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY" &&
+        -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID" &&
+        -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID" &&
+        "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_CREATE_ATTEMPTED" == 0 &&
+        "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_CREATE_ATTEMPTED" == 0 ]]; then
     if recovery_release_operation_serialization; then
       SERIALIZATION_LEASE_OWNED=0
     else
@@ -1325,7 +1438,7 @@ require_checkpoint_post_watch_absence_stable() {
 }
 
 quiesce_writers() {
-  local index
+  local index rolling_scale_result rolling_zero_contract rolling_generation
   local -a remaining_order=(0 1 2 4)
   WRITERS_MUTATED=1
   # Revoke the token-bearing parent first and wait for its Pod to disappear.
@@ -1333,12 +1446,35 @@ quiesce_writers() {
   # reconciles exact causal identities into permanent fences and records one
   # stable fence inventory for every later synchronous quiescence gate.
   index=3
-  DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
-    "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
-    "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" "${ORIGINAL_REPLICAS[$index]}" 0 \
-    "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" || return 1
+  if [[ "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+    rolling_scale_result="$(
+      recovery_scale_process_local_freeze_parent_replicas_exact \
+        "$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT" \
+        "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" \
+        "$(jq -er '.generation' \
+          <<<"$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT")" 1 0
+    )" || return 1
+    local rolling_resource_version
+    IFS=$'\t' read -r rolling_resource_version \
+      rolling_generation <<<"$rolling_scale_result"
+    DEPLOYMENT_RESOURCE_VERSIONS["$index"]="$rolling_resource_version"
+  else
+    DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
+      "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
+      "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" "${ORIGINAL_REPLICAS[$index]}" 0 \
+      "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" || return 1
+  fi
   recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
     "deployment/${CONSUMERS[$index]}" 180s || return 1
+  if [[ "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+    rolling_zero_contract="$(
+      recovery_capture_process_local_freeze_parent_boundary_exact zero \
+        "$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT" \
+        "$rolling_generation"
+    )" || return 1
+    DEPLOYMENT_RESOURCE_VERSIONS[index]="$(jq -er '.resource_version' \
+      <<<"$rolling_zero_contract")" || return 1
+  fi
   recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
     "${CONSUMERS[$index]}" 0 || return 1
   if [[ "$CHECKPOINT_RUNNER_MODE" == kubernetes-pod ]]; then
@@ -1380,12 +1516,16 @@ quiesce_writers() {
     recovery_require_recovery_operation_fence_state active \
       "$CHECKPOINT_OPERATION_FENCE_ACTIVE_IDENTITY" || return 1
   fi
-  # This ready handshake is the linearization point for the joint snapshot
-  # window. From here until its verified stop, LIST+watch coverage proves that
-  # none of the five fixed consumers or their ReplicaSets/Pods can execute an
-  # unobserved 0 -> 1 -> 0 writer excursion.
-  start_checkpoint_writer_monitor || return 1
-  require_checkpoint_writer_monitor_healthy || return 1
+  if checkpoint_uses_freeze_admission_fence; then
+    require_checkpoint_freeze_fence_zero_boundary || return 1
+  else
+    # This ready handshake is the linearization point for the joint snapshot
+    # window. From here until its verified stop, LIST+watch coverage proves that
+    # none of the five fixed consumers or their ReplicaSets/Pods can execute an
+    # unobserved 0 -> 1 -> 0 writer excursion.
+    start_checkpoint_writer_monitor || return 1
+    require_checkpoint_writer_monitor_healthy || return 1
+  fi
   if [[ "$CHECKPOINT_RUNNER_MODE" == kubernetes-pod ]]; then
     # The durable runner monitor pins the schema-3 writer baseline, which in
     # turn pins this exact active admission-fence identity.
@@ -1410,8 +1550,8 @@ prepare_runner_monitor_for_resume() {
   # failed before the normal watcher started. Reconstruct a safe monitored
   # boundary from the captured parent contract instead of making automatic
   # resume impossible solely because the watcher was not yet created.
-  recovery_require_checkpoint_runner_mode_exact \
-    "$VALUES_SOURCE_FILE" "$CHECKPOINT_RUNNER_MODE" >/dev/null || return 1
+  checkpoint_require_runner_mode_exact "$CHECKPOINT_RUNNER_MODE" \
+    >/dev/null || return 1
   contract="$(recovery_capture_deployment_contract bot-orchestrator)" || return 1
   IFS=$'\t' read -r uid resource_version replicas selector fingerprint <<<"$contract"
   index=3
@@ -1457,6 +1597,7 @@ prepare_runner_monitor_for_resume() {
 adopt_committed_bot_parent_resume_before_monitor() {
   local index=3 deployment contract uid resource_version replicas selector fingerprint
   local receipt_resource_version="" live_resource_version=""
+  local rolling_ready_contract rolling_resume_generation
   local receipt_present=0
   BOT_PARENT_RESUME_ALREADY_COMMITTED=0
   deployment="${CONSUMERS[$index]}"
@@ -1475,21 +1616,36 @@ adopt_committed_bot_parent_resume_before_monitor() {
   # writers and both runner guards had completed. Distinguish that committed
   # state from a genuinely untouched parent before rebuilding any quiescence
   # monitor: parent authority is already live and must not be treated as zero.
-  if receipt_resource_version="$(
-       recovery_capture_checkpoint_resume_receipt_contract \
-         "$deployment" "$uid" "${ORIGINAL_REPLICAS[$index]}" \
-         "$selector" "$fingerprint" "$RECOVERY_OPERATION_ID"
-     )"; then
-    receipt_present=1
+  if [[ "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+    # The dedicated RollingUpdate CAS is replica-only, so its in-process
+    # resume capability plus the exact generation/full-spec/Ready boundary
+    # replaces the legacy metadata receipt. No fresh shell may infer this.
+    [[ "${DEPLOYMENT_RESUME_STARTED[$index]}" == 1 ]] || return 0
+    rolling_resume_generation="$(jq -er '.generation + 2' \
+      <<<"$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT")" || return 1
+    rolling_ready_contract="$(
+      recovery_capture_process_local_freeze_parent_boundary_exact ready-one \
+        "$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT" \
+        "$rolling_resume_generation"
+    )" || return 1
+    live_resource_version="$(jq -er '.resource_version' \
+      <<<"$rolling_ready_contract")" || return 1
+    receipt_present=0
+  elif receipt_resource_version="$(
+         recovery_capture_checkpoint_resume_receipt_contract \
+           "$deployment" "$uid" "${ORIGINAL_REPLICAS[$index]}" \
+           "$selector" "$fingerprint" "$RECOVERY_OPERATION_ID"
+       )"; then
+      receipt_present=1
   elif recovery_capture_checkpoint_resume_receipt_absent_contract \
          "$deployment" "$uid" "${ORIGINAL_REPLICAS[$index]}" \
          "$selector" "$fingerprint" >/dev/null; then
-    # Absence normally means the parent was never resumed. It is also the
-    # exact reconciled state after this same shell proved the receipt and its
-    # cleanup CAS committed but its response (or the following assignment)
-    # was interrupted. Only that in-memory capability permits adoption.
-    [[ "${DEPLOYMENT_RESUME_STARTED[$index]}" == 1 ]] || return 0
-    receipt_present=0
+      # Absence normally means the parent was never resumed. It is also the
+      # exact reconciled state after this same shell proved the receipt and its
+      # cleanup CAS committed but its response (or the following assignment)
+      # was interrupted. Only that in-memory capability permits adoption.
+      [[ "${DEPLOYMENT_RESUME_STARTED[$index]}" == 1 ]] || return 0
+      receipt_present=0
   else
     printf 'Bot parent has an unknown checkpoint resume receipt.\n' >&2
     return 1
@@ -1520,7 +1676,10 @@ adopt_committed_bot_parent_resume_before_monitor() {
     recovery_require_operation_serialization || return 1
     recovery_require_operation_lock || return 1
     if [[ "$index" == 3 ]]; then
-      if [[ "$receipt_present" == 1 ]]; then
+      if [[ "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+        live_resource_version="$(jq -er '.resource_version' \
+          <<<"$rolling_ready_contract")" || return 1
+      elif [[ "$receipt_present" == 1 ]]; then
         live_resource_version="$(
           recovery_capture_checkpoint_resume_receipt_contract \
             "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
@@ -1546,9 +1705,11 @@ adopt_committed_bot_parent_resume_before_monitor() {
       DEPLOYMENT_RESUME_RECEIPT_CLEARED[index]=1
     fi
   done
-  recovery_require_checkpoint_runner_mode_exact \
-    "$VALUES_SOURCE_FILE" "$CHECKPOINT_RUNNER_MODE" >/dev/null || return 1
-  if [[ "$receipt_present" == 1 ]]; then
+  checkpoint_require_runner_mode_exact "$CHECKPOINT_RUNNER_MODE" \
+    >/dev/null || return 1
+  if [[ "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+    DEPLOYMENT_RESOURCE_VERSIONS[3]="$live_resource_version"
+  elif [[ "$receipt_present" == 1 ]]; then
     DEPLOYMENT_RESOURCE_VERSIONS[3]="$(
       recovery_clear_checkpoint_resume_receipt \
         "${CONSUMERS[3]}" "${DEPLOYMENT_UIDS[3]}" "$live_resource_version" \
@@ -1561,10 +1722,12 @@ adopt_committed_bot_parent_resume_before_monitor() {
   DEPLOYMENT_RESUME_RECEIPT_CLEARED[3]=1
   recovery_require_operation_serialization || return 1
   recovery_require_operation_lock || return 1
-  recovery_capture_checkpoint_resume_receipt_absent_contract \
-    "${CONSUMERS[3]}" "${DEPLOYMENT_UIDS[3]}" "${ORIGINAL_REPLICAS[3]}" \
-    "${DEPLOYMENT_SELECTORS[3]}" "${DEPLOYMENT_FINGERPRINTS[3]}" \
-    >/dev/null || return 1
+  if [[ "$CHECKPOINT_PROCESS_LOCAL_ROLLING" != 1 ]]; then
+    recovery_capture_checkpoint_resume_receipt_absent_contract \
+      "${CONSUMERS[3]}" "${DEPLOYMENT_UIDS[3]}" "${ORIGINAL_REPLICAS[3]}" \
+      "${DEPLOYMENT_SELECTORS[3]}" "${DEPLOYMENT_FINGERPRINTS[3]}" \
+      >/dev/null || return 1
+  fi
   if [[ "$CHECKPOINT_RUNNER_MODE" == kubernetes-pod ]]; then
     [[ -n "$CHECKPOINT_OPERATION_FENCE_DORMANT_IDENTITY" ]] || return 1
     checkpoint_set_failure_context resume fence-continuity
@@ -1612,14 +1775,15 @@ deactivate_checkpoint_operation_fence_before_resume() {
 
 resume_writers() {
   local index deployment contract uid resource_version replicas selector fingerprint
+  local rolling_scale_result rolling_ready_contract rolling_resume_generation
   local -a order=(1 2 0 4 3)
   checkpoint_set_failure_context resume preflight
   recovery_require_operation_lock || return 1
   # Classify mode drift before monitor reconstruction derives the runner
   # namespaces. A partial isolated-runner binding must retain the exact
   # semantic failure even when the synchronous guard and watcher race.
-  recovery_require_checkpoint_runner_mode_exact \
-    "$VALUES_SOURCE_FILE" "$CHECKPOINT_RUNNER_MODE" >/dev/null || return 1
+  checkpoint_require_runner_mode_exact "$CHECKPOINT_RUNNER_MODE" \
+    >/dev/null || return 1
   checkpoint_set_failure_context resume adopt-parent
   adopt_committed_bot_parent_resume_before_monitor || return 1
   if [[ "$BOT_PARENT_RESUME_ALREADY_COMMITTED" == 1 ]]; then
@@ -1635,8 +1799,8 @@ resume_writers() {
   [[ "$WRITERS_MUTATED" == 1 ]] || return 0
   checkpoint_set_failure_context resume writer-precheck
   require_checkpoint_runner_quiescent_now || return 1
-  recovery_require_checkpoint_runner_mode_exact \
-    "$VALUES_SOURCE_FILE" "$CHECKPOINT_RUNNER_MODE" >/dev/null || return 1
+  checkpoint_require_runner_mode_exact "$CHECKPOINT_RUNNER_MODE" \
+    >/dev/null || return 1
   recovery_require_operation_serialization || return 1
   recovery_require_operation_lock || return 1
   for index in "${!CONSUMERS[@]}"; do
@@ -1718,16 +1882,16 @@ resume_writers() {
       # Re-check before any helper derives runner namespaces. The later gate
       # remains intentionally adjacent to restoring parent authority and
       # closes drift across the post-watch stable-absence window.
-      recovery_require_checkpoint_runner_mode_exact \
-        "$VALUES_SOURCE_FILE" "$CHECKPOINT_RUNNER_MODE" >/dev/null || return 1
+      checkpoint_require_runner_mode_exact "$CHECKPOINT_RUNNER_MODE" \
+        >/dev/null || return 1
       require_checkpoint_runner_quiescent_now || return 1
       stop_runner_monitor_before_resume || return 1
       require_checkpoint_post_watch_absence_stable || return 1
       # This second exact Cloud gate is adjacent to restoring token-bearing
       # parent authority. It closes drift after the initial resume gate while
       # the other four consumers were restarted.
-      recovery_require_checkpoint_runner_mode_exact \
-        "$VALUES_SOURCE_FILE" "$CHECKPOINT_RUNNER_MODE" >/dev/null || return 1
+      checkpoint_require_runner_mode_exact "$CHECKPOINT_RUNNER_MODE" \
+        >/dev/null || return 1
       recovery_require_operation_serialization || return 1
       recovery_require_operation_lock || return 1
       recovery_require_consumer_contract_entry \
@@ -1753,12 +1917,37 @@ resume_writers() {
         return 1
       }
       checkpoint_set_failure_context resume writer-cas
-      DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
-        "$deployment" "$uid" "$resource_version" 0 "${ORIGINAL_REPLICAS[$index]}" \
-        "$selector" "$fingerprint" "$RECOVERY_OPERATION_ID")" || return 1
+      if [[ "$deployment" == bot-orchestrator &&
+            "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+        rolling_resume_generation="$(jq -er '.generation + 1' \
+          <<<"$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT")" || return 1
+        rolling_scale_result="$(
+          recovery_scale_process_local_freeze_parent_replicas_exact \
+            "$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT" \
+            "$resource_version" "$rolling_resume_generation" 0 1
+        )" || return 1
+        local rolling_resource_version
+        IFS=$'\t' read -r rolling_resource_version \
+          rolling_resume_generation <<<"$rolling_scale_result"
+        DEPLOYMENT_RESOURCE_VERSIONS["$index"]="$rolling_resource_version"
+      else
+        DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
+          "$deployment" "$uid" "$resource_version" 0 "${ORIGINAL_REPLICAS[$index]}" \
+          "$selector" "$fingerprint" "$RECOVERY_OPERATION_ID")" || return 1
+      fi
       DEPLOYMENT_RESUME_STARTED[index]=1
       checkpoint_set_failure_context resume writer-rollout
       recovery_wait_for_deployment_rollout "$deployment" 300 || return 1
+      if [[ "$deployment" == bot-orchestrator &&
+            "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+        rolling_ready_contract="$(
+          recovery_capture_process_local_freeze_parent_boundary_exact ready-one \
+            "$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT" \
+            "$rolling_resume_generation"
+        )" || return 1
+        DEPLOYMENT_RESOURCE_VERSIONS[index]="$(jq -er '.resource_version' \
+          <<<"$rolling_ready_contract")" || return 1
+      fi
     elif [[ "$replicas" == "${ORIGINAL_REPLICAS[$index]}" ]]; then
       [[ "${DEPLOYMENT_RESUME_STARTED[$index]}" == 1 ]] || {
         printf 'Writer resumed outside the controlled checkpoint CAS: %s.\n' \
@@ -1773,7 +1962,10 @@ resume_writers() {
     # The same server-side annotation that resolves an ambiguous PATCH is
     # removed only after rollout. Status updates may have advanced the
     # resourceVersion, so recapture the exact receipt before its cleanup CAS.
-    if [[ "${DEPLOYMENT_RESUME_RECEIPT_CLEARED[$index]}" != 1 ]]; then
+    if [[ "$deployment" == bot-orchestrator &&
+          "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+      DEPLOYMENT_RESUME_RECEIPT_CLEARED[index]=1
+    elif [[ "${DEPLOYMENT_RESUME_RECEIPT_CLEARED[$index]}" != 1 ]]; then
       checkpoint_set_failure_context resume receipt
       if DEPLOYMENT_RESOURCE_VERSIONS[index]="$(
            recovery_capture_checkpoint_resume_receipt_contract \
@@ -1831,6 +2023,12 @@ resume_writers_with_single_reentry() {
 
 release_lock_if_safe() {
   [[ "$OPERATION_LOCK_OWNED" == 1 ]] || return 0
+  [[ "$CHECKPOINT_FREEZE_FENCE_ACTIVE" == 0 &&
+     -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY" &&
+     -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID" &&
+     -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID" &&
+     "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_CREATE_ATTEMPTED" == 0 &&
+     "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_CREATE_ATTEMPTED" == 0 ]] || return 1
   recovery_require_operation_serialization || return 1
   if [[ "$CHECKPOINT_RUNNER_MODE" == kubernetes-pod ]]; then
     checkpoint_set_failure_context lock-release fence-continuity
@@ -1975,6 +2173,19 @@ checkpoint_error() {
       return "$status"
     fi
   fi
+  if [[ -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY" ||
+        -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID" ||
+        -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID" ||
+        "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_CREATE_ATTEMPTED" == 1 ||
+        "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_CREATE_ATTEMPTED" == 1 ]]; then
+    if ! recovery_cleanup_partial_freeze_checkpoint_fence; then
+      CHECKPOINT_FREEZE_FENCE_CLEANUP_FAILED=1
+      printf 'Checkpoint admission fence could not be removed safely; lock and Lease are retained.\n' >&2
+      return "$status"
+    fi
+    RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY=""
+    CHECKPOINT_FREEZE_FENCE_ACTIVE=0
+  fi
   if [[ "$OPERATION_LOCK_OWNED" == 1 ]] && ! release_lock_if_safe; then
     printf 'Checkpoint operation lock could not be released safely.\n' >&2
   fi
@@ -1982,7 +2193,7 @@ checkpoint_error() {
 }
 
 checkpoint_interrupted() {
-  local status="$1"
+  local status="$1" fence_status=0
   CHECKPOINT_INTERRUPT_IN_PROGRESS=1
   trap - EXIT ERR
   trap '' INT TERM
@@ -1990,7 +2201,20 @@ checkpoint_interrupted() {
     resume_writers_with_single_reentry || \
       printf 'Interrupted checkpoint retained its lock for manual recovery.\n' >&2
   fi
-  if [[ "$WRITERS_MUTATED" == 0 && "$OPERATION_LOCK_OWNED" == 1 ]]; then
+  if [[ -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY" ||
+        -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID" ||
+        -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID" ||
+        "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_CREATE_ATTEMPTED" == 1 ||
+        "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_CREATE_ATTEMPTED" == 1 ]] &&
+     ! recovery_cleanup_partial_freeze_checkpoint_fence; then
+    CHECKPOINT_FREEZE_FENCE_CLEANUP_FAILED=1
+    fence_status=1
+  else
+    RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY=""
+    CHECKPOINT_FREEZE_FENCE_ACTIVE=0
+  fi
+  if [[ "$WRITERS_MUTATED" == 0 && "$OPERATION_LOCK_OWNED" == 1 &&
+        "$fence_status" == 0 ]]; then
     release_lock_if_safe || :
   fi
   cleanup_local_artifacts
@@ -2019,6 +2243,10 @@ command node "$SCRIPT_DIR/parse-local-values.mjs" "$VALUES_SOURCE_FILE" --valida
 checkpoint_runner_expected="$(
   checkpoint_runner_mode_from_values "$VALUES_SOURCE_FILE"
 )"
+if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 &&
+      "$checkpoint_runner_expected" == process-local ]]; then
+  CHECKPOINT_PROCESS_LOCAL_STRATEGY_SCOPE=freeze-checkpoint
+fi
 if [[ "$checkpoint_runner_expected" == kubernetes-pod ]]; then
   [[ -n "$CUTOVER_KEY_INPUT_FILE" ]] || {
     printf 'PROCESS_LOCAL_CUTOVER_KEY_PATH is required for a durable checkpoint.\n' >&2
@@ -2039,7 +2267,8 @@ recovery_require_pvc_identity ret-pvc
 # but still before the Lease or operation lock can mutate Kubernetes.
 CHECKPOINT_RUNNER_MODE="$(
   recovery_require_checkpoint_runner_mode_exact \
-    "$VALUES_SOURCE_FILE" "$checkpoint_runner_expected"
+    "$VALUES_SOURCE_FILE" "$checkpoint_runner_expected" \
+    "$CHECKPOINT_PROCESS_LOCAL_STRATEGY_SCOPE"
 )"
 [[ "$CHECKPOINT_RUNNER_MODE" == "$checkpoint_runner_expected" ]] || {
   printf 'Checkpoint runner mode changed while binding immutable local inputs.\n' >&2
@@ -2066,6 +2295,24 @@ if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
     printf 'Source cluster anchor UID is missing or malformed.\n' >&2
     exit 1
   }
+  CHECKPOINT_PROCESS_LOCAL_PARENT_PRELOCK_CONTRACT="$(
+    recovery_capture_process_local_freeze_parent_contract_exact
+  )" || exit 1
+  checkpoint_parent_strategy="$(jq -er '.spec.strategy.type' \
+    <<<"$CHECKPOINT_PROCESS_LOCAL_PARENT_PRELOCK_CONTRACT")" || exit 1
+  if [[ "$checkpoint_parent_strategy" == RollingUpdate ]]; then
+    CHECKPOINT_PROCESS_LOCAL_ROLLING=1
+    CHECKPOINT_PROCESS_LOCAL_ROLLING_PRELOCK_CONTRACT="$(
+      recovery_capture_process_local_freeze_parent_boundary_exact ready-one
+    )" || exit 1
+    [[ "$(jq -c '{uid,resource_version,generation,spec}' \
+          <<<"$CHECKPOINT_PROCESS_LOCAL_ROLLING_PRELOCK_CONTRACT")" == \
+       "$(jq -c '{uid,resource_version,generation,spec}' \
+          <<<"$CHECKPOINT_PROCESS_LOCAL_PARENT_PRELOCK_CONTRACT")" ]] || {
+      printf 'RollingUpdate parent changed during pre-lock boundary capture.\n' >&2
+      exit 1
+    }
+  fi
 fi
 RECOVERY_CHECKPOINT_STAMP="$TIMESTAMP"
 RECOVERY_DUMP_SHA256="$(printf '0%.0s' {1..64})"
@@ -2082,6 +2329,40 @@ recovery_require_operation_serialization
 export RECOVERY_CHECKPOINT_STAMP RECOVERY_DUMP_SHA256 RECOVERY_STORAGE_SHA256 \
   RECOVERY_NAMESPACE_UID RECOVERY_PVC_UID
 capture_consumer_contracts
+if [[ -n "$CHECKPOINT_PROCESS_LOCAL_PARENT_PRELOCK_CONTRACT" ]]; then
+  recovery_capture_process_local_freeze_parent_contract_exact \
+    "$CHECKPOINT_PROCESS_LOCAL_PARENT_PRELOCK_CONTRACT" >/dev/null || exit 1
+  [[ "${DEPLOYMENT_UIDS[3]}" == \
+       "$(jq -er '.uid' \
+         <<<"$CHECKPOINT_PROCESS_LOCAL_PARENT_PRELOCK_CONTRACT")" &&
+     "${DEPLOYMENT_RESOURCE_VERSIONS[3]}" == \
+       "$(jq -er '.resource_version' \
+         <<<"$CHECKPOINT_PROCESS_LOCAL_PARENT_PRELOCK_CONTRACT")" ]] || {
+    printf 'Bot parent changed between the pre-lock and consumer contracts.\n' >&2
+    exit 1
+  }
+fi
+if [[ "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+  CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT="$(
+    recovery_capture_process_local_freeze_parent_boundary_exact ready-one \
+      "$CHECKPOINT_PROCESS_LOCAL_ROLLING_PRELOCK_CONTRACT" \
+      "$(jq -er '.generation' \
+        <<<"$CHECKPOINT_PROCESS_LOCAL_ROLLING_PRELOCK_CONTRACT")"
+  )" || exit 1
+  [[ "$(jq -er '.resource_version' \
+        <<<"$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT")" == \
+       "$(jq -er '.resource_version' \
+        <<<"$CHECKPOINT_PROCESS_LOCAL_ROLLING_PRELOCK_CONTRACT")" &&
+     "${DEPLOYMENT_UIDS[3]}" == \
+       "$(jq -er '.uid' \
+        <<<"$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT")" &&
+     "${DEPLOYMENT_RESOURCE_VERSIONS[3]}" == \
+       "$(jq -er '.resource_version' \
+        <<<"$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT")" ]] || {
+    printf 'RollingUpdate parent changed between preflight and the locked checkpoint contract.\n' >&2
+    exit 1
+  }
+fi
 
 recovery_require_operation_serialization
 recovery_require_operation_lock
@@ -2093,7 +2374,9 @@ fi
 # Capture the exact live image/infrastructure inventory while the deployments
 # still have their pre-downtime scale, then prove those immutable contracts
 # again as each writer is stopped.
-VALUES_FILE="$VALUES_SOURCE_FILE" CAPTURE_STATE_FORMAT="$CHECKPOINT_FORMAT" \
+env VALUES_FILE="$VALUES_SOURCE_FILE" CAPTURE_STATE_FORMAT="$CHECKPOINT_FORMAT" \
+  CHECKPOINT_FORMAT="$CHECKPOINT_FORMAT" \
+  RECOVERY_CHECKPOINT_CAPTURE_RUNNER_MODE="$CHECKPOINT_RUNNER_MODE" \
   "$SCRIPT_DIR/capture-instance-state.sh" "$OUTPUT_DIR"
 captured_runner_mode="$(jq -er '.bot_runner_runtime.mode' \
   "$OUTPUT_DIR/deployment-images.json")"
@@ -2106,6 +2389,14 @@ CHECKPOINT_RUNNER_GENERATION="$(jq -er '
   printf 'Captured runner mode does not match the pre-downtime authorization.\n' >&2
   exit 1
 }
+
+if checkpoint_uses_freeze_admission_fence; then
+  checkpoint_set_failure_context quiescence fence-create
+  establish_checkpoint_freeze_fence
+  checkpoint_set_failure_context quiescence fence-probe
+  recovery_probe_freeze_checkpoint_fence \
+    "$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY"
+fi
 
 QUIESCE_STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 if [[ "$CHECKPOINT_FORMAT" == legacy ]]; then
@@ -2188,6 +2479,7 @@ YENHUBS_PARENT_LEASE_HOLDER="$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
 YENHUBS_PARENT_LEASE_UID="$RECOVERY_SERIALIZATION_LEASE_UID" \
 YENHUBS_PARENT_PROCESS_PID="$RECOVERY_SERIALIZATION_PARENT_PID" \
 YENHUBS_PARENT_PROCESS_START_IDENTITY="$RECOVERY_SERIALIZATION_PARENT_START_IDENTITY" \
+YENHUBS_PARENT_FREEZE_FENCE_CAPABILITY="$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY" \
 YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_PATH="$CHECKPOINT_WRITER_MONITOR_CONTRACT" \
 YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_SHA256="$CHECKPOINT_WRITER_MONITOR_CONTRACT_SHA256" \
 YENHUBS_PARENT_WRITER_MONITOR_BASELINE_PATH="$CHECKPOINT_WRITER_MONITOR_BASELINE" \
@@ -2222,6 +2514,7 @@ YENHUBS_PARENT_LEASE_HOLDER="$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
 YENHUBS_PARENT_LEASE_UID="$RECOVERY_SERIALIZATION_LEASE_UID" \
 YENHUBS_PARENT_PROCESS_PID="$RECOVERY_SERIALIZATION_PARENT_PID" \
 YENHUBS_PARENT_PROCESS_START_IDENTITY="$RECOVERY_SERIALIZATION_PARENT_START_IDENTITY" \
+YENHUBS_PARENT_FREEZE_FENCE_CAPABILITY="$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY" \
 YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_PATH="$CHECKPOINT_WRITER_MONITOR_CONTRACT" \
 YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_SHA256="$CHECKPOINT_WRITER_MONITOR_CONTRACT_SHA256" \
 YENHUBS_PARENT_WRITER_MONITOR_BASELINE_PATH="$CHECKPOINT_WRITER_MONITOR_BASELINE" \
@@ -2325,7 +2618,11 @@ chmod 600 "$OUTPUT_DIR/SHA256SUMS"
 checkpoint_set_failure_context staging-verification layout
 verify_checkpoint_staging_directory
 checkpoint_set_failure_context staging-verification writer-monitor
-require_checkpoint_writer_monitor_healthy
+if checkpoint_uses_freeze_admission_fence; then
+  require_checkpoint_freeze_fence_zero_boundary
+else
+  require_checkpoint_writer_monitor_healthy
+fi
 if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
   checkpoint_set_failure_context staging-verification durable-monitor
   require_checkpoint_durable_monitor_healthy
@@ -2361,7 +2658,11 @@ if [[ "$CHECKPOINT_FORMAT" == legacy ]]; then
     "$evidence_manifest" checkpoint
 fi
 checkpoint_set_failure_context terminal-boundary writer-monitor
-require_checkpoint_writer_monitor_healthy
+if checkpoint_uses_freeze_admission_fence; then
+  require_checkpoint_freeze_fence_zero_boundary
+else
+  require_checkpoint_writer_monitor_healthy
+fi
 if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
   checkpoint_set_failure_context terminal-boundary durable-monitor
   require_checkpoint_durable_monitor_healthy
@@ -2372,7 +2673,9 @@ fi
 checkpoint_set_failure_context terminal-boundary durable-stop
 stop_checkpoint_durable_monitor_before_writer_monitor
 checkpoint_set_failure_context terminal-boundary writer-stop
-stop_checkpoint_writer_monitor_before_resume
+if ! checkpoint_uses_freeze_admission_fence; then
+  stop_checkpoint_writer_monitor_before_resume
+fi
 checkpoint_set_failure_context precommit serialization
 recovery_require_operation_serialization
 checkpoint_set_failure_context precommit operation-lock

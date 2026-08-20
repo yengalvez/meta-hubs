@@ -39,6 +39,15 @@ const WRITER_NAMES = [
 const DEPLOYMENT_NAME_SET = new Set(DEPLOYMENT_NAMES);
 const WRITER_NAME_SET = new Set(WRITER_NAMES);
 const activeChildren = new Set();
+let failureStage = "arguments";
+const SAFE_BASELINE_FAILURE_CODES = new Set([
+  "baseline_contract", "deployment_inventory", "deployments_list_contract",
+  "file_contract", "file_size", "file_write", "kubectl_read", "owner_contract",
+  "pod_inventory", "pod_owner_contract", "pod_service_account_projection",
+  "pod_spec_contract", "pod_template_contract", "pod_template_drift_baseline",
+  "pods_list_contract", "replicaset_inventory", "replicasets_list_contract",
+  "reticulum_image_contract", "writer_pod_present"
+]);
 
 function fail(code) {
   const error = new Error(code);
@@ -307,6 +316,24 @@ function exactKeys(value, keys) {
   return object(value) && Object.keys(value).sort().join(",") === [...keys].sort().join(",");
 }
 
+function exactOrOmittedTypeMeta(value, apiVersion, kind, allowOmitted = false) {
+  if (value?.apiVersion === apiVersion && value?.kind === kind) return true;
+  return allowOmitted &&
+    [undefined, null].includes(value?.apiVersion) &&
+    [undefined, null].includes(value?.kind);
+}
+
+function canonicalConsumerFingerprint(encoded, code = "consumer_contract") {
+  try {
+    const value = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+    if (!exactKeys(value, ["selector", "strategy", "template"])) fail(code);
+    return Buffer.from(canonicalJson(value)).toString("base64");
+  } catch (error) {
+    if (error?.code === code) throw error;
+    fail(code);
+  }
+}
+
 function validateConsumerContract(text, expectedDigest, namespace) {
   if (sha256(text) !== expectedDigest) fail("contract_digest");
   const contract = parseJson(text, "contract_json");
@@ -334,6 +361,7 @@ function validateConsumerContract(text, expectedDigest, namespace) {
       typeof consumer.fingerprint !== "string" ||
       !/^[A-Za-z0-9+/]+={0,2}$/.test(consumer.fingerprint)
     ) fail("consumer_contract");
+    canonicalConsumerFingerprint(consumer.fingerprint);
     seen.add(consumer.name);
   }
   if (expectedNames.some(name => !seen.has(name)) || !namespace) fail("consumer_contract");
@@ -484,6 +512,14 @@ function validateControlPlane(
 
 function deploymentFingerprint(deployment) {
   return Buffer.from(JSON.stringify({
+    selector: deployment.spec.selector,
+    strategy: deployment.spec.strategy || {},
+    template: deployment.spec.template
+  })).toString("base64");
+}
+
+function canonicalDeploymentFingerprint(deployment) {
+  return Buffer.from(canonicalJson({
     selector: deployment.spec.selector,
     strategy: deployment.spec.strategy || {},
     template: deployment.spec.template
@@ -755,10 +791,14 @@ function deploymentSpecFingerprint(deployment) {
   return sha256(canonicalJson(deployment.spec));
 }
 
-function validateDeploymentEnvelope(deployment, namespace, code) {
+function validateDeploymentEnvelope(
+  deployment, namespace, code, allowOmittedTypeMeta = false
+) {
   if (
-    !object(deployment) || deployment.apiVersion !== "apps/v1" ||
-    deployment.kind !== "Deployment" || !object(deployment.metadata) ||
+    !object(deployment) ||
+    !exactOrOmittedTypeMeta(
+      deployment, "apps/v1", "Deployment", allowOmittedTypeMeta
+    ) || !object(deployment.metadata) ||
     deployment.metadata.namespace !== namespace ||
     typeof deployment.metadata.name !== "string" || !deployment.metadata.name ||
     typeof deployment.metadata.uid !== "string" || !deployment.metadata.uid ||
@@ -799,9 +839,13 @@ function validateDeploymentShape(deployment, event) {
   ) fail(event ? "deployment_event_contract" : "deployment_inventory");
 }
 
-function validateDeploymentObject(deployment, namespace, expected, consumer = null, event = false) {
+function validateDeploymentObject(
+  deployment, namespace, expected, consumer = null, event = false,
+  allowOmittedTypeMeta = false
+) {
   validateDeploymentEnvelope(
-    deployment, namespace, event ? "deployment_event_contract" : "deployment_inventory"
+    deployment, namespace, event ? "deployment_event_contract" : "deployment_inventory",
+    allowOmittedTypeMeta
   );
   validateDeploymentShape(deployment, event);
   const identity = deploymentIdentity(deployment);
@@ -814,7 +858,8 @@ function validateDeploymentObject(deployment, namespace, expected, consumer = nu
     (WRITER_NAME_SET.has(identity.name) && identity.replicas !== 0) ||
     (consumer && (
       identity.uid !== consumer.uid || identity.selector !== consumer.selector ||
-      identity.fingerprint !== consumer.fingerprint
+      canonicalDeploymentFingerprint(deployment) !==
+        canonicalConsumerFingerprint(consumer.fingerprint)
     ))
   ) fail(event ? "deployment_drift" : "deployment_inventory");
   return identity;
@@ -837,10 +882,14 @@ function replicaSetFingerprint(replicaSet) {
   }));
 }
 
-function validateReplicaSetEnvelope(replicaSet, namespace, code) {
+function validateReplicaSetEnvelope(
+  replicaSet, namespace, code, allowOmittedTypeMeta = false
+) {
   if (
-    !object(replicaSet) || replicaSet.apiVersion !== "apps/v1" ||
-    replicaSet.kind !== "ReplicaSet" || !object(replicaSet.metadata) ||
+    !object(replicaSet) ||
+    !exactOrOmittedTypeMeta(
+      replicaSet, "apps/v1", "ReplicaSet", allowOmittedTypeMeta
+    ) || !object(replicaSet.metadata) ||
     replicaSet.metadata.namespace !== namespace ||
     typeof replicaSet.metadata.name !== "string" || !replicaSet.metadata.name ||
     typeof replicaSet.metadata.uid !== "string" || !replicaSet.metadata.uid ||
@@ -882,10 +931,12 @@ function validateReplicaSetShape(replicaSet, event) {
 }
 
 function validateReplicaSetObject(
-  replicaSet, namespace, deploymentByUid, expected, event = false
+  replicaSet, namespace, deploymentByUid, expected, event = false,
+  allowOmittedTypeMeta = false
 ) {
   validateReplicaSetEnvelope(
-    replicaSet, namespace, event ? "replicaset_event_contract" : "replicaset_inventory"
+    replicaSet, namespace, event ? "replicaset_event_contract" : "replicaset_inventory",
+    allowOmittedTypeMeta
   );
   validateReplicaSetShape(replicaSet, event);
   const identity = replicaSetIdentity(replicaSet);
@@ -962,7 +1013,7 @@ function defaultNoExecuteToleration(value) {
     });
 }
 
-function normalizePodSpec(value) {
+function normalizePodSpec(value, ignoreAdmittedImagePullSecrets = false) {
   if (!object(value)) fail("pod_spec_contract");
   const spec = structuredClone(value);
   delete spec.nodeName;
@@ -972,6 +1023,15 @@ function normalizePodSpec(value) {
   // mutable live state.
   delete spec.priority;
   delete spec.preemptionPolicy;
+  // Kubernetes defaults an omitted enableServiceLinks to true on the admitted
+  // Pod. Canonicalize the template and the Pod to that exact API default; an
+  // explicit false remains distinct and therefore still fails closed.
+  if (spec.enableServiceLinks === undefined) spec.enableServiceLinks = true;
+  // The ServiceAccount admission plugin may copy imagePullSecrets into the Pod
+  // when the PodTemplate omits them. Ignore that copy only for the narrow
+  // Template-to-Pod comparison. The complete Pod fingerprint and the separate
+  // admission projection below retain it to detect replacement drift.
+  if (ignoreAdmittedImagePullSecrets) delete spec.imagePullSecrets;
   const serviceAccountName = spec.serviceAccountName || spec.serviceAccount || "default";
   delete spec.serviceAccount;
   spec.serviceAccountName = serviceAccountName;
@@ -1009,8 +1069,52 @@ function podTemplateFingerprint(value) {
   return sha256(canonicalJson({
     annotations: value.metadata.annotations || {},
     labels: value.metadata.labels || {},
-    spec: normalizePodSpec(value.spec)
+    spec: normalizePodSpec(value.spec, true)
   }));
+}
+
+function podAdmissionFingerprint(pod) {
+  const serviceAccountName =
+    pod.spec?.serviceAccountName || pod.spec?.serviceAccount || "default";
+  const imagePullSecrets = pod.spec?.imagePullSecrets || [];
+  if (
+    typeof serviceAccountName !== "string" || !serviceAccountName ||
+    !Array.isArray(imagePullSecrets) || imagePullSecrets.some(secret =>
+      !exactKeys(secret, ["name"]) || typeof secret.name !== "string" || !secret.name
+    )
+  ) fail("pod_service_account_projection");
+  return sha256(canonicalJson({ service_account: serviceAccountName, image_pull_secrets: imagePullSecrets }));
+}
+
+function validatePodServiceAccountProjection(
+  kubectl, context, namespace, pod, replicaSet
+) {
+  const imagePullSecrets = pod.spec?.imagePullSecrets || [];
+  const templateImagePullSecrets = replicaSet.spec?.template?.spec?.imagePullSecrets || [];
+  const serviceAccountName = pod.spec?.serviceAccountName || pod.spec?.serviceAccount || "default";
+  if (
+    !Array.isArray(imagePullSecrets) || imagePullSecrets.some(secret =>
+      !exactKeys(secret, ["name"]) || typeof secret.name !== "string" || !secret.name
+    ) ||
+    !Array.isArray(templateImagePullSecrets) || templateImagePullSecrets.some(secret =>
+      !exactKeys(secret, ["name"]) || typeof secret.name !== "string" || !secret.name
+    )
+  ) fail("pod_service_account_projection");
+  if (canonicalJson(templateImagePullSecrets) === canonicalJson(imagePullSecrets)) return;
+  if (templateImagePullSecrets.length !== 0) fail("pod_service_account_projection");
+  const serviceAccount = kubectlJson(kubectl, context, [
+    "get", "serviceaccount", serviceAccountName, "-n", namespace, "-o", "json"
+  ]);
+  if (
+    serviceAccount.apiVersion !== "v1" || serviceAccount.kind !== "ServiceAccount" ||
+    serviceAccount.metadata?.name !== serviceAccountName ||
+    serviceAccount.metadata?.namespace !== namespace ||
+    typeof serviceAccount.metadata?.uid !== "string" || !serviceAccount.metadata.uid ||
+    typeof serviceAccount.metadata?.resourceVersion !== "string" ||
+    !serviceAccount.metadata.resourceVersion ||
+    serviceAccount.metadata.deletionTimestamp !== undefined ||
+    canonicalJson(serviceAccount.imagePullSecrets || []) !== canonicalJson(imagePullSecrets)
+  ) fail("pod_service_account_projection");
 }
 
 function podObjectFingerprint(pod) {
@@ -1028,9 +1132,12 @@ function podObjectFingerprint(pod) {
   }));
 }
 
-function validatePodEnvelope(pod, namespace, code, allowDeleting = false) {
+function validatePodEnvelope(
+  pod, namespace, code, allowDeleting = false, allowOmittedTypeMeta = false
+) {
   if (
-    !object(pod) || pod.apiVersion !== "v1" || pod.kind !== "Pod" ||
+    !object(pod) ||
+    !exactOrOmittedTypeMeta(pod, "v1", "Pod", allowOmittedTypeMeta) ||
     !object(pod.metadata) || pod.metadata.namespace !== namespace ||
     typeof pod.metadata.name !== "string" || !pod.metadata.name ||
     typeof pod.metadata.uid !== "string" || !pod.metadata.uid ||
@@ -1049,6 +1156,7 @@ function podIdentity(pod, owner, role = "service") {
     role,
     owner,
     fingerprint: podTemplateFingerprint(pod),
+    admission_fingerprint: podAdmissionFingerprint(pod),
     object_fingerprint: podObjectFingerprint(pod)
   };
 }
@@ -1071,8 +1179,14 @@ function storageHelperContract(operationId, image, operationOwner) {
   return { name: `${role}-${operationId.slice(0, 12)}`, image };
 }
 
-function validateStorageHelperPod(pod, namespace, options, baseline, allowDeleting = false) {
-  validatePodEnvelope(pod, namespace, "storage_helper_contract", allowDeleting);
+function validateStorageHelperPod(
+  pod, namespace, options, baseline, allowDeleting = false,
+  allowOmittedTypeMeta = false
+) {
+  validatePodEnvelope(
+    pod, namespace, "storage_helper_contract", allowDeleting,
+    allowOmittedTypeMeta
+  );
   const metadata = pod.metadata;
   const spec = pod.spec;
   const containers = spec.containers || [];
@@ -1171,7 +1285,7 @@ function captureBaseline(
     const matches = deploymentList.items.filter(item => item.metadata?.name === name);
     if (matches.length !== 1) fail("deployment_inventory");
     const current = matches[0];
-    validateDeploymentEnvelope(current, namespace, "deployment_inventory");
+    validateDeploymentEnvelope(current, namespace, "deployment_inventory", true);
     validateDeploymentShape(current, false);
     const identity = deploymentIdentity(current);
     const consumer = consumerByName.get(name) || null;
@@ -1179,7 +1293,9 @@ function captureBaseline(
       WRITER_NAME_SET.has(name) !== Boolean(consumer) ||
       consumer && (
         identity.uid !== consumer.uid || identity.selector !== consumer.selector ||
-        identity.fingerprint !== consumer.fingerprint || identity.replicas !== 0
+        canonicalDeploymentFingerprint(current) !==
+          canonicalConsumerFingerprint(consumer.fingerprint) ||
+        identity.replicas !== 0
       )
     ) fail("deployment_inventory");
     deployments.push(identity);
@@ -1192,10 +1308,15 @@ function captureBaseline(
   if (deploymentByUid.size !== DEPLOYMENT_NAMES.length) fail("deployment_inventory");
   const replicaSetList = listResource(kubectl, context, namespace, "replicasets");
   const replicaSets = [];
+  const rawReplicaSetByUid = new Map();
   for (const replicaSet of replicaSetList.items) {
-    validateReplicaSetEnvelope(replicaSet, namespace, "replicaset_inventory");
-    const identity = replicaSetIdentity(replicaSet);
-    replicaSets.push(validateReplicaSetObject(replicaSet, namespace, deploymentByUid, identity));
+    validateReplicaSetEnvelope(replicaSet, namespace, "replicaset_inventory", true);
+    const expectedIdentity = replicaSetIdentity(replicaSet);
+    const identity = validateReplicaSetObject(
+      replicaSet, namespace, deploymentByUid, expectedIdentity, false, true
+    );
+    replicaSets.push(identity);
+    rawReplicaSetByUid.set(identity.uid, replicaSet);
   }
   const replicaSetOwners = new Set(replicaSets.map(item => item.owner.uid));
   if (
@@ -1207,12 +1328,17 @@ function captureBaseline(
   const podList = listResource(kubectl, context, namespace, "pods");
   const pods = [];
   for (const pod of podList.items) {
-    validatePodEnvelope(pod, namespace, "pod_inventory");
+    validatePodEnvelope(pod, namespace, "pod_inventory", false, true);
     const owner = controllerOwner(pod, "ReplicaSet");
     const replicaSet = replicaSetByUid.get(owner.uid);
     if (!replicaSet || replicaSet.name !== owner.name) fail("pod_owner_contract");
+    const rawReplicaSet = rawReplicaSetByUid.get(owner.uid);
+    if (!rawReplicaSet) fail("pod_owner_contract");
     const deployment = deploymentByUid.get(replicaSet.owner.uid);
     if (!deployment || WRITER_NAME_SET.has(deployment.name)) fail("writer_pod_present");
+    validatePodServiceAccountProjection(
+      kubectl, context, namespace, pod, rawReplicaSet
+    );
     const identity = podIdentity(pod, owner);
     if (identity.fingerprint !== replicaSet.template_fingerprint) {
       if (process.env.YENHUBS_WATCH_TEST_DEBUG === "1") {
@@ -1339,7 +1465,9 @@ function validateBaseline(
       expectedConsumer && (
         deployment.uid !== expectedConsumer.uid ||
         deployment.selector !== expectedConsumer.selector ||
-        deployment.fingerprint !== expectedConsumer.fingerprint || deployment.replicas !== 0
+        canonicalConsumerFingerprint(deployment.fingerprint, "baseline_contract") !==
+          canonicalConsumerFingerprint(expectedConsumer.fingerprint, "baseline_contract") ||
+        deployment.replicas !== 0
       ) ||
       deploymentUids.has(deployment.uid)
     ) fail("baseline_contract");
@@ -1394,12 +1522,13 @@ function validateBaseline(
     if (
       !exactKeys(pod, [
         "name", "uid", "resource_version", "role", "owner", "fingerprint",
-        "object_fingerprint"
+        "admission_fingerprint", "object_fingerprint"
       ]) || pod.role !== "service" || !exactKeys(pod.owner, ["name", "uid"]) ||
       typeof pod.name !== "string" || !pod.name || podNames.has(pod.name) ||
       typeof pod.uid !== "string" || !pod.uid || podUids.has(pod.uid) ||
       typeof pod.resource_version !== "string" || !pod.resource_version ||
       !/^[a-f0-9]{64}$/.test(pod.fingerprint) ||
+      !/^[a-f0-9]{64}$/.test(pod.admission_fingerprint) ||
       !/^[a-f0-9]{64}$/.test(pod.object_fingerprint) || !replicaSet || !deployment ||
       replicaSet.name !== pod.owner.name || WRITER_NAME_SET.has(deployment.name) ||
       pod.fingerprint !== replicaSet.template_fingerprint
@@ -1417,19 +1546,28 @@ function validateBaseline(
 function baselineMaps(baseline) {
   const deploymentByUid = new Map(baseline.deployments.map(item => [item.uid, item]));
   const replicaSetByUid = new Map(baseline.replica_sets.map(item => [item.uid, item]));
+  const podAdmissionByReplicaSetUid = new Map();
+  for (const pod of baseline.pods) {
+    const current = podAdmissionByReplicaSetUid.get(pod.owner.uid);
+    if (current && current !== pod.admission_fingerprint) fail("baseline_contract");
+    podAdmissionByReplicaSetUid.set(pod.owner.uid, pod.admission_fingerprint);
+  }
   return {
     consumerByName: new Map(baseline.consumers.map(item => [item.name, item])),
     deploymentByName: new Map(baseline.deployments.map(item => [item.name, item])),
     deploymentByUid,
     replicaSetByName: new Map(baseline.replica_sets.map(item => [item.name, item])),
-    replicaSetByUid
+    replicaSetByUid,
+    podAdmissionByReplicaSetUid
   };
 }
 
 function validateListedPod(pod, namespace, options, baseline, maps) {
-  validatePodEnvelope(pod, namespace, "pod_inventory");
+  validatePodEnvelope(pod, namespace, "pod_inventory", false, true);
   if (pod.metadata.name === baseline.storage_helper.name) {
-    return validateStorageHelperPod(pod, namespace, options, baseline);
+    return validateStorageHelperPod(
+      pod, namespace, options, baseline, false, true
+    );
   }
   const owner = controllerOwner(pod, "ReplicaSet");
   const replicaSet = maps.replicaSetByUid.get(owner.uid);
@@ -1439,7 +1577,10 @@ function validateListedPod(pod, namespace, options, baseline, maps) {
     WRITER_NAME_SET.has(deployment.name)
   ) fail("pod_owner_contract");
   const identity = podIdentity(pod, owner);
-  if (identity.fingerprint !== replicaSet.template_fingerprint) {
+  if (
+    identity.fingerprint !== replicaSet.template_fingerprint ||
+    identity.admission_fingerprint !== maps.podAdmissionByReplicaSetUid.get(replicaSet.uid)
+  ) {
     fail("pod_template_drift_list");
   }
   return identity;
@@ -1458,7 +1599,8 @@ function validateCurrentLists(
     const matches = deploymentList.items.filter(item => item.metadata?.name === expected.name);
     if (matches.length !== 1) fail("deployment_inventory");
     const identity = validateDeploymentObject(
-      matches[0], namespace, expected, maps.consumerByName.get(expected.name) || null
+      matches[0], namespace, expected,
+      maps.consumerByName.get(expected.name) || null, false, true
     );
     if (WRITER_NAME_SET.has(expected.name)) {
       writerDeployments.push({
@@ -1479,10 +1621,12 @@ function validateCurrentLists(
   }
   const seen = new Set();
   for (const replicaSet of replicaSetList.items) {
-    validateReplicaSetEnvelope(replicaSet, namespace, "replicaset_inventory");
+    validateReplicaSetEnvelope(replicaSet, namespace, "replicaset_inventory", true);
     const expected = maps.replicaSetByName.get(replicaSet.metadata?.name);
     if (!expected) fail("replicaset_added");
-    validateReplicaSetObject(replicaSet, namespace, maps.deploymentByUid, expected);
+    validateReplicaSetObject(
+      replicaSet, namespace, maps.deploymentByUid, expected, false, true
+    );
     seen.add(expected.name);
   }
   if (seen.size !== baseline.replica_sets.length) fail("replicaset_missing");
@@ -1523,10 +1667,11 @@ function validateReceiptCurrentLists(
     const identity = expected.name === handoff.target.name
       ? validateReceiptDeploymentObject(
           matches[0], namespace, expected, maps.consumerByName.get(expected.name),
-          options.operationId
+          options.operationId, false, true
         )
       : validateDeploymentObject(
-          matches[0], namespace, expected, maps.consumerByName.get(expected.name) || null
+          matches[0], namespace, expected,
+          maps.consumerByName.get(expected.name) || null, false, true
         );
     if (expected.name === handoff.target.name) targetIdentity = identity;
     if (WRITER_NAME_SET.has(expected.name)) {
@@ -1550,10 +1695,12 @@ function validateReceiptCurrentLists(
   }
   const seen = new Set();
   for (const replicaSet of replicaSetList.items) {
-    validateReplicaSetEnvelope(replicaSet, namespace, "replicaset_inventory");
+    validateReplicaSetEnvelope(replicaSet, namespace, "replicaset_inventory", true);
     const expected = maps.replicaSetByName.get(replicaSet.metadata?.name);
     if (!expected) fail("replicaset_added");
-    validateReplicaSetObject(replicaSet, namespace, maps.deploymentByUid, expected);
+    validateReplicaSetObject(
+      replicaSet, namespace, maps.deploymentByUid, expected, false, true
+    );
     seen.add(expected.name);
   }
   if (seen.size !== baseline.replica_sets.length) fail("replicaset_missing");
@@ -1594,6 +1741,7 @@ function samePodIdentity(actual, expected) {
   return actual.name === expected.name && actual.uid === expected.uid &&
     actual.role === expected.role && canonicalJson(actual.owner) === canonicalJson(expected.owner) &&
     actual.fingerprint === expected.fingerprint &&
+    actual.admission_fingerprint === expected.admission_fingerprint &&
     actual.object_fingerprint === expected.object_fingerprint;
 }
 
@@ -1613,7 +1761,10 @@ function validatePodEvent(event, namespace, options, baseline, maps, state) {
       WRITER_NAME_SET.has(deployment.name)
     ) fail("writer_pod_event");
     identity = podIdentity(pod, owner);
-    if (identity.fingerprint !== replicaSet.template_fingerprint) {
+    if (
+      identity.fingerprint !== replicaSet.template_fingerprint ||
+      identity.admission_fingerprint !== maps.podAdmissionByReplicaSetUid.get(replicaSet.uid)
+    ) {
       fail("pod_template_drift_event");
     }
   }
@@ -1680,10 +1831,12 @@ function validateEvent(resource, event, namespace, options, baseline, state) {
 }
 
 function validateReceiptDeploymentObject(
-  deployment, namespace, expected, consumer, operationId, event = false
+  deployment, namespace, expected, consumer, operationId, event = false,
+  allowOmittedTypeMeta = false
 ) {
   validateDeploymentEnvelope(
-    deployment, namespace, event ? "deployment_event_contract" : "deployment_inventory"
+    deployment, namespace, event ? "deployment_event_contract" : "deployment_inventory",
+    allowOmittedTypeMeta
   );
   validateDeploymentShape(deployment, event);
   const identity = deploymentIdentity(deployment);
@@ -1703,7 +1856,9 @@ function validateReceiptDeploymentObject(
     identity.spec_fingerprint !== expected.spec_fingerprint ||
     metadataFingerprint(normalized) !== expected.metadata_fingerprint ||
     !consumer || identity.uid !== consumer.uid ||
-    identity.selector !== consumer.selector || identity.fingerprint !== consumer.fingerprint
+    identity.selector !== consumer.selector ||
+    canonicalDeploymentFingerprint(deployment) !==
+      canonicalConsumerFingerprint(consumer.fingerprint)
   ) fail(event ? "receipt_deployment_drift" : "receipt_deployment_inventory");
   return identity;
 }
@@ -2651,6 +2806,7 @@ function optionsFrom(values) {
 }
 
 async function monitor(values) {
+  failureStage = "authority";
   const options = optionsFrom(values);
   const authoritySha256 = validateMonitorAuthority(values, options);
   const contractText = readRegular(values.get("--contract"), MAX_CONTRACT_BYTES);
@@ -2668,6 +2824,7 @@ async function monitor(values) {
   const recoveryOperationFence = captureRecoveryOperationFence(
     options.kubectl, options.context, options
   );
+  failureStage = "control-plane";
   const preBaselineOptions = {
     ...options,
     baseline: { recovery_operation_fence: recoveryOperationFence }
@@ -2675,6 +2832,7 @@ async function monitor(values) {
   const lease = validateControlPlane(
     preBaselineOptions.kubectl, preBaselineOptions.context, preBaselineOptions
   );
+  failureStage = "baseline";
   const baseline = captureBaseline(
     options.kubectl, options.context, options.namespace, options.namespaceUid,
     contract, lease, options.runtimeGeneration, recoveryOperationFence,
@@ -2684,17 +2842,20 @@ async function monitor(values) {
       resource_version: options.lockResourceVersion
     }
   );
+  failureStage = "control-plane";
   const monitoredOptions = { ...options, baseline };
   validateControlPlane(
     monitoredOptions.kubectl, monitoredOptions.context, monitoredOptions, baseline.lease
   );
   const baselineText = `${JSON.stringify(baseline)}\n`;
   const baselineDigest = sha256(baselineText);
+  failureStage = "baseline";
   writeRegular(values.get("--baseline"), baselineText, MAX_BASELINE_BYTES);
   const state = runtimeState(baseline);
   let resourceVersions = { ...baseline.boundaries };
   let rounds = 0;
   while (true) {
+    failureStage = "watch";
     if (validateMonitorAuthority(values, options) !== authoritySha256) {
       fail("monitor_authority_changed");
     }
@@ -2799,6 +2960,13 @@ try {
   }
 } catch (error) {
   for (const child of activeChildren) child.kill("SIGTERM");
+  if (parsed?.mode === "monitor") {
+    process.stderr.write(`checkpoint_writer_monitor_stage:${failureStage}\n`);
+    const safeCode = SAFE_BASELINE_FAILURE_CODES.has(error?.code)
+      ? error.code
+      : "other";
+    process.stderr.write(`checkpoint_writer_monitor_code:${safeCode}\n`);
+  }
   if (process.env.YENHUBS_WATCH_TEST_DEBUG === "1") {
     process.stderr.write(`checkpoint_writer_monitor_error:${String(error?.code || "failed")}\n`);
   }

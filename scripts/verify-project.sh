@@ -92,11 +92,17 @@ printf '\n== Root browser and capacity harnesses ==\n'
   npm run validate
 )
 
+printf '\n== H5 freeze and cold-reactivation recovery gates ==\n'
+YENHUBS_RECOVERY_TEST_FOCUS=h5-final \
+  "$ROOT_DIR/tests/recovery/test-recovery-safety.sh"
+
 printf '\n== Hubs CE Node services ==\n'
 (
   cd "$ROOT_DIR/hubs-cloud/community-edition"
   npm ci
   npm audit --omit=dev --audit-level=high
+  npm run test:generator
+  npm run test:apply
   fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/yenhubs-hcce-fixture.XXXXXX")"
   fixture_manifest="$fixture_dir/hcce.yaml"
   trap 'find "$fixture_dir" -type f -delete; rmdir "$fixture_dir"' EXIT

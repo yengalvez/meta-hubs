@@ -43,6 +43,7 @@ PARENT_LEASE_HOLDER="${YENHUBS_PARENT_LEASE_HOLDER:-}"
 PARENT_LEASE_UID="${YENHUBS_PARENT_LEASE_UID:-}"
 PARENT_PROCESS_PID="${YENHUBS_PARENT_PROCESS_PID:-}"
 PARENT_PROCESS_START_IDENTITY="${YENHUBS_PARENT_PROCESS_START_IDENTITY:-}"
+PARENT_FREEZE_FENCE_CAPABILITY="${YENHUBS_PARENT_FREEZE_FENCE_CAPABILITY:-}"
 PARENT_WRITER_MONITOR_CONTRACT_PATH="${YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_PATH:-}"
 PARENT_WRITER_MONITOR_CONTRACT_SHA256="${YENHUBS_PARENT_WRITER_MONITOR_CONTRACT_SHA256:-}"
 PARENT_WRITER_MONITOR_BASELINE_PATH="${YENHUBS_PARENT_WRITER_MONITOR_BASELINE_PATH:-}"
@@ -86,7 +87,8 @@ unset YENHUBS_PARENT_WRITER_MONITOR_PID \
   YENHUBS_PARENT_DURABLE_MONITOR_PROGRESS_PATH \
   YENHUBS_PARENT_DURABLE_MONITOR_CAPABILITY_SHA256 \
   YENHUBS_PARENT_DURABLE_MONITOR_AUTHORITY_SHA256 \
-  YENHUBS_PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY
+  YENHUBS_PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY \
+  YENHUBS_PARENT_FREEZE_FENCE_CAPABILITY
 if [[ "$COORDINATED" == 1 ]]; then
   RECOVERY_CHECKPOINT_STAMP="$PARENT_CHECKPOINT_STAMP"
   RECOVERY_DUMP_SHA256="$PARENT_DUMP_SHA256"
@@ -123,6 +125,20 @@ require_parent_writer_monitor_capability() {
       "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" >/dev/null
 }
 
+require_parent_freeze_fence_capability() {
+  [[ "$CHECKPOINT_RUNNER_GENERATION" == legacy-absent &&
+     -n "$PARENT_FREEZE_FENCE_CAPABILITY" &&
+     -z "$PARENT_WRITER_MONITOR_PID" &&
+     -z "$PARENT_WRITER_MONITOR_CONTRACT_PATH" &&
+     -z "$PARENT_WRITER_MONITOR_BASELINE_PATH" ]] || return 1
+  recovery_require_freeze_checkpoint_fence "$PARENT_FREEZE_FENCE_CAPABILITY" || return 1
+  local deployment
+  for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+    recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
+      "$deployment" 0 || return 1
+  done
+}
+
 require_parent_durable_monitor_capability() {
   [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 &&
      -n "$PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY" &&
@@ -154,24 +170,31 @@ require_parent_durable_monitor_capability() {
 }
 
 if [[ "$COORDINATED" == 1 ]]; then
-  if ! require_parent_writer_monitor_capability ||
-     ! PARENT_WRITER_MONITOR_MAX_STALE_SECONDS="$(
-       recovery_stream_guard_max_stale_seconds
-     )"; then
-    printf 'Coordinated DB backup requires the live parent writer monitor guard.\n' >&2
-    exit 1
+  if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then
+    require_parent_freeze_fence_capability || {
+      printf 'Coordinated DB backup requires the exact freeze admission fence.\n' >&2
+      exit 1
+    }
+  else
+    if ! require_parent_writer_monitor_capability ||
+       ! PARENT_WRITER_MONITOR_MAX_STALE_SECONDS="$(
+         recovery_stream_guard_max_stale_seconds
+       )"; then
+      printf 'Coordinated DB backup requires the live parent writer monitor guard.\n' >&2
+      exit 1
+    fi
+    PARENT_STREAM_GUARD_ARGS=(
+      --guard-process-capability checkpoint-writer-monitor
+      "$PARENT_WRITER_MONITOR_PID"
+      "$PARENT_WRITER_MONITOR_START_IDENTITY"
+      "$PARENT_WRITER_MONITOR_FAILURE_PATH"
+      "$PARENT_WRITER_MONITOR_READY_PATH"
+      "$PARENT_WRITER_MONITOR_PROGRESS_PATH"
+      "${PARENT_WRITER_MONITOR_READY_PATH}.authority.json"
+      "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256"
+      "$PARENT_WRITER_MONITOR_MAX_STALE_SECONDS"
+    )
   fi
-  PARENT_STREAM_GUARD_ARGS=(
-    --guard-process-capability checkpoint-writer-monitor
-    "$PARENT_WRITER_MONITOR_PID"
-    "$PARENT_WRITER_MONITOR_START_IDENTITY"
-    "$PARENT_WRITER_MONITOR_FAILURE_PATH"
-    "$PARENT_WRITER_MONITOR_READY_PATH"
-    "$PARENT_WRITER_MONITOR_PROGRESS_PATH"
-    "${PARENT_WRITER_MONITOR_READY_PATH}.authority.json"
-    "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256"
-    "$PARENT_WRITER_MONITOR_MAX_STALE_SECONDS"
-  )
   if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
     if ! require_parent_durable_monitor_capability ||
        ! PARENT_DURABLE_MONITOR_MAX_STALE_SECONDS="$(
@@ -220,7 +243,11 @@ require_backup_guard() {
     recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
       "$deployment" 0 || return 1
   done
-  require_parent_writer_monitor_capability || return 1
+  if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then
+    require_parent_freeze_fence_capability || return 1
+  else
+    require_parent_writer_monitor_capability || return 1
+  fi
   recovery_require_checkpoint_runner_quiescence_exact \
     "$CHECKPOINT_RUNNER_GENERATION" \
     "$CHECKPOINT_DURABLE_FENCE_BASELINE_PATH" \
@@ -265,13 +292,21 @@ require_exact_pgsql_source_now() {
 monitor_exact_pgsql_source() {
   local progress=0
   while [[ ! -e "$DB_SOURCE_MONITOR_STOP" ]]; do
-    if ! recovery_require_cluster_identity ||
-       ! recovery_require_operation_serialization ||
-       ! recovery_require_operation_lock ||
-       ! require_exact_pgsql_source_now; then
-      printf 'pgsql_source_or_authority_drift\n' >"$DB_SOURCE_MONITOR_FAILURE"
-      return 1
-    fi
+    recovery_require_cluster_identity || {
+      printf 'cluster-identity\n' >"$DB_SOURCE_MONITOR_FAILURE"; return 1;
+    }
+    recovery_require_operation_serialization || {
+      printf 'serialization\n' >"$DB_SOURCE_MONITOR_FAILURE"; return 1;
+    }
+    recovery_require_operation_lock || {
+      printf 'operation-lock\n' >"$DB_SOURCE_MONITOR_FAILURE"; return 1;
+    }
+    require_backup_guard || {
+      printf 'backup-guard\n' >"$DB_SOURCE_MONITOR_FAILURE"; return 1;
+    }
+    require_exact_pgsql_source_now || {
+      printf 'pgsql-source\n' >"$DB_SOURCE_MONITOR_FAILURE"; return 1;
+    }
     progress=$((progress + 1))
     if ! recovery_write_stream_guard_progress \
         "$DB_SOURCE_MONITOR_PROGRESS" "$progress"; then
@@ -602,10 +637,24 @@ ACTIVE_FILES="$(jq -r '.critical_counts.active_owned_files' "$CONTRACT_BEFORE")"
 recovery_require_cluster_identity
 require_backup_guard
 require_pgsql_source
-start_db_source_monitor || {
-  printf 'Could not start the exact PostgreSQL source monitor.\n' >&2
-  exit 1
-}
+if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then
+  # The H5 freeze fence rejects every Pod CREATE/UPDATE in the namespace except
+  # the exact read-only storage helper. PostgreSQL therefore cannot be replaced
+  # during pg_dump. Pin it immediately before and after the stream instead of
+  # retaining the older polling monitor used by legacy/durable lanes.
+  require_exact_pgsql_source_now
+else
+  start_db_source_monitor || {
+    if [[ -s "$DB_SOURCE_MONITOR_FAILURE" ]]; then
+      printf 'PostgreSQL source monitor stopped at %s.\n' \
+        "$(cat "$DB_SOURCE_MONITOR_FAILURE")" >&2
+    else
+      printf 'PostgreSQL source monitor did not complete its initial sweep in time.\n' >&2
+    fi
+    printf 'Could not start the exact PostgreSQL source monitor.\n' >&2
+    exit 1
+  }
+fi
 run_dump_stream() {
   # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
   # shellcheck disable=SC2016
@@ -619,7 +668,7 @@ if run_dump_stream | gzip -9 >"$PARTIAL_PATH"; then
 else
   dump_status=$?
 fi
-if stop_db_source_monitor; then
+if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]] || stop_db_source_monitor; then
   source_monitor_status=0
 else
   source_monitor_status=$?
