@@ -917,6 +917,7 @@ function fixtureProcessGroupExists(pid) {
     return true;
   } catch (error) {
     if (error?.code === "ESRCH") return false;
+    if (error?.code === "EPERM") return true;
     throw error;
   }
 }
@@ -925,7 +926,7 @@ function signalFixtureProcessGroup(pid, signal) {
   try {
     process.kill(-pid, signal);
   } catch (error) {
-    if (error?.code !== "ESRCH") throw error;
+    if (!["EPERM", "ESRCH"].includes(error?.code)) throw error;
   }
 }
 
