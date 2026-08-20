@@ -20,6 +20,11 @@ estan cerradas en los bytes actuales: stale/helper **75/75** y writer-monitor
 **55/55**, sin procesos residuales ni cambios productivos. Por eso queda un
 solo gate completo valido, no una suma ficticia de pruebas parciales.
 
+El primer full sobre el plan nuevo encontro una unica carrera del propio stub
+de Lease tras 113 checks verdes. Se paro sin tocar produccion. La causa ya esta
+aislada: el camino restore con heartbeat real pasa **49/49** y las familias
+adyacentes siguen **55/55** y **75/75** en el candidato `42a4142`.
+
 El estado live se ha recapturado: infraestructura exacta, 12 Deployments, siete
 auxiliares Ready, cinco writers a cero, DB sin tablas, dos PVC de 10 GiB, cuatro
 certificados Ready, lock cold-rebind retenido y Lease libre. El preflight real

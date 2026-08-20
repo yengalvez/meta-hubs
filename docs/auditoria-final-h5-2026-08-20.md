@@ -98,6 +98,13 @@ economica porque nodo, LB y volumenes vuelven a estar asignados y facturando.
 **Correccion:** dos familias causales cerradas (`75/75` y `55/55`), despacho
 H5 desduplicado y un unico full pendiente sobre SHA congelado.
 
+El primer full posterior a la auditoria se detuvo despues de 113 checks
+recovery verdes por una carrera introducida en el propio fixture: varios
+watchers escribian `serialization-lease.next`. La correccion no toca producto;
+el refresco sintetico queda limitado a los modos unitarios. La reproduccion
+dirigida del camino con heartbeat real pasa `49/49`, y las dos familias
+adyacentes vuelven a pasar `55/55` y `75/75`.
+
 ### P1 — resultado live pendiente
 
 **Hallazgo:** infraestructura nueva correcta, pero DB y medios no restaurados;

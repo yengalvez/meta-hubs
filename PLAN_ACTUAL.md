@@ -70,7 +70,7 @@ integracion final.
   superficie modificada. No habia JavaScript modificado que requiriese otro
   Node check.
 - [x] Versionar `PLAN_ACTUAL.md`, la auditoria, los fixes de fixture y la salida
-  terminal de `h5-final`. Candidato de codigo root `3b36cbd`, Hubs
+  terminal de `h5-final`. Candidato de codigo root `42a4142`, Hubs
   `ce8390a` y Hubs Cloud `7e56f90`.
 
 **Cierre:** candidato reproducible y sin procesos locales residuales.
@@ -89,6 +89,13 @@ integracion final.
 **Cierre:** comando completo verde.  
 **STOP:** cualquier fallo. No hay restore ni relanzamiento automatico; primero
 se identifica una causa concreta. Nunca se repiten los mismos bytes.
+
+**Intento invalidado y cerrado:** el candidato anterior `cdf15ba` alcanzo 113
+checks recovery verdes y fallo cuando un refresco sintetico de Lease del stub
+uso el mismo temporal desde varios watchers. No fue un fallo live ni de
+produccion. El refresco queda limitado a los modos unitarios que lo necesitan;
+el camino con heartbeat real pasa `49/49`, writer-monitor `55/55` y
+stale/helper `75/75` en `42a4142`.
 
 ### F3. Completar una unica restauracion productiva
 
