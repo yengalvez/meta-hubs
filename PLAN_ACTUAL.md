@@ -115,6 +115,23 @@ unico fallo fue test-only y especifico de Darwin: `kill(-pgid, 0)` devolvio
 comprobacion final sigue exigiendo `ESRCH`, por lo que no se ocultan procesos.
 El caso causal pasa `1/1` y la suite completa `57/57`.
 
+**Intento posterior no aceptado:** el `--full` sobre `3b8a6bd` avanzo al menos
+hasta `323` comprobaciones recovery verdes y ejecuto los restores coordinados
+del bloque. El canal de terminal perdio su identificador durante una ventana de
+espera; el proceso fue terminado externamente despues de aproximadamente 1 h
+48 min y no existe codigo de salida ni resumen final recuperable. No se
+observaron `not ok`, no se cambio ningun byte y no se puede afirmar que F2 sea
+verde. El selector causal existente `restore-finalize-positive` se ejecuto
+despues, una sola vez, y paso `54/54`; sirve para descartar esa frontera
+concreta, pero no sustituye el full.
+
+**Regla de reanudacion F2:** se permite una unica nueva ejecucion del mismo
+candidato solo para recuperar evidencia persistente del gate incompleto
+anterior. Debe arrancar desde un worktree limpio y escribir stdout/stderr y el
+codigo de salida en un log privado persistente; si termina por timeout externo
+otra vez, F2 queda inconclusa y no se formula otra hipotesis ni se relanza de
+nuevo.
+
 ### F3. Completar una unica restauracion productiva
 
 - [ ] Recapturar read-only contexto, topologia, Namespace/PVC, cinco writers,

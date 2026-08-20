@@ -1,6 +1,6 @@
 # Estado sencillo de YenHubs
 
-Ultima actualizacion: **20 de agosto de 2026**
+Ultima actualizacion: **21 de agosto de 2026**
 
 ## Respuesta corta
 
@@ -96,10 +96,19 @@ El candidato actual es **`3b8a6bd`**. Evidencia dirigida sobre sus bytes:
 Estas pruebas no sustituyen el full; demuestran que existe una causa concreta y
 que no hemos reabierto la carrera anterior.
 
+El intento siguiente del `--full` avanzo al menos hasta `323` checks recovery
+verdes y entro en restores coordinados, pero el terminal perdio su identificador
+durante una espera y el proceso fue terminado externamente tras unas 1 h 48
+min, sin codigo de salida ni resumen final recuperable. No se cuenta como verde
+ni como fallo de producto. El selector causal `restore-finalize-positive` paso
+`54/54` despues, descartando esa frontera concreta. Queda una unica repeticion
+permitida del candidato con log persistente para recuperar el cierre completo.
+
 ## Lo que queda, en orden
 
 1. Ejecutar una sola vez `./scripts/verify-project.sh --full` sobre el candidato
-   congelado. Si falla, STOP en la primera causa nueva; no relanzar igual.
+   congelado con stdout/stderr y codigo de salida conservados en un log privado.
+   Si falla, STOP en la primera causa nueva; no relanzar igual.
 2. Recapturar el estado live y limpiar una sola vez el lock stale exacto.
 3. Ejecutar un unico restore coordinado de DB y medios y medir el RTO.
 4. Aceptar en navegador frio: español, login, dos usuarios/audio, camaras,
