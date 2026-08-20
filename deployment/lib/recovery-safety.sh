@@ -1473,6 +1473,7 @@ recovery_kubectl_stream_supervised() {
     local guard_cancel_reserve_milliseconds=2000
     local -a guard_last_progress=() guard_last_progress_milliseconds=()
     local -a guard_last_observation_milliseconds=()
+    # shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap below.
     report_stream_diagnostic() {
       stream_diagnostic_status=$?
       trap - EXIT

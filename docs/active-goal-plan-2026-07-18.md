@@ -2,7 +2,7 @@
 
 Ultima revision: **20 de agosto de 2026 (Europe/Madrid)**
 
-Version: **v29**. Estado activo: **H5-B19 en reactivacion. La topologia exacta
+Version: **v30**. Estado activo: **H5-B19 en reactivacion. La topologia exacta
 ya esta recreada con Kubernetes `1.34.10-do.1`: `ams3`, HA desactivada, un nodo
 `s-4vcpu-8gb`, un balanceador regional y dos volumenes de 10 GiB. El target
 greenfield esta `12/12` exacto, con los cinco writers a cero. El preflight real
@@ -20,8 +20,12 @@ gate full convoca una sola bateria agregada H5 y las suites oficiales Cloud, y
 el runbook contiene el target exacto de limpieza. Sus focos finales pasan
 `120/120`, `57/57` y `49/49`; el unico riesgo no simulado es la aceptacion live
 real de DNS/TLS/HTTP/DB/medios. Siguiente accion exacta: fijar primero Cloud y
-root en commits limpios y ejecutar una sola validacion
-`./scripts/verify-project.sh --full`. Solo si queda verde se
+root quedaron fijados en commits limpios. El primer `--full` se detuvo a los
+40 s, antes de las suites, por el unico diagnostico ShellCheck `SC2329` sobre
+una funcion invocada indirectamente por un trap `EXIT`. La anotacion estrecha
+queda aplicada y el ShellCheck exacto pasa; no se relanza el full dentro de la
+misma parada anti-loop. Siguiente accion: una unica nueva ejecucion
+`./scripts/verify-project.sh --full` sobre el commit corregido. Solo si queda verde se
 limpia el lock por el procedimiento confirmado y se ejecuta un unico restore;
 cualquier nueva parada debe traer el guard cerrado exacto y no autoriza otro
 retry.

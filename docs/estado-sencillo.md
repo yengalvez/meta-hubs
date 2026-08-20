@@ -448,7 +448,7 @@ proceso, pero el diagnostico anterior era demasiado amplio para saber cual.
 Ahora cada subetapa tiene un codigo cerrado y no sensible; su prueba dirigida
 pasa **51/51**.
 
-El Goal se ha actualizado y el plan tecnico queda en **v29**. La revision
+El Goal se ha actualizado y el plan tecnico queda en **v30**. La revision
 independiente ha encontrado tres incompatibilidades concretas antes de volver a
 produccion: el verificador live todavia espera el runner durable aunque este
 target es legacy/process-local; el full no llama aun todas las pruebas nuevas de
@@ -461,6 +461,13 @@ contrato live por perfil pasa **57/57**; y el cold-rebind coordinado afectado
 pasa **49/49**. El selector final agrupa H5 sin repetir los 45 prechecks. No se
 ha fabricado una simulacion de Internet: DNS, TLS, HTTP y el contenido real se
 probaran una vez en la aceptacion live, despues del restore.
+
+Cloud y root ya quedaron fijados en commits limpios. El primer full no consumio
+horas ni llego a las suites: paro a los **40 segundos** porque ShellCheck no
+reconocia que una funcion se invoca mediante un trap `EXIT`. Se ha añadido solo
+la anotacion exacta para ese uso indirecto y el ShellCheck del fichero ya pasa.
+La politica anti-loop impide relanzar el full en esta misma parada; el siguiente
+paso es una unica ejecucion nueva sobre el commit corregido.
 
 El orden es ahora inequívoco: corregir esas tres fronteras, fijar primero el
 commit Cloud y despues el commit root, comprobar que ambos arboles quedan
