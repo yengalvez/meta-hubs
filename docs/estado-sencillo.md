@@ -76,7 +76,13 @@ El segundo full cruzo esa zona y paso **672 checks**. El primer fallo fue el
 abierto el canal de captura y la asercion esperaba el baseline anterior al
 fence H5. No fue una averia del metaverso ni una regresion productiva.
 
-El candidato actual es **`9377986`**. Evidencia dirigida sobre sus bytes:
+El tercer full supero estaticos y la primera suite Node `32/32`, pero se detuvo
+antes de recovery con `56/57`: macOS devolvio `EPERM` al consultar un process
+group que estaba terminando y el helper de cleanup lo trato como excepcion. Los
+procesos desaparecieron y producto no cambio. La correccion mantiene el control
+estricto: `EPERM` significa «aun existe» y solo `ESRCH` confirma ausencia.
+
+El candidato actual es **`3b8a6bd`**. Evidencia dirigida sobre sus bytes:
 
 - positivo backup `46/46`;
 - positivo restore `46/46`;
@@ -84,6 +90,7 @@ El candidato actual es **`9377986`**. Evidencia dirigida sobre sus bytes:
 - negativos writer `55/55`;
 - restore con heartbeat padre `49/49`;
 - contrato writer-fence completo `100/100`;
+- cleanup causal de process group `1/1` y suite Node completa `57/57`;
 - Bash, ShellCheck y `git diff --check` verdes.
 
 Estas pruebas no sustituyen el full; demuestran que existe una causa concreta y

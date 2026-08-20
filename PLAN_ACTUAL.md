@@ -70,7 +70,7 @@ integracion final.
   superficie modificada. No habia JavaScript modificado que requiriese otro
   Node check.
 - [x] Versionar `PLAN_ACTUAL.md`, la auditoria, los fixes de fixture y la salida
-  terminal de `h5-final`. Candidato de codigo root `9377986`, Hubs
+  terminal de `h5-final`. Candidato de codigo root `3b8a6bd`, Hubs
   `ce8390a` y Hubs Cloud `7e56f90`.
 
 **Cierre:** candidato reproducible y sin procesos locales residuales.
@@ -106,6 +106,14 @@ esperando el baseline anterior a H5 (12 ReplicaSets y Pods sin
 `admission_fingerprint`). Produccion no cambio. En `9377986` pasan los dos
 positivos `46/46` por owner, stale Lease `46/46`, negativos writer `55/55`,
 concurrencia restore `49/49` y el bloque writer-fence completo `100/100`.
+
+**Tercer intento invalidado y cerrado:** el root `38f2358` supero estaticos y
+la primera suite Node `32/32`; la segunda termino `56/57` antes de recovery. El
+unico fallo fue test-only y especifico de Darwin: `kill(-pgid, 0)` devolvio
+`EPERM` durante el cleanup transitorio y el helper lo lanzo como excepcion. En
+`3b8a6bd`, `EPERM` cuenta como grupo aun existente y no como ausencia; la
+comprobacion final sigue exigiendo `ESRCH`, por lo que no se ocultan procesos.
+El caso causal pasa `1/1` y la suite completa `57/57`.
 
 ### F3. Completar una unica restauracion productiva
 

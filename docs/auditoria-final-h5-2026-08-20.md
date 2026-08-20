@@ -22,7 +22,7 @@ una aceptacion real. Avance razonado: **85 %**.
 
 ### Repos y producto
 
-- Root: rama `codex/h5-preflight`; candidato actual `9377986`, con el trabajo
+- Root: rama `codex/h5-preflight`; candidato actual `3b8a6bd`, con el trabajo
   H5 congelado en commits locales revisables.
 - Hubs: `ce8390a`, exactamente el baseline ya aceptado; no contiene cambios H5.
 - Hubs Cloud: `7e56f90`, un commit H5 sobre su remoto y descendiente de `2.1.0`.
@@ -117,6 +117,14 @@ solo en refrescos sinteticos y actualiza esas formas. Evidencia final dirigida:
 positivos backup/restore `46/46`, stale `46/46`, writer negativos `55/55`,
 concurrencia padre `49/49` y contrato fence completo `100/100`; Bash, ShellCheck
 y diff-check pasan. Aun falta el unico full completo, no otra arquitectura.
+
+El siguiente full sobre root `38f2358` se detuvo antes de recovery: la primera
+suite Node paso `32/32` y la segunda `56/57`. El unico rojo fue un helper de
+cleanup en macOS, no el monitor: la consulta POSIX de un process group recibio
+`EPERM` de forma transitoria y el test la trato como excepcion. Los PIDs y grupos
+desaparecieron. `3b8a6bd` clasifica `EPERM` como «todavia existe», tolera esa
+respuesta al señalizar y conserva el fallo final salvo que llegue `ESRCH`.
+Prueba causal `1/1`, suite completa `57/57`, Node check y diff-check verdes.
 
 ### P1 — resultado live pendiente
 
