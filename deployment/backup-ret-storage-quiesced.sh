@@ -1099,8 +1099,9 @@ fi
 recovery_require_operation_lock
 require_pgsql_source
 recovery_capture_live_database_contract "$PGSQL_POD" "$CONTRACT_AFTER"
-# shellcheck disable=SC2016
 STORAGE_FAILURE_STAGE="database-postcheck"
+# Expansion is intentionally deferred to the PostgreSQL container.
+# shellcheck disable=SC2016
 recovery_kubectl exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec \
   'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d retdb -Atc "select owned_file_uuid from ret0.owned_files where state::text = '\''active'\'' order by owned_file_uuid"' \
   | tr -d '\r' | LC_ALL=C sort >"$DB_ACTIVE_AFTER"

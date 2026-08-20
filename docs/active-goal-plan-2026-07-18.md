@@ -23,8 +23,11 @@ real de DNS/TLS/HTTP/DB/medios. Cloud y root quedaron fijados en commits
 limpios. El primer `--full` se detuvo a los
 40 s, antes de las suites, por el unico diagnostico ShellCheck `SC2329` sobre
 una funcion invocada indirectamente por un trap `EXIT`. La anotacion estrecha
-queda aplicada y el ShellCheck exacto pasa; no se relanza el full dentro de la
-misma parada anti-loop. Siguiente accion: una unica nueva ejecucion
+quedo aplicada. La siguiente ejecucion se detuvo a los 52 s, tambien antes de
+las suites, por `SC2016`: la supresion existente estaba separada de la cadena
+SQL por una asignacion. El comentario queda ahora adyacente y el ShellCheck
+exacto pasa; no se relanza el full dentro de esta parada anti-loop. Siguiente
+accion: una unica nueva ejecucion
 `./scripts/verify-project.sh --full` sobre el commit corregido. Solo si queda verde se
 limpia el lock por el procedimiento confirmado y se ejecuta un unico restore;
 cualquier nueva parada debe traer el guard cerrado exacto y no autoriza otro

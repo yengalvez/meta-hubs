@@ -469,6 +469,13 @@ la anotacion exacta para ese uso indirecto y el ShellCheck del fichero ya pasa.
 La politica anti-loop impide relanzar el full en esta misma parada; el siguiente
 paso es una unica ejecucion nueva sobre el commit corregido.
 
+Esa ejecucion nueva tambien paro pronto, a los **52 segundos**, por otra
+anotacion ShellCheck mal colocada: el comentario que justificaba una cadena SQL
+con expansion dentro del contenedor no estaba pegado al comando. Se ha movido
+solo ese comentario, el ShellCheck exacto pasa y ninguna suite larga ni recurso
+productivo llego a ejecutarse. El siguiente turno conserva el mismo paso: un
+unico full nuevo sobre el commit corregido.
+
 El orden es ahora inequívoco: corregir esas tres fronteras, fijar primero el
 commit Cloud y despues el commit root, comprobar que ambos arboles quedan
 limpios y ejecutar exactamente una vez `./scripts/verify-project.sh --full`.
