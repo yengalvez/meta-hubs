@@ -1,48 +1,16 @@
 # Meta activa: hibernar y reactivar una instancia de cliente
 
+> **HISTORICO.** Este documento conserva decisiones y evidencia hasta H5-B19,
+> pero ya no es una cola ejecutable. El unico plan vigente es
+> [`../PLAN_ACTUAL.md`](../PLAN_ACTUAL.md).
+
 Ultima revision: **20 de agosto de 2026 (Europe/Madrid)**
 
-Version: **v31**. Estado activo: **H5-B19 en reactivacion. La topologia exacta
-ya esta recreada con Kubernetes `1.34.10-do.1`: `ams3`, HA desactivada, un nodo
-`s-4vcpu-8gb`, un balanceador regional y dos volumenes de 10 GiB. El target
-greenfield esta `12/12` exacto, con los cinco writers a cero. El preflight real
-cold-rebind pasa completo. DNS y certificados ya estan cerrados `4/4`. El
-restore supero el baseline y alcanzo la fase DB, pero no pudo demostrar la
-quietud continua antes del reset en el ultimo intento. Estado fail-closed:
-lock `cold-rebind` retenido, Lease existente pero libre/sin holder, cinco
-writers `0`, cero Pods writer y DB target vacia. La lectura posterior confirma
-contratos `5/5`, runner ausente, LIST/WATCH runner y PostgreSQL Ready; el fallo
-restante fue temporal en la cadena de capacidades. El diagnostico por subetapa
-queda implementado y su foco pasa `51/51`. La revision independiente del
-candidato encontro tres incompatibilidades de integracion finitas. Ya estan
-corregidas: el verificador live separa durable de cold-rebind process-local, el
-gate full convoca una sola bateria agregada H5 y las suites oficiales Cloud, y
-el runbook contiene el target exacto de limpieza. Sus focos finales pasan
-`120/120`, `57/57` y `49/49`; el unico riesgo no simulado es la aceptacion live
-real de DNS/TLS/HTTP/DB/medios. Cloud y root quedaron fijados en commits
-limpios. El primer `--full` se detuvo a los
-40 s, antes de las suites, por el unico diagnostico ShellCheck `SC2329` sobre
-una funcion invocada indirectamente por un trap `EXIT`. La anotacion estrecha
-quedo aplicada. La siguiente ejecucion se detuvo a los 52 s, tambien antes de
-las suites, por `SC2016`: la supresion existente estaba separada de la cadena
-SQL por una asignacion. El comentario queda ahora adyacente y el ShellCheck
-exacto pasa. La siguiente ejecucion se detuvo a los 160 s, aun antes de las
-suites, por ocho avisos ShellCheck del arnes recovery: expansiones literales y
-alcance de `PATH`/PID en fixtures con subshells. Las supresiones quedan locales,
-documentadas y el ShellCheck exacto del arnes pasa. El siguiente `--full`
-supero por fin todo el bloque estatico y las suites recovery observadas
-`32/32` y `57/57`, pero se detuvo a los 320 s en el contrato live legacy: una
-expresion regular de `jq` tenia barras duplicadas y rechazaba el room id valido
-`VJopCY3`. Se corrigio solo ese escape y el gate de seguridad dirigido pasa
-`57/57`. No se relanza el full dentro de esta parada anti-loop. Siguiente
-accion: una unica nueva ejecucion `./scripts/verify-project.sh --full` sobre el
-commit corregido. Solo si queda verde se
-limpia el lock por el procedimiento confirmado y se ejecuta un unico restore;
-cualquier nueva parada debe traer el guard cerrado exacto y no autoriza otro
-retry.
-
-Este fichero es la unica fuente de orden y estado. La explicacion para el
-propietario esta en `docs/estado-sencillo.md`.
+Version: **v32 historica**. Este texto ya no decide ninguna accion. Conserva la
+secuencia H0-H5-B19 y sus evidencias hasta el cambio de autoridad. El estado,
+orden, STOP y cierre vigentes estan exclusivamente en `PLAN_ACTUAL.md`; la
+auditoria que motivo ese reemplazo esta en
+`docs/auditoria-final-h5-2026-08-20.md`.
 
 ## Decision de la auditoria
 

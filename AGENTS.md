@@ -11,11 +11,11 @@ operating rules only. Session history belongs exclusively in
 - Hubs CE and backend submodule: `hubs-cloud/`, fork `yengalvez/hubs-cloud`,
   base branch `master`.
 - Runtime and recovery source of truth: `deployment/README.md`.
-- Sole authority for current order and task state:
-  `docs/active-goal-plan-2026-07-18.md`.
+- Sole authority for current order and task state: `PLAN_ACTUAL.md`.
+- Historical H5 plan and evidence: `docs/active-goal-plan-2026-07-18.md`.
 - Human-readable projection of that plan: `docs/estado-sencillo.md`.
 - Latest frozen audit snapshot and residual risks:
-  `docs/audit-general-2026-08-09.md`.
+  `docs/auditoria-final-h5-2026-08-20.md`.
 - H1 hibernation contract: `docs/client-hibernation-design-v1.md`.
 - July handoff and audit are historical evidence, not resumption points.
 - Upstream update procedure: `docs/development-workflow.md`.

@@ -6,6 +6,27 @@ Ultima actualizacion: **20 de agosto de 2026**
 
 El metaverso no se esta rehaciendo y produccion no ha sido sustituida.
 
+Manda unicamente `PLAN_ACTUAL.md`. La auditoria completa confirma que el trabajo
+no se ha perdido: bundle, dos copias cifradas, borrado selectivo y recreacion ya
+estan terminados. El avance razonado es aproximadamente **85 %**.
+
+Tambien confirma un loop real. El intento llamado `--full` termino dentro de la
+primera bateria recovery: paso 855 aserciones, fallo 16 y nunca alcanzo Hubs,
+Hubs Cloud, Spoke ni Reticulum. Ademas, el agregado H5 iba a repetir la bateria
+recovery normal. Esa duplicacion ya esta eliminada.
+
+Los 16 rojos eran dos familias de fixtures, no 16 averias del metaverso. Ambas
+estan cerradas en los bytes actuales: stale/helper **75/75** y writer-monitor
+**55/55**, sin procesos residuales ni cambios productivos. Por eso queda un
+solo gate completo valido, no una suma ficticia de pruebas parciales.
+
+El estado live se ha recapturado: infraestructura exacta, 12 Deployments, siete
+auxiliares Ready, cinco writers a cero, DB sin tablas, dos PVC de 10 GiB, cuatro
+certificados Ready, lock cold-rebind retenido y Lease libre. El preflight real
+cold-rebind vuelve a pasar read-only. El siguiente resultado importante es
+terminar un full, limpiar el lock, restaurar una vez y validar el baseline
+comercial completo en navegador frio.
+
 El objetivo correcto es poder **hibernar la instancia de un cliente para dejar
 de pagar DigitalOcean y recuperarla mas adelante sin una reconstruccion
 artesanal**.
@@ -572,4 +593,4 @@ meta y se elige una sola capacidad nueva del metaverso.
 - GitHub se reserva para una confirmacion final sobre un candidato ya verde.
 
 La lista tecnica completa y el prompt de continuacion estan en
-`docs/active-goal-plan-2026-07-18.md`.
+`PLAN_ACTUAL.md`.

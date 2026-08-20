@@ -2835,7 +2835,9 @@ if [[ "$joined" == "get lease yenhubs-operation-serialization -n hcce --ignore-n
 fi
 if [[ "$joined" == "get lease yenhubs-operation-serialization -n hcce -o json" ]]; then
   [[ -f "$STUB_STATE_DIR/serialization-lease.json" ]] || exit 1
-  if [[ "${STUB_MODE:-}" == checkpoint-writer-list-item-gvk-omitted ||
+  if [[ ( -n "${STUB_CHECKPOINT_WRITER_OPERATION_OWNER:-}" &&
+        ! -e "$STUB_STATE_DIR/checkpoint-writer-stale-lease" ) ||
+        "${STUB_MODE:-}" == checkpoint-writer-list-item-gvk-omitted ||
         "${STUB_MODE:-}" == checkpoint-writer-live-pod-defaults ||
         "${STUB_MODE:-}" == checkpoint-writer-live-pod-secret-mismatch ||
         "${STUB_MODE:-}" == checkpoint-writer-live-pod-secret-watch-drift ]]; then
@@ -6595,6 +6597,7 @@ reset_stub() {
     "$STUB_STATE_DIR/checkpoint-dormant-fence-aba-before-lock-release-observed" \
     "$STUB_STATE_DIR/checkpoint-dormant-fence-post-resume-read-count" \
     "$STUB_STATE_DIR/checkpoint-writer-post-ready-emitted" \
+    "$STUB_STATE_DIR/checkpoint-writer-stale-lease" \
     "$STUB_STATE_DIR/checkpoint-writer-final-boundary-read" \
     "$STUB_STATE_DIR/checkpoint-writer-final-event-emitted" \
     "$STUB_STATE_DIR/checkpoint-writer-terminal-watch-seen" \
@@ -9347,6 +9350,7 @@ spec:
   automountServiceAccountToken: false
   enableServiceLinks: false
   restartPolicy: Never
+  terminationGracePeriodSeconds: 1
   activeDeadlineSeconds: 3600
   securityContext:
     runAsNonRoot: true
@@ -9387,7 +9391,8 @@ EOF
       annotations:{"yenhubs.org/operation-lock-uid":"restore-lock-uid",
         "yenhubs.org/operation-token":$operation_token}},
       spec:{automountServiceAccountToken:false,enableServiceLinks:false,
-        restartPolicy:"Never",activeDeadlineSeconds:3600,
+        restartPolicy:"Never",terminationGracePeriodSeconds:1,
+        activeDeadlineSeconds:3600,
         securityContext:{runAsNonRoot:true,runAsUser:1000,runAsGroup:1000,
           fsGroup:1000,fsGroupChangePolicy:"OnRootMismatch",
           seccompProfile:{type:"RuntimeDefault"}},
@@ -10058,6 +10063,12 @@ wait_checkpoint_writer_test_handoff() {
     kill -0 "$WRITER_TEST_PID" 2>/dev/null || return 0
     sleep 0.01
   done
+  if kill -0 "$WRITER_TEST_PID" 2>/dev/null; then
+    # Reap the timed-out monitor so an inherited capture pipe cannot keep the
+    # focused test alive after the causal failure has already been observed.
+    kill -TERM "$WRITER_TEST_PID" 2>/dev/null || :
+  fi
+  wait "$WRITER_TEST_PID" 2>/dev/null || :
   return 1
 }
 
@@ -10506,6 +10517,7 @@ run_checkpoint_writer_monitor_failure() {
       ln -s "$WRITER_TEST_CONTRACT" "$WRITER_TEST_FINAL"
       ;;
     stale-lease)
+      : >"$STUB_STATE_DIR/checkpoint-writer-stale-lease"
       jq '.spec.renewTime = "2020-01-01T00:00:00.000000Z" |
         .spec.acquireTime = "2020-01-01T00:00:00.000000Z"' \
         "$STUB_STATE_DIR/serialization-lease.json" \
@@ -15669,6 +15681,20 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == restore-clear-stale-success ]]; then
   exit 0
 fi
 
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == h5-full-red-stale ]]; then
+  initialize_restore_fence_test_context
+  run_restore_clear_stale_final_evidence_test
+  run_restore_clear_stale_success_test
+  run_stale_helper_cleanup_tests
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused H5 stale-helper regression test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused H5 stale-helper regression tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
 if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == recovery-operation-fence ]]; then
   run_recovery_operation_fence_library_tests
   if [[ "$FAIL_COUNT" -ne 0 ]]; then
@@ -15878,6 +15904,26 @@ fi
 if recovery_focus_selected checkpoint-writer-pod-defaults; then
   run_checkpoint_writer_live_pod_defaults_tests
   recovery_finish_focus 'Focused checkpoint writer Pod-default'
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == h5-full-red-writer ]]; then
+  run_checkpoint_writer_list_item_gvk_tests
+  run_checkpoint_writer_live_pod_defaults_tests
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused H5 writer-monitor regression test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused H5 writer-monitor regression tests passed: %s.\n' \
+    "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "$H5_FINAL_RECOVERY_FOCUS" == true ]]; then
+  # verify-project already ran the default recovery suite once.  h5-final is
+  # additive, so stop here instead of falling through and repeating it.
+  printf 'Aggregated H5-only recovery tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
 fi
 
 if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-writers ]]; then
