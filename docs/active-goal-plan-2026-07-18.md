@@ -2,7 +2,7 @@
 
 Ultima revision: **20 de agosto de 2026 (Europe/Madrid)**
 
-Version: **v30**. Estado activo: **H5-B19 en reactivacion. La topologia exacta
+Version: **v31**. Estado activo: **H5-B19 en reactivacion. La topologia exacta
 ya esta recreada con Kubernetes `1.34.10-do.1`: `ams3`, HA desactivada, un nodo
 `s-4vcpu-8gb`, un balanceador regional y dos volumenes de 10 GiB. El target
 greenfield esta `12/12` exacto, con los cinco writers a cero. El preflight real
@@ -29,9 +29,14 @@ SQL por una asignacion. El comentario queda ahora adyacente y el ShellCheck
 exacto pasa. La siguiente ejecucion se detuvo a los 160 s, aun antes de las
 suites, por ocho avisos ShellCheck del arnes recovery: expansiones literales y
 alcance de `PATH`/PID en fixtures con subshells. Las supresiones quedan locales,
-documentadas y el ShellCheck exacto del arnes pasa. No se relanza el full dentro
-de esta parada anti-loop. Siguiente accion: una unica nueva ejecucion
-`./scripts/verify-project.sh --full` sobre el commit corregido. Solo si queda verde se
+documentadas y el ShellCheck exacto del arnes pasa. El siguiente `--full`
+supero por fin todo el bloque estatico y las suites recovery observadas
+`32/32` y `57/57`, pero se detuvo a los 320 s en el contrato live legacy: una
+expresion regular de `jq` tenia barras duplicadas y rechazaba el room id valido
+`VJopCY3`. Se corrigio solo ese escape y el gate de seguridad dirigido pasa
+`57/57`. No se relanza el full dentro de esta parada anti-loop. Siguiente
+accion: una unica nueva ejecucion `./scripts/verify-project.sh --full` sobre el
+commit corregido. Solo si queda verde se
 limpia el lock por el procedimiento confirmado y se ejecuta un unico restore;
 cualquier nueva parada debe traer el guard cerrado exacto y no autoriza otro
 retry.
@@ -626,6 +631,12 @@ el coste hundido no obliga a terminarlos ni desplegarlos.
         `./scripts/verify-project.sh --full` sobre esos bytes. No ejecutar antes
         el gate normal ni repetir bloques verdes. Este gate es dependencia del
         siguiente restore productivo.
+        - El ultimo candidato supero el bloque estatico y dos suites recovery
+          (`32/32` y `57/57`), y se detuvo en el gate de seguridad por un
+          escape duplicado en el regex del identificador de sala legacy. La
+          correccion es de una linea; `security-gates` vuelve a pasar `57/57`.
+          No hubo mutacion productiva ni relanzamiento del full sobre estos
+          bytes.
       - [ ] Repetir el restore coordinado con confirmacion nueva y ejecutar
         verificador live mas navegador frio. El intento previo no escribio DB
         ni medios: fallo en `baseline`, libero lock/Lease y dejo writers `0/0`.

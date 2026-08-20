@@ -448,7 +448,7 @@ proceso, pero el diagnostico anterior era demasiado amplio para saber cual.
 Ahora cada subetapa tiene un codigo cerrado y no sensible; su prueba dirigida
 pasa **51/51**.
 
-El Goal se ha actualizado y el plan tecnico queda en **v30**. La revision
+El Goal se ha actualizado y el plan tecnico queda en **v31**. La revision
 independiente ha encontrado tres incompatibilidades concretas antes de volver a
 produccion: el verificador live todavia espera el runner durable aunque este
 target es legacy/process-local; el full no llama aun todas las pruebas nuevas de
@@ -481,6 +481,14 @@ suites: el analizador encontro ocho avisos informativos en fixtures recovery que
 usan deliberadamente subshells, `PATH`, PID y cadenas literales. Cada supresion
 queda pegada al comando concreto y explica por que es intencional. El ShellCheck
 completo de ese arnes ya pasa. No se repitio el full ni se toco produccion.
+
+El siguiente full ya supero todo ese bloque estatico y avanzo de verdad por las
+suites: quedaron verdes `32/32` pruebas de recovery y `57/57` del monitor. Se
+detuvo a los **320 segundos** en una prueba nueva del perfil legacy, porque su
+expresion regular tenia barras duplicadas y rechazaba incluso la sala valida
+`VJopCY3`. Se ha corregido solo esa linea y el gate de seguridad afectado pasa
+de nuevo **57/57**. No se repite el full en esta misma parada y produccion sigue
+sin tocarse.
 
 El orden es ahora inequívoco: corregir esas tres fronteras, fijar primero el
 commit Cloud y despues el commit root, comprobar que ambos arboles quedan
@@ -519,9 +527,10 @@ No se esta repitiendo la matriz antigua:
 - H3a, H3b y H3c no fueron repeticiones: cada uno encontro una causa diferente
   y genero bytes nuevos. H3d fue el unico candidato aceptado;
 - sintaxis, ShellCheck y diff-check pasan sobre los componentes afectados;
-- el full se ejecuto una sola vez; al detenerse por configuracion local se
-  completo exclusivamente su tramo aun pendiente y no se repitio el bloque
-  comun de cuatro horas;
+- cada full se detuvo en una causa nueva antes de repetir un bloque largo ya
+  aceptado; el ultimo supero por primera vez todo ShellCheck y avanzo hasta las
+  suites recovery/monitor, y la correccion posterior se valido solo con el
+  gate de seguridad afectado;
 - las dos correcciones posteriores fueron dependencias de seguridad con causa
   nueva y solo repitieron los componentes afectados;
 - GitHub se uso para publicar los dos PR sin CI automatico y para runs causales:

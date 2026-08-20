@@ -344,7 +344,7 @@ reactivation_legacy_bot_health_is_acceptable() {
     (.active_hubs | type == "array" and length == $root.active_rooms) and
     (.queued_hubs | type == "array" and length == $root.queued_rooms) and
     ((.active_hubs + .queued_hubs) | all(.[];
-      type == "string" and test("^[^\\u0000-\\u001f\\u007f]{1,64}$"))) and
+      type == "string" and test("^[^\u0000-\u001f\u007f]{1,64}$"))) and
     ((.active_hubs + .queued_hubs) | unique | length) ==
       ((.active_hubs + .queued_hubs) | length) and
     (.runner_backends | type == "object") and
