@@ -19,8 +19,8 @@ corregidas: el verificador live separa durable de cold-rebind process-local, el
 gate full convoca una sola bateria agregada H5 y las suites oficiales Cloud, y
 el runbook contiene el target exacto de limpieza. Sus focos finales pasan
 `120/120`, `57/57` y `49/49`; el unico riesgo no simulado es la aceptacion live
-real de DNS/TLS/HTTP/DB/medios. Siguiente accion exacta: fijar primero Cloud y
-root quedaron fijados en commits limpios. El primer `--full` se detuvo a los
+real de DNS/TLS/HTTP/DB/medios. Cloud y root quedaron fijados en commits
+limpios. El primer `--full` se detuvo a los
 40 s, antes de las suites, por el unico diagnostico ShellCheck `SC2329` sobre
 una funcion invocada indirectamente por un trap `EXIT`. La anotacion estrecha
 queda aplicada y el ShellCheck exacto pasa; no se relanza el full dentro de la
