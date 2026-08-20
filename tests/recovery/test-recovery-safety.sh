@@ -2845,10 +2845,13 @@ if [[ "$joined" == "get lease yenhubs-operation-serialization -n hcce -o json" ]
         "${STUB_MODE:-}" == checkpoint-writer-live-pod-explicit-false ||
         "${STUB_MODE:-}" == checkpoint-writer-live-pod-secret-mismatch ||
         "${STUB_MODE:-}" == checkpoint-writer-live-pod-secret-watch-drift ]]; then
+    lease_refresh_path="$(
+      mktemp "$STUB_STATE_DIR/serialization-lease.next.XXXXXX"
+    )" || exit 1
     jq -c --arg renew "$(date -u '+%Y-%m-%dT%H:%M:%S.000000Z')" \
       '.spec.renewTime = $renew' "$STUB_STATE_DIR/serialization-lease.json" \
-      >"$STUB_STATE_DIR/serialization-lease.next"
-    mv "$STUB_STATE_DIR/serialization-lease.next" \
+      >"$lease_refresh_path"
+    mv "$lease_refresh_path" \
       "$STUB_STATE_DIR/serialization-lease.json"
   fi
   if [[ -n "${YENHUBS_PARENT_LEASE_HOLDER:-}" ]]; then
@@ -6549,6 +6552,7 @@ reset_stub() {
     "$STUB_STATE_DIR/replace-ready-Role" \
     "$STUB_STATE_DIR/serialization-lease.json" \
     "$STUB_STATE_DIR/serialization-lease.next" \
+    "$STUB_STATE_DIR"/serialization-lease.next.* \
     "$STUB_STATE_DIR/serialization-lease-create.yaml" \
     "$STUB_STATE_DIR/serialization-lease-get-count" \
     "$STUB_STATE_DIR/runner-role-uid" "$STUB_STATE_DIR/runner-role-rv" \
@@ -9984,7 +9988,7 @@ prepare_checkpoint_writer_monitor_fixture() {
 
 start_checkpoint_writer_test_monitor() {
   local mode="$1" require_live_terminal="" terminal_timeout_seconds=""
-  local authority_json authority_path gate_path writer_identity=""
+  local authority_json authority_path gate_path monitor_log writer_identity=""
   case "$mode" in
     checkpoint-writer-terminal-live|checkpoint-writer-terminal-list-gap|\
       checkpoint-writer-terminal-control-gap)
@@ -9996,8 +10000,10 @@ start_checkpoint_writer_test_monitor() {
   fi
   authority_path="${WRITER_TEST_READY}.authority.json"
   gate_path="${WRITER_TEST_READY}.spawn-gate"
+  monitor_log="${WRITER_TEST_READY}.monitor.log"
   : >"$gate_path"
-  chmod 600 "$gate_path"
+  : >"$monitor_log"
+  chmod 600 "$gate_path" "$monitor_log"
   env STUB_MODE="$mode" \
     KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer" \
     YENHUBS_RECOVERY_TEST_MODE=local-fixture \
@@ -10023,7 +10029,8 @@ os.execvp(sys.argv[2], sys.argv[2:])
       "${WRITER_TEST_COMMON_ARGS[@]}" \
       --stop "$WRITER_TEST_STOP" --failure "$WRITER_TEST_FAILURE" \
       --ready "$WRITER_TEST_READY" --progress "$WRITER_TEST_PROGRESS" \
-      --final "$WRITER_TEST_FINAL" --authority "$authority_path" &
+      --final "$WRITER_TEST_FINAL" --authority "$authority_path" \
+      >"$monitor_log" 2>&1 &
   # shellcheck disable=SC2031 # This shell owns the gated writer-monitor PID.
   WRITER_TEST_PID=$!
   writer_identity="$(
@@ -10412,15 +10419,15 @@ run_checkpoint_writer_monitor_success() {
     all(.deployments[];
       keys == ["fingerprint","generation","metadata_fingerprint","name","replicas",
         "resource_version","selector","spec_fingerprint","uid"]) and
-    (.replica_sets | length) == 12 and
+    (.replica_sets | length) == 13 and
     all(.replica_sets[];
       keys == ["fingerprint","generation","metadata_fingerprint","name","owner",
         "replicas","resource_version","selector","template_fingerprint","uid"]) and
     ([.replica_sets[].owner.uid] | unique | length) == 12 and
     (.pods | length) == 7 and
     all(.pods[];
-      keys == ["fingerprint","name","object_fingerprint","owner","resource_version",
-        "role","uid"] and .role == "service") and
+      keys == ["admission_fingerprint","fingerprint","name","object_fingerprint",
+        "owner","resource_version","role","uid"] and .role == "service") and
     (.boundaries | keys) == ["deployments","pods","replicasets"]
   ' "$WRITER_TEST_BASELINE" >/dev/null || return 1
   boundary="$(checkpoint_writer_boundary "$baseline_sha")" || return 1
@@ -15895,6 +15902,38 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-writer-fence ]]; then
     exit 1
   fi
   printf 'Focused checkpoint writer-fence tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == h5-full-red-writer-positive ]]; then
+  case "${YENHUBS_RECOVERY_TEST_CASE:-}" in
+    backup)
+      expect_success 'standalone checkpoint-backup writer monitor completes under its synthetic Lease' \
+        run_checkpoint_writer_monitor_success
+      ;;
+    restore)
+      expect_success 'standalone checkpoint-restore writer monitor completes under its synthetic Lease' \
+        run_checkpoint_writer_monitor_success "" durable-v2 checkpoint-restore
+      ;;
+    stale)
+      expect_success 'standalone writer monitor still rejects an explicitly stale Lease' \
+        run_checkpoint_writer_monitor_failure "" stale-lease
+      ;;
+    "")
+      expect_success 'standalone checkpoint-backup writer monitor completes under its synthetic Lease' \
+        run_checkpoint_writer_monitor_success
+      expect_success 'standalone checkpoint-restore writer monitor completes under its synthetic Lease' \
+        run_checkpoint_writer_monitor_success "" durable-v2 checkpoint-restore
+      ;;
+    *) exit 2 ;;
+  esac
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused positive writer-monitor regression test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused positive writer-monitor regression tests passed: %s.\n' \
+    "$PASS_COUNT"
   exit 0
 fi
 
