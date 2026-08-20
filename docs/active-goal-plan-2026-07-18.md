@@ -26,8 +26,11 @@ una funcion invocada indirectamente por un trap `EXIT`. La anotacion estrecha
 quedo aplicada. La siguiente ejecucion se detuvo a los 52 s, tambien antes de
 las suites, por `SC2016`: la supresion existente estaba separada de la cadena
 SQL por una asignacion. El comentario queda ahora adyacente y el ShellCheck
-exacto pasa; no se relanza el full dentro de esta parada anti-loop. Siguiente
-accion: una unica nueva ejecucion
+exacto pasa. La siguiente ejecucion se detuvo a los 160 s, aun antes de las
+suites, por ocho avisos ShellCheck del arnes recovery: expansiones literales y
+alcance de `PATH`/PID en fixtures con subshells. Las supresiones quedan locales,
+documentadas y el ShellCheck exacto del arnes pasa. No se relanza el full dentro
+de esta parada anti-loop. Siguiente accion: una unica nueva ejecucion
 `./scripts/verify-project.sh --full` sobre el commit corregido. Solo si queda verde se
 limpia el lock por el procedimiento confirmado y se ejecuta un unico restore;
 cualquier nueva parada debe traer el guard cerrado exacto y no autoriza otro

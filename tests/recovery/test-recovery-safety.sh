@@ -11049,6 +11049,7 @@ STUB
   export NODE_EXEC_MARKER="$node_exec_marker"
   export WRITER_GATE_TEST_MODE="$mode"
   export WRITER_GATE_DESCENDANT_PATH="$descendant_path"
+  # shellcheck disable=SC2030 # The PATH override is intentionally scoped to this fixture subshell.
   PATH="$fake_bin:$PATH"
   export PATH
   NAMESPACE=hcce
@@ -14504,6 +14505,7 @@ fi
 exec "$STUB_REAL_NODE" "$@"
 STUB
   chmod 700 "$fence_node_bin/node"
+  # shellcheck disable=SC2031 # Consume the parent PATH value; do not rely on a fixture subshell mutation.
   fence_common_env=(
     ALLOW_CHECKPOINT_DOWNTIME=1 CHECKPOINT_FORMAT=freeze-bundle-v1
     CLIENT_INSTANCE_ID=fixture-client-001
@@ -14543,6 +14545,7 @@ STUB
 
   run_freeze_fence_library_case() {
     local action="$1" mode="${2:-}"
+    # shellcheck disable=SC2016,SC2031 # PATH is explicit; positional parameters expand in the child shell.
     env EXPECTED_KUBE_CONTEXT=fixture-context NAMESPACE=hcce STUB_MODE="$mode" \
       RECOVERY_WAIT_RETRY_DELAY_SECONDS=0 \
       STUB_FREEZE_FENCE_CAPABILITY_MARKER="$STUB_STATE_DIR/freeze-fence-capability-issued" \
@@ -14583,11 +14586,13 @@ STUB
   run_fence_signal_case() {
     local mode="$1" marker="$2" output="$3" log="$4" driver status=0
     FENCE_SIGNAL_STATUS="unset"
+    # shellcheck disable=SC2016 # Positional parameters and $$ expand in the child shell.
     env "${fence_common_env[@]}" STUB_MODE="$mode" \
       bash -c '
         export STUB_CHECKPOINT_DRIVER_PID=$$
         exec "$1" "$2"
       ' _ "$ROOT_DIR/deployment/create-checkpoint.sh" "$output" >"$log" 2>&1 &
+    # shellcheck disable=SC2031 # Capture the background PID created by this function, not a subshell value.
     driver=$!
     for _ in {1..300}; do
       [[ -e "$STUB_STATE_DIR/$marker" ]] && break
@@ -14968,6 +14973,7 @@ STUB
     STUB_DEPLOYMENTS_JSON="$LEGACY_ROLLING_DEPLOYMENTS_JSON" \
     bash -c 'source "$1"; recovery_require_live_process_local_runner_exact "$2"' \
       _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$fence_values"
+  # shellcheck disable=SC2016 # The grep patterns intentionally match literal shell variables.
   if grep -q 'checkpoint_uses_freeze_admission_fence; then' \
        "$ROOT_DIR/deployment/create-checkpoint.sh" &&
      grep -q 'if \[\[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" \]\]; then' \
@@ -15356,6 +15362,7 @@ if recovery_focus_selected cold-rebind-preflight; then
     fail 'cold target preflight missed a guarded typed collection endpoint' \
       "$(cat "$KUBECTL_LOG")"
   fi
+  # shellcheck disable=SC2016 # Positional parameters expand in the child shell.
   expect_failure 'cold rebind rejects a noncanonical bot image pull secret' \
     'exact checkpoint contract' \
     env RESTORE_TARGET_MODE=cold-rebind EXPECTED_KUBE_CONTEXT=fixture-context \
@@ -15373,6 +15380,7 @@ if recovery_focus_selected cold-rebind-preflight; then
       ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$FREEZE_BUNDLE" \
         "$STAMP" "$ROOT_DIR/deployment/validate-checkpoint.sh" \
         "$VALUES_PROCESS_LOCAL_FIXTURE"
+  # shellcheck disable=SC2016 # Positional parameters expand in the child shell.
   expect_failure 'cold rebind requires the exact process-local Reticulum block' \
     'Reticulum config' \
     env RESTORE_TARGET_MODE=cold-rebind EXPECTED_KUBE_CONTEXT=fixture-context \

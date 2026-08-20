@@ -476,6 +476,12 @@ solo ese comentario, el ShellCheck exacto pasa y ninguna suite larga ni recurso
 productivo llego a ejecutarse. El siguiente turno conserva el mismo paso: un
 unico full nuevo sobre el commit corregido.
 
+La siguiente ejecucion alcanzo **160 segundos** y volvio a parar antes de las
+suites: el analizador encontro ocho avisos informativos en fixtures recovery que
+usan deliberadamente subshells, `PATH`, PID y cadenas literales. Cada supresion
+queda pegada al comando concreto y explica por que es intencional. El ShellCheck
+completo de ese arnes ya pasa. No se repitio el full ni se toco produccion.
+
 El orden es ahora inequívoco: corregir esas tres fronteras, fijar primero el
 commit Cloud y despues el commit root, comprobar que ambos arboles quedan
 limpios y ejecutar exactamente una vez `./scripts/verify-project.sh --full`.
