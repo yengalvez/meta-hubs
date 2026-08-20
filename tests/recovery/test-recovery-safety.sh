@@ -2835,10 +2835,14 @@ if [[ "$joined" == "get lease yenhubs-operation-serialization -n hcce --ignore-n
 fi
 if [[ "$joined" == "get lease yenhubs-operation-serialization -n hcce -o json" ]]; then
   [[ -f "$STUB_STATE_DIR/serialization-lease.json" ]] || exit 1
-  if [[ ( -n "${STUB_CHECKPOINT_WRITER_OPERATION_OWNER:-}" &&
-        ! -e "$STUB_STATE_DIR/checkpoint-writer-stale-lease" ) ||
-        "${STUB_MODE:-}" == checkpoint-writer-list-item-gvk-omitted ||
+  if [[ "${STUB_MODE:-}" == checkpoint-writer-list-item-gvk-omitted ||
+        "${STUB_MODE:-}" == checkpoint-writer-deployment-gvk-spoof ||
+        "${STUB_MODE:-}" == checkpoint-writer-replicaset-gvk-spoof ||
+        "${STUB_MODE:-}" == checkpoint-writer-pod-gvk-spoof ||
         "${STUB_MODE:-}" == checkpoint-writer-live-pod-defaults ||
+        "${STUB_MODE:-}" == checkpoint-writer-template-pull-secret ||
+        "${STUB_MODE:-}" == checkpoint-writer-list-key-order ||
+        "${STUB_MODE:-}" == checkpoint-writer-live-pod-explicit-false ||
         "${STUB_MODE:-}" == checkpoint-writer-live-pod-secret-mismatch ||
         "${STUB_MODE:-}" == checkpoint-writer-live-pod-secret-watch-drift ]]; then
     jq -c --arg renew "$(date -u '+%Y-%m-%dT%H:%M:%S.000000Z')" \
@@ -6597,7 +6601,6 @@ reset_stub() {
     "$STUB_STATE_DIR/checkpoint-dormant-fence-aba-before-lock-release-observed" \
     "$STUB_STATE_DIR/checkpoint-dormant-fence-post-resume-read-count" \
     "$STUB_STATE_DIR/checkpoint-writer-post-ready-emitted" \
-    "$STUB_STATE_DIR/checkpoint-writer-stale-lease" \
     "$STUB_STATE_DIR/checkpoint-writer-final-boundary-read" \
     "$STUB_STATE_DIR/checkpoint-writer-final-event-emitted" \
     "$STUB_STATE_DIR/checkpoint-writer-terminal-watch-seen" \
@@ -10517,7 +10520,6 @@ run_checkpoint_writer_monitor_failure() {
       ln -s "$WRITER_TEST_CONTRACT" "$WRITER_TEST_FINAL"
       ;;
     stale-lease)
-      : >"$STUB_STATE_DIR/checkpoint-writer-stale-lease"
       jq '.spec.renewTime = "2020-01-01T00:00:00.000000Z" |
         .spec.acquireTime = "2020-01-01T00:00:00.000000Z"' \
         "$STUB_STATE_DIR/serialization-lease.json" \
@@ -16095,6 +16097,33 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == restore-legacy-child-guards ]]; then
     exit 1
   fi
   printf 'Focused legacy restore child-guard tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == h5-full-red-restore-concurrency ]]; then
+  reset_stub
+  expect_success 'focused exact DB restore holds the writer monitor under its parent heartbeat' \
+    run_guarded_legacy_restore_child db \
+    "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz"
+  reset_stub
+  expect_failure 'focused DB restore still rejects an active UUID mismatch' \
+    'does not exactly match' run_guarded_legacy_restore_child db \
+    "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz" restored-uuid-mismatch
+  reset_stub
+  expect_failure 'focused storage restore rejects an initial extra PVC consumer' \
+    'Unexpected pods consume PVC' run_guarded_legacy_restore_child storage \
+    "$GOOD_CHECKPOINT/ret-storage-$STAMP.tar.gz" extra-consumer
+  reset_stub
+  expect_failure 'focused storage monitor catches a transient extra PVC consumer' \
+    'Unexpected pods consume PVC' run_guarded_legacy_restore_child storage \
+    "$GOOD_CHECKPOINT/ret-storage-$STAMP.tar.gz" monitor-extra
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused restore-concurrency regression test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused restore-concurrency regression tests passed: %s.\n' \
+    "$PASS_COUNT"
   exit 0
 fi
 
