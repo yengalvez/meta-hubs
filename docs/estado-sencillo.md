@@ -101,15 +101,22 @@ verdes y entro en restores coordinados, pero el terminal perdio su identificador
 durante una espera y el proceso fue terminado externamente tras unas 1 h 48
 min, sin codigo de salida ni resumen final recuperable. No se cuenta como verde
 ni como fallo de producto. El selector causal `restore-finalize-positive` paso
-`54/54` despues, descartando esa frontera concreta. Queda una unica repeticion
-permitida del candidato con log persistente para recuperar el cierre completo.
+`54/54` despues, descartando esa frontera concreta.
+
+La unica repeticion permitida del candidato se ejecuto con log persistente. El
+primer fallo nuevo fue el caso 173: el mutador del fixture no vio el marcador de
+inicio del stream dentro de 90 s, aunque el producto se quedo fail-closed con
+writers a cero, lock presente y fence activa. La reproduccion aislada paso
+`50/50` y el grupo secuencial DB/medios paso `72/72`, asi que no hay una causa
+de producto reproducible ni base para otro relanzamiento. F2 queda en STOP.
 
 ## Lo que queda, en orden
 
-1. Ejecutar una sola vez `./scripts/verify-project.sh --full` sobre el candidato
-   congelado con stdout/stderr y codigo de salida conservados en un log privado.
-   Si falla, STOP en la primera causa nueva; no relanzar igual.
-2. Recapturar el estado live y limpiar una sola vez el lock stale exacto.
+1. F2 queda en STOP: no se vuelve a ejecutar el mismo `--full` sobre estos
+   bytes ni se abre otro parche preventivo. F3 no empieza hasta que exista un
+   candidato nuevo con una causa nueva y una decision explicita.
+2. Recapturar el estado live y limpiar una sola vez el lock stale exacto,
+   unicamente despues de reabrir F2 con esa decision.
 3. Ejecutar un unico restore coordinado de DB y medios y medir el RTO.
 4. Aceptar en navegador frio: español, login, dos usuarios/audio, camaras,
    avatar, Admin, Spoke, sitting y medios.
@@ -123,7 +130,7 @@ permitida del candidato con log persistente para recuperar el cierre completo.
 - Un defecto de fixture no abre trabajo de produccion.
 - No habra otro checkpoint, otro borrado DigitalOcean ni un segundo restore.
 - No se añaden mejoras recovery, HA, upgrades o features antes de cerrar H5.
-- El full completo es el unico gate local pendiente; las sumas parciales no se
+- El full completo sigue sin estar verificado; las sumas parciales no se
   presentaran como si fuera verde.
 
 ## Confianza humana

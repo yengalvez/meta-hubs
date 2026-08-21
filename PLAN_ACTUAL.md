@@ -1,8 +1,8 @@
 # PLAN ACTUAL — terminar H5 y volver a features
 
 Version: **v2**  
-Estado: **EJECUTABLE**  
-Ultima revision: **20 de agosto de 2026 (Europe/Madrid)**  
+Estado: **EJECUTABLE — F2 INCONCLUSA, STOP**
+Ultima revision: **21 de agosto de 2026 (Europe/Madrid)**
 Autoridad: este es el unico plan ejecutable. El detalle de la auditoria esta en
 `docs/auditoria-final-h5-2026-08-20.md`; los planes anteriores son historial.
 
@@ -131,6 +131,22 @@ anterior. Debe arrancar desde un worktree limpio y escribir stdout/stderr y el
 codigo de salida en un log privado persistente; si termina por timeout externo
 otra vez, F2 queda inconclusa y no se formula otra hipotesis ni se relanza de
 nuevo.
+
+**Repeticion persistente consumida:** la unica repeticion permitida se ejecuto
+sobre `3b8a6bd` con log privado persistente. El primer fallo nuevo fue el caso
+173 (`db inflight-authority`): el mutador del fixture no observo el marcador de
+inicio de stream dentro de 90 s, aunque el producto dejo el restore en
+`database-stream`, writers a cero, lock presente y fence activa. El proceso se
+detuvo sin tocar produccion. Los fallos posteriores del mismo proceso fueron
+consecuencia de ese estado de prueba contaminado, no causas independientes.
+
+La reproduccion exacta aislada de ese caso paso `50/50`, y el grupo secuencial
+completo de guards DB/medios paso `72/72` (incluidos los tres modos
+`inflight-authority`). Estas pruebas diagnostican y no sustituyen al `--full`.
+Por tanto F2 sigue inconclusa: no hay una causa de producto reproducible que
+justifique otro parche y queda prohibido relanzar el mismo gate sobre estos
+bytes. Para continuar hace falta una decision explicita sobre un candidato
+nuevo con causa nueva; F3 no se inicia mientras F2 siga en STOP.
 
 ### F3. Completar una unica restauracion productiva
 
