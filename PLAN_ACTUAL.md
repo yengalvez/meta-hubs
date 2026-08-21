@@ -29,8 +29,9 @@ F2 esta activa sobre el candidato `10a1aa1`, con una sola ejecucion persistente
 del recovery normal. El proceso padre es `14324`, el log privado esta en
 `/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-recovery-candidate.leF7uS/recovery.log`
 y el marcador de salida sera `exit.status` en ese mismo directorio. En la
-ultima lectura habia 307 comprobaciones `ok`, ninguna `not ok` y un hijo de
-prueba vivo; no se ha relanzado ni duplicado el gate. Hasta que exista un
+ultima lectura habia 623 comprobaciones `ok`, ninguna `not ok` y un hijo de
+prueba vivo; el log seguia avanzando y no se ha relanzado ni duplicado el gate.
+Hasta que exista un
 codigo de salida, F2 no se marca verde ni se inicia F3.
 
 ### Terminado y no se repite

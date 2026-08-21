@@ -113,7 +113,7 @@ repetirlo.
 
 El candidato vigente es **`10a1aa1`**. Tras aislar el perfil sintetico que
 contaminaba los guards de restore, se lanzo una sola ejecucion persistente del
-recovery normal (PID `14324`). En la ultima lectura llevaba `307` comprobaciones
+recovery normal (PID `14324`). En la ultima lectura llevaba `623` comprobaciones
 `ok`, ninguna `not ok`, y seguia vivo un hijo interno. Su log privado y el
 marcador de salida estan en el directorio temporal indicado por
 `PLAN_ACTUAL.md`. F2 sigue abierta hasta obtener un codigo de salida; no se ha
