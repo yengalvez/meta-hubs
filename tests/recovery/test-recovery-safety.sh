@@ -17301,6 +17301,10 @@ else
   fail 'helper cleanup emits exact UID-preconditioned DeleteOptions only' "$(cat "$STUB_STATE_DIR"/delete-options-*.json 2>/dev/null || :)"
 fi
 
+# The default recovery path reaches these guards after earlier writer and
+# runner fixtures.  Clear their synthetic query profile before producing the
+# durable restore fixture, matching the isolated restore selectors.
+initialize_restore_fence_test_environment
 run_restore_child_stream_guard_tests
 run_durable_restore_child_capability_swap_tests
 run_private_directory_helper_tests
