@@ -15,8 +15,10 @@ el recovery normal termino `871/871`, H5 `173/173` y el generador `32/32`. El
 full corregido llego hasta `test:apply` y dejo `119/120`; solo fallo una prueba
 de limpieza de un grupo de procesos detached, por timeout de `180001 ms`. El
 mismo caso habia pasado en el full anterior en `1006 ms` y no hubo cambios en
-ese watcher. Esto es un bloqueo de evidencia de test, no una regresion
-demostrada del metaverso. No se repite hasta tener una causa nueva.
+ese watcher. Una reejecucion aislada del caso paso `1/1` en `1026 ms`; por tanto
+el bloqueo queda acotado al contexto concurrente de `test:apply`, no a una
+regresion demostrada del metaverso. No se repite el full hasta tener evidencia
+nueva de ese contexto.
 
 La unica autoridad de trabajo es [`PLAN_ACTUAL.md`](../PLAN_ACTUAL.md). La
 auditoria tecnica completa esta en
@@ -141,7 +143,8 @@ Su unico full persistente termino con codigo `1` tras recovery `871/871`, H5
 procesos detached despues de que termina su lider. El log privado es
 `/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-full-candidate.5yFlsm/full.log`.
 No hay cambios de produccion, DigitalOcean ni procesos residuales. No se lanza
-otro full sin una revision causal de ese test.
+otro full sin una revision causal de ese test; la siguiente comprobacion, si se
+reabre F2, es solo `npm run test:apply` una vez.
 
 ## Lo que queda, en orden
 

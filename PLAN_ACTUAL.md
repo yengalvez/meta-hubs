@@ -1,7 +1,7 @@
 # PLAN ACTUAL — terminar H5 y volver a features
 
-Version: **v3**
-Estado: **EJECUTABLE — F2 bloqueado por un unico test de process-group no determinista**
+Version: **v4**
+Estado: **EJECUTABLE — F2 bloqueado; el caso aislado pasa y queda diagnosticar el contexto de test:apply**
 Ultima revision: **21 de agosto de 2026 (Europe/Madrid)**
 Autoridad: este es el unico plan ejecutable. El detalle de la auditoria esta en
 `docs/auditoria-final-h5-2026-08-20.md`; los planes anteriores son historial.
@@ -68,6 +68,13 @@ ese watcher. Por tanto se clasifica como evidencia no determinista de
 process-group/Darwin, no como defecto demostrado de producto. F2 queda
 bloqueado: no se relanza ni se cambia codigo hasta una revision causal del
 transporte de esa prueba.
+
+La unica reejecucion causal aislada posterior uso el mismo archivo y el mismo
+comando detached, con timeout de test de `8 s`, y paso `1/1` en `1026 ms`. Esto
+confirma que el transporte puede cerrar el grupo en este Mac bajo carga baja,
+pero no prueba el contexto concurrente de `npm run test:apply`. La proxima
+evidencia, si se reabre F2, es una sola suite `test:apply` normal; no se repite
+recovery, H5 ni el full hasta clasificar ese resultado.
 
 ### Terminado y no se repite
 
@@ -158,9 +165,10 @@ transporte de esa prueba.
   residuales.
 
 - [ ] Resolver o aceptar explícitamente el caso de process-group con evidencia
-  causal. Solo después de una modificación demostrada de fuente o fixture se
-  permite un nuevo full; no se repite el mismo intento ni se parchea el
-  producto por hipótesis.
+  causal. La reproducción aislada `1/1` pasa; queda una sola comprobación
+  `npm run test:apply` bajo su concurrencia normal. Solo después de una causa
+  demostrada se permite cambiar fuente/fixture y, como máximo, un nuevo full;
+  no se repite el mismo intento ni se parchea el producto por hipótesis.
 
 **Cierre:** comando completo verde.  
 **STOP:** cualquier fallo. No hay restore ni relanzamiento automatico; primero
@@ -169,8 +177,9 @@ se identifica una causa concreta. Nunca se repiten los mismos bytes.
 **Bloqueo actual de F2:** la unica firma pendiente no pertenece a DB, restore,
 H5, DigitalOcean ni Puppeteer productivo. Es la limpieza de un grupo de
 procesos detached cuyo lider ya termino; el caso paso anteriormente y ahora
-agoto el timeout. La siguiente accion valida es una revision de esa prueba y
-su transporte, no otro full ni otra suite verde.
+agoto el timeout, pero la reproduccion aislada pasa. La siguiente accion valida
+es observar una sola ejecucion normal de `test:apply`, no otro full ni otra
+suite verde repetida.
 
 **Intento invalidado y cerrado:** el candidato anterior `cdf15ba` alcanzo 113
 checks recovery verdes y fallo cuando un refresco sintetico de Lease del stub
