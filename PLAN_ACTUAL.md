@@ -1,7 +1,7 @@
 # PLAN ACTUAL — terminar H5 y volver a features
 
 Version: **v2**  
-Estado: **EJECUTABLE — F2 ACTIVA (unico candidato en curso)**
+Estado: **EJECUTABLE — F2 recovery verde; full pendiente**
 Ultima revision: **21 de agosto de 2026 (Europe/Madrid)**
 Autoridad: este es el unico plan ejecutable. El detalle de la auditoria esta en
 `docs/auditoria-final-h5-2026-08-20.md`; los planes anteriores son historial.
@@ -25,14 +25,15 @@ Avance razonado: **aproximadamente 85 %**. No es una medicion automatica: cinco
 resultados comerciales estan terminados y quedan el restore, la aceptacion y la
 integracion final.
 
-F2 esta activa sobre el candidato `10a1aa1`, con una sola ejecucion persistente
-del recovery normal. El proceso padre es `14324`, el log privado esta en
-`/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-recovery-candidate.leF7uS/recovery.log`
-y el marcador de salida sera `exit.status` en ese mismo directorio. En la
-ultima lectura habia 623 comprobaciones `ok`, ninguna `not ok` y un hijo de
-prueba vivo; el log seguia avanzando y no se ha relanzado ni duplicado el gate.
-Hasta que exista un
-codigo de salida, F2 no se marca verde ni se inicia F3.
+F2 recovery normal termino sobre el candidato de codigo `10a1aa1` con una sola
+ejecucion persistente. El proceso padre `14324` ya no existe; el log privado es
+`/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-recovery-candidate.leF7uS/recovery.log`.
+Su ultima linea es `All 871 recovery safety tests passed using local fixtures
+only.`; `rg '^not ok ' <log>` no encuentra fallos y no hubo relanzamiento ni
+duplicacion. El lanzador no llego a escribir `exit.status`, por lo que no se
+afirma un codigo numerico: el cierre del gate se basa en la linea terminal de
+exito, la ausencia de `not ok` y el proceso terminado. Esto cierra el recovery
+normal, pero no sustituye al `./scripts/verify-project.sh --full` pendiente.
 
 ### Terminado y no se repite
 
@@ -56,6 +57,8 @@ codigo de salida, F2 no se marca verde ni se inicia F3.
   producto: stale/helper `75/75` y writer-monitor `55/55` en los bytes finales.
 - [x] Eliminada la duplicacion por la que `h5-final` repetia toda la bateria
   recovery normal.
+- [x] Recovery normal final: `871/871`, sin `not ok`, proceso terminado y log
+  persistente conservado; el codigo numerico del lanzador no quedo disponible.
 
 ### No demostrado todavia
 
@@ -79,13 +82,16 @@ codigo de salida, F2 no se marca verde ni se inicia F3.
   superficie modificada. No habia JavaScript modificado que requiriese otro
   Node check.
 - [x] Versionar `PLAN_ACTUAL.md`, la auditoria, los fixes de fixture y la salida
-  terminal de `h5-final`. Candidato de codigo root `3b8a6bd`, Hubs
+  terminal de `h5-final`. Candidato de codigo root `10a1aa1`, Hubs
   `ce8390a` y Hubs Cloud `7e56f90`.
 
 **Cierre:** candidato reproducible y sin procesos locales residuales.
 
 ### F2. Ejecutar un unico gate final valido
 
+- [x] Ejecutar y conservar el recovery normal del candidato: `871/871` pass,
+  sin `not ok`, sin proceso residual y sin duplicacion. El log no contiene
+  codigo numerico de salida, limitacion registrada arriba.
 - [ ] Ejecutar exactamente una vez, sobre los SHA congelados:
 
   ```bash
@@ -141,12 +147,14 @@ codigo de salida en un log privado persistente; si termina por timeout externo
 otra vez, F2 queda inconclusa y no se formula otra hipotesis ni se relanza de
 nuevo.
 
-**Ejecucion vigente:** la unica reanudacion permitida se lanzo sobre `10a1aa1`
-despues de corregir el aislamiento del perfil sintetico de los guards de
-restore. Los dos puntos que habian fallado en el candidato anterior (DB y
-medios `inflight-authority`) ya aparecen como `ok` en esta ejecucion. Se espera
-su resultado terminal; mientras siga viva no se abre otra hipotesis, no se
-repite ningun selector verde y no se toca produccion.
+**Ejecucion terminal aceptada:** la unica reanudacion permitida se lanzo sobre
+`10a1aa1` despues de corregir el aislamiento del perfil sintetico de los guards
+de restore. Los dos puntos que habian fallado en el candidato anterior (DB y
+medios `inflight-authority`) aparecen como `ok`; el log termina en `871/871`,
+sin `not ok`, y el proceso padre desaparecio. El lanzador no creo
+`exit.status`, asi que se conserva esa limitacion en vez de inventar un codigo.
+No se abre otra hipotesis ni se repite ningun selector verde. El siguiente y
+unico paso F2 es `./scripts/verify-project.sh --full` sobre el checkout limpio.
 
 **Repeticion persistente consumida:** la unica repeticion permitida se ejecuto
 sobre `3b8a6bd` con log privado persistente. El primer fallo nuevo fue el caso
@@ -158,11 +166,11 @@ consecuencia de ese estado de prueba contaminado, no causas independientes.
 
 La reproduccion exacta aislada de ese caso paso `50/50`, y el grupo secuencial
 completo de guards DB/medios paso `72/72` (incluidos los tres modos
-`inflight-authority`). Estas pruebas diagnostican y no sustituyen al `--full`.
-Por tanto F2 sigue inconclusa: no hay una causa de producto reproducible que
-justifique otro parche y queda prohibido relanzar el mismo gate sobre estos
-bytes. Para continuar hace falta una decision explicita sobre un candidato
-nuevo con causa nueva; F3 no se inicia mientras F2 siga en STOP.
+`inflight-authority`). Estas pruebas pertenecen al historial del candidato
+anterior y no sustituyen al `--full`. El recovery normal del candidato vigente
+queda cerrado con la evidencia terminal descrita arriba; F2 completa solo
+cuando el comando `--full` termine verde. No se permite otra repeticion de
+recovery sobre estos bytes.
 
 ### F3. Completar una unica restauracion productiva
 

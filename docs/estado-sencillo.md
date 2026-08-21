@@ -11,8 +11,8 @@ facturables, se recreo la topologia en DigitalOcean y el destino nuevo esta
 preparado para recibir el restore.
 
 Avance razonado: **aproximadamente 85 %**. Lo que falta no es otra arquitectura:
-es conseguir un unico gate completo verde, restaurar una vez, comprobar el
-producto en navegador real e integrar los commits.
+el recovery normal ya termino `871/871`; queda el gate completo, restaurar una
+vez, comprobar el producto en navegador real e integrar los commits.
 
 La unica autoridad de trabajo es [`PLAN_ACTUAL.md`](../PLAN_ACTUAL.md). La
 auditoria tecnica completa esta en
@@ -45,6 +45,8 @@ No es alta disponibilidad. Mientras esta hibernado, el metaverso esta apagado.
   `14/14` y sin lock residual.
 - Hubs/Hubs Cloud y cobertura H5 ya implementados; no se abre otra linea de
   monitores, receipts, HMAC o takeover.
+- Recovery normal final `871/871`, sin `not ok`, con log persistente y sin
+  proceso residual. No se repite.
 
 ## Estado productivo actual
 
@@ -82,7 +84,7 @@ group que estaba terminando y el helper de cleanup lo trato como excepcion. Los
 procesos desaparecieron y producto no cambio. La correccion mantiene el control
 estricto: `EPERM` significa «aun existe» y solo `ESRCH` confirma ausencia.
 
-El candidato actual es **`3b8a6bd`**. Evidencia dirigida sobre sus bytes:
+El candidato anterior fue **`3b8a6bd`**. Evidencia dirigida sobre sus bytes:
 
 - positivo backup `46/46`;
 - positivo restore `46/46`;
@@ -112,19 +114,17 @@ Ese resultado cerro el candidato anterior; no se reutiliza como excusa para
 repetirlo.
 
 El candidato vigente es **`10a1aa1`**. Tras aislar el perfil sintetico que
-contaminaba los guards de restore, se lanzo una sola ejecucion persistente del
-recovery normal (PID `14324`). En la ultima lectura llevaba `623` comprobaciones
-`ok`, ninguna `not ok`, y seguia vivo un hijo interno. Su log privado y el
-marcador de salida estan en el directorio temporal indicado por
-`PLAN_ACTUAL.md`. F2 sigue abierta hasta obtener un codigo de salida; no se ha
-relanzado ni duplicado el proceso.
+contaminaba los guards de restore, la unica ejecucion persistente del recovery
+normal termino con `All 871 recovery safety tests passed using local fixtures
+only.`; no hay ningun `not ok` y el PID `14324` ya no existe. El log privado es
+el indicado en `PLAN_ACTUAL.md`. El lanzador no escribio `exit.status`, por lo
+que no se afirma un codigo numerico; la evidencia terminal sí cierra este gate.
 
 ## Lo que queda, en orden
 
-1. Terminar de leer el unico gate F2 activo sobre `10a1aa1`. Si queda verde, se
-   conserva su evidencia y se ejecuta una sola vez el `--full` final; si falla,
-   se registra la primera causa y se detiene sin relanzar. F3 no empieza antes
-   del cierre verde de F2.
+1. Ejecutar una sola vez el `./scripts/verify-project.sh --full` sobre el
+   candidato limpio. Si falla, se registra la primera causa y se detiene sin
+   relanzar; si queda verde, F2 se cierra y F3 puede empezar.
 2. Recapturar el estado live y limpiar una sola vez el lock stale exacto,
    unicamente despues de reabrir F2 con esa decision.
 3. Ejecutar un unico restore coordinado de DB y medios y medir el RTO.
