@@ -11,10 +11,12 @@ facturables, se recreo la topologia en DigitalOcean y el destino nuevo esta
 preparado para recibir el restore.
 
 Avance razonado: **aproximadamente 85 %**. Lo que falta no es otra arquitectura:
-el recovery normal ya termino `871/871` y H5 paso `173/173` dentro del full. El
-full se detuvo despues por una dependencia de desarrollo mal clasificada en el
-diagnostico Chromium; queda corregir y verificar esa frontera, terminar el
-gate, restaurar una vez, comprobar el producto en navegador real e integrar.
+el recovery normal termino `871/871`, H5 `173/173` y el generador `32/32`. El
+full corregido llego hasta `test:apply` y dejo `119/120`; solo fallo una prueba
+de limpieza de un grupo de procesos detached, por timeout de `180001 ms`. El
+mismo caso habia pasado en el full anterior en `1006 ms` y no hubo cambios en
+ese watcher. Esto es un bloqueo de evidencia de test, no una regresion
+demostrada del metaverso. No se repite hasta tener una causa nueva.
 
 La unica autoridad de trabajo es [`PLAN_ACTUAL.md`](../PLAN_ACTUAL.md). La
 auditoria tecnica completa esta en
@@ -127,18 +129,25 @@ se habian ejecutado: H5 `173/173`, generador Hubs CE `32/32` y `test:apply` con
 `120` tests quedaron verdes. Termino con codigo `1` exclusivamente al auditar
 `bot-orchestrator`: Puppeteer arrastraba `extract-zip 2.0.1`, publicado ahora
 como advisory alto. Puppeteer no entra en las imagenes productivas; solo sirve
-al diagnostico Chromium manual. Se ha preparado su reclasificacion como
-dependencia de desarrollo, sin cambiar Node, Chromium ni el producto. Cloud
-`d74cded` ya la contiene y la validacion dirigida queda verde: audit de
-produccion en cero, `bot-orchestrator` `155/155`, Puppeteer cargable para el
-diagnostico manual y sin Puppeteer en el arbol `--omit=dev`. Falta unicamente
-el siguiente full sobre el candidato corregido.
+al diagnostico Chromium manual. Cloud `d74cded` ya la contiene y la validacion
+dirigida queda verde: audit de produccion en cero, `bot-orchestrator` `155/155`,
+Puppeteer cargable para el diagnostico manual y sin Puppeteer en el arbol
+`--omit=dev`.
+
+El candidato vigente del full es root **`972efe3`** con Cloud **`d74cded`**.
+Su unico full persistente termino con codigo `1` tras recovery `871/871`, H5
+`173/173`, generador `32/32` y `test:apply` `119/120`. El unico `not ok` fue
+`apply/watch-evidence-process.test.js:269`, caso 92, sobre recoger un grupo de
+procesos detached despues de que termina su lider. El log privado es
+`/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-full-candidate.5yFlsm/full.log`.
+No hay cambios de produccion, DigitalOcean ni procesos residuales. No se lanza
+otro full sin una revision causal de ese test.
 
 ## Lo que queda, en orden
 
-1. Congelar el puntero Cloud `d74cded` en root y ejecutar una sola vez
-   `./scripts/verify-project.sh
-   --full`; no repetir los focos H5 ya verdes por separado.
+1. Resolver o aceptar explícitamente el único test de process-group; solo una
+   causa demostrada permite un nuevo full. No repetir recovery, H5 ni
+   `test:apply` por separado.
 2. Recapturar el estado live y limpiar una sola vez el lock stale exacto,
    unicamente despues de reabrir F2 con esa decision.
 3. Ejecutar un unico restore coordinado de DB y medios y medir el RTO.
@@ -152,6 +161,8 @@ el siguiente full sobre el candidato corregido.
 - Un PASS sobre los mismos bytes no se repite.
 - Un FAIL necesita una causa demostrada y un SHA nuevo.
 - Un defecto de fixture no abre trabajo de produccion.
+- Un full con un solo fallo no significa volver al principio: conserva todos
+  los bloques verdes y solo reabre la firma causal pendiente.
 - No habra otro checkpoint, otro borrado DigitalOcean ni un segundo restore.
 - No se añaden mejoras recovery, HA, upgrades o features antes de cerrar H5.
 - El full completo sigue sin estar verificado; las sumas parciales no se
@@ -159,8 +170,10 @@ el siguiente full sobre el candidato corregido.
 
 ## Confianza humana
 
-La confianza es alta en el bundle, la recreacion y el estado fail-closed. La
-incertidumbre material que queda es una sola: que el restore productivo encuentre
-una diferencia que los ensayos locales no reprodujeron. La defensa correcta es
-el full, el preflight live ya verde y un unico restore fail-closed; no mas
-ingenieria preventiva.
+La confianza es alta en el bundle, la recreacion, el estado fail-closed y los
+bloques recovery/H5 que ya tienen evidencia. Quedan dos incertidumbres acotadas:
+el caso de process-group que agoto el timeout una vez y la diferencia que el
+restore productivo pueda encontrar y que los ensayos locales no reprodujeron.
+La defensa correcta es resolver primero esa firma sin tocar produccion, luego
+un unico full verde, el preflight live ya verde y un unico restore fail-closed;
+no mas ingenieria preventiva.

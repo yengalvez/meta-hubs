@@ -1,7 +1,7 @@
 # PLAN ACTUAL — terminar H5 y volver a features
 
-Version: **v2**  
-Estado: **EJECUTABLE — F2 correccion validada; full pendiente**
+Version: **v3**
+Estado: **EJECUTABLE — F2 bloqueado por un unico test de process-group no determinista**
 Ultima revision: **21 de agosto de 2026 (Europe/Madrid)**
 Autoridad: este es el unico plan ejecutable. El detalle de la auditoria esta en
 `docs/auditoria-final-h5-2026-08-20.md`; los planes anteriores son historial.
@@ -46,11 +46,28 @@ fallo fue el audit de produccion de `bot-orchestrator`: `puppeteer-core
 No hubo relanzamiento ni efecto externo.
 
 La correccion quedo en Cloud `d74cded` (`chore(bot): classify chromium
-diagnostic dependency`). `npm ci --ignore-scripts --no-audit`,
+diagnostic dependency`) y el puntero root candidato es `972efe3`, con Hubs
+`ce8390a`. `npm ci --ignore-scripts --no-audit`,
 `npm audit --omit=dev --audit-level=high`, `npm test` (`155/155`), carga local
 de `puppeteer-core`, `node --check` y `git diff --check` pasan. El arbol
-`--omit=dev` no contiene Puppeteer. Este commit local es el nuevo candidato;
-todavia no se ha ejecutado otro full.
+`--omit=dev` no contiene Puppeteer.
+
+El unico full persistente sobre ese candidato termino con codigo `1` en
+`/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-full-candidate.5yFlsm/full.log`.
+Antes del fallo pasaron recovery normal `871/871`, agregado H5 `173/173`,
+generador Hubs CE `32/32` y `test:apply` `119/120`. El primer y unico fallo fue
+`apply/watch-evidence-process.test.js:269`, caso 92: `an exited leader cannot
+leave a descendant holding watch pipes indefinitely`. El proceso de prueba
+agoto exactamente el timeout de `180001 ms` y la asercion observo
+`cleanupTimedOut=true`; no hubo otros `not ok`, cambios de produccion, red,
+DigitalOcean ni procesos residuales.
+
+La misma prueba paso en el full anterior sobre el mismo codigo del watcher en
+`1006 ms`; el commit Cloud solo cambia la clasificacion de Puppeteer y no toca
+ese watcher. Por tanto se clasifica como evidencia no determinista de
+process-group/Darwin, no como defecto demostrado de producto. F2 queda
+bloqueado: no se relanza ni se cambia codigo hasta una revision causal del
+transporte de esa prueba.
 
 ### Terminado y no se repite
 
@@ -86,8 +103,9 @@ todavia no se ha ejecutado otro full.
 ### No demostrado todavia
 
 - [ ] Un `./scripts/verify-project.sh --full` completo y verde sobre el
-  candidato corregido. El intento de `8c01608` llego a las suites full-only y
-  se detuvo unicamente en el audit del primer servicio Node Hubs CE.
+  candidato corregido. El unico intento sobre `972efe3` llego a recovery
+  `871/871`, H5 `173/173`, generador `32/32` y `test:apply` `119/120`; quedo
+  bloqueado unicamente por el caso 92 de process-group descrito arriba.
 - [ ] Restore real de DB y `ret-pvc` en la infraestructura nueva.
 - [ ] Baseline comercial completo en navegador frio.
 - [ ] RTO real medido y evidencia historica del intervalo sin recursos
@@ -105,8 +123,8 @@ todavia no se ha ejecutado otro full.
   superficie modificada. No habia JavaScript modificado que requiriese otro
   Node check.
 - [x] Versionar `PLAN_ACTUAL.md`, la auditoria, los fixes de fixture y la salida
-  terminal de `h5-final`. Candidato de codigo root `10a1aa1`, Hubs
-  `ce8390a` y Hubs Cloud `7e56f90`.
+  terminal de `h5-final`. Candidato de codigo root `972efe3`, Hubs
+  `ce8390a` y Hubs Cloud `d74cded`.
 
 **Cierre:** candidato reproducible y sin procesos locales residuales.
 
@@ -126,18 +144,33 @@ todavia no se ha ejecutado otro full.
   `--omit=dev` en cero, `bot-orchestrator` `155/155`, contratos de sus dos
   Dockerfiles, Node check, diff-check y carga del diagnostico Chromium local.
   No se repitieron recovery/H5 como focos separados.
-- [ ] Congelar el nuevo SHA y ejecutar exactamente una vez:
+- [x] Congelar el nuevo SHA y ejecutar exactamente una vez el full persistente:
 
   ```bash
   ./scripts/verify-project.sh --full
   ```
 
-- [ ] Preservar el resumen terminal y comprobar que la bateria recovery normal
-  se ejecuta una vez y el agregado H5 solo ejecuta sus focos adicionales.
+- Resultado: codigo `1`; no se cuenta como verde. El log privado y la primera
+  firma estan registrados en el estado real de este plan.
+
+- [x] Preservar el resumen terminal: recovery normal `871/871`, H5 `173/173`,
+  generador `32/32`, `test:apply` `119/120`, un solo `not ok` y sin procesos
+  residuales.
+
+- [ ] Resolver o aceptar explícitamente el caso de process-group con evidencia
+  causal. Solo después de una modificación demostrada de fuente o fixture se
+  permite un nuevo full; no se repite el mismo intento ni se parchea el
+  producto por hipótesis.
 
 **Cierre:** comando completo verde.  
 **STOP:** cualquier fallo. No hay restore ni relanzamiento automatico; primero
 se identifica una causa concreta. Nunca se repiten los mismos bytes.
+
+**Bloqueo actual de F2:** la unica firma pendiente no pertenece a DB, restore,
+H5, DigitalOcean ni Puppeteer productivo. Es la limpieza de un grupo de
+procesos detached cuyo lider ya termino; el caso paso anteriormente y ahora
+agoto el timeout. La siguiente accion valida es una revision de esa prueba y
+su transporte, no otro full ni otra suite verde.
 
 **Intento invalidado y cerrado:** el candidato anterior `cdf15ba` alcanzo 113
 checks recovery verdes y fallo cuando un refresco sintetico de Lease del stub
