@@ -11,8 +11,10 @@ facturables, se recreo la topologia en DigitalOcean y el destino nuevo esta
 preparado para recibir el restore.
 
 Avance razonado: **aproximadamente 85 %**. Lo que falta no es otra arquitectura:
-el recovery normal ya termino `871/871`; queda el gate completo, restaurar una
-vez, comprobar el producto en navegador real e integrar los commits.
+el recovery normal ya termino `871/871` y H5 paso `173/173` dentro del full. El
+full se detuvo despues por una dependencia de desarrollo mal clasificada en el
+diagnostico Chromium; queda corregir y verificar esa frontera, terminar el
+gate, restaurar una vez, comprobar el producto en navegador real e integrar.
 
 La unica autoridad de trabajo es [`PLAN_ACTUAL.md`](../PLAN_ACTUAL.md). La
 auditoria tecnica completa esta en
@@ -120,11 +122,23 @@ only.`; no hay ningun `not ok` y el PID `14324` ya no existe. El log privado es
 el indicado en `PLAN_ACTUAL.md`. El lanzador no escribio `exit.status`, por lo
 que no se afirma un codigo numerico; la evidencia terminal sí cierra este gate.
 
+El siguiente `--full`, sobre root `8c01608`, ya alcanzo las suites que antes no
+se habian ejecutado: H5 `173/173`, generador Hubs CE `32/32` y `test:apply` con
+`120` tests quedaron verdes. Termino con codigo `1` exclusivamente al auditar
+`bot-orchestrator`: Puppeteer arrastraba `extract-zip 2.0.1`, publicado ahora
+como advisory alto. Puppeteer no entra en las imagenes productivas; solo sirve
+al diagnostico Chromium manual. Se ha preparado su reclasificacion como
+dependencia de desarrollo, sin cambiar Node, Chromium ni el producto. Cloud
+`d74cded` ya la contiene y la validacion dirigida queda verde: audit de
+produccion en cero, `bot-orchestrator` `155/155`, Puppeteer cargable para el
+diagnostico manual y sin Puppeteer en el arbol `--omit=dev`. Falta unicamente
+el siguiente full sobre el candidato corregido.
+
 ## Lo que queda, en orden
 
-1. Ejecutar una sola vez el `./scripts/verify-project.sh --full` sobre el
-   candidato limpio. Si falla, se registra la primera causa y se detiene sin
-   relanzar; si queda verde, F2 se cierra y F3 puede empezar.
+1. Congelar el puntero Cloud `d74cded` en root y ejecutar una sola vez
+   `./scripts/verify-project.sh
+   --full`; no repetir los focos H5 ya verdes por separado.
 2. Recapturar el estado live y limpiar una sola vez el lock stale exacto,
    unicamente despues de reabrir F2 con esa decision.
 3. Ejecutar un unico restore coordinado de DB y medios y medir el RTO.

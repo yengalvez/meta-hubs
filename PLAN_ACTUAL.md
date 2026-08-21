@@ -1,7 +1,7 @@
 # PLAN ACTUAL — terminar H5 y volver a features
 
 Version: **v2**  
-Estado: **EJECUTABLE — F2 recovery verde; full pendiente**
+Estado: **EJECUTABLE — F2 correccion validada; full pendiente**
 Ultima revision: **21 de agosto de 2026 (Europe/Madrid)**
 Autoridad: este es el unico plan ejecutable. El detalle de la auditoria esta en
 `docs/auditoria-final-h5-2026-08-20.md`; los planes anteriores son historial.
@@ -33,7 +33,24 @@ only.`; `rg '^not ok ' <log>` no encuentra fallos y no hubo relanzamiento ni
 duplicacion. El lanzador no llego a escribir `exit.status`, por lo que no se
 afirma un codigo numerico: el cierre del gate se basa en la linea terminal de
 exito, la ausencia de `not ok` y el proceso terminado. Esto cierra el recovery
-normal, pero no sustituye al `./scripts/verify-project.sh --full` pendiente.
+normal.
+
+El primer `./scripts/verify-project.sh --full` completo y persistente sobre root
+`8c01608`, Hubs `ce8390a` y Hubs Cloud `7e56f90` termino con codigo `1`. No
+fallo recovery ni H5: el agregado H5 paso `173/173`; tambien pasaron el
+generador Hubs CE `32/32` y `test:apply` con `120` tests. El primer y unico
+fallo fue el audit de produccion de `bot-orchestrator`: `puppeteer-core
+24.37.2 -> @puppeteer/browsers 2.12.0 -> extract-zip 2.0.1`, advisory alto
+`GHSA-jmr9-qjv8-65gv`. El log y el codigo terminal estan en
+`/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-full-candidate.Jg3axX/`.
+No hubo relanzamiento ni efecto externo.
+
+La correccion quedo en Cloud `d74cded` (`chore(bot): classify chromium
+diagnostic dependency`). `npm ci --ignore-scripts --no-audit`,
+`npm audit --omit=dev --audit-level=high`, `npm test` (`155/155`), carga local
+de `puppeteer-core`, `node --check` y `git diff --check` pasan. El arbol
+`--omit=dev` no contiene Puppeteer. Este commit local es el nuevo candidato;
+todavia no se ha ejecutado otro full.
 
 ### Terminado y no se repite
 
@@ -59,12 +76,18 @@ normal, pero no sustituye al `./scripts/verify-project.sh --full` pendiente.
   recovery normal.
 - [x] Recovery normal final: `871/871`, sin `not ok`, proceso terminado y log
   persistente conservado; el codigo numerico del lanzador no quedo disponible.
+- [x] El full alcanzo y cerro el agregado H5 `173/173`, generador Hubs CE
+  `32/32` y `test:apply` (`120` tests); esos bloques no se repiten de forma
+  aislada.
+- [x] La unica causa del full se corrigio en Cloud `d74cded`: Puppeteer sigue
+  disponible para `run-bot.js`, pero queda fuera de las dependencias productivas
+  y el contrato Docker lo comprueba.
 
 ### No demostrado todavia
 
 - [ ] Un `./scripts/verify-project.sh --full` completo y verde sobre el
-  candidato congelado. El intento anterior termino dentro del primer recovery
-  y nunca alcanzo las suites full-only.
+  candidato corregido. El intento de `8c01608` llego a las suites full-only y
+  se detuvo unicamente en el audit del primer servicio Node Hubs CE.
 - [ ] Restore real de DB y `ret-pvc` en la infraestructura nueva.
 - [ ] Baseline comercial completo en navegador frio.
 - [ ] RTO real medido y evidencia historica del intervalo sin recursos
@@ -92,7 +115,18 @@ normal, pero no sustituye al `./scripts/verify-project.sh --full` pendiente.
 - [x] Ejecutar y conservar el recovery normal del candidato: `871/871` pass,
   sin `not ok`, sin proceso residual y sin duplicacion. El log no contiene
   codigo numerico de salida, limitacion registrada arriba.
-- [ ] Ejecutar exactamente una vez, sobre los SHA congelados:
+- [x] Ejecutar una vez el full de `8c01608`: codigo `1`, H5 `173/173`, primer
+  fallo exacto en el audit de produccion de `bot-orchestrator` por
+  `extract-zip 2.0.1`; log persistente y cero relanzamientos.
+- [x] Mover `puppeteer-core` a dependencia de desarrollo del paquete agregado,
+  conservar sin cambios los dos manifiestos de imagen productiva que ya lo
+  excluyen, regenerar el lockfile y fijar la frontera con una prueba. Cloud
+  `d74cded` contiene el cambio.
+- [x] Validar solo la superficie modificada: instalacion reproducible, audit
+  `--omit=dev` en cero, `bot-orchestrator` `155/155`, contratos de sus dos
+  Dockerfiles, Node check, diff-check y carga del diagnostico Chromium local.
+  No se repitieron recovery/H5 como focos separados.
+- [ ] Congelar el nuevo SHA y ejecutar exactamente una vez:
 
   ```bash
   ./scripts/verify-project.sh --full
@@ -153,8 +187,9 @@ de restore. Los dos puntos que habian fallado en el candidato anterior (DB y
 medios `inflight-authority`) aparecen como `ok`; el log termina en `871/871`,
 sin `not ok`, y el proceso padre desaparecio. El lanzador no creo
 `exit.status`, asi que se conserva esa limitacion en vez de inventar un codigo.
-No se abre otra hipotesis ni se repite ningun selector verde. El siguiente y
-unico paso F2 es `./scripts/verify-project.sh --full` sobre el checkout limpio.
+No se abre otra hipotesis ni se repite ningun selector verde. El siguiente paso
+en ese punto fue el `./scripts/verify-project.sh --full` persistente cuyo
+resultado y causa terminal se registran mas abajo.
 
 **Repeticion persistente consumida:** la unica repeticion permitida se ejecuto
 sobre `3b8a6bd` con log privado persistente. El primer fallo nuevo fue el caso
@@ -171,6 +206,20 @@ anterior y no sustituyen al `--full`. El recovery normal del candidato vigente
 queda cerrado con la evidencia terminal descrita arriba; F2 completa solo
 cuando el comando `--full` termine verde. No se permite otra repeticion de
 recovery sobre estos bytes.
+
+**Full de `8c01608` cerrado:** el comando persistente termino con codigo `1`
+despues de completar los bloques recovery, Hubs/Admin, navegador/capacidad y
+H5. El audit del paquete agregado Hubs CE y sus pruebas tambien pasaron; el
+primer fallo fue el `npm audit --omit=dev --audit-level=high` del primer
+servicio, `bot-orchestrator`, por el nuevo advisory de `extract-zip`. La ruta
+vulnerable llega solo a traves de `puppeteer-core`, usado por `run-bot.js` como
+diagnostico Chromium manual. `Dockerfile` y `Dockerfile.runner` no copian ese
+script y eliminan Puppeteer; sus manifiestos productivos contienen solo
+`express` y el ghost runner respectivamente. La correccion elegida no actualiza
+Node, Chromium ni Puppeteer: reclasifica esa herramienta como dependencia de
+desarrollo y añade una regresion de frontera. El lockfile y la validacion
+dirigida ya quedaron verdes en Cloud `d74cded`; falta congelar el puntero root
+y ejecutar el siguiente full.
 
 ### F3. Completar una unica restauracion productiva
 
