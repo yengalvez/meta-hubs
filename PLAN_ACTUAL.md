@@ -1,7 +1,7 @@
 # PLAN ACTUAL — terminar H5 y volver a features
 
-Version: **v4**
-Estado: **EJECUTABLE — F2 bloqueado; el caso aislado pasa y queda diagnosticar el contexto de test:apply**
+Version: **v5**
+Estado: **EJECUTABLE — F2 pendiente de un unico full final; no se justifica cambio de producto**
 Ultima revision: **21 de agosto de 2026 (Europe/Madrid)**
 Autoridad: este es el unico plan ejecutable. El detalle de la auditoria esta en
 `docs/auditoria-final-h5-2026-08-20.md`; los planes anteriores son historial.
@@ -75,6 +75,15 @@ confirma que el transporte puede cerrar el grupo en este Mac bajo carga baja,
 pero no prueba el contexto concurrente de `npm run test:apply`. La proxima
 evidencia, si se reabre F2, es una sola suite `test:apply` normal; no se repite
 recovery, H5 ni el full hasta clasificar ese resultado.
+
+La unica suite normal `npm run test:apply` posterior paso `120/120` en
+`5657 ms`; el log privado es
+`/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-apply-diagnostic.IPKSFQ/apply.log`.
+El wrapper de captura devolvio `1` despues de terminar porque zsh rechazo la
+variable reservada `status`; el resumen real de Node es `# pass 120`, `# fail 0`.
+No se modifico codigo. La evidencia conjunta —reproduccion aislada y suite
+normal verdes— clasifica el fallo observado solo dentro del contexto completo
+del arnes; no autoriza parchear el watcher.
 
 ### Terminado y no se repite
 
@@ -164,22 +173,24 @@ recovery, H5 ni el full hasta clasificar ese resultado.
   generador `32/32`, `test:apply` `119/120`, un solo `not ok` y sin procesos
   residuales.
 
-- [ ] Resolver o aceptar explícitamente el caso de process-group con evidencia
-  causal. La reproducción aislada `1/1` pasa; queda una sola comprobación
-  `npm run test:apply` bajo su concurrencia normal. Solo después de una causa
-  demostrada se permite cambiar fuente/fixture y, como máximo, un nuevo full;
-  no se repite el mismo intento ni se parchea el producto por hipótesis.
+- [x] Resolver causalmente el caso de process-group sin tocar producto: la
+  reproduccion aislada pasa `1/1` y la suite normal `test:apply` pasa `120/120`.
+  El wrapper zsh defectuoso queda registrado y no se usa como evidencia de
+  fallo Node.
+
+- [ ] Ejecutar un unico full final sobre el mismo candidato, con captura de
+  codigo corregida y sin repetir ningun bloque aparte. Si termina verde, F2
+  cierra; si falla, se conserva el primer fallo y no se relanza en este plan.
 
 **Cierre:** comando completo verde.  
 **STOP:** cualquier fallo. No hay restore ni relanzamiento automatico; primero
 se identifica una causa concreta. Nunca se repiten los mismos bytes.
 
-**Bloqueo actual de F2:** la unica firma pendiente no pertenece a DB, restore,
-H5, DigitalOcean ni Puppeteer productivo. Es la limpieza de un grupo de
-procesos detached cuyo lider ya termino; el caso paso anteriormente y ahora
-agoto el timeout, pero la reproduccion aislada pasa. La siguiente accion valida
-es observar una sola ejecucion normal de `test:apply`, no otro full ni otra
-suite verde repetida.
+**Frontera actual de F2:** la firma del process-group queda clasificada sin
+cambio de producto: aislada `1/1` y `test:apply` `120/120`. Solo falta un full
+final para comprobar el orden completo del arnes; la captura del codigo debe
+usar un nombre de variable no reservado en zsh. No se repite recovery, H5 ni
+`test:apply` por separado.
 
 **Intento invalidado y cerrado:** el candidato anterior `cdf15ba` alcanzo 113
 checks recovery verdes y fallo cuando un refresco sintetico de Lease del stub

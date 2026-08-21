@@ -15,10 +15,10 @@ el recovery normal termino `871/871`, H5 `173/173` y el generador `32/32`. El
 full corregido llego hasta `test:apply` y dejo `119/120`; solo fallo una prueba
 de limpieza de un grupo de procesos detached, por timeout de `180001 ms`. El
 mismo caso habia pasado en el full anterior en `1006 ms` y no hubo cambios en
-ese watcher. Una reejecucion aislada del caso paso `1/1` en `1026 ms`; por tanto
-el bloqueo queda acotado al contexto concurrente de `test:apply`, no a una
-regresion demostrada del metaverso. No se repite el full hasta tener evidencia
-nueva de ese contexto.
+ese watcher. Una reejecucion aislada del caso paso `1/1` en `1026 ms` y la suite
+normal `npm run test:apply` paso `120/120` en unos `5,7 s`. Por tanto el bloqueo
+queda acotado al contexto completo del arnes, no a una regresion demostrada del
+metaverso. No se repiten recovery, H5 ni `test:apply` por separado.
 
 La unica autoridad de trabajo es [`PLAN_ACTUAL.md`](../PLAN_ACTUAL.md). La
 auditoria tecnica completa esta en
@@ -142,15 +142,16 @@ Su unico full persistente termino con codigo `1` tras recovery `871/871`, H5
 `apply/watch-evidence-process.test.js:269`, caso 92, sobre recoger un grupo de
 procesos detached despues de que termina su lider. El log privado es
 `/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-full-candidate.5yFlsm/full.log`.
-No hay cambios de produccion, DigitalOcean ni procesos residuales. No se lanza
-otro full sin una revision causal de ese test; la siguiente comprobacion, si se
-reabre F2, es solo `npm run test:apply` una vez.
+No hay cambios de produccion, DigitalOcean ni procesos residuales. El wrapper
+de captura devolvio `1` por usar la variable reservada `status` de zsh despues
+de que Node ya habia terminado con `120/120`; no es un fallo de la suite. Falta
+un unico full final con captura corregida.
 
 ## Lo que queda, en orden
 
-1. Resolver o aceptar explícitamente el único test de process-group; solo una
-   causa demostrada permite un nuevo full. No repetir recovery, H5 ni
-   `test:apply` por separado.
+1. Ejecutar un unico full final con captura de codigo corregida. La causa del
+   test de process-group queda acotada y no requiere parche de producto; no
+   repetir recovery, H5 ni `test:apply` por separado.
 2. Recapturar el estado live y limpiar una sola vez el lock stale exacto,
    unicamente despues de reabrir F2 con esa decision.
 3. Ejecutar un unico restore coordinado de DB y medios y medir el RTO.
