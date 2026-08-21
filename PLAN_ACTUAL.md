@@ -1,7 +1,7 @@
 # PLAN ACTUAL — terminar H5 y volver a features
 
 Version: **v2**  
-Estado: **EJECUTABLE — F2 INCONCLUSA, STOP**
+Estado: **EJECUTABLE — F2 ACTIVA (unico candidato en curso)**
 Ultima revision: **21 de agosto de 2026 (Europe/Madrid)**
 Autoridad: este es el unico plan ejecutable. El detalle de la auditoria esta en
 `docs/auditoria-final-h5-2026-08-20.md`; los planes anteriores son historial.
@@ -24,6 +24,14 @@ plan; el siguiente trabajo sera una feature elegida por el propietario.
 Avance razonado: **aproximadamente 85 %**. No es una medicion automatica: cinco
 resultados comerciales estan terminados y quedan el restore, la aceptacion y la
 integracion final.
+
+F2 esta activa sobre el candidato `10a1aa1`, con una sola ejecucion persistente
+del recovery normal. El proceso padre es `14324`, el log privado esta en
+`/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-recovery-candidate.leF7uS/recovery.log`
+y el marcador de salida sera `exit.status` en ese mismo directorio. En la
+ultima lectura habia 307 comprobaciones `ok`, ninguna `not ok` y un hijo de
+prueba vivo; no se ha relanzado ni duplicado el gate. Hasta que exista un
+codigo de salida, F2 no se marca verde ni se inicia F3.
 
 ### Terminado y no se repite
 
@@ -131,6 +139,13 @@ anterior. Debe arrancar desde un worktree limpio y escribir stdout/stderr y el
 codigo de salida en un log privado persistente; si termina por timeout externo
 otra vez, F2 queda inconclusa y no se formula otra hipotesis ni se relanza de
 nuevo.
+
+**Ejecucion vigente:** la unica reanudacion permitida se lanzo sobre `10a1aa1`
+despues de corregir el aislamiento del perfil sintetico de los guards de
+restore. Los dos puntos que habian fallado en el candidato anterior (DB y
+medios `inflight-authority`) ya aparecen como `ok` en esta ejecucion. Se espera
+su resultado terminal; mientras siga viva no se abre otra hipotesis, no se
+repite ningun selector verde y no se toca produccion.
 
 **Repeticion persistente consumida:** la unica repeticion permitida se ejecuto
 sobre `3b8a6bd` con log privado persistente. El primer fallo nuevo fue el caso

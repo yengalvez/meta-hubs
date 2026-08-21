@@ -103,18 +103,28 @@ min, sin codigo de salida ni resumen final recuperable. No se cuenta como verde
 ni como fallo de producto. El selector causal `restore-finalize-positive` paso
 `54/54` despues, descartando esa frontera concreta.
 
-La unica repeticion permitida del candidato se ejecuto con log persistente. El
-primer fallo nuevo fue el caso 173: el mutador del fixture no vio el marcador de
-inicio del stream dentro de 90 s, aunque el producto se quedo fail-closed con
-writers a cero, lock presente y fence activa. La reproduccion aislada paso
-`50/50` y el grupo secuencial DB/medios paso `72/72`, asi que no hay una causa
-de producto reproducible ni base para otro relanzamiento. F2 queda en STOP.
+La unica repeticion permitida del candidato anterior se ejecuto con log
+persistente. El primer fallo nuevo fue el caso 173: el mutador del fixture no
+vio el marcador de inicio del stream dentro de 90 s, aunque el producto se
+quedo fail-closed con writers a cero, lock presente y fence activa. La
+reproduccion aislada paso `50/50` y el grupo secuencial DB/medios paso `72/72`.
+Ese resultado cerro el candidato anterior; no se reutiliza como excusa para
+repetirlo.
+
+El candidato vigente es **`10a1aa1`**. Tras aislar el perfil sintetico que
+contaminaba los guards de restore, se lanzo una sola ejecucion persistente del
+recovery normal (PID `14324`). En la ultima lectura llevaba `307` comprobaciones
+`ok`, ninguna `not ok`, y seguia vivo un hijo interno. Su log privado y el
+marcador de salida estan en el directorio temporal indicado por
+`PLAN_ACTUAL.md`. F2 sigue abierta hasta obtener un codigo de salida; no se ha
+relanzado ni duplicado el proceso.
 
 ## Lo que queda, en orden
 
-1. F2 queda en STOP: no se vuelve a ejecutar el mismo `--full` sobre estos
-   bytes ni se abre otro parche preventivo. F3 no empieza hasta que exista un
-   candidato nuevo con una causa nueva y una decision explicita.
+1. Terminar de leer el unico gate F2 activo sobre `10a1aa1`. Si queda verde, se
+   conserva su evidencia y se ejecuta una sola vez el `--full` final; si falla,
+   se registra la primera causa y se detiene sin relanzar. F3 no empieza antes
+   del cierre verde de F2.
 2. Recapturar el estado live y limpiar una sola vez el lock stale exacto,
    unicamente despues de reabrir F2 con esa decision.
 3. Ejecutar un unico restore coordinado de DB y medios y medir el RTO.
