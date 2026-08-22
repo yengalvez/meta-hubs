@@ -1,356 +1,307 @@
-# PLAN ACTUAL — terminar H5 y volver a features
+# PLAN ACTUAL — terminar H5 sin repetir trabajo verde
 
-Version: **v5**
-Estado: **EJECUTABLE — F2 pendiente de un unico full final; no se justifica cambio de producto**
-Ultima revision: **21 de agosto de 2026 (Europe/Madrid)**
-Autoridad: este es el unico plan ejecutable. El detalle de la auditoria esta en
-`docs/auditoria-final-h5-2026-08-20.md`; los planes anteriores son historial.
+Version: **v9.4; M1/M2 cerrados y solución M3 preparada**
+Estado: **pin seguro de Reticulum implementado; la siguiente fase es únicamente validación mecánica acotada**
+Ultima revision: **22 de agosto de 2026 (Europe/Madrid)**
+Autoridad: **este es el único plan ejecutable**. Los planes anteriores y
+`docs/auditoria-final-h5-2026-08-20.md` son evidencia histórica, no colas de
+trabajo.
 
-## Resultado que importa
+## Resultado humano
 
-Demostrar una sola vez que una instancia YenHubs puede:
+Terminar una única demostración comercial de hibernación y reactivación:
 
-1. guardar conjuntamente PostgreSQL y los medios de `ret-pvc`;
-2. apagar sus recursos facturables de DigitalOcean;
-3. recrear la misma topologia con identidades Kubernetes nuevas;
-4. restaurar datos y medios;
-5. volver a ofrecer el baseline comercial en un navegador real.
+1. conservar conjuntamente PostgreSQL y los medios de `ret-pvc`;
+2. retirar los recursos facturables de una instancia;
+3. recrear la topología autorizada con identidades Kubernetes nuevas;
+4. restaurar DB y medios una sola vez;
+5. demostrar en navegador frío que el metaverso vuelve a funcionar.
 
-Al cumplirlo, H5 termina. No se abre otra mejora de recovery dentro de este
-plan; el siguiente trabajo sera una feature elegida por el propietario.
+Al cerrar esos cinco resultados termina H5 y el trabajo vuelve a features. No
+se abre otra arquitectura recovery, otra hibernación ni otro restore dentro de
+este plan.
 
-## Estado real
+## Estado comercial ya demostrado
 
-Avance razonado: **aproximadamente 85 %**. No es una medicion automatica: cinco
-resultados comerciales estan terminados y quedan el restore, la aceptacion y la
-integracion final.
-
-F2 recovery normal termino sobre el candidato de codigo `10a1aa1` con una sola
-ejecucion persistente. El proceso padre `14324` ya no existe; el log privado es
-`/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-recovery-candidate.leF7uS/recovery.log`.
-Su ultima linea es `All 871 recovery safety tests passed using local fixtures
-only.`; `rg '^not ok ' <log>` no encuentra fallos y no hubo relanzamiento ni
-duplicacion. El lanzador no llego a escribir `exit.status`, por lo que no se
-afirma un codigo numerico: el cierre del gate se basa en la linea terminal de
-exito, la ausencia de `not ok` y el proceso terminado. Esto cierra el recovery
-normal.
-
-El primer `./scripts/verify-project.sh --full` completo y persistente sobre root
-`8c01608`, Hubs `ce8390a` y Hubs Cloud `7e56f90` termino con codigo `1`. No
-fallo recovery ni H5: el agregado H5 paso `173/173`; tambien pasaron el
-generador Hubs CE `32/32` y `test:apply` con `120` tests. El primer y unico
-fallo fue el audit de produccion de `bot-orchestrator`: `puppeteer-core
-24.37.2 -> @puppeteer/browsers 2.12.0 -> extract-zip 2.0.1`, advisory alto
-`GHSA-jmr9-qjv8-65gv`. El log y el codigo terminal estan en
-`/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-full-candidate.Jg3axX/`.
-No hubo relanzamiento ni efecto externo.
-
-La correccion quedo en Cloud `d74cded` (`chore(bot): classify chromium
-diagnostic dependency`) y el puntero root candidato es `972efe3`, con Hubs
-`ce8390a`. `npm ci --ignore-scripts --no-audit`,
-`npm audit --omit=dev --audit-level=high`, `npm test` (`155/155`), carga local
-de `puppeteer-core`, `node --check` y `git diff --check` pasan. El arbol
-`--omit=dev` no contiene Puppeteer.
-
-El unico full persistente sobre ese candidato termino con codigo `1` en
-`/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-full-candidate.5yFlsm/full.log`.
-Antes del fallo pasaron recovery normal `871/871`, agregado H5 `173/173`,
-generador Hubs CE `32/32` y `test:apply` `119/120`. El primer y unico fallo fue
-`apply/watch-evidence-process.test.js:269`, caso 92: `an exited leader cannot
-leave a descendant holding watch pipes indefinitely`. El proceso de prueba
-agoto exactamente el timeout de `180001 ms` y la asercion observo
-`cleanupTimedOut=true`; no hubo otros `not ok`, cambios de produccion, red,
-DigitalOcean ni procesos residuales.
-
-La misma prueba paso en el full anterior sobre el mismo codigo del watcher en
-`1006 ms`; el commit Cloud solo cambia la clasificacion de Puppeteer y no toca
-ese watcher. Por tanto se clasifica como evidencia no determinista de
-process-group/Darwin, no como defecto demostrado de producto. F2 queda
-bloqueado: no se relanza ni se cambia codigo hasta una revision causal del
-transporte de esa prueba.
-
-La unica reejecucion causal aislada posterior uso el mismo archivo y el mismo
-comando detached, con timeout de test de `8 s`, y paso `1/1` en `1026 ms`. Esto
-confirma que el transporte puede cerrar el grupo en este Mac bajo carga baja,
-pero no prueba el contexto concurrente de `npm run test:apply`. La proxima
-evidencia, si se reabre F2, es una sola suite `test:apply` normal; no se repite
-recovery, H5 ni el full hasta clasificar ese resultado.
-
-La unica suite normal `npm run test:apply` posterior paso `120/120` en
-`5657 ms`; el log privado es
-`/var/folders/t5/k22wlmd54b32xnqlqrxvglh80000gp/T//yenhubs-apply-diagnostic.IPKSFQ/apply.log`.
-El wrapper de captura devolvio `1` despues de terminar porque zsh rechazo la
-variable reservada `status`; el resumen real de Node es `# pass 120`, `# fail 0`.
-No se modifico codigo. La evidencia conjunta —reproduccion aislada y suite
-normal verdes— clasifica el fallo observado solo dentro del contexto completo
-del arnes; no autoriza parchear el watcher.
-
-### Terminado y no se repite
-
-- [x] Baseline de producto aceptado; Hubs sigue en la release
-  `prod-2026-03-11` y Hubs CE en `2.1.0`.
-- [x] Bundle `freeze-bundle-v1` conjunto y valido: nueve ficheros, DB, medios,
-  inventarios y checksums.
-- [x] Dos copias cifradas reabiertas, descifradas y rehasheadas; recibo privado
-  `0600`; 13 imagenes custodiadas.
-- [x] Retirada selectiva del cluster, nodo, Load Balancer y dos volumenes
-  autorizados; el recurso ajeno `voice-chat` se conservo.
-- [x] Recreacion equivalente: `ams3`, Kubernetes `1.34.10-do.1`, HA false, un
-  nodo `s-4vcpu-8gb`, LB regional y dos PVC de 10 GiB.
+- [x] Bundle `freeze-bundle-v1` conjunto y válido: DB, medios, inventarios,
+  receta, digests y checksums.
+- [x] Dos copias cifradas reabiertas y rehasheadas; recibo privado `0600`; 13
+  imágenes custodiadas.
+- [x] Retirada selectiva anterior del cluster, nodo, Load Balancer y dos
+  volúmenes; el recurso ajeno `voice-chat` se conservó.
+- [x] Infraestructura equivalente recreada en `ams3`: Kubernetes
+  `1.34.10-do.1`, HA desactivada, un nodo `s-4vcpu-8gb`, LB regional y dos PVC
+  de 10 GiB.
 - [x] DNS y certificados `4/4`.
-- [x] Perfil target `cold-rebind-legacy-absent-v1` generado, aplicado y
-  preflight live read-only PASS.
-- [x] Estado fail-closed actual: 12 Deployments, siete auxiliares Ready, cinco
-  writers a cero, DB `retdb` sin tablas, cero Pods writer/helper, lock
-  `checkpoint-restore/cold-rebind` retenido y Lease libre.
-- [x] Las dos familias rojas del intento de full eran fixtures, no averias de
-  producto: stale/helper `75/75` y writer-monitor `55/55` en los bytes finales.
-- [x] Eliminada la duplicacion por la que `h5-final` repetia toda la bateria
-  recovery normal.
-- [x] Recovery normal final: `871/871`, sin `not ok`, proceso terminado y log
-  persistente conservado; el codigo numerico del lanzador no quedo disponible.
-- [x] El full alcanzo y cerro el agregado H5 `173/173`, generador Hubs CE
-  `32/32` y `test:apply` (`120` tests); esos bloques no se repiten de forma
-  aislada.
-- [x] La unica causa del full se corrigio en Cloud `d74cded`: Puppeteer sigue
-  disponible para `run-bot.js`, pero queda fuera de las dependencias productivas
-  y el contrato Docker lo comprueba.
+- [x] Perfil `cold-rebind-legacy-absent-v1` generado y aplicado; preflight live
+  read-only verde.
+- [x] Estado live fail-closed conservado: cinco writers a cero, DB destino sin
+  tablas de aplicación, lock `checkpoint-restore/cold-rebind` retenido y Lease
+  libre.
 
-### No demostrado todavia
+## Evidencia local cerrada que no se repite
 
-- [ ] Un `./scripts/verify-project.sh --full` completo y verde sobre el
-  candidato corregido. El unico intento sobre `972efe3` llego a recovery
-  `871/871`, H5 `173/173`, generador `32/32` y `test:apply` `119/120`; quedo
-  bloqueado unicamente por el caso 92 de process-group descrito arriba.
-- [ ] Restore real de DB y `ret-pvc` en la infraestructura nueva.
-- [ ] Baseline comercial completo en navegador frio.
-- [ ] RTO real medido y evidencia historica del intervalo sin recursos
-  facturables; si esta ultima no puede recuperarse, se documenta como no
-  verificada y no se repite una hibernacion para fabricarla.
-- [ ] Integracion final de Hubs Cloud y despues del puntero root.
+Los siguientes resultados pertenecen a superficies que no han cambiado por el
+hallazgo de Dialog ni por el rediseño del orquestador. Se conservan como
+evidencia de transición H5 y no se convierten artificialmente en recibos v2:
 
-## Camino critico finito
+- recovery normal `871/871`;
+- agregado H5 `173/173`;
+- Hubs CE generator `32/32`;
+- `test:apply` `120/120`;
+- bot-orchestrator `155/155`;
+- Hubs/Admin y navegador/capacidad alcanzados verdes por el último candidato.
 
-### F1. Congelar el candidato local
+Los logs privados y las causas de los intentos anteriores están indexados en
+`docs/session-changelog.md` y `docs/auditoria-final-h5-2026-08-20.md`. No se
+copian otra vez aquí.
 
-- [x] Revisar el diff final y retirar cualquier selector o diagnostico temporal
-  que no pertenezca al arnes definitivo.
-- [x] Ejecutar `bash -n`, ShellCheck, Gitleaks y `git diff --check` sobre la
-  superficie modificada. No habia JavaScript modificado que requiriese otro
-  Node check.
-- [x] Versionar `PLAN_ACTUAL.md`, la auditoria, los fixes de fixture y la salida
-  terminal de `h5-final`. Candidato de codigo root `972efe3`, Hubs
-  `ce8390a` y Hubs Cloud `d74cded`.
+## Corrección del método de validación
 
-**Cierre:** candidato reproducible y sin procesos locales residuales.
+El `--full` antiguo era monolítico, `fail-fast` y utilizaba suites largas para
+descubrir un fallo cada vez. Esa política queda retirada.
 
-### F2. Ejecutar un unico gate final valido
+El arnés nuevo de `scripts/verify-project.sh` debe ofrecer:
 
-- [x] Ejecutar y conservar el recovery normal del candidato: `871/871` pass,
-  sin `not ok`, sin proceso residual y sin duplicacion. El log no contiene
-  codigo numerico de salida, limitacion registrada arriba.
-- [x] Ejecutar una vez el full de `8c01608`: codigo `1`, H5 `173/173`, primer
-  fallo exacto en el audit de produccion de `bot-orchestrator` por
-  `extract-zip 2.0.1`; log persistente y cero relanzamientos.
-- [x] Mover `puppeteer-core` a dependencia de desarrollo del paquete agregado,
-  conservar sin cambios los dos manifiestos de imagen productiva que ya lo
-  excluyen, regenerar el lockfile y fijar la frontera con una prueba. Cloud
-  `d74cded` contiene el cambio.
-- [x] Validar solo la superficie modificada: instalacion reproducible, audit
-  `--omit=dev` en cero, `bot-orchestrator` `155/155`, contratos de sus dos
-  Dockerfiles, Node check, diff-check y carga del diagnostico Chromium local.
-  No se repitieron recovery/H5 como focos separados.
-- [x] Congelar el nuevo SHA y ejecutar exactamente una vez el full persistente:
+- secciones independientes con los mismos comandos de cobertura;
+- auditorías de dependencias antes de las suites largas;
+- continuación entre secciones aunque una falle;
+- logs y recibos privados, atómicos y ligados a la clausura de entradas de cada
+  sección, al arnés y al toolchain;
+- caducidad de 24 horas para advisories;
+- reutilización automática de un PASS exacto;
+- invalidación solo de la sección afectada y sus dependientes;
+- una sección corta de composición y un finalizador que compruebe recibos,
+  gitlinks, diffs y ausencia de procesos residuales.
+
+Un cambio transversal, una clausura desconocida, toolchain distinto,
+advisories caducados, log incompleto o contaminación del host invalida la
+evidencia correspondiente. Una modificación exclusiva de Dialog no invalida
+recovery ni H5.
+
+## Plan de producción
+
+### M1. Validar el nuevo arnés seccionado
+
+- [ ] Revisar el diff de `scripts/verify-project.sh` y
+  `tests/scripts/verify-project-sections.test.sh`.
+  - Estado: **cerrado y validado**.
+  - No ejecutar ninguna suite de producto ni `--full` durante esta revisión.
+  - Confirmar que `scripts/verify-project.sh` conserva modo ejecutable; si la
+    sustitución del fichero lo perdió, restaurar únicamente ese bit antes de
+    validar.
+- [x] Ejecutar únicamente:
 
   ```bash
-  ./scripts/verify-project.sh --full
+  bash -n scripts/verify-project.sh tests/scripts/verify-project-sections.test.sh
+  shellcheck -x scripts/verify-project.sh tests/scripts/verify-project-sections.test.sh
+  bash tests/scripts/verify-project-sections.test.sh
+  git diff --check
   ```
 
-- Resultado: codigo `1`; no se cuenta como verde. El log privado y la primera
-  firma estan registrados en el estado real de este plan.
+  - Resultado: `bash -n` PASS, ShellCheck PASS, arnés focal `12/12` PASS y
+    `git diff --check` PASS. La sustitución del script conserva modo `0755`.
+  - STOP aplicado una sola vez a cuatro advertencias de ShellCheck y cuatro
+    espacios finales del plan; se corrigieron únicamente esas causas y no se
+    repitió ninguna suite de producto.
 
-- [x] Preservar el resumen terminal: recovery normal `871/871`, H5 `173/173`,
-  generador `32/32`, `test:apply` `119/120`, un solo `not ok` y sin procesos
-  residuales.
+**Cierre M1:** CLI, fingerprint, privacidad, tamper y caducidad del recibo
+verificados; cero suite larga ejecutada.
 
-- [x] Resolver causalmente el caso de process-group sin tocar producto: la
-  reproduccion aislada pasa `1/1` y la suite normal `test:apply` pasa `120/120`.
-  El wrapper zsh defectuoso queda registrado y no se usa como evidencia de
-  fallo Node.
+### M2. Resolver la alerta productiva de Dialog — cerrado
 
-- [ ] Ejecutar un unico full final sobre el mismo candidato, con captura de
-  codigo corregida y sin repetir ningun bloque aparte. Si termina verde, F2
-  cierra; si falla, se conserva el primer fallo y no se relanza en este plan.
+- [x] Confirmar que `mediasoup@3.19.22` declara `tar ^7.5.13` y que la versión
+  corregida elegida sigue dentro de ese rango.
+- [x] Actualizar únicamente la resolución transitiva de `tar` en el lockfile de
+  Dialog. Prohibidos `npm audit fix --force`, upgrade general de Mediasoup y
+  cambios de aplicación sin una causa distinta.
+- [x] Mantener las dependencias de desarrollo fuera de la imagen runtime de
+  Dialog (`npm ci --omit=dev`); los avisos de ESLint no deben viajar al cliente.
+- [x] Revisar que el diff del lockfile no actualiza paquetes ajenos.
+- [x] Ejecutar, usando un único directorio privado de evidencia:
 
-**Cierre:** comando completo verde.  
-**STOP:** cualquier fallo. No hay restore ni relanzamiento automatico; primero
-se identifica una causa concreta. Nunca se repiten los mismos bytes.
+  ```bash
+  ./scripts/verify-project.sh --section advisories --evidence-dir <DIR_PRIVADO_0700>
+  ./scripts/verify-project.sh --section dialog --evidence-dir <MISMO_DIR>
+  ```
 
-**Frontera actual de F2:** la firma del process-group queda clasificada sin
-cambio de producto: aislada `1/1` y `test:apply` `120/120`. Solo falta un full
-final para comprobar el orden completo del arnes; la captura del codigo debe
-usar un nombre de variable no reservado en zsh. No se repite recovery, H5 ni
-`test:apply` por separado.
+**Cierre M2:** `advisories` PASS, `dialog` PASS; el lock solo cambia
+`tar@7.5.20` a `7.5.21`, la imagen usa `npm ci --omit=dev`, y lint/tests de
+Dialog pasan. El audit completo del entorno de test aún enumera dependencias de
+desarrollo antiguas, pero no se copian al runtime y no abre una deuda productiva
+distinta.
 
-**Intento invalidado y cerrado:** el candidato anterior `cdf15ba` alcanzo 113
-checks recovery verdes y fallo cuando un refresco sintetico de Lease del stub
-uso el mismo temporal desde varios watchers. No fue un fallo live ni de
-produccion. El refresco queda limitado a los modos unitarios que lo necesitan;
-el camino con heartbeat real pasa `49/49`, writer-monitor `55/55` y
-stale/helper `75/75` en `42a4142`.
+### M3. Completar únicamente la cola que el full nunca alcanzó — parcialmente cerrado
 
-**Segundo intento invalidado y cerrado:** el candidato `42a4142` cruzo la
-carrera anterior y acumulo 672 checks recovery verdes. El primer fallo fue el
-673, en el positivo standalone del writer monitor. La causa completa estaba en
-el arnes: el proceso de fondo heredaba el canal de `expect_success`, impedia que
-el helper enviase el boundary y envejecia la Lease; ademas, su asercion seguia
-esperando el baseline anterior a H5 (12 ReplicaSets y Pods sin
-`admission_fingerprint`). Produccion no cambio. En `9377986` pasan los dos
-positivos `46/46` por owner, stale Lease `46/46`, negativos writer `55/55`,
-concurrencia restore `49/49` y el bloque writer-fence completo `100/100`.
+- [x] Ejecutar una sola vez y en el mismo directorio de evidencia:
 
-**Tercer intento invalidado y cerrado:** el root `38f2358` supero estaticos y
-la primera suite Node `32/32`; la segunda termino `56/57` antes de recovery. El
-unico fallo fue test-only y especifico de Darwin: `kill(-pgid, 0)` devolvio
-`EPERM` durante el cleanup transitorio y el helper lo lanzo como excepcion. En
-`3b8a6bd`, `EPERM` cuenta como grupo aun existente y no como ausencia; la
-comprobacion final sigue exigiendo `ESRCH`, por lo que no se ocultan procesos.
-El caso causal pasa `1/1` y la suite completa `57/57`.
+  ```bash
+  ./scripts/verify-project.sh --section photomnemonic --evidence-dir <DIR>
+  ./scripts/verify-project.sh --section coturn --evidence-dir <DIR>
+  ./scripts/verify-project.sh --section spoke --evidence-dir <DIR>
+  ./scripts/verify-project.sh --section reticulum --evidence-dir <DIR>
+  ```
 
-**Intento posterior no aceptado:** el `--full` sobre `3b8a6bd` avanzo al menos
-hasta `323` comprobaciones recovery verdes y ejecuto los restores coordinados
-del bloque. El canal de terminal perdio su identificador durante una ventana de
-espera; el proceso fue terminado externamente despues de aproximadamente 1 h
-48 min y no existe codigo de salida ni resumen final recuperable. No se
-observaron `not ok`, no se cambio ningun byte y no se puede afirmar que F2 sea
-verde. El selector causal existente `restore-finalize-positive` se ejecuto
-despues, una sola vez, y paso `54/54`; sirve para descartar esa frontera
-concreta, pero no sustituye el full.
+  Resultado: `photomnemonic`, `coturn` y `spoke` PASS. La primera ejecución de
+  `reticulum` quedó bloqueada por dos causas independientes: `mix hex.audit`
+  detectó el advisory nuevo de `cowlib 2.19.0` (`EEF-CVE-2026-43971`) y el
+  arnés imponía el usuario local `postgres`, que no existe en este Mac.
 
-**Regla de reanudacion F2:** se permite una unica nueva ejecucion del mismo
-candidato solo para recuperar evidencia persistente del gate incompleto
-anterior. Debe arrancar desde un worktree limpio y escribir stdout/stderr y el
-codigo de salida en un log privado persistente; si termina por timeout externo
-otra vez, F2 queda inconclusa y no se formula otra hipotesis ni se relanza de
-nuevo.
+  La causa local ya está resuelta como evidencia de entorno, sin modificar
+  producto ni producción: con el rol existente `yengalvez` (superusuario local
+  de pruebas), Reticulum pasó **461 tests, 5 properties y 0 fallos**. El arnés
+  productivo conserva deliberadamente `DB_CREDENTIALS=postgres`; no se cambia
+  esa configuración por conveniencia local.
 
-**Ejecucion terminal aceptada:** la unica reanudacion permitida se lanzo sobre
-`10a1aa1` despues de corregir el aislamiento del perfil sintetico de los guards
-de restore. Los dos puntos que habian fallado en el candidato anterior (DB y
-medios `inflight-authority`) aparecen como `ok`; el log termina en `871/871`,
-sin `not ok`, y el proceso padre desaparecio. El lanzador no creo
-`exit.status`, asi que se conserva esa limitacion en vez de inventar un codigo.
-No se abre otra hipotesis ni se repite ningun selector verde. El siguiente paso
-en ese punto fue el `./scripts/verify-project.sh --full` persistente cuyo
-resultado y causa terminal se registran mas abajo.
+  El bloqueo detectado era upstream: la CNA marca afectadas las versiones
+  Hex desde `2.9.0` y enlaza el commit `89da27e` como parche, mientras Hex sigue
+  marcando `2.19.0` como vulnerable y no publica una release corregida. No se
+  añade `CVE-2026-43971` a `ignore_advisories`. El propietario autorizó resolver
+  la unidad y se eligió el pin exacto al commit oficial `89da27e`, acompañado de
+  una guarda específica para que convertir Cowlib en dependencia Git no deje
+  ciego a `mix hex.audit`.
 
-**Repeticion persistente consumida:** la unica repeticion permitida se ejecuto
-sobre `3b8a6bd` con log privado persistente. El primer fallo nuevo fue el caso
-173 (`db inflight-authority`): el mutador del fixture no observo el marcador de
-inicio de stream dentro de 90 s, aunque el producto dejo el restore en
-`database-stream`, writers a cero, lock presente y fence activa. El proceso se
-detuvo sin tocar produccion. Los fallos posteriores del mismo proceso fueron
-consecuencia de ese estado de prueba contaminado, no causas independientes.
+  Como preparación no mutante, se probó ese commit en una copia desechable del
+  servicio: `mix deps.get`, formato y compilación estricta pasan; `mix
+  hex.audit` queda sin paquetes retirados ni advisories (solo advierte que las
+  dos entradas antiguas ya no aplican al paquete Git), y el foco de 4 pruebas
+  de CORS pasa. La suite completa desechable tuvo un único timeout de socket en
+  ese mismo foco; al aislarlo pasó `4/4`, por lo que no se atribuye a cowlib.
+  Esto demostró la viabilidad técnica previa del pin.
 
-La reproduccion exacta aislada de ese caso paso `50/50`, y el grupo secuencial
-completo de guards DB/medios paso `72/72` (incluidos los tres modos
-`inflight-authority`). Estas pruebas pertenecen al historial del candidato
-anterior y no sustituyen al `--full`. El recovery normal del candidato vigente
-queda cerrado con la evidencia terminal descrita arriba; F2 completa solo
-cuando el comando `--full` termine verde. No se permite otra repeticion de
-recovery sobre estos bytes.
+- [x] Implementar la solución de procedencia y seguridad, sin ejecutar todavía
+  la fase mecánica:
+  - `mix.exs` y `mix.lock` fijan el repositorio oficial y el SHA completo;
+  - la guarda nueva comprueba lock, checkout, ancestro 2.19.0 y los tres commits
+    exactos posteriores al tag;
+  - OSV debe seguir ligando `CVE-2026-43971` al SHA parcheado y devolver
+    exactamente el conjunto conocido para Hex 2.19.0; toda alerta nueva falla;
+  - `mix hex.audit` continúa cubriendo todas las demás dependencias Hex;
+  - un ExUnit focal prueba un Link válido y rechaza inyección por target, `rel`
+    y clave de atributo;
+  - la auditoría se ejecuta en la sección `advisories`, cuyo recibo caduca a las
+    24 horas, y no dentro de los 461 tests de Reticulum.
 
-**Full de `8c01608` cerrado:** el comando persistente termino con codigo `1`
-despues de completar los bloques recovery, Hubs/Admin, navegador/capacidad y
-H5. El audit del paquete agregado Hubs CE y sus pruebas tambien pasaron; el
-primer fallo fue el `npm audit --omit=dev --audit-level=high` del primer
-servicio, `bot-orchestrator`, por el nuevo advisory de `extract-zip`. La ruta
-vulnerable llega solo a traves de `puppeteer-core`, usado por `run-bot.js` como
-diagnostico Chromium manual. `Dockerfile` y `Dockerfile.runner` no copian ese
-script y eliminan Puppeteer; sus manifiestos productivos contienen solo
-`express` y el ghost runner respectivamente. La correccion elegida no actualiza
-Node, Chromium ni Puppeteer: reclasifica esa herramienta como dependencia de
-desarrollo y añade una regresion de frontera. El lockfile y la validacion
-dirigida ya quedaron verdes en Cloud `d74cded`; falta congelar el puntero root
-y ejecutar el siguiente full.
+- [ ] Ejecutar una sola vez, en este orden y en un mismo directorio privado:
 
-### F3. Completar una unica restauracion productiva
+  ```bash
+  bash -n scripts/verify-project.sh tests/scripts/verify-project-sections.test.sh \
+    hubs-cloud/community-edition/services/reticulum/scripts/verify-cowlib-security-contract.sh
+  shellcheck -x scripts/verify-project.sh tests/scripts/verify-project-sections.test.sh \
+    hubs-cloud/community-edition/services/reticulum/scripts/verify-cowlib-security-contract.sh
+  bash tests/scripts/verify-project-sections.test.sh
+  cd hubs-cloud/community-edition/services/reticulum
+  mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- \
+    env MIX_ENV=test mix deps.get --only test --check-locked
+  mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- \
+    env MIX_ENV=test mix test test/cowlib_security_contract_test.exs
+  cd ../../../..
+  ./scripts/verify-project.sh --section advisories --evidence-dir <DIR>
+  YENHUBS_RETICULUM_TEST_DB_CREDENTIALS=yengalvez \
+    ./scripts/verify-project.sh --section reticulum --evidence-dir <DIR>
+  ./scripts/verify-project.sh --section static --evidence-dir <DIR>
+  ./scripts/verify-project.sh --section composition --evidence-dir <DIR>
+  ```
 
-- [ ] Recapturar read-only contexto, topologia, Namespace/PVC, cinco writers,
-  DB, Pods, lock y Lease. Deben coincidir con el estado permitido anterior.
-- [ ] Obtener la confirmacion exacta y ejecutar una sola limpieza
-  `RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1` con
-  `RESTORE_TARGET_MODE=cold-rebind`.
-- [ ] Confirmar que solo desaparecieron helper/policy si existian y el lock;
-  Lease libre, writers cero, DB y PVC sin cambios.
-- [ ] Ejecutar otra vez el preflight cold-rebind read-only inmediatamente antes
-  de restaurar.
-- [ ] Iniciar cronometro y ejecutar un unico restore coordinado del bundle y
-  recibo ya validados. Nunca ejecutar DB y storage por separado.
+  Si falla una orden, corregir solo esa causa y repetir únicamente la sección o
+  foco cuya entrada haya cambiado. No iniciar el despachador completo hasta que
+  esta unidad quede verde.
 
-**Cierre:** DB y medios validados, cinco writers reanudados en orden, lock y
-Lease liberados y RTO registrado.  
-**STOP:** identidad, topologia o coste distintos; Lease ocupada; lock no exacto;
-respuesta ambigua o fallo del restore. Se conserva el estado fail-closed y no
-se lanza un segundo restore en este plan.
+- [ ] Crear una sola vez los recibos v2 que falten y finalizar. Esta es la
+  única repetición amplia restante: no reabre decisiones ni borra los PASS que
+  vaya obteniendo. El `--full` actual es un despachador seccionado, continúa
+  ante fallos y reutiliza automáticamente los recibos exactos ya creados:
 
-### F4. Aceptar el producto real una sola vez
+  ```bash
+  ./scripts/verify-project.sh --full --evidence-dir <MISMO_DIR>
+  ./scripts/verify-project.sh --finalize --evidence-dir <MISMO_DIR>
+  ```
 
-- [ ] Conservar el resultado `0 failures / 0 warnings` del verificador que el
-  restore coordinado ejecuta internamente. Solo repetir el verificador si no se
-  pudo conservar esa evidencia o si el estado cambio.
-- [ ] En navegador interno frio y sin cache comprobar el baseline comercial:
-  portada en espanol, magic link/login, entrada a `VJopCY3`, dos participantes
-  y audio bidireccional, primera/tercera persona, avatar visible, Admin, Spoke y
-  sitting legacy. Confirmar escena, medios y cero excepciones first-party.
-- [ ] Bots solo se comprueban hasta el baseline ya prometido para esta
-  instancia; H5 no introduce bots nuevos, runner durable, VR ni otras features.
+  Si una sección falla, conservar todos los otros recibos, corregir la causa y
+  ejecutar solo `--section <fallida>` antes de repetir exclusivamente el
+  finalizador. Nunca reiniciar la batería completa.
 
-**Cierre:** resultado observable por un cliente, no solo mocks o HTTP 200.
+- [x] Por el cambio del propio arnés, ejecutar solo sus dependientes:
 
-### F5. Integrar y cerrar
+  ```bash
+  ./scripts/verify-project.sh --section static --evidence-dir <DIR>
+  ./scripts/verify-project.sh --section security --evidence-dir <DIR>
+  ./scripts/verify-project.sh --section composition --evidence-dir <DIR>
+  ```
 
-- [ ] Recuperar evidencia read-only del intervalo con cero recursos/facturacion
-  si sigue disponible. No borrar ni recrear infraestructura para obtenerla.
-- [ ] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md` con
-  hashes, RTO, resultado live y cualquier limitacion real.
-- [ ] Integrar primero el commit Hubs Cloud en su rama base y despues el
-  gitlink/root, siguiendo `docs/development-workflow.md`.
-- [ ] Marcar H5 completo y entregar la siguiente decision de feature.
+  Resultado: `static`, `security` y `composition` PASS. La primera ejecución
+  de `composition` fue invalidada porque el runner ocultaba el fallo de cwd y
+  status; tras corregirlo, la única repetición `composition` generó y verificó
+  `68` recursos correctamente.
 
-**Cierre:** repos reproducibles, documentacion fiel y cero tarea recovery
-abierta en el camino critico.
+- [x] Registrar la matriz H5 de transición: recibos nuevos para las secciones
+  anteriores y evidencia histórica cerrada para recovery/H5/Hubs/browser/HCCE/
+  bot. No fabricar recibos retroactivos ni ejecutar esos bloques de nuevo.
 
-## Lo que queda fuera
+**Cierre M3:** la decisión y el código están cerrados; falta solamente validar
+los bytes finales del pin, la guarda, la regresión y las secciones invalidadas.
+No se abre otro full para ello.
 
-- nuevas matrices, monitores, receipts, HMAC, takeover o protocolos de
-  respuesta ambigua;
-- HA, HPA, Terraform, self-service multi-cliente o observabilidad nueva;
-- upgrades upstream, features, modernizacion o refactors no requeridos por el
-  restore actual;
-- otro checkpoint, otras copias cifradas, otro borrado DigitalOcean o un
-  segundo restore;
-- `kubectl scale`, hotpatches, edicion del manifiesto generado o ejecucion
-  manual de los hijos de restore.
+**Frescura de recibos:** el schema v2 liga cada recibo al núcleo común, al
+comando y al toolchain de su propia sección, no al fichero completo del arnés ni
+a herramientas ajenas. Este cambio invalida una sola vez los recibos v1;
+después, un ajuste en Reticulum o advisories no vuelve a invalidar recovery,
+H5, Hubs ni otras secciones cerradas. No se fabrican recibos retroactivos.
+
+### M4. Completar una única restauración productiva
+
+- [ ] Recapturar read-only contexto, topología, Namespace/PVC, cinco writers,
+  DB, Pods, lock y Lease; comparar con el estado fail-closed autorizado.
+- [ ] Limpiar una sola vez el lock stale exacto mediante el flujo
+  `RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1` y `RESTORE_TARGET_MODE=cold-rebind`.
+- [ ] Repetir inmediatamente el preflight cold-rebind read-only.
+- [ ] Ejecutar un único restore coordinado de DB y medios y medir RTO.
+
+**Cierre M4:** DB y medios validados, cinco writers reanudados en orden, lock y
+Lease liberados.
+**STOP:** identidad/topología/coste distintos, Lease ocupada, lock no exacto,
+respuesta ambigua o fallo. No se lanza un segundo restore en este plan.
+
+### M5. Aceptar el producto real e integrar
+
+- [ ] Conservar `0 failures / 0 warnings` del verificador live ejecutado por el
+  restore; repetirlo solo si no quedó evidencia o cambió el estado.
+- [ ] En navegador interno frío comprobar español, login, `VJopCY3`, dos
+  participantes y audio bidireccional, cámaras primera/tercera persona, avatar,
+  Admin, Spoke, sitting legacy, escena y medios sin excepciones first-party.
+- [ ] Recuperar evidencia histórica de coste solo si sigue disponible; no
+  repetir una hibernación para fabricarla.
+- [ ] Integrar primero Hubs Cloud y después el gitlink/root siguiendo
+  `docs/development-workflow.md`.
+- [ ] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md`, cerrar
+  H5 y volver a features.
+
+## Fuera de alcance
+
+- otro checkpoint, otra copia cifrada, otro borrado o recreación de DO;
+- otro restore, salvo una nueva autorización tras un STOP real;
+- nuevas matrices o arquitectura recovery;
+- HA, HPA, Terraform, multi-cliente self-service o modernización upstream;
+- hotpatches, `kubectl scale`, manifiestos editados a mano o hijos restore
+  ejecutados por separado.
 
 ## Reglas anti-loop
 
-1. Un PASS sobre los mismos bytes no se repite.
-2. Un FAIL no se relanza sin cambio causal y SHA nuevo.
-3. Polling de un proceso no cuenta como un intento ni como progreso.
-4. El full se ejecuta una vez por candidato congelado; no se sustituyen sus
-   bloques por sumas parciales.
-5. Un defecto de fixture se corrige en el fixture; no abre arquitectura de
-   produccion.
-6. Un fallo live conserva writers cero y autoridad; no autoriza un segundo
-   restore.
-7. No se crea otro plan, Goal ni auditoria H5 salvo evidencia material nueva.
-8. Solo cuentan como progreso: requisito cerrado, riesgo eliminado, evidencia
-   nueva o mejora observable del estado live.
+1. Un PASS exacto se reutiliza; no se repite para aumentar confianza.
+2. Un FAIL solo se repite después de una causa demostrada y un cambio relevante.
+3. El arnés recopila todos los fallos independientes en la misma pasada.
+4. Una sección cambia solo la evidencia de su clausura y dependientes.
+5. Los audits caducan; las suites funcionales no caducan mientras sus entradas y
+   toolchain permanezcan idénticos.
+6. No se vuelve a exigir un `--full` monolítico para cerrar H5.
+7. El resultado comercial lo demuestran el restore y el navegador, no el número
+   de tests.
+8. El historial vive en el changelog/auditoría; este plan conserva solo estado,
+   dependencias, próximos pasos y evidencia necesaria para reanudar.
 
 ## Punto de menor confianza
 
-El riesgo restante no es el bundle ni la recreacion: es que el unico restore
-real encuentre una diferencia que los ensayos locales no reprodujeron. La
-defensa correcta es el preflight live ya verde, el full final, un solo restore
-coordinado y la parada fail-closed; no otra capa de recovery.
+La decisión difícil ya está resuelta sin silenciar advisories. La incertidumbre
+restante es puramente verificable: confirmar que los bytes finales pasan la
+guarda online, la regresión `cow_link`, Reticulum y el release/CI. Hasta esos
+verdes el cambio no se integra ni se usa para construir una imagen productiva.

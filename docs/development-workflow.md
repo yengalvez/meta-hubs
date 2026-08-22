@@ -137,11 +137,13 @@ Reglas de resolucion:
 4. Implementar con un flag cuando exista riesgo operativo.
 5. Anadir tests en la capa mas baja que pueda demostrar el contrato.
 6. Actualizar `features/<feature>/` y `docs/session-changelog.md`.
-7. Ejecutar:
+7. Ejecutar solo las secciones afectadas, conservar sus recibos en un directorio
+   privado fuera del checkout y finalizar la composición:
 
    ```bash
-   ./scripts/verify-project.sh
-   ./scripts/verify-project.sh --full
+   ./scripts/verify-project.sh --list-sections
+   ./scripts/verify-project.sh --section <nombre> --evidence-dir <directorio>
+   ./scripts/verify-project.sh --finalize --evidence-dir <directorio>
    ```
 
 8. Commit y push del subrepo.

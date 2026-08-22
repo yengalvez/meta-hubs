@@ -693,7 +693,9 @@ test "$(git rev-parse HEAD)" = "$(git rev-parse refs/heads/main)"
 test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/main)"
 test -z "$(git status --porcelain)"
 ./scripts/verify-project.sh
-./scripts/verify-project.sh --full
+./scripts/verify-project.sh --list-sections
+./scripts/verify-project.sh --section <nombre> --evidence-dir <directorio-privado-0700>
+./scripts/verify-project.sh --finalize --evidence-dir <directorio-privado-0700>
 ALLOW_CHECKPOINT_DOWNTIME=1 ./deployment/create-checkpoint.sh
 ```
 

@@ -59,7 +59,7 @@ ownership and deployment recovery have been revalidated where relevant.
 3. Create a DB and storage checkpoint before any production mutation.
 4. Implement one coherent change set.
 5. Update the relevant feature specification and `docs/session-changelog.md`.
-6. Run static and full validation.
+6. Run the affected verification sections and finalize their exact evidence.
 7. Build images through the approved GitHub Actions workflow.
 8. Deploy only by regenerating and applying the tracked Hubs CE manifest.
 9. Perform a cold-browser acceptance and the live verifier.
@@ -70,21 +70,29 @@ the disruption to existing clones and references.
 
 ## Required Validation
 
-Run from the root. The `--full` path already executes the common/normal block,
-so do not run both commands consecutively on the same bytes:
+Run from the root. Verification is sectioned so a local change invalidates only
+its declared inputs and reverse dependencies. Store evidence outside the
+checkout in one private directory owned by the current user with mode `0700`:
 
 ```bash
-./scripts/verify-project.sh --full
+./scripts/verify-project.sh --section <name> --evidence-dir <absolute-private-dir>
+./scripts/verify-project.sh --finalize --evidence-dir <absolute-private-dir>
 ```
 
-Use `./scripts/verify-project.sh` alone only as the faster intermediate gate
-when the full-only components are not yet due. A frozen final candidate must
-pass `--full` once.
+`--full` remains a convenience that runs every named section and collects all
+independent failures; it is not required to restart green sections after a
+local repair. `--list-sections` prints the exact inventory. The no-argument
+path runs the normal advisories/static/security/recovery set. Receipts are
+reused only when the declared content closure, harness, toolchain and private
+log match; advisories expire after 24 hours.
 
-The full gate covers Hubs, Admin, Hubs CE generator, bot orchestrator, Dialog,
-Photomnemonic, Coturn, Spoke and Reticulum. Do not use `npm audit fix --force`
-or broad dependency upgrades to silence findings. Upgrade one compatibility
-surface at a time and retest it.
+Final acceptance requires current evidence for advisories, static/security,
+recovery, Hubs/Admin, browser/capacity, H5, Hubs CE, bot orchestrator, Dialog,
+Photomnemonic, Coturn, Spoke, Reticulum and composition. Do not accept a manual
+sum of PASS labels or receipts copied from another input closure. Do not use
+`npm audit fix --force` or broad dependency upgrades to silence findings.
+Upgrade one compatibility surface at a time and rerun only its invalidated
+sections.
 
 After a live rollout:
 
@@ -140,8 +148,10 @@ including reusable-workflow `secrets.*` expressions and GHCR `403` errors.
   commit. The root security workflow enforces the same baseline.
 - A secret found in Git history is compromised even after deleting the file.
   Revoke it and record only the revocation status, never the value.
-- Reticulum currently acknowledges exactly two upstream `cowlib 2.18.0`
-  advisories with no fixed release. Any additional Hex advisory must fail CI.
+- Reticulum temporarily pins the official Cowlib fix commit after Hex 2.19.0.
+  Its expiring security gate must verify the exact source/ref/ancestry, the
+  patched CVE and the Hex-plus-Git advisory sets. Only CVE-2026-43966 and
+  CVE-2026-43969 remain acknowledged; every additional advisory must fail CI.
 
 ## Backup, Freeze and Restore
 
