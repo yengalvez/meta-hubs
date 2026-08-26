@@ -1,6 +1,6 @@
 # PLAN ACTUAL — cerrar H5 y volver a features
 
-Version: **v11.8**
+Version: **v11.9**
 Ultima revision: **26 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El historial de
 intentos vive en `docs/session-changelog.md`; no se reanuda trabajo desde él.
@@ -237,16 +237,16 @@ ocupada ni procesos residuales.
   por OpenAI. No se exige `/transport-ready`, propio del runtime durable.
 - [x] Ejecutar únicamente las secciones invalidadas por los bytes finales, sin
   `--full`: `recovery` **894/894**, `h5` **174/174**, `hcce`, `composition`,
-  `advisories`, `static`, `security` y `reticulum` tienen PASS. El primer
-  `--finalize` detectó correctamente el submódulo Cloud aún sucio; se repetirá
-  solo después de integrarlo y renovar los recibos que cambien.
-- [ ] Integrar primero el commit de `hubs-cloud`, después el gitlink y los
-  cambios raíz, siguiendo `docs/development-workflow.md`. Cloud ya está
-  integrado: #25 sincronizó `development`, #26 pasó CI y fusionó los cuatro
-  commits H5, y #27 promovió el mismo árbol a `master` como
-  `6d9ee9e998f636fcf61a4928cd2a275829768259`. Queda fijar ese gitlink e
-  integrar los cambios raíz.
-- [ ] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md` con los
+  `advisories`, `static`, `security` y `reticulum` tienen PASS. Tras integrar
+  Cloud y renovar solo `static`/`security`, `--finalize` confirmó los dos
+  gitlinks y todos los recibos exactos. La compatibilidad de ShellCheck 0.10 del
+  runner se corrigió solo en el workflow, sin invalidar recovery ni H5.
+- [x] Integrar primero el commit de `hubs-cloud`, después el gitlink y los
+  cambios raíz, siguiendo `docs/development-workflow.md`. #25 sincronizó
+  `development`, #26 validó los cuatro commits H5, #27 promovió Cloud a
+  `master` como `6d9ee9e998f636fcf61a4928cd2a275829768259` y el PR raíz #18
+  integró el gitlink y el árbol H5 final en `main`.
+- [x] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md` con los
   recibos finales y declarar H5 cerrado. El siguiente trabajo será features.
 
 ## Reglas anti-loop y parada
@@ -270,6 +270,6 @@ ocupada ni procesos residuales.
 **Alta para M4 y para la base funcional de M5.** La operación final demostró DB,
 medios, reanudación, infraestructura, HTTPS y ghost runner con cero
 fallos/avisos y cierre limpio; la batería final pasó 894/894. Ya no queda otro
-restore. La aceptación humana completa ya está demostrada: avatar neutral, chat
-privado y dos participantes con audio bidireccional. Para cerrar H5 solo faltan
-la integración ordenada y el certificado de recibos sobre esos commits.
+restore. La aceptación humana completa está demostrada: avatar neutral, chat
+privado y dos participantes con audio bidireccional. Cloud, gitlink y raíz están
+integrados y el certificado de recibos exactos está verde. **H5 está cerrado.**

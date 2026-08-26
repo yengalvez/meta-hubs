@@ -9,9 +9,9 @@ de datos y sus medios originales. El verificador de producción terminó con
 **0 fallos y 0 avisos**, y la batería local final pasó **894 de 894 pruebas**.
 No hace falta repetir otro restore ni volver a crear DigitalOcean.
 
-Estamos en el cierre de H5, no en otra reconstrucción. Falta integrar el código
-exacto que hizo posible la recuperación y certificar los recibos sobre esos
-commits. La aceptación humana ya está completa.
+H5 está cerrado. El código exacto que hizo posible la recuperación quedó
+integrado, los recibos corresponden a los bytes finales y la aceptación humana
+está completa. El siguiente trabajo vuelve a ser desarrollar features.
 
 ## Lo que ya está demostrado
 
@@ -37,23 +37,25 @@ commits. La aceptación humana ya está completa.
 - Las secciones finales pasan sin ejecutar otro `--full`: recuperación
   `894/894`, H5 `174/174`, HCCE, composición, advisories, static, security y
   Reticulum.
+- El finalizador confirmó los dos gitlinks y todos los recibos exactos.
+- Cloud quedó integrado en `6d9ee9e`; el PR raíz #18 integró el gitlink y el
+  cierre H5 en `main`.
 
-## Por qué el cierre todavía no está marcado como terminado
+## Por qué H5 ya está cerrado
 
-El finalizador exige que los submódulos estén integrados y limpios. Cloud ya
-cumple: #25 sincronizó `development`, #26 pasó todo el CI y #27 promovió el
-mismo árbol a `master` como `6d9ee9e`. Falta que el repositorio raíz fije ese
-commit y recoja el plan, las pruebas y la documentación.
+El finalizador exigió submódulos integrados y limpios, gitlinks exactos y todos
+los recibos vigentes. Cloud pasó #25, #26 y #27; la raíz pasó #18. La única
+diferencia del runner fue un falso positivo de ShellCheck 0.10 en una función
+de `trap`; se acotó al workflow y no cambió la lógica de recovery.
 
 Las tres acciones que no debe fingir una prueba automática ya han pasado:
 avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Lo que toca ahora
 
-1. Actualizar el gitlink raíz y renovar únicamente los recibos afectados por
-   los commits/documentación; no repetir recuperación ni ejecutar `--full`.
-2. Finalizar los recibos, integrar la raíz y declarar H5 cerrado.
-3. Volver a desarrollar features.
+1. Volver a desarrollar features.
+2. Mantener este recovery como capacidad operativa, sin reabrir H5 salvo que
+   cambien sus requisitos o aparezca evidencia nueva.
 
 ## Qué no se va a hacer
 
@@ -64,9 +66,8 @@ avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Cuánto queda
 
-Queda el cierre, no la construcción: un commit/PR raíz y el certificado de
-recibos. El riesgo técnico principal de recuperación y la aceptación humana ya
-están resueltos.
+No queda trabajo de H5. La recuperación, la aceptación humana, los recibos y la
+integración están resueltos. Lo siguiente es producto y features.
 
 ## Cuándo se para
 

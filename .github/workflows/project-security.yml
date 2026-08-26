@@ -141,6 +141,7 @@ jobs:
 
       - name: Validate operational shell scripts
         run: |
+          shellcheck_version="$(shellcheck --version | awk '$1 == "version:" { print $2 }')"
           while IFS= read -r -d '' script; do
             printf 'ShellCheck start: %s\n' "$script"
             if [[ "$script" == "tests/recovery/test-recovery-safety.sh" ]]; then
@@ -148,6 +149,12 @@ jobs:
               # exceeds the standard runner memory. The library is linted as its
               # own input below; these diagnostics are source-following artifacts.
               shellcheck -e SC1091,SC2030,SC2034,SC2317,SC2329 "$script"
+            elif [[ "$script" == "deployment/lib/recovery-safety.sh" &&
+                    "$shellcheck_version" == "0.10.0" ]]; then
+              # ShellCheck 0.10 marks the body of the EXIT-trap callback as
+              # unreachable; 0.11 no longer emits that false positive. Keep
+              # the compatibility exclusion limited to that version and file.
+              shellcheck -x -e SC2317 "$script"
             else
               shellcheck -x "$script"
             fi
