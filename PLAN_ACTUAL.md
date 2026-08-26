@@ -239,8 +239,9 @@ ocupada ni procesos residuales.
   `--full`: `recovery` **894/894**, `h5` **174/174**, `hcce`, `composition`,
   `advisories`, `static`, `security` y `reticulum` tienen PASS. Tras integrar
   Cloud y renovar solo `static`/`security`, `--finalize` confirmó los dos
-  gitlinks y todos los recibos exactos. La compatibilidad de ShellCheck 0.10 del
-  runner se corrigió solo en el workflow, sin invalidar recovery ni H5.
+  gitlinks y todos los recibos exactos. El falso positivo `SC2317` del runner
+  sobre el callback de `trap EXIT` se acotó solo en el workflow y solo para esa
+  biblioteca, sin invalidar recovery ni H5.
 - [x] Integrar primero el commit de `hubs-cloud`, después el gitlink y los
   cambios raíz, siguiendo `docs/development-workflow.md`. #25 sincronizó
   `development`, #26 validó los cuatro commits H5, #27 promovió Cloud a

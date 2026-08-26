@@ -45,8 +45,8 @@ está completa. El siguiente trabajo vuelve a ser desarrollar features.
 
 El finalizador exigió submódulos integrados y limpios, gitlinks exactos y todos
 los recibos vigentes. Cloud pasó #25, #26 y #27; la raíz pasó #18. La única
-diferencia del runner fue un falso positivo de ShellCheck 0.10 en una función
-de `trap`; se acotó al workflow y no cambió la lógica de recovery.
+diferencia del runner fue un falso positivo `SC2317` en una función de `trap`;
+se acotó a esa biblioteca en el workflow y no cambió la lógica de recovery.
 
 Las tres acciones que no debe fingir una prueba automática ya han pasado:
 avatar real, chat privado y audio bidireccional con dos participantes.
