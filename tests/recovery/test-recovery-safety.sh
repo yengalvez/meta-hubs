@@ -7856,6 +7856,10 @@ run_checkpoint_backup_child() {
   local runner_namespace="" deployments_json="$LEGACY_DEPLOYMENTS_JSON"
   local child_stub_mode="${STUB_MODE:-}" guard_max_stale_seconds=""
   local db_dump_delay_seconds=0.2
+  # Keep the three concurrent fixture monitors responsive without creating the
+  # 10 ms subprocess storm that can starve them on a two-core CI runner. The
+  # production default remains one second; this only paces the local fixture.
+  local fixture_monitor_poll_seconds=0.1
   local writer_pid="" writer_identity="" writer_progress="" writer_authority=""
   if [[ "$generation" == durable-v2 ]]; then
     runner_namespace=present
@@ -7874,6 +7878,7 @@ run_checkpoint_backup_child() {
       STUB_DEPLOYMENTS_JSON="$deployments_json" \
         STUB_RUNNER_NAMESPACE="$runner_namespace" \
         STUB_RUNNER_POD_PROFILE="$profile" \
+        RECOVERY_STREAM_POLL_SECONDS="$fixture_monitor_poll_seconds" \
         start_checkpoint_backup_writer_guard healthy "$generation" \
           "$baseline_path" "$baseline_sha" || return 1
       ;;
@@ -7881,6 +7886,7 @@ run_checkpoint_backup_child() {
       STUB_DEPLOYMENTS_JSON="$deployments_json" \
         STUB_RUNNER_NAMESPACE="$runner_namespace" \
         STUB_RUNNER_POD_PROFILE="$profile" \
+        RECOVERY_STREAM_POLL_SECONDS="$fixture_monitor_poll_seconds" \
         start_checkpoint_backup_writer_guard stale "$generation" \
           "$baseline_path" "$baseline_sha" || return 1
       child_stub_mode='checkpoint-parent-writer-guard-stale'
@@ -7893,6 +7899,7 @@ run_checkpoint_backup_child() {
       STUB_DEPLOYMENTS_JSON="$deployments_json" \
         STUB_RUNNER_NAMESPACE="$runner_namespace" \
         STUB_RUNNER_POD_PROFILE="$profile" \
+        RECOVERY_STREAM_POLL_SECONDS="$fixture_monitor_poll_seconds" \
         start_checkpoint_backup_writer_guard healthy "$generation" \
           "$baseline_path" "$baseline_sha" || return 1
       case "$writer_guard_mode" in
@@ -7995,6 +8002,7 @@ run_checkpoint_backup_child() {
         STUB_RUNNER_POD_PROFILE="$profile" \
         STUB_MODE="$child_stub_mode" \
         STUB_DB_DUMP_DELAY_SECONDS="$db_dump_delay_seconds" \
+        RECOVERY_STREAM_POLL_SECONDS="$fixture_monitor_poll_seconds" \
         RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS="$guard_max_stale_seconds" \
         "$ROOT_DIR/deployment/backup-retdb.sh" \
         "$output_root/retdb-$STAMP.sql.gz"; then
@@ -8424,6 +8432,32 @@ run_checkpoint_backup_child_guard_tests() {
   local sequence=0 inventory_path output_path started_at
   local focused_case="${YENHUBS_RECOVERY_TEST_CASE:-}"
   initialize_durable_restore_fixture || return 1
+  if [[ "$focused_case" == db-stable ]]; then
+    sequence=$((sequence + 1))
+    case_root="$TMP_DIR/backup-child-db-$sequence-stable"
+    baseline_path="$case_root/fences.json"
+    mkdir -p "$case_root"
+    cp "$DURABLE_FENCE_BASELINE_FIXTURE" "$baseline_path"
+    chmod 600 "$baseline_path"
+    baseline_sha="$(sha256_digest "$baseline_path")"
+    reset_stub
+    STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
+      seed_checkpoint_backup_guard
+    expect_success 'db child accepts the exact immutable durable fence baseline' \
+      run_checkpoint_backup_child db "$case_root/output" durable-v2 \
+        "$baseline_path" "$baseline_sha" fence-stable \
+        "$DURABLE_RESTORE_CHECKPOINT/deployment-images.json"
+    if [[ -e "$STUB_STATE_DIR/db-source-monitor-inflight-observed" &&
+          -e "$STUB_STATE_DIR/db-source-monitor-stream-completed" &&
+          -f "$case_root/output/retdb-$STAMP.sql.gz" &&
+          -f "$case_root/output/database-contract.json" ]]; then
+      pass 'durable DB source monitor sweeps the exact PostgreSQL identity in flight'
+    else
+      fail 'durable DB source monitor positive in-flight sweep' \
+        "$(cat "$KUBECTL_LOG")"
+    fi
+    return
+  fi
   initialize_schema3_legacy_restore_fixture || return 1
   if [[ "$focused_case" != db-source-monitor-abort ]]; then
   for child in db storage; do
