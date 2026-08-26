@@ -1,6 +1,6 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **26 de agosto de 2026**
+Ultima actualización: **27 de agosto de 2026**
 
 ## Respuesta corta
 
@@ -9,9 +9,10 @@ de datos y sus medios originales. El verificador de producción terminó con
 **0 fallos y 0 avisos**, y la batería local final pasó **894 de 894 pruebas**.
 No hace falta repetir otro restore ni volver a crear DigitalOcean.
 
-H5 está cerrado. El código exacto que hizo posible la recuperación quedó
-integrado, los recibos corresponden a los bytes finales y la aceptación humana
-está completa. El siguiente trabajo vuelve a ser desarrollar features.
+La recuperación y la aceptación humana están terminadas. Falta únicamente
+fusionar el código raíz: Cloud ya está integrado, pero el PR #18 sigue abierto
+porque dos exámenes idénticos de GitHub dieron un resultado distinto en una
+prueba local sensible a la carga. Uno pasó 894/894 y el otro falló solo ese caso.
 
 ## Lo que ya está demostrado
 
@@ -38,23 +39,24 @@ está completa. El siguiente trabajo vuelve a ser desarrollar features.
   `894/894`, H5 `174/174`, HCCE, composición, advisories, static, security y
   Reticulum.
 - El finalizador confirmó los dos gitlinks y todos los recibos exactos.
-- Cloud quedó integrado en `6d9ee9e`; el PR raíz #18 integró el gitlink y el
-  cierre H5 en `main`.
+- Cloud quedó integrado en `6d9ee9e`; el PR raíz #18 contiene el gitlink y el
+  cierre H5, pero todavía no está fusionado en `main`.
 
-## Por qué H5 ya está cerrado
+## Qué falta para cerrar H5
 
-El finalizador exigió submódulos integrados y limpios, gitlinks exactos y todos
-los recibos vigentes. Cloud pasó #25, #26 y #27; la raíz pasó #18. La única
-diferencia del runner fue un falso positivo `SC2317` en una función de `trap`;
-se acotó a esa biblioteca en el workflow y no cambió la lógica de recovery.
+La plataforma restaurada ya funciona y no necesita otra intervención. Solo hay
+que estabilizar el ritmo del fixture que simula tres monitores simultáneos,
+obtener un único examen verde y fusionar #18. No se repite el restore, no se
+toca DigitalOcean y no se vuelven a ejecutar los bloques ya aceptados.
 
 Las tres acciones que no debe fingir una prueba automática ya han pasado:
 avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Lo que toca ahora
 
-1. Volver a desarrollar features.
-2. Mantener este recovery como capacidad operativa, sin reabrir H5 salvo que
+1. Terminar el único CI de #18 y fusionarlo.
+2. Volver a desarrollar features.
+3. Mantener este recovery como capacidad operativa, sin reabrir H5 salvo que
    cambien sus requisitos o aparezca evidencia nueva.
 
 ## Qué no se va a hacer
@@ -66,8 +68,8 @@ avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Cuánto queda
 
-No queda trabajo de H5. La recuperación, la aceptación humana, los recibos y la
-integración están resueltos. Lo siguiente es producto y features.
+Queda un único cierre técnico: CI verde y merge de #18. La recuperación, la
+aceptación humana y los recibos ya están resueltos.
 
 ## Cuándo se para
 

@@ -7856,10 +7856,10 @@ run_checkpoint_backup_child() {
   local runner_namespace="" deployments_json="$LEGACY_DEPLOYMENTS_JSON"
   local child_stub_mode="${STUB_MODE:-}" guard_max_stale_seconds=""
   local db_dump_delay_seconds=0.2
-  # Keep the three concurrent fixture monitors responsive without creating the
-  # 10 ms subprocess storm that can starve them on a two-core CI runner. The
-  # production default remains one second; this only paces the local fixture.
-  local fixture_monitor_poll_seconds=0.1
+  # Pace the three concurrent fixture monitors exactly like production. Faster
+  # fixture-only polling creates a subprocess storm that can starve a healthy
+  # monitor past its fail-closed freshness window on a small CI runner.
+  local fixture_monitor_poll_seconds=1
   local writer_pid="" writer_identity="" writer_progress="" writer_authority=""
   if [[ "$generation" == durable-v2 ]]; then
     runner_namespace=present

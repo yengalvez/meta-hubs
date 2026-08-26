@@ -1,7 +1,7 @@
 # PLAN ACTUAL — cerrar H5 y volver a features
 
-Version: **v11.9**
-Ultima revision: **26 de agosto de 2026 (Europe/Madrid)**
+Version: **v11.10**
+Ultima revision: **27 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El historial de
 intentos vive en `docs/session-changelog.md`; no se reanuda trabajo desde él.
 
@@ -242,13 +242,16 @@ ocupada ni procesos residuales.
   gitlinks y todos los recibos exactos. El falso positivo `SC2317` del runner
   sobre el callback de `trap EXIT` se acotó solo en el workflow y solo para esa
   biblioteca, sin invalidar recovery ni H5.
-- [x] Integrar primero el commit de `hubs-cloud`, después el gitlink y los
-  cambios raíz, siguiendo `docs/development-workflow.md`. #25 sincronizó
-  `development`, #26 validó los cuatro commits H5, #27 promovió Cloud a
-  `master` como `6d9ee9e998f636fcf61a4928cd2a275829768259` y el PR raíz #18
-  integró el gitlink y el árbol H5 final en `main`.
-- [x] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md` con los
-  recibos finales y declarar H5 cerrado. El siguiente trabajo será features.
+- [ ] Integrar primero el commit de `hubs-cloud`, después el gitlink y los
+  cambios raíz, siguiendo `docs/development-workflow.md`. Cloud ya está en
+  `master` como `6d9ee9e998f636fcf61a4928cd2a275829768259`; el PR raíz #18
+  sigue abierto. Sobre `b22aa9e`, el run de `push` `32994112165` pasó completo
+  y el run simultáneo de PR `32993940396` repitió el único fallo no
+  determinista del fixture DB. Estado: **ACTIVE** hasta obtener un único CI
+  verde y fusionar #18.
+- [ ] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md` después
+  del merge real y declarar H5 cerrado. Estado: **WAITING** por la integración
+  raíz; el siguiente trabajo será features.
 
 ## Reglas anti-loop y parada
 
@@ -272,5 +275,6 @@ ocupada ni procesos residuales.
 medios, reanudación, infraestructura, HTTPS y ghost runner con cero
 fallos/avisos y cierre limpio; la batería final pasó 894/894. Ya no queda otro
 restore. La aceptación humana completa está demostrada: avatar neutral, chat
-privado y dos participantes con audio bidireccional. Cloud, gitlink y raíz están
-integrados y el certificado de recibos exactos está verde. **H5 está cerrado.**
+privado y dos participantes con audio bidireccional. Cloud está integrado y el
+gitlink candidato está validado, pero la raíz aún no está fusionada. **H5 está
+funcionalmente aceptado; falta cerrar la integración de #18.**
