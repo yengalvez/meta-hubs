@@ -1,307 +1,275 @@
-# PLAN ACTUAL — terminar H5 sin repetir trabajo verde
+# PLAN ACTUAL — cerrar H5 y volver a features
 
-Version: **v9.4; M1/M2 cerrados y solución M3 preparada**
-Estado: **pin seguro de Reticulum implementado; la siguiente fase es únicamente validación mecánica acotada**
-Ultima revision: **22 de agosto de 2026 (Europe/Madrid)**
-Autoridad: **este es el único plan ejecutable**. Los planes anteriores y
-`docs/auditoria-final-h5-2026-08-20.md` son evidencia histórica, no colas de
-trabajo.
+Version: **v11.8**
+Ultima revision: **26 de agosto de 2026 (Europe/Madrid)**
+Autoridad: **este fichero es la única cola ejecutable**. El historial de
+intentos vive en `docs/session-changelog.md`; no se reanuda trabajo desde él.
 
-## Resultado humano
+## Resultado final
 
-Terminar una única demostración comercial de hibernación y reactivación:
+Demostrar una sola vez que una instancia comercial de YenHubs puede hibernarse,
+recrearse y volver a funcionar con su PostgreSQL y sus medios intactos. Cuando
+la recuperación, la aceptación live y la integración pasen, H5 termina y el
+proyecto vuelve a features.
 
-1. conservar conjuntamente PostgreSQL y los medios de `ret-pvc`;
-2. retirar los recursos facturables de una instancia;
-3. recrear la topología autorizada con identidades Kubernetes nuevas;
-4. restaurar DB y medios una sola vez;
-5. demostrar en navegador frío que el metaverso vuelve a funcionar.
+## Estado actual confirmado
 
-Al cerrar esos cinco resultados termina H5 y el trabajo vuelve a features. No
-se abre otra arquitectura recovery, otra hibernación ni otro restore dentro de
-este plan.
+- M1, M2 y M3 están cerrados. No se repite el `--full` ni ninguna sección verde
+  cuyas entradas no hayan cambiado.
+- El bundle conjunto `output/checkpoints/h5-b16-20260813-022800`, sus dos copias
+  cifradas, recibo privado, hashes, 13 imágenes e inventarios están validados.
+- La infraestructura autorizada está recreada: contexto `do-ams3-hubs-ce`,
+  cluster `hubs-ce`, región `ams3`, Kubernetes `1.34.10-do.1`, HA desactivada,
+  un nodo `s-4vcpu-8gb`, LB regional y dos volúmenes de 10 GiB.
+- Recaptura live final del 26 de agosto: Namespace UID
+  `6020aa74-b369-4484-90f6-a767b1ca566f`, `ret-pvc` UID
+  `80f66189-311e-4cc5-a2d1-6eed38d33715` y Bound; writers
+  `reticulum/pgbouncer/pgbouncer-t/bot-orchestrator/coturn` a `5/5`, `pgsql`
+  `1/1`, un único consumidor legítimo de `ret-pvc` (Reticulum), cero helpers y
+  cero policies storage.
+- El lock `yenhubs-recovery-operation-lock` está ausente y la Lease UID
+  `bc32cd00-c0ba-4252-babd-e8e43dc908c9` está libre. No quedan procesos locales
+  de recovery.
+- La operación final `1dc5d5c9db33165a08a473dc3cf7afae` validó DB y medios,
+  retiró exactamente el orphan `8aa…`, reactivó los cinco writers y completó
+  el verificador con **0 fallos y 0 avisos**. Confirmó perfil, 13 imágenes,
+  DNS, TLS, DB `356/94/18/33`, medios `33/33`, Reticulum histórico, HTTPS y
+  ghost runner activo.
 
-## Estado comercial ya demostrado
+## Decisión de la auditoría
 
-- [x] Bundle `freeze-bundle-v1` conjunto y válido: DB, medios, inventarios,
-  receta, digests y checksums.
-- [x] Dos copias cifradas reabiertas y rehasheadas; recibo privado `0600`; 13
-  imágenes custodiadas.
-- [x] Retirada selectiva anterior del cluster, nodo, Load Balancer y dos
-  volúmenes; el recurso ajeno `voice-chat` se conservó.
-- [x] Infraestructura equivalente recreada en `ams3`: Kubernetes
-  `1.34.10-do.1`, HA desactivada, un nodo `s-4vcpu-8gb`, LB regional y dos PVC
-  de 10 GiB.
-- [x] DNS y certificados `4/4`.
-- [x] Perfil `cold-rebind-legacy-absent-v1` generado y aplicado; preflight live
-  read-only verde.
-- [x] Estado live fail-closed conservado: cinco writers a cero, DB destino sin
-  tablas de aplicación, lock `checkpoint-restore/cold-rebind` retenido y Lease
-  libre.
+La imagen congelada
+`ghcr.io/yengalvez/bot-orchestrator@sha256:325c5c10e4ee039518693771c0974a0e5c876dcf54c443295e84490f4fa8ec53`
+es la imagen correcta para este restore histórico y debe seguir coincidiendo con
+el bundle, los values privados y el Deployment live.
 
-## Evidencia local cerrada que no se repite
+La imagen moderna publicada por Actions `32827354958` con digest
+`sha256:334759ad3611aa68187daf885654abb607d2d11c4ec82b51cda4d20a406625db`
+queda aparcada para una migración durable posterior. No puede introducirse sola
+en H5: exige ServiceAccount/RBAC, namespace runner, epoch y variables que el
+perfil `cold-rebind-legacy-absent-v1` elimina deliberadamente.
 
-Los siguientes resultados pertenecen a superficies que no han cambiado por el
-hallazgo de Dialog ni por el rediseño del orquestador. Se conservan como
-evidencia de transición H5 y no se convierten artificialmente en recibos v2:
+La reparación mínima es únicamente de composición: el perfil legacy transforma
+readiness a `/health` y conserva liveness `/health`; el perfil durable mantiene
+readiness `/transport-ready`. Generador, verificador standalone y contrato
+estructural rechazan una mezcla. Las focales afectadas pasan **49/49** y
+`git diff --check` pasa.
 
-- recovery normal `871/871`;
-- agregado H5 `173/173`;
-- Hubs CE generator `32/32`;
-- `test:apply` `120/120`;
-- bot-orchestrator `155/155`;
-- Hubs/Admin y navegador/capacidad alcanzados verdes por el último candidato.
+La auditoría del 26 de agosto corrige además tres supuestos del verificador:
 
-Los logs privados y las causas de los intentos anteriores están indexados en
-`docs/session-changelog.md` y `docs/auditoria-final-h5-2026-08-20.md`. No se
-copian otra vez aquí.
+- el API raw entrega un `DeploymentList` tipado cuyos elementos omiten
+  `apiVersion/kind`; la autoridad singleton debe validar la lista completa;
+- el digest Reticulum histórico fue construido en Cloud `5a82de5`, anterior a
+  `/health/capabilities`; durante el restore legacy se valida su `/health/`
+  exacto, y protocol 2 queda para el runtime moderno posterior;
+- el bot histórico reintenta sincronización cada 30 s; el verificador espera
+  hasta 60 s al contrato legacy completo en lugar de aceptar la primera
+  respuesta JSON prematura. La DB contiene dos salas configuradas con bots,
+  incluida `VJopCY3`.
 
-## Corrección del método de validación
+Las correcciones son solo de aceptación y pasan `security-gates` **58/58**,
+Bash, ShellCheck, `git diff --check` y una prueba contra el `DeploymentList`
+raw real. No cambian imágenes, datos, topología ni seguridad del restore.
 
-El `--full` antiguo era monolítico, `fail-fast` y utilizaba suites largas para
-descubrir un fallo cada vez. Esa política queda retirada.
+La evidencia de `8aa…` aisló además una incompatibilidad de composición real:
+el manifiesto live entrega al bot histórico
+`RET_INTERNAL_ACCESS_HEADER=x-ret-bot-orchestrator-access-key`, pero el código
+congelado `5a82de5` autentica `/api-internal` mediante
+`x-ret-dashboard-access-key`. Por eso la sincronización recibe `401`, no activa
+ninguna sala y el runner nunca puede cumplir readiness. El perfil legacy, sus
+dos verificadores, su regresión de generador y el gate live exigen ya el
+encabezado histórico; `test:generator` pasa **32/32** y `security-gates`
+**58/58**, más Bash, ShellCheck y `git diff --check`. No se cambia la credencial,
+la imagen ni el protocolo: únicamente el nombre de header compatible con esos
+bytes históricos.
 
-El arnés nuevo de `scripts/verify-project.sh` debe ofrecer:
+## Cola ejecutable
 
-- secciones independientes con los mismos comandos de cobertura;
-- auditorías de dependencias antes de las suites largas;
-- continuación entre secciones aunque una falle;
-- logs y recibos privados, atómicos y ligados a la clausura de entradas de cada
-  sección, al arnés y al toolchain;
-- caducidad de 24 horas para advisories;
-- reutilización automática de un PASS exacto;
-- invalidación solo de la sección afectada y sus dependientes;
-- una sección corta de composición y un finalizador que compruebe recibos,
-  gitlinks, diffs y ausencia de procesos residuales.
+### M4. Una recuperación productiva final
 
-Un cambio transversal, una clausura desconocida, toolchain distinto,
-advisories caducados, log incompleto o contaminación del host invalida la
-evidencia correspondiente. Una modificación exclusiva de Dialog no invalida
-recovery ni H5.
+- [x] Auditar source, bundle, plan, worktrees, estado live y reglas anti-loop.
+- [x] Corregir solo el contrato de probe del perfil legacy y validar las tres
+  focales afectadas; no ejecutar otro `--full`.
+- [x] Confirmar en read-only el Lease de serialización, la imagen/probe del
+  Deployment live y que las identidades y el estado fail-closed siguen siendo
+  exactamente los anteriores. Resultado: Lease libre; digest histórico exacto;
+  readiness live todavía `/transport-ready` y liveness `/health`; identidades,
+  writers, PVC y consumidores coinciden.
+- [x] Limpiar únicamente el lock stale exacto mediante la confirmación completa
+  del supervisor. El cleanup es condicional a la recaptura; no se leen
+  anotaciones ni valores privados. Resultado: helper/policy propios y lock
+  exacto retirados; ningún workload se reanudó.
+- [x] Regenerar desde `output/private-h5-b4/input-values.freeze-20260812.yaml`
+  con `HCCE_TARGET_PROFILE=cold-rebind-legacy-absent-v1`. Verificar el
+  manifiesto sin abrirlo ni imprimir Secrets; comprobar por inventario redactado
+  que conserva el digest histórico y usa readiness/liveness `/health` solo para
+  `bot-orchestrator` legacy. Resultado: 44 recursos verificados, fichero `0600`,
+  digest histórico exacto, writers cero y probes `/health`/`/health`.
+- [x] Revisar el `kubectl diff` redactado y aplicar únicamente por el wrapper
+  protegido `npm run apply`. Los cinco writers deben permanecer a cero y no se
+  cambia topología, coste, DNS, certificados, PVC ni imágenes del checkpoint.
+  El diff fue solo `/transport-ready` a `/health`. El wrapper aplicó ese cambio
+  y después agotó su espera por un reset TCP del API al normalizar el último
+  Deployment; no se repitió. Una comprobación read-only posterior confirmó los
+  doce Deployments exactos, Lease libre, bot `/health` y writers todavía cero.
+- [x] Repetir una sola vez el preflight cold-rebind DB+medios sobre el mismo
+  bundle, recibo, Namespace y PVC. Resultado: PASS read-only; bundle y recibo
+  rehasheados, target exacto y vacío, writers cero y bytes invariantes.
+- [x] Ejecutar la operación causal `3b905ea22b1235e90df885469e1e3d18`.
+  Se detuvo antes del stream DB con
+  `database_restore_stream_stage:launch` / `lease-window:0:2838`. El rollback
+  dejó writers cero, `pgsql=1`, cero consumidores/helpers/policies y retuvo
+  lock y Lease. No se repitió producción.
+- [x] Preparar un candidato para esa causa: si todas las guardas avanzaron pero
+  no coinciden en una ventana suficiente para Lease y cancelación, la guarda
+  con menor margen obtiene otro barrido dentro del plazo inicial de 30 s. La
+  frescura productiva continúa en 10 s y ningún hijo destructivo existe durante
+  la realineación. La regresión exacta y el foco pasan **50/50**, además de
+  Bash, ShellCheck y `git diff --check`. **No queda aceptado live:** la operación
+  posterior cruzó el stream DB pero falló en `post-audit`; el refuerzo de esa
+  frontera pasó la focal, pero otro intento volvió a fallar la misma clase de
+  alineación en otra guarda.
+- [x] Limpiar de forma supervisada el lock y la Lease retenidos, recapturar y
+  repetir el preflight sin reabrir bloques verdes. Resultado anterior al último
+  intento: Lease libre, lock ausente y preflight PASS.
+- [x] Ejecutar `a31b9c5671049404da5f4d33a61c2b1a`: cruzó el stream DB y
+  se detuvo en `database-stream/post-audit`, sin subdetalle. Rollback seguro.
+- [x] Añadir post-audit explícito, puerta aislada previa a la alineación y
+  diagnóstico de Lease; focal **50/50**, Bash, ShellCheck y diff PASS.
+- [x] Ejecutar `d719176b220c65711c37869184a5c80d`: volvió a fallar antes
+  del stream en `refresh/lease-window:1:3536`. Es la misma clase de fallo en
+  otra guarda; rollback seguro con Lease libre, lock retenido, writers cero y
+  sin consumidor/helper/policy.
+- [x] **STOP anti-loop resuelto localmente:** la capacidad firmada del monitor
+  de escritores ya valida en cada ronda la Lease, el lock y las identidades de
+  esta operación. El supervisor deja de repetir un segundo GET síncrono de
+  Lease cuando esa capacidad exacta está presente; deriva el margen de inicio
+  solo de las capacidades que aún deben ejecutarse y conserva intactos los
+  diez segundos de frescura y los dos segundos de cancelación. La focal pasa
+  **92/92**, incluida una regresión que hace fallar cualquier Lease directo;
+  Bash, ShellCheck y `git diff --check` pasan. No es todavía evidencia live.
+- [x] Recapturar, limpiar el lock exacto y pasar preflight. La operación
+  `51f5f9bb49f0cd473ba60d06caca4ce4` restauró y validó DB, retiró el orphan
+  exacto de `33` pares de `7311bb41b28765341d8993a91375c8f2` y restauró y
+  validó los medios. El coordinador superó por tanto la frontera de guardas.
+  Falló después, en aceptación, porque el verificador hijo perdió
+  `RECOVERY_CHECKPOINT_RUNNER_GENERATION=legacy-absent` al volver a cargar la
+  librería de seguridad. Rollback seguro: writers cero, `pgsql=1`, Lease libre,
+  lock retenido y cero consumidores/helpers/policies.
+- [x] Corregir esa frontera: el verificador conserva el input inmutable antes
+  de cargar la librería y lo restaura después; no conserva capacidades de
+  cleanup o señalización. La regresión estructural y `security-gates` pasan
+  **58/58**, junto con Bash, ShellCheck y `git diff --check`.
+- [x] Recapturar metadata y estado, limpiar el lock exacto y repetir el
+  preflight. La operación nueva fue `22ec832b72ba151b6cbef155ec1e2e94`.
+- [x] Ejecutar esa única recuperación coordinada con el orphan exacto de
+  `51f5f9bb49f0cd473ba60d06caca4ce4`: DB y medios pasaron, los cinco writers
+  reanudaron en orden y Reticulum llegó a `Ready`; la aceptación externa falló
+  después y activó rollback seguro.
+- [x] Diagnosticar sin repetir: la sonda de sitting hacía port-forward al puerto
+  TLS `4000` y lo consultaba como HTTP, mientras Reticulum, el Service y la
+  arquitectura documentada usan HTTP interno `4001`. Corregir verificador y su
+  gate estructural únicamente; Bash, ShellCheck, gate dirigido y diff deben
+  pasar antes de otra acción live.
+- [x] Recapturar el rollback exacto, limpiar solo el lock y pasar el preflight.
+  Resultado: target exacto, vacío y byte-invariante; operación nueva
+  `dbd20994714ea8eb532f12803729269b`.
+- [x] Ejecutar esa recuperación con orphan source `22ec…`: datos y reanudación
+  pasaron; aceptación falló por los tres supuestos legacy descritos arriba y el
+  rollback quedó seguro.
+- [x] Corregir solo esas tres causas y validar el foco: `58/58`, Bash,
+  ShellCheck, diff y `DeploymentList` raw real pasan. No se ejecuta `--full`.
+- [x] Recapturar el rollback, limpiar solo el lock exacto y pasar el mismo
+  preflight una vez; no cambiar bytes de producto, imágenes, datos o topología.
+- [x] Ejecutar `8aa49fb2d35e2d0189dd3931d59b5a5d` con orphan source `dbd…`.
+  DB, medios, reanudación, perfil, imágenes, DNS, TLS, recursos, PostgreSQL,
+  `ret-pvc`, Reticulum histórico y HTTPS pasaron. El runner ghost no activó
+  salas; rollback seguro con escritores cero, Lease libre, mismo Namespace/PVC,
+  cero consumidores/helpers/policies y lock nuevo retenido.
+- [x] Diagnosticar esa única firma: el bot histórico enviaba el header moderno
+  que Reticulum histórico no reconoce y sincronizaba con `401`. Corregir solo
+  la composición legacy y sus contratos; generador **32/32**, security-gates
+  **58/58**, Bash, ShellCheck y diff pasan.
+- [x] Limpiar condicionalmente solo el lock exacto `bca29da4…`, regenerar desde
+  los mismos values con el mismo perfil y revisar/aplicar por el wrapper
+  protegido únicamente el cambio de header. Resultado: 44 recursos y 12
+  Deployments exactos, header histórico live, writers cero durante el cambio;
+  no cambiaron imágenes, credenciales, datos, topología ni coste. El wrapper
+  agotó su bucle de observación, pero el readback server-normalized posterior
+  probó los 12 Deployments exactos; no se repitió el apply.
+- [x] Recapturar el estado posterior y pasar el mismo preflight una vez.
+  Resultado: PASS read-only y bundle byte-invariante.
+- [x] Ejecutar la última recuperación con operación
+  `1dc5d5c9db33165a08a473dc3cf7afae` y orphan source `8aa…`. Resultado: DB,
+  medios, reanudación y verificador live completos con 0 fallos/avisos; lock
+  ausente, Lease libre, writers `5/5`, `pgsql=1`, cero helpers/policies/procesos.
+- [x] La rama de fallo final no se activó: la operación terminó en verde. Se
+  conserva como regla que no existe reintento automático ni segunda hipótesis
+  sin evidencia causal nueva.
 
-## Plan de producción
+**M4: DONE.** DB y medios se validaron conjuntamente, los writers se reactivaron
+en el orden protegido, el lock se liberó y no quedan helper, policy, Lease
+ocupada ni procesos residuales.
 
-### M1. Validar el nuevo arnés seccionado
+### M5. Aceptación comercial e integración
 
-- [ ] Revisar el diff de `scripts/verify-project.sh` y
-  `tests/scripts/verify-project-sections.test.sh`.
-  - Estado: **cerrado y validado**.
-  - No ejecutar ninguna suite de producto ni `--full` durante esta revisión.
-  - Confirmar que `scripts/verify-project.sh` conserva modo ejecutable; si la
-    sustitución del fichero lo perdió, restaurar únicamente ese bit antes de
-    validar.
-- [x] Ejecutar únicamente:
+- [x] Ejecutar `./deployment/verify-live-reactivation.sh`: resultado final con
+  cero fallos y cero avisos, conjunto activo coherente y `33/33` pares físicos.
+- [x] En navegador interno con sesión fría comprobar carga sin excepciones
+  first-party, español, login, sala `VJopCY3`, escena y medios. `APP`, `AFRAME`,
+  escena y cinco bots inicializaron correctamente.
+- [x] Probar escritorio y móvil, primera y tercera persona y sitting histórico;
+  comprobar además el catálogo de nueve avatares y sus thumbnails.
+- [x] Completar solo la aceptación humana que no puede inferirse del mismo
+  perfil autenticado. La selección real del avatar neutral `base` pasó y la UI
+  confirmó `Tu avatar ha sido cambiado`. Después la sala mostró `Personas (2)`,
+  el micrófono local pasó por `Hablando`, el propietario confirmó audio en ambos
+  sentidos y se volvió a dejar `Silenciado`. La exclusividad protocol 2
+  pertenece al runtime moderno pendiente y no se falsifica en la imagen
+  restaurada `5a82de5`.
+- [x] Probar Admin y propiedad/edición en Spoke del proyecto `qa3U3Ke` y escena
+  `f6VKtim`.
+- [x] Para el perfil histórico, comprobar `/health`, runner ghost activo, cinco
+  bots presentes y navegación con el navmesh publicado.
+- [x] Enviar un único mensaje inocuo en el chat privado del bot y comprobar su
+  respuesta. `bot-2` respondió `¡Hola! ¿En qué puedo ayudarte hoy?`; la UI
+  mostró que la conversación es privada y temporal y el aviso de procesamiento
+  por OpenAI. No se exige `/transport-ready`, propio del runtime durable.
+- [x] Ejecutar únicamente las secciones invalidadas por los bytes finales, sin
+  `--full`: `recovery` **894/894**, `h5` **174/174**, `hcce`, `composition`,
+  `advisories`, `static`, `security` y `reticulum` tienen PASS. El primer
+  `--finalize` detectó correctamente el submódulo Cloud aún sucio; se repetirá
+  solo después de integrarlo y renovar los recibos que cambien.
+- [ ] Integrar primero el commit de `hubs-cloud`, después el gitlink y los
+  cambios raíz, siguiendo `docs/development-workflow.md`. Cloud ya está
+  integrado: #25 sincronizó `development`, #26 pasó CI y fusionó los cuatro
+  commits H5, y #27 promovió el mismo árbol a `master` como
+  `6d9ee9e998f636fcf61a4928cd2a275829768259`. Queda fijar ese gitlink e
+  integrar los cambios raíz.
+- [ ] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md` con los
+  recibos finales y declarar H5 cerrado. El siguiente trabajo será features.
 
-  ```bash
-  bash -n scripts/verify-project.sh tests/scripts/verify-project-sections.test.sh
-  shellcheck -x scripts/verify-project.sh tests/scripts/verify-project-sections.test.sh
-  bash tests/scripts/verify-project-sections.test.sh
-  git diff --check
-  ```
+## Reglas anti-loop y parada
 
-  - Resultado: `bash -n` PASS, ShellCheck PASS, arnés focal `12/12` PASS y
-    `git diff --check` PASS. La sustitución del script conserva modo `0755`.
-  - STOP aplicado una sola vez a cuatro advertencias de ShellCheck y cuatro
-    espacios finales del plan; se corrigieron únicamente esas causas y no se
-    repitió ninguna suite de producto.
+1. Un PASS se reutiliza mientras sus bytes, toolchain y dependencias no cambien.
+2. Un FAIL solo puede repetirse después de identificar una causa nueva y cambiar
+   exactamente la superficie responsable.
+3. No se crea otro checkpoint, otra copia cifrada, otra topología ni otra
+   arquitectura de recovery para cerrar H5.
+4. No se despliega la imagen durable nueva dentro del restore histórico.
+5. No se abren ni imprimen values, manifiestos generados, Secret bodies,
+   anotaciones o tokens del lock.
+6. Solo se para ante divergencia del target, estado/Lease/lock ambiguo,
+   exposición de secreto, pérdida del estado fail-closed, coste/topología no
+   previsto o un fallo grave que requiera investigación superior.
+7. El cierre lo demuestran el restore, el verificador live, el navegador y la
+   integración; no la cantidad de tests ejecutados.
 
-**Cierre M1:** CLI, fingerprint, privacidad, tamper y caducidad del recibo
-verificados; cero suite larga ejecutada.
+## Confianza operativa
 
-### M2. Resolver la alerta productiva de Dialog — cerrado
-
-- [x] Confirmar que `mediasoup@3.19.22` declara `tar ^7.5.13` y que la versión
-  corregida elegida sigue dentro de ese rango.
-- [x] Actualizar únicamente la resolución transitiva de `tar` en el lockfile de
-  Dialog. Prohibidos `npm audit fix --force`, upgrade general de Mediasoup y
-  cambios de aplicación sin una causa distinta.
-- [x] Mantener las dependencias de desarrollo fuera de la imagen runtime de
-  Dialog (`npm ci --omit=dev`); los avisos de ESLint no deben viajar al cliente.
-- [x] Revisar que el diff del lockfile no actualiza paquetes ajenos.
-- [x] Ejecutar, usando un único directorio privado de evidencia:
-
-  ```bash
-  ./scripts/verify-project.sh --section advisories --evidence-dir <DIR_PRIVADO_0700>
-  ./scripts/verify-project.sh --section dialog --evidence-dir <MISMO_DIR>
-  ```
-
-**Cierre M2:** `advisories` PASS, `dialog` PASS; el lock solo cambia
-`tar@7.5.20` a `7.5.21`, la imagen usa `npm ci --omit=dev`, y lint/tests de
-Dialog pasan. El audit completo del entorno de test aún enumera dependencias de
-desarrollo antiguas, pero no se copian al runtime y no abre una deuda productiva
-distinta.
-
-### M3. Completar únicamente la cola que el full nunca alcanzó — parcialmente cerrado
-
-- [x] Ejecutar una sola vez y en el mismo directorio de evidencia:
-
-  ```bash
-  ./scripts/verify-project.sh --section photomnemonic --evidence-dir <DIR>
-  ./scripts/verify-project.sh --section coturn --evidence-dir <DIR>
-  ./scripts/verify-project.sh --section spoke --evidence-dir <DIR>
-  ./scripts/verify-project.sh --section reticulum --evidence-dir <DIR>
-  ```
-
-  Resultado: `photomnemonic`, `coturn` y `spoke` PASS. La primera ejecución de
-  `reticulum` quedó bloqueada por dos causas independientes: `mix hex.audit`
-  detectó el advisory nuevo de `cowlib 2.19.0` (`EEF-CVE-2026-43971`) y el
-  arnés imponía el usuario local `postgres`, que no existe en este Mac.
-
-  La causa local ya está resuelta como evidencia de entorno, sin modificar
-  producto ni producción: con el rol existente `yengalvez` (superusuario local
-  de pruebas), Reticulum pasó **461 tests, 5 properties y 0 fallos**. El arnés
-  productivo conserva deliberadamente `DB_CREDENTIALS=postgres`; no se cambia
-  esa configuración por conveniencia local.
-
-  El bloqueo detectado era upstream: la CNA marca afectadas las versiones
-  Hex desde `2.9.0` y enlaza el commit `89da27e` como parche, mientras Hex sigue
-  marcando `2.19.0` como vulnerable y no publica una release corregida. No se
-  añade `CVE-2026-43971` a `ignore_advisories`. El propietario autorizó resolver
-  la unidad y se eligió el pin exacto al commit oficial `89da27e`, acompañado de
-  una guarda específica para que convertir Cowlib en dependencia Git no deje
-  ciego a `mix hex.audit`.
-
-  Como preparación no mutante, se probó ese commit en una copia desechable del
-  servicio: `mix deps.get`, formato y compilación estricta pasan; `mix
-  hex.audit` queda sin paquetes retirados ni advisories (solo advierte que las
-  dos entradas antiguas ya no aplican al paquete Git), y el foco de 4 pruebas
-  de CORS pasa. La suite completa desechable tuvo un único timeout de socket en
-  ese mismo foco; al aislarlo pasó `4/4`, por lo que no se atribuye a cowlib.
-  Esto demostró la viabilidad técnica previa del pin.
-
-- [x] Implementar la solución de procedencia y seguridad, sin ejecutar todavía
-  la fase mecánica:
-  - `mix.exs` y `mix.lock` fijan el repositorio oficial y el SHA completo;
-  - la guarda nueva comprueba lock, checkout, ancestro 2.19.0 y los tres commits
-    exactos posteriores al tag;
-  - OSV debe seguir ligando `CVE-2026-43971` al SHA parcheado y devolver
-    exactamente el conjunto conocido para Hex 2.19.0; toda alerta nueva falla;
-  - `mix hex.audit` continúa cubriendo todas las demás dependencias Hex;
-  - un ExUnit focal prueba un Link válido y rechaza inyección por target, `rel`
-    y clave de atributo;
-  - la auditoría se ejecuta en la sección `advisories`, cuyo recibo caduca a las
-    24 horas, y no dentro de los 461 tests de Reticulum.
-
-- [ ] Ejecutar una sola vez, en este orden y en un mismo directorio privado:
-
-  ```bash
-  bash -n scripts/verify-project.sh tests/scripts/verify-project-sections.test.sh \
-    hubs-cloud/community-edition/services/reticulum/scripts/verify-cowlib-security-contract.sh
-  shellcheck -x scripts/verify-project.sh tests/scripts/verify-project-sections.test.sh \
-    hubs-cloud/community-edition/services/reticulum/scripts/verify-cowlib-security-contract.sh
-  bash tests/scripts/verify-project-sections.test.sh
-  cd hubs-cloud/community-edition/services/reticulum
-  mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- \
-    env MIX_ENV=test mix deps.get --only test --check-locked
-  mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- \
-    env MIX_ENV=test mix test test/cowlib_security_contract_test.exs
-  cd ../../../..
-  ./scripts/verify-project.sh --section advisories --evidence-dir <DIR>
-  YENHUBS_RETICULUM_TEST_DB_CREDENTIALS=yengalvez \
-    ./scripts/verify-project.sh --section reticulum --evidence-dir <DIR>
-  ./scripts/verify-project.sh --section static --evidence-dir <DIR>
-  ./scripts/verify-project.sh --section composition --evidence-dir <DIR>
-  ```
-
-  Si falla una orden, corregir solo esa causa y repetir únicamente la sección o
-  foco cuya entrada haya cambiado. No iniciar el despachador completo hasta que
-  esta unidad quede verde.
-
-- [ ] Crear una sola vez los recibos v2 que falten y finalizar. Esta es la
-  única repetición amplia restante: no reabre decisiones ni borra los PASS que
-  vaya obteniendo. El `--full` actual es un despachador seccionado, continúa
-  ante fallos y reutiliza automáticamente los recibos exactos ya creados:
-
-  ```bash
-  ./scripts/verify-project.sh --full --evidence-dir <MISMO_DIR>
-  ./scripts/verify-project.sh --finalize --evidence-dir <MISMO_DIR>
-  ```
-
-  Si una sección falla, conservar todos los otros recibos, corregir la causa y
-  ejecutar solo `--section <fallida>` antes de repetir exclusivamente el
-  finalizador. Nunca reiniciar la batería completa.
-
-- [x] Por el cambio del propio arnés, ejecutar solo sus dependientes:
-
-  ```bash
-  ./scripts/verify-project.sh --section static --evidence-dir <DIR>
-  ./scripts/verify-project.sh --section security --evidence-dir <DIR>
-  ./scripts/verify-project.sh --section composition --evidence-dir <DIR>
-  ```
-
-  Resultado: `static`, `security` y `composition` PASS. La primera ejecución
-  de `composition` fue invalidada porque el runner ocultaba el fallo de cwd y
-  status; tras corregirlo, la única repetición `composition` generó y verificó
-  `68` recursos correctamente.
-
-- [x] Registrar la matriz H5 de transición: recibos nuevos para las secciones
-  anteriores y evidencia histórica cerrada para recovery/H5/Hubs/browser/HCCE/
-  bot. No fabricar recibos retroactivos ni ejecutar esos bloques de nuevo.
-
-**Cierre M3:** la decisión y el código están cerrados; falta solamente validar
-los bytes finales del pin, la guarda, la regresión y las secciones invalidadas.
-No se abre otro full para ello.
-
-**Frescura de recibos:** el schema v2 liga cada recibo al núcleo común, al
-comando y al toolchain de su propia sección, no al fichero completo del arnés ni
-a herramientas ajenas. Este cambio invalida una sola vez los recibos v1;
-después, un ajuste en Reticulum o advisories no vuelve a invalidar recovery,
-H5, Hubs ni otras secciones cerradas. No se fabrican recibos retroactivos.
-
-### M4. Completar una única restauración productiva
-
-- [ ] Recapturar read-only contexto, topología, Namespace/PVC, cinco writers,
-  DB, Pods, lock y Lease; comparar con el estado fail-closed autorizado.
-- [ ] Limpiar una sola vez el lock stale exacto mediante el flujo
-  `RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1` y `RESTORE_TARGET_MODE=cold-rebind`.
-- [ ] Repetir inmediatamente el preflight cold-rebind read-only.
-- [ ] Ejecutar un único restore coordinado de DB y medios y medir RTO.
-
-**Cierre M4:** DB y medios validados, cinco writers reanudados en orden, lock y
-Lease liberados.
-**STOP:** identidad/topología/coste distintos, Lease ocupada, lock no exacto,
-respuesta ambigua o fallo. No se lanza un segundo restore en este plan.
-
-### M5. Aceptar el producto real e integrar
-
-- [ ] Conservar `0 failures / 0 warnings` del verificador live ejecutado por el
-  restore; repetirlo solo si no quedó evidencia o cambió el estado.
-- [ ] En navegador interno frío comprobar español, login, `VJopCY3`, dos
-  participantes y audio bidireccional, cámaras primera/tercera persona, avatar,
-  Admin, Spoke, sitting legacy, escena y medios sin excepciones first-party.
-- [ ] Recuperar evidencia histórica de coste solo si sigue disponible; no
-  repetir una hibernación para fabricarla.
-- [ ] Integrar primero Hubs Cloud y después el gitlink/root siguiendo
-  `docs/development-workflow.md`.
-- [ ] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md`, cerrar
-  H5 y volver a features.
-
-## Fuera de alcance
-
-- otro checkpoint, otra copia cifrada, otro borrado o recreación de DO;
-- otro restore, salvo una nueva autorización tras un STOP real;
-- nuevas matrices o arquitectura recovery;
-- HA, HPA, Terraform, multi-cliente self-service o modernización upstream;
-- hotpatches, `kubectl scale`, manifiestos editados a mano o hijos restore
-  ejecutados por separado.
-
-## Reglas anti-loop
-
-1. Un PASS exacto se reutiliza; no se repite para aumentar confianza.
-2. Un FAIL solo se repite después de una causa demostrada y un cambio relevante.
-3. El arnés recopila todos los fallos independientes en la misma pasada.
-4. Una sección cambia solo la evidencia de su clausura y dependientes.
-5. Los audits caducan; las suites funcionales no caducan mientras sus entradas y
-   toolchain permanezcan idénticos.
-6. No se vuelve a exigir un `--full` monolítico para cerrar H5.
-7. El resultado comercial lo demuestran el restore y el navegador, no el número
-   de tests.
-8. El historial vive en el changelog/auditoría; este plan conserva solo estado,
-   dependencias, próximos pasos y evidencia necesaria para reanudar.
-
-## Punto de menor confianza
-
-La decisión difícil ya está resuelta sin silenciar advisories. La incertidumbre
-restante es puramente verificable: confirmar que los bytes finales pasan la
-guarda online, la regresión `cow_link`, Reticulum y el release/CI. Hasta esos
-verdes el cambio no se integra ni se usa para construir una imagen productiva.
+**Alta para M4 y para la base funcional de M5.** La operación final demostró DB,
+medios, reanudación, infraestructura, HTTPS y ghost runner con cero
+fallos/avisos y cierre limpio; la batería final pasó 894/894. Ya no queda otro
+restore. La aceptación humana completa ya está demostrada: avatar neutral, chat
+privado y dos participantes con audio bidireccional. Para cerrar H5 solo faltan
+la integración ordenada y el certificado de recibos sobre esos commits.

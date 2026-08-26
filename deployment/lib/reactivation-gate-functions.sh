@@ -353,6 +353,10 @@ reactivation_legacy_bot_health_is_acceptable() {
   ' >/dev/null 2>&1 <<<"$payload"
 }
 
+reactivation_legacy_reticulum_health_is_acceptable() {
+  [[ "${1:-}" == "ok" ]]
+}
+
 reactivation_bot_health_matches_profile() {
   local payload="${1:-}"
   local profile="${2:-durable-active}"
@@ -461,7 +465,11 @@ reactivation_deployments_are_acceptable() {
      else
        ([.items[] | select(.metadata.name == "bot-orchestrator") |
          .spec.template.spec.containers[] | select(.name == "bot-orchestrator") |
-         (.env // [])[] | select(.name == "BOT_RUNNER_IMAGE")] | length) == 0
+         (.env // [])[] | select(.name == "BOT_RUNNER_IMAGE")] | length) == 0 and
+       ([.items[] | select(.metadata.name == "bot-orchestrator") |
+         .spec.template.spec.containers[] | select(.name == "bot-orchestrator") |
+         (.env // [])[] | select(.name == "RET_INTERNAL_ACCESS_HEADER") | .value] ==
+        ["x-ret-dashboard-access-key"])
      end)
   ' >/dev/null 2>&1 <<<"$payload"
 }
@@ -470,14 +478,24 @@ reactivation_reticulum_deployment_is_singleton() {
   local payload="${1:-}"
   [[ -n "$payload" ]] || return 1
   jq -e '
-    .apiVersion == "apps/v1" and .kind == "Deployment" and
-    .metadata.name == "reticulum" and
-    (.metadata.namespace | type == "string" and length > 0) and
-    (.metadata.uid | type == "string" and length > 0) and
-    .spec.replicas == 1 and
-    .spec.strategy == {type:"Recreate"} and
-    .spec.selector.matchLabels.app == "reticulum" and
-    .spec.template.metadata.labels.app == "reticulum"
+    def exact_reticulum:
+      .metadata.name == "reticulum" and
+      (.metadata.namespace | type == "string" and length > 0) and
+      (.metadata.uid | type == "string" and length > 0) and
+      .spec.replicas == 1 and
+      .spec.strategy == {type:"Recreate"} and
+      .spec.selector.matchLabels.app == "reticulum" and
+      .spec.template.metadata.labels.app == "reticulum";
+    if .apiVersion == "apps/v1" and .kind == "Deployment" then
+      exact_reticulum
+    elif .apiVersion == "apps/v1" and .kind == "DeploymentList" and
+         (.metadata.resourceVersion | type == "string" and length > 0) and
+         (.items | type == "array") then
+      [.items[] | select(.metadata.name == "reticulum")] as $matches |
+      ($matches | length) == 1 and ($matches[0] | exact_reticulum)
+    else
+      false
+    end
   ' >/dev/null 2>&1 <<<"$payload"
 }
 

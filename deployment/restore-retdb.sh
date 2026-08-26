@@ -127,6 +127,7 @@ DB_QUIESCE_MONITOR_POLL_SECONDS=""
 RESTORE_PHASE="validating"
 DATABASE_RESTORE_STAGE="validation"
 DATABASE_RESTORE_QUIESCENCE_GUARD="entry"
+DATABASE_RESTORE_QUIESCENCE_DETAIL=""
 cleanup_restore() {
   if [[ -n "$QUIESCE_MONITOR_PID" ]]; then
     [[ -z "$QUIESCE_MONITOR_STOP" ]] || : >"$QUIESCE_MONITOR_STOP"
@@ -181,6 +182,7 @@ restore_interrupted() {
   exit "$status"
 }
 restore_failed() {
+  local quiescence_detail=""
   case "$DATABASE_RESTORE_STAGE" in
     validation|target|guards|quiescence|database-reset|database-stream|counts|active-files|contract|monitor-stop) ;;
     *) DATABASE_RESTORE_STAGE=other ;;
@@ -195,6 +197,26 @@ restore_failed() {
     esac
     printf 'database_restore_quiescence_guard:%s\n' \
       "$DATABASE_RESTORE_QUIESCENCE_GUARD" >&2
+    if [[ "$DATABASE_RESTORE_QUIESCENCE_GUARD" == local-monitor-progress ]]; then
+      quiescence_detail="$DATABASE_RESTORE_QUIESCENCE_DETAIL"
+      if [[ -z "$quiescence_detail" && -s "$QUIESCE_MONITOR_FAILURE" ]]; then
+        IFS= read -r quiescence_detail <"$QUIESCE_MONITOR_FAILURE" || :
+      fi
+      case "$quiescence_detail" in
+        initial-progress-timeout|\
+        consumer_or_pgsql_source_drift:consumer-recheck|\
+        consumer_or_pgsql_source_drift:runner-absence|\
+        consumer_or_pgsql_source_drift:parent-writer-guard|\
+        consumer_or_pgsql_source_drift:pgsql-source|\
+        progress_publish_failed)
+          printf 'database_restore_quiescence_detail:%s\n' \
+            "$quiescence_detail" >&2
+          ;;
+        *)
+          printf 'database_restore_quiescence_detail:unknown\n' >&2
+          ;;
+      esac
+    fi
   fi
   if [[ "$RESTORE_PHASE" == "quiescing" || "$RESTORE_PHASE" == "restoring" ]]; then
     printf 'Database restore stopped. Any scaled DB consumers remain at zero for safety.\n' >&2
@@ -635,20 +657,281 @@ require_runner_quiescence() {
 
 initialize_runner_quiescence
 
-require_quiesced_consumers() {
-  local deployment selector pods
-  DATABASE_RESTORE_QUIESCENCE_GUARD="consumer-recheck"
-  recovery_require_operation_lock || return 1
+require_quiesced_monitor_snapshot() {
+  local control_json workloads_json runner_json
+  local namespace_json pvc_json lock_json lease_json runner_namespace_json
+  local deployment expected expected_uid expected_selector expected_fingerprint
+  local current_contract current_uid current_replicas current_selector current_fingerprint selector
+  local pgsql_pod_json pgsql_pod_name pgsql_pod_uid pgsql_rs_name pgsql_rs_uid
+  local pgsql_deployment_uid
+
+  # Keep the local stream guard comfortably inside the fixed ten-second
+  # freshness budget. Two bounded snapshots replace the old serialized
+  # identity sweep; every object remains checked by UID/resourceVersion and
+  # the original lock, Lease, contract and ownership predicates.
+  [[ "$(command kubectl --request-timeout=45s config current-context 2>/dev/null)" == \
+     "$EXPECTED_KUBE_CONTEXT" ]] || return 1
+  control_json="$(recovery_kubectl get \
+    namespace/"$NAMESPACE" namespace/hcce-bot-runners \
+    pvc/ret-pvc configmap/"$RECOVERY_OPERATION_LOCK_NAME" \
+    lease/"$RECOVERY_SERIALIZATION_LEASE_NAME" \
+    -n "$NAMESPACE" --ignore-not-found -o json)" || return 1
+  jq -e --arg namespace "$NAMESPACE" '
+    .apiVersion == "v1" and .kind == "List" and (.items | type == "array") and
+    all(.items[];
+      (.metadata | type == "object") and
+      (.metadata.name | type == "string" and length > 0) and
+      (.metadata.uid | type == "string" and length > 0) and
+      (.metadata.resourceVersion | type == "string" and length > 0) and
+      ((.metadata.namespace // "") == "" or .metadata.namespace == $namespace)
+    )
+  ' >/dev/null <<<"$control_json" || return 1
+  namespace_json="$(jq -cer --arg name "$NAMESPACE" \
+    '[.items[] | select(.kind == "Namespace" and .metadata.name == $name)] |
+     select(length == 1) | .[0]' <<<"$control_json")" || return 1
+  pvc_json="$(jq -cer --arg namespace "$NAMESPACE" \
+    '[.items[] | select(.kind == "PersistentVolumeClaim" and
+      .metadata.name == "ret-pvc" and .metadata.namespace == $namespace)] |
+     select(length == 1) | .[0]' <<<"$control_json")" || return 1
+  lock_json="$(jq -cer --arg namespace "$NAMESPACE" \
+    '[.items[] | select(.kind == "ConfigMap" and
+      .metadata.name == "yenhubs-recovery-operation-lock" and .metadata.namespace == $namespace)] |
+     select(length == 1) | .[0]' <<<"$control_json")" || return 1
+  lease_json="$(jq -cer --arg namespace "$NAMESPACE" \
+    '[.items[] | select(.kind == "Lease" and
+      .metadata.name == "yenhubs-operation-serialization" and .metadata.namespace == $namespace)] |
+     select(length == 1) | .[0]' <<<"$control_json")" || return 1
+  runner_namespace_json="$(jq -cr '
+    [.items[] | select(.kind == "Namespace" and .metadata.name == "hcce-bot-runners")] |
+    select(length <= 1) | if length == 1 then .[0] else null end
+  ' <<<"$control_json")" || return 1
+  [[ "$(jq -er '.metadata.uid' <<<"$namespace_json")" == \
+     "$EXPECTED_NAMESPACE_UID" ]] || return 1
+  [[ "$(jq -er '.metadata.uid' <<<"$pvc_json")" == \
+     "$EXPECTED_RET_PVC_UID" ]] || return 1
+  RECOVERY_NAMESPACE_UID="$EXPECTED_NAMESPACE_UID"
+  RECOVERY_PVC_UID="$EXPECTED_RET_PVC_UID"
+  recovery_operation_lock_json_is_exact "$lock_json" || return 1
+  recovery_owned_serialization_lease_json_is_exact "$lease_json" || return 1
+
+  workloads_json="$(recovery_kubectl get deployments,pods,replicasets \
+    -n "$NAMESPACE" -o json)" || return 1
+  jq -e --arg namespace "$NAMESPACE" '
+    .apiVersion == "v1" and .kind == "List" and (.items | type == "array") and
+    all(.items[];
+      (.kind == "Deployment" or .kind == "Pod" or .kind == "ReplicaSet") and
+      .metadata.namespace == $namespace and
+      (.metadata.name | type == "string" and length > 0) and
+      (.metadata.uid | type == "string" and length > 0) and
+      (.metadata.resourceVersion | type == "string" and length > 0)
+    )
+  ' >/dev/null <<<"$workloads_json" || return 1
+  recovery_consumer_contract_is_acceptable "$RECOVERY_CONSUMER_CONTRACT_JSON" ||
+    return 1
+  [[ "$(jq -r '.operation_id' <<<"$RECOVERY_CONSUMER_CONTRACT_JSON")" == \
+     "${RECOVERY_OPERATION_ID:-}" ]] || return 1
   for deployment in "${CONSUMERS[@]}"; do
-    recovery_require_consumer_contract_entry \
-      "$RECOVERY_CONSUMER_CONTRACT_JSON" "$deployment" 0 \
-      "$RECOVERY_OPERATION_ID" || return 1
+    expected="$(jq -cer --arg name "$deployment" \
+      '[.consumers[] | select(.name == $name)] | select(length == 1) | .[0]' \
+      <<<"$RECOVERY_CONSUMER_CONTRACT_JSON")" || return 1
+    expected_uid="$(jq -r '.uid' <<<"$expected")"
+    expected_selector="$(jq -r '.selector' <<<"$expected")"
+    expected_fingerprint="$(jq -r '.fingerprint' <<<"$expected")"
+    current_contract="$(jq -cer --arg name "$deployment" --arg namespace "$NAMESPACE" '
+      [.items[] | select(.kind == "Deployment" and
+        .metadata.name == $name and .metadata.namespace == $namespace) |
+        select(.spec.replicas | type == "number" and floor == . and . >= 0) |
+        select((.spec.selector.matchLabels | keys) == ["app"]) |
+        select((.spec.selector.matchExpressions // []) == []) |
+        select(.spec.selector.matchLabels.app | type == "string" and length > 0) |
+        select(.spec.template.metadata.labels.app == .spec.selector.matchLabels.app)] |
+        select(length == 1) | .[0] |
+        [.metadata.uid,.metadata.resourceVersion,(.spec.replicas | tostring),
+         .spec.selector.matchLabels.app,
+         ({selector:.spec.selector,strategy:(.spec.strategy // {}),template:.spec.template} | @base64)] |
+        @tsv
+    ' <<<"$workloads_json")" || return 1
+    IFS=$'\t' read -r current_uid _current_resource_version current_replicas \
+      current_selector current_fingerprint <<<"$current_contract"
+    [[ "$current_uid" == "$expected_uid" && "$current_replicas" == 0 &&
+       "$current_selector" == "$expected_selector" &&
+       "$current_fingerprint" == "$expected_fingerprint" ]] || return 1
+  done
+  for deployment in "${CONSUMERS[@]}"; do
     selector="$(jq -er --arg name "$deployment" \
       '[.consumers[] | select(.name == $name)] | select(length == 1) | .[0].selector' \
       <<<"$RECOVERY_CONSUMER_CONTRACT_JSON")" || return 1
-    pods="$(recovery_kubectl get pod -n "$NAMESPACE" -l "app=$selector" -o name)" || return 1
-    [[ -z "$pods" ]] || return 1
+    jq -e --arg selector "$selector" '
+      [.items[] | select(.kind == "Pod" and (.metadata.labels.app // "") == $selector)] |
+      length == 0
+    ' <<<"$workloads_json" >/dev/null || return 1
   done
+  jq -e '
+    [.items[] | select(.kind == "Pod") | select(
+      (.metadata.labels.app // "") == "bot-runner" or
+      (.metadata.labels.component // "") == "bot-runner" or
+      (.metadata.labels["yenhubs.org/managed-by"] // "") == "bot-orchestrator" or
+      (.spec.serviceAccountName // "") == "bot-orchestrator")] | length == 0
+  ' <<<"$workloads_json" >/dev/null || return 1
+
+  pgsql_pod_json="$(jq -cer --arg namespace "$NAMESPACE" '
+    [.items[] | select(.kind == "Pod" and .metadata.namespace == $namespace and
+      .metadata.labels.app == "pgsql" and .status.phase == "Running" and
+      ([.status.conditions[]? | select(.type == "Ready" and .status == "True")] | length == 1) and
+      ([.metadata.ownerReferences[]? | select(.kind == "ReplicaSet" and .controller == true)] | length == 1))] |
+      select(length == 1) | .[0]
+  ' <<<"$workloads_json")" || return 1
+  pgsql_pod_name="$(jq -er '.metadata.name' <<<"$pgsql_pod_json")"
+  pgsql_pod_uid="$(jq -er '.metadata.uid' <<<"$pgsql_pod_json")"
+  pgsql_rs_name="$(jq -er '[.metadata.ownerReferences[] | select(.kind == "ReplicaSet" and .controller == true)] | .[0].name' <<<"$pgsql_pod_json")"
+  pgsql_rs_uid="$(jq -er '[.metadata.ownerReferences[] | select(.kind == "ReplicaSet" and .controller == true)] | .[0].uid' <<<"$pgsql_pod_json")"
+  pgsql_deployment_uid="$(jq -er --arg name pgsql --arg namespace "$NAMESPACE" '
+    [.items[] | select(.kind == "Deployment" and .metadata.name == $name and .metadata.namespace == $namespace)] |
+    select(length == 1) | .[0].metadata.uid
+  ' <<<"$workloads_json")" || return 1
+  [[ "$pgsql_pod_name" == "$PGSQL_POD" && "$pgsql_pod_uid" == "$PGSQL_POD_UID" &&
+     "$pgsql_deployment_uid" == "$PGSQL_DEPLOYMENT_UID" ]] || return 1
+  jq -e --arg rs_name "$pgsql_rs_name" --arg rs_uid "$pgsql_rs_uid" \
+    --arg deployment pgsql --arg deployment_uid "$pgsql_deployment_uid" \
+    --arg namespace "$NAMESPACE" '
+    [.items[] | select(.kind == "ReplicaSet" and .metadata.name == $rs_name and
+      .metadata.uid == $rs_uid and .metadata.namespace == $namespace) |
+      select([.metadata.ownerReferences[]? | select(.kind == "Deployment" and
+        .controller == true and .name == $deployment and .uid == $deployment_uid)] | length == 1)] |
+    length == 1
+  ' <<<"$workloads_json" >/dev/null || return 1
+  if [[ "$(jq -r 'if . == null then "absent" else "present" end' <<<"$runner_namespace_json")" == present ]]; then
+    runner_json="$(recovery_kubectl_get_namespaced_list pods hcce-bot-runners)" || return 1
+    jq -e '
+      .apiVersion == "v1" and .kind == "PodList" and
+      (.metadata.resourceVersion | type == "string" and length > 0) and
+      (.items | type == "array") and
+      ([.items[] | select(
+        ((.metadata.labels.app // "") != "bot-runner-fence" and
+         (.metadata.labels.app // "") != "bot-runner-intent" and
+         (.metadata.labels.app // "") != "bot-runner") or
+        (.metadata.labels.app // "") == "bot-runner" or
+        (.metadata.labels.app // "") == "bot-runner-intent")] | length == 0)
+    ' >/dev/null <<<"$runner_json" || return 1
+  fi
+  # The parent writer capability is already one of the exact supervised stream
+  # guards. The initial quiescence gate validates it before this monitor starts;
+  # during the destructive window the stream supervisor revokes immediately on
+  # any stale/failed parent capability. Repeating the full parent Kubernetes
+  # sweep here would serialize the same guard into the local ten-second window.
+  return 0
+}
+
+require_quiesced_consumer_inventory() {
+  local deployments_json pods_json deployment expected expected_uid expected_selector
+  local expected_fingerprint current_contract current_uid current_replicas
+  local current_selector current_fingerprint selector contract_operation_id
+
+  # The old monitor performed one Deployment GET and one Pod GET per writer on
+  # every sweep.  During a real stream those serialized calls could consume
+  # the whole ten-second freshness window even though the API was healthy. A
+  # Single namespaced snapshots are stronger for this boundary: all five writer
+  # contracts and all writer Pods are collected in bounded API responses, then
+  # validated locally using each item's UID/resourceVersion and the full
+  # contract without weakening any identity check. Some Kubernetes servers
+  # return an empty List-level resourceVersion for this non-watch request.
+  deployments_json="$(RECOVERY_QUIESCENCE_INVENTORY=1 \
+    recovery_kubectl get deployment -n "$NAMESPACE" -o json)" ||
+    return 1
+  jq -e --arg namespace "$NAMESPACE" '
+    ((.apiVersion == "v1" and .kind == "List") or
+      (.apiVersion == "apps/v1" and .kind == "DeploymentList")) and
+    (.metadata | type == "object" and has("resourceVersion")) and
+    (.metadata.resourceVersion | type == "string") and
+    (.items | type == "array") and
+    all(.items[];
+      .apiVersion == "apps/v1" and .kind == "Deployment" and
+      # A namespaced List is already scoped by the API request. Older test
+      # fixtures omit the repeated namespace field; if present it must still
+      # match the verified namespace.
+      ((.metadata.namespace // $namespace) == $namespace) and
+      (.metadata.name | type == "string" and length > 0) and
+      (.metadata.uid | type == "string" and length > 0) and
+      (.metadata.resourceVersion | type == "string" and length > 0) and
+      (.spec | type == "object")
+    )
+  ' >/dev/null <<<"$deployments_json" || return 1
+
+  recovery_consumer_contract_is_acceptable "$RECOVERY_CONSUMER_CONTRACT_JSON" ||
+    return 1
+  contract_operation_id="$(jq -r '.operation_id' <<<"$RECOVERY_CONSUMER_CONTRACT_JSON")" ||
+    return 1
+  [[ "$contract_operation_id" == "${RECOVERY_OPERATION_ID:-}" ]] || return 1
+
+  for deployment in "${CONSUMERS[@]}"; do
+    expected="$(jq -cer --arg name "$deployment" \
+      '[.consumers[] | select(.name == $name)] | select(length == 1) | .[0]' \
+      <<<"$RECOVERY_CONSUMER_CONTRACT_JSON")" || return 1
+    expected_uid="$(jq -r '.uid' <<<"$expected")"
+    expected_selector="$(jq -r '.selector' <<<"$expected")"
+    expected_fingerprint="$(jq -r '.fingerprint' <<<"$expected")"
+    current_contract="$(jq -cer --arg name "$deployment" \
+      --arg namespace "$NAMESPACE" '
+      [.items[]
+       | select(.apiVersion == "apps/v1" and .kind == "Deployment")
+       | select(.metadata.name == $name and
+           ((.metadata.namespace // $namespace) == $namespace))
+       | select(.metadata.uid | type == "string" and length > 0)
+       | select(.metadata.resourceVersion | type == "string" and length > 0)
+       | select(.spec.replicas | type == "number" and floor == . and . >= 0)
+       | select((.spec.selector.matchLabels | keys) == ["app"])
+       | select((.spec.selector.matchExpressions // []) == [])
+       | select(.spec.selector.matchLabels.app | type == "string" and length > 0)
+       | select(.spec.template.metadata.labels.app == .spec.selector.matchLabels.app)
+      ] | select(length == 1) | .[0] |
+      [
+        .metadata.uid,
+        .metadata.resourceVersion,
+        (.spec.replicas | tostring),
+        .spec.selector.matchLabels.app,
+        ({selector:.spec.selector, strategy:(.spec.strategy // {}), template:.spec.template} | @base64)
+      ] | @tsv
+    ' <<<"$deployments_json")" || return 1
+    IFS=$'\t' read -r current_uid _current_resource_version current_replicas \
+      current_selector current_fingerprint <<<"$current_contract"
+    [[ "$current_uid" == "$expected_uid" && "$current_replicas" == 0 &&
+       "$current_selector" == "$expected_selector" &&
+       "$current_fingerprint" == "$expected_fingerprint" ]] || return 1
+  done
+
+  pods_json="$(recovery_kubectl get pods -n "$NAMESPACE" -o json)" || return 1
+  jq -e --arg namespace "$NAMESPACE" '
+    .apiVersion == "v1" and (.kind == "List" or .kind == "PodList") and
+    (.metadata | type == "object" and has("resourceVersion")) and
+    (.metadata.resourceVersion | type == "string") and
+    (.items | type == "array") and
+    all(.items[];
+      .apiVersion == "v1" and .kind == "Pod" and
+      ((.metadata.namespace // $namespace) == $namespace) and
+      (.metadata.name | type == "string" and length > 0) and
+      (.metadata.uid | type == "string" and length > 0) and
+      ((.metadata.labels // {}) | type == "object")
+    )
+  ' >/dev/null <<<"$pods_json" || return 1
+  for deployment in "${CONSUMERS[@]}"; do
+    selector="$(jq -er --arg name "$deployment" \
+      '[.consumers[] | select(.name == $name)] | select(length == 1) | .[0].selector' \
+      <<<"$RECOVERY_CONSUMER_CONTRACT_JSON")" || return 1
+    jq -e --arg selector "$selector" \
+      '[.items[] | select((.metadata.labels.app // "") == $selector)] | length == 0' \
+      <<<"$pods_json" >/dev/null || return 1
+  done
+}
+
+require_quiesced_consumers() {
+  if [[ "${DATABASE_RESTORE_MONITOR_PHASE:-}" == quiescence ]]; then
+    DATABASE_RESTORE_QUIESCENCE_GUARD="consumer-recheck"
+    require_quiesced_monitor_snapshot
+    return $?
+  fi
+  DATABASE_RESTORE_QUIESCENCE_GUARD="consumer-recheck"
+  recovery_require_operation_lock || return 1
+  require_quiesced_consumer_inventory || return 1
   DATABASE_RESTORE_QUIESCENCE_GUARD="runner-absence"
   require_runner_quiescence || return 1
   DATABASE_RESTORE_QUIESCENCE_GUARD="pgsql-source"
@@ -656,6 +939,7 @@ require_quiesced_consumers() {
 }
 
 start_quiesce_monitor() {
+  local initial_progress_status=0
   DATABASE_RESTORE_QUIESCENCE_GUARD="local-monitor-start"
   [[ -z "$RUNNER_WATCH_PID" &&
      -z "$RUNNER_WATCH_START_IDENTITY" ]] || return 2
@@ -670,10 +954,21 @@ start_quiesce_monitor() {
     # supervisor with a tail-executed kubectl reached through a nested helper.
     db_monitor_exit_status=0
     trap 'db_monitor_exit_status=$?; trap - EXIT; exit "$db_monitor_exit_status"' EXIT
+    DATABASE_RESTORE_MONITOR_PHASE=quiescence
+    export DATABASE_RESTORE_MONITOR_PHASE
     progress=0
     while [[ ! -e "$QUIESCE_MONITOR_STOP" ]]; do
       if ! require_quiesced_consumers; then
-        printf 'consumer_or_pgsql_source_drift\n' >"$QUIESCE_MONITOR_FAILURE"
+        case "$DATABASE_RESTORE_QUIESCENCE_GUARD" in
+          consumer-recheck|runner-absence|parent-writer-guard|pgsql-source)
+            printf 'consumer_or_pgsql_source_drift:%s\n' \
+              "$DATABASE_RESTORE_QUIESCENCE_GUARD" >"$QUIESCE_MONITOR_FAILURE"
+            ;;
+          *)
+            printf 'consumer_or_pgsql_source_drift:unknown\n' \
+              >"$QUIESCE_MONITOR_FAILURE"
+            ;;
+        esac
         exit 1
       fi
       progress=$((progress + 1))
@@ -709,10 +1004,16 @@ start_quiesce_monitor() {
     return 1
   fi
   DATABASE_RESTORE_QUIESCENCE_GUARD="local-monitor-progress"
-  if ! recovery_wait_for_stream_guard_initial_progress \
-    "$QUIESCE_MONITOR_PID" "$QUIESCE_MONITOR_START_IDENTITY" \
-    "$QUIESCE_MONITOR_FAILURE" "$QUIESCE_MONITOR_PROGRESS" \
-    "$DB_STREAM_GUARD_INITIAL_DEADLINE_SECONDS"; then
+  if recovery_wait_for_stream_guard_initial_progress \
+      "$QUIESCE_MONITOR_PID" "$QUIESCE_MONITOR_START_IDENTITY" \
+      "$QUIESCE_MONITOR_FAILURE" "$QUIESCE_MONITOR_PROGRESS" \
+      "$DB_STREAM_GUARD_INITIAL_DEADLINE_SECONDS"; then
+    :
+  else
+    initial_progress_status=$?
+    if [[ "$initial_progress_status" == 3 ]]; then
+      DATABASE_RESTORE_QUIESCENCE_DETAIL="initial-progress-timeout"
+    fi
     : >"$QUIESCE_MONITOR_STOP"
     wait "$QUIESCE_MONITOR_PID" 2>/dev/null || :
     QUIESCE_MONITOR_PID=""
@@ -798,6 +1099,10 @@ DATABASE_RESTORE_STAGE="database-reset"
 # ret_admin even though it is a NOLOGIN role.
 # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
 # shellcheck disable=SC2016
+# The reset is a guarded stream too. Keep its allowlisted supervisor stage in
+# the failure output; without this context an initialize/refresh/launch failure
+# collapses to the outer database-reset stage and cannot be diagnosed safely.
+RECOVERY_STREAM_DIAGNOSTIC_CONTEXT=database-restore \
 recovery_kubectl_mutate "${DB_STREAM_GUARD_ARGS[@]}" -- \
   exec -n "$NAMESPACE" "$PGSQL_POD" -- sh -ec '
   psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres -q <<'\''SQL'\''

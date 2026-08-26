@@ -18,6 +18,8 @@ NAMESPACE="${NAMESPACE:-hcce}"
 PREFLIGHT="${RESTORE_STORAGE_PREFLIGHT:-${RESTORE_STORAGE_DRY_RUN:-0}}"
 COORDINATED="${RESTORE_COORDINATED:-0}"
 CLEAR_STALE_HELPER="${RESTORE_STORAGE_CLEAR_STALE_HELPER:-0}"
+CLEAR_ORPHAN_ROOT="${RESTORE_STORAGE_CLEAR_ORPHAN_ROOT:-0}"
+ORPHAN_SOURCE_OPERATION_ID="${RESTORE_STORAGE_ORPHAN_SOURCE_OPERATION_ID:-}"
 RESTORE_POD=""
 RESTORE_NETWORK_POLICY=""
 DB_CONSUMERS=(reticulum pgbouncer pgbouncer-t bot-orchestrator coturn)
@@ -102,8 +104,21 @@ if [[ "$CLEAR_STALE_HELPER" != "0" && "$CLEAR_STALE_HELPER" != "1" ]]; then
   printf 'RESTORE_STORAGE_CLEAR_STALE_HELPER must be 0 or 1.\n' >&2
   exit 2
 fi
+if [[ "$CLEAR_ORPHAN_ROOT" != "0" && "$CLEAR_ORPHAN_ROOT" != "1" ]]; then
+  printf 'RESTORE_STORAGE_CLEAR_ORPHAN_ROOT must be 0 or 1.\n' >&2
+  exit 2
+fi
 if [[ "$CLEAR_STALE_HELPER" == "1" && "$COORDINATED" != "1" ]]; then
   printf 'Stale helper clearance requires the coordinated parent lock.\n' >&2
+  exit 2
+fi
+if [[ "$CLEAR_ORPHAN_ROOT" == "1" && "$COORDINATED" != "1" ]]; then
+  printf 'Orphan owned-root clearance requires the coordinated parent lock.\n' >&2
+  exit 2
+fi
+if [[ "$CLEAR_ORPHAN_ROOT" == "1" &&
+      ! "$ORPHAN_SOURCE_OPERATION_ID" =~ ^[a-f0-9]{32}$ ]]; then
+  printf 'Orphan owned-root clearance requires one exact source operation id.\n' >&2
   exit 2
 fi
 if [[ "$PREFLIGHT" == "0" && "$COORDINATED" != "1" ]]; then
@@ -113,6 +128,7 @@ fi
 
 RESTORE_POD_CREATED=0
 RESTORE_POD_UID=""
+RESTORE_POD_STALE_COMPAT=0
 RESTORE_NETWORK_POLICY_CREATED=0
 RESTORE_NETWORK_POLICY_UID=""
 RESTORE_CHILD_PENDING_SIGNAL_STATUS=0
@@ -122,6 +138,7 @@ PVC_MONITOR_START_IDENTITY=""
 PVC_MONITOR_STOP=""
 PVC_MONITOR_FAILURE=""
 PVC_MONITOR_PROGRESS=""
+PVC_MONITOR_STAGE=""
 RUNNER_WATCH_PID=""
 RUNNER_WATCH_START_IDENTITY=""
 RUNNER_WATCH_STOP=""
@@ -277,13 +294,48 @@ capture_restore_pod_identity() {
   RESTORE_POD_UID="$pod_uid"
 }
 
+restore_pod_spec_is_exact_for_stale_cleanup() {
+  local pod_json="$1" pod_uid="$2" normalized_json
+  RESTORE_POD_STALE_COMPAT=0
+  if restore_pod_spec_is_exact "$pod_json" "$pod_uid"; then
+    return 0
+  fi
+  # A failed pre-fix restore may have been admitted with Kubernetes' default
+  # grace period (30s). Accept that one exact, already-owned shape only for
+  # cleanup, normalizing it in memory before the strict contract check. The
+  # operation/lock/token, UID, image, mount and every other field remain
+  # exact; no new helper may use this compatibility path.
+  normalized_json="$(jq -ce '
+    select(.spec.terminationGracePeriodSeconds == 30) |
+    .spec.terminationGracePeriodSeconds = 1
+  ' <<<"$pod_json")" || return 1
+  restore_pod_spec_is_exact "$normalized_json" "$pod_uid" || return 1
+  RESTORE_POD_STALE_COMPAT=1
+}
+
+capture_stale_restore_pod_identity() {
+  local pod_json="${1:-}" pod_uid
+  if [[ -z "$pod_json" ]]; then
+    pod_json="$(recovery_kubectl get pod "$RESTORE_POD" \
+      -n "$NAMESPACE" -o json)" || return 1
+  fi
+  pod_uid="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' \
+    <<<"$pod_json")" || return 1
+  restore_pod_spec_is_exact_for_stale_cleanup "$pod_json" "$pod_uid" || return 1
+  RESTORE_POD_UID="$pod_uid"
+}
+
 require_owned_restore_pod() {
   local pod_json current_uid
   [[ -n "$RESTORE_POD_UID" ]] || return 1
   pod_json="$(recovery_kubectl get pod "$RESTORE_POD" -n "$NAMESPACE" -o json)" || return 1
   current_uid="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' <<<"$pod_json")" || return 1
   [[ "$current_uid" == "$RESTORE_POD_UID" ]] || return 1
-  restore_pod_spec_is_exact "$pod_json"
+  if restore_pod_spec_is_exact "$pod_json"; then
+    return 0
+  fi
+  [[ "$RESTORE_POD_STALE_COMPAT" == 1 ]] || return 1
+  restore_pod_spec_is_exact_for_stale_cleanup "$pod_json" "$current_uid"
 }
 
 capture_restore_network_policy_identity() {
@@ -422,7 +474,7 @@ clear_stale_helper_resources() {
   RESTORE_NETWORK_POLICY="ret-storage-restore-deny-${RECOVERY_OPERATION_ID:0:12}"
   if pod_json="$(recovery_kubectl get pod "$RESTORE_POD" -n "$NAMESPACE" -o json 2>/dev/null)"; then
     RESTORE_POD_UID=""
-    capture_restore_pod_identity "$pod_json" || {
+    capture_stale_restore_pod_identity "$pod_json" || {
       printf 'Stale helper pod is not bound to the exact retained operation.\n' >&2
       return 1
     }
@@ -465,7 +517,7 @@ cleanup_local() {
           f:quiesced-db-active-uuids \
           f:quiesced-database-contract.json \
           f:restored-blob-uuids f:restored-meta-uuids f:restored-paths \
-          f:monitor-stop f:monitor-failure f:monitor-progress \
+          f:monitor-stop f:monitor-failure f:monitor-progress f:monitor-stage \
           f:monitor-progress.next \
           f:runner-watch-stop f:runner-watch-failure f:runner-watch-ready \
           f:runner-watch-progress f:runner-watch-progress.next; then
@@ -640,17 +692,20 @@ RESTORED_PATHS="$VALIDATION_DIR/restored-paths"
 PVC_MONITOR_STOP="$VALIDATION_DIR/monitor-stop"
 PVC_MONITOR_FAILURE="$VALIDATION_DIR/monitor-failure"
 PVC_MONITOR_PROGRESS="$VALIDATION_DIR/monitor-progress"
+PVC_MONITOR_STAGE="$VALIDATION_DIR/monitor-stage"
 RUNNER_WATCH_STOP="$VALIDATION_DIR/runner-watch-stop"
 RUNNER_WATCH_FAILURE="$VALIDATION_DIR/runner-watch-failure"
 RUNNER_WATCH_READY="$VALIDATION_DIR/runner-watch-ready"
 RUNNER_WATCH_PROGRESS="$VALIDATION_DIR/runner-watch-progress"
 : >"$PVC_MONITOR_FAILURE"
 : >"$PVC_MONITOR_PROGRESS"
+: >"$PVC_MONITOR_STAGE"
 : >"$DB_ACTIVE_UUIDS"
 : >"$QUIESCED_DB_ACTIVE_UUIDS"
 : >"$RESTORED_BLOB_UUIDS"
 : >"$RESTORED_META_UUIDS"
-chmod 600 "$PVC_MONITOR_FAILURE" "$PVC_MONITOR_PROGRESS" "$DB_ACTIVE_UUIDS" \
+chmod 600 "$PVC_MONITOR_FAILURE" "$PVC_MONITOR_PROGRESS" "$PVC_MONITOR_STAGE" \
+  "$DB_ACTIVE_UUIDS" \
   "$QUIESCED_DB_ACTIVE_UUIDS" \
   "$RESTORED_BLOB_UUIDS" "$RESTORED_META_UUIDS"
 
@@ -1164,6 +1219,7 @@ spec:
   automountServiceAccountToken: false
   enableServiceLinks: false
   restartPolicy: Never
+  terminationGracePeriodSeconds: 1
   activeDeadlineSeconds: 3600
   securityContext:
     runAsNonRoot: true
@@ -1213,31 +1269,174 @@ EXISTING_ENTRY="$(
        find /storage/owned -mindepth 1 -print -quit 2>/dev/null
      fi'
 )"
+clear_exact_orphan_owned_root() {
+  local expected_confirmation actual_paths actual_symlinks restored_blobs restored_meta
+  expected_confirmation="orphan-root:${ORPHAN_SOURCE_OPERATION_ID}:${RECOVERY_OPERATION_ID}:${RECOVERY_STORAGE_SHA256}:${RECOVERY_PVC_UID}"
+  [[ "${CONFIRM_RESTORE_ORPHAN_ROOT:-}" == "$expected_confirmation" ]] || {
+    printf 'Refusing orphan owned-root clearance without the exact source/current operation confirmation.\n' >&2
+    return 1
+  }
+  [[ "$ORPHAN_SOURCE_OPERATION_ID" != "$RECOVERY_OPERATION_ID" ]] || {
+    printf 'Orphan owned-root source and current operation must be different.\n' >&2
+    return 1
+  }
+  recovery_require_cluster_identity || return 1
+  recovery_require_pvc_identity ret-pvc || return 1
+  recovery_require_operation_lock || return 1
+  require_runner_watch_healthy || return 1
+  recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD" || return 1
+  actual_symlinks="$(
+    recovery_kubectl exec -n "$NAMESPACE" "$RESTORE_POD" -- sh -ec \
+      'test -d /storage/owned && test ! -L /storage/owned
+       find /storage/owned -type l -print -quit 2>/dev/null'
+  )" || return 1
+  [[ -z "$actual_symlinks" ]] || {
+    printf 'Refusing orphan owned-root clearance because a symlink is present.\n' >&2
+    return 1
+  }
+  actual_paths="$(
+    recovery_kubectl exec -n "$NAMESPACE" "$RESTORE_POD" -- sh -ec \
+      'test -d /storage/owned; cd /storage; { find owned -type d -print | sed "s|$|/|"; find owned -type f -print; }'
+  )" || return 1
+  printf '%s\n' "$actual_paths" | tr -d '\r' >"$RESTORED_PATHS"
+  recovery_storage_paths_file_is_exact "$RESTORED_PATHS" || {
+    printf 'Refusing orphan owned-root clearance because its path contract is not exact.\n' >&2
+    return 1
+  }
+  cmp -s <(LC_ALL=C sort "$ARCHIVE_PATHS") <(LC_ALL=C sort "$RESTORED_PATHS") || {
+    printf 'Refusing orphan owned-root clearance because it is not the complete current bundle.\n' >&2
+    return 1
+  }
+  recovery_extract_storage_uuids "$RESTORED_PATHS" blob |
+    LC_ALL=C sort >"$RESTORED_BLOB_UUIDS" || return 1
+  recovery_extract_storage_uuids "$RESTORED_PATHS" meta.json |
+    LC_ALL=C sort >"$RESTORED_META_UUIDS" || return 1
+  restored_blobs="$(sed '/^$/d' "$RESTORED_BLOB_UUIDS" | wc -l | tr -d ' ')"
+  restored_meta="$(sed '/^$/d' "$RESTORED_META_UUIDS" | wc -l | tr -d ' ')"
+  [[ "$restored_blobs" == "$ARCHIVE_BLOB_COUNT" &&
+     "$restored_meta" == "$ARCHIVE_META_COUNT" ]] || {
+    printf 'Refusing orphan owned-root clearance because its complete-pair counts differ.\n' >&2
+    return 1
+  }
+  cmp -s "$ARCHIVE_BLOB_UUIDS" "$RESTORED_BLOB_UUIDS" || return 1
+  cmp -s "$ARCHIVE_META_UUIDS" "$RESTORED_META_UUIDS" || return 1
+  recovery_require_operation_lock || return 1
+  recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD" || return 1
+  recovery_kubectl exec -n "$NAMESPACE" "$RESTORE_POD" -- sh -ec \
+    'set -eu
+     test -d /storage/owned && test ! -L /storage/owned
+     test -z "$(find /storage/owned -type l -print -quit 2>/dev/null)"
+     find /storage/owned -type f -exec rm -f {} +
+     find /storage/owned -depth -type d -mindepth 1 -exec rmdir {} +
+     test -z "$(find /storage/owned -mindepth 1 -print -quit 2>/dev/null)"' || return 1
+  recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD" || return 1
+  REMOTE_RESTORE_STATE_RETAINED=0
+  printf 'Validated and removed the exact orphan owned root from source_operation=%s files=%s.\n' \
+    "$ORPHAN_SOURCE_OPERATION_ID" "$restored_blobs"
+}
 if [[ -n "$EXISTING_ENTRY" ]]; then
-  REMOTE_RESTORE_STATE_RETAINED=1
-  printf 'Refusing to merge into non-empty or unsafe ret-pvc owned root.\n' >&2
-  printf 'All DB consumers remain at zero for inspection.\n' >&2
-  exit 1
+  if [[ "$CLEAR_ORPHAN_ROOT" == 1 ]]; then
+    clear_exact_orphan_owned_root
+    EXISTING_ENTRY="$(
+      recovery_kubectl exec -n "$NAMESPACE" "$RESTORE_POD" -- sh -ec \
+        'test -d /storage/owned; find /storage/owned -mindepth 1 -print -quit 2>/dev/null'
+    )" || exit 1
+    [[ -z "$EXISTING_ENTRY" ]] || {
+      printf 'Exact orphan owned-root clearance did not leave the root empty.\n' >&2
+      exit 1
+    }
+  else
+    REMOTE_RESTORE_STATE_RETAINED=1
+    printf 'Refusing to merge into non-empty or unsafe ret-pvc owned root.\n' >&2
+    printf 'All DB consumers remain at zero for inspection.\n' >&2
+    exit 1
+  fi
 fi
 
 monitor_pvc_during_extraction() {
   local progress=0
+  pvc_monitor_stage() {
+    local stage="$1"
+    [[ "$stage" =~ ^[a-z-]+([0-9]+([.][0-9]+)?)?$ ]] || return 2
+    printf '%s\n' "$stage" >"$PVC_MONITOR_STAGE"
+  }
+  pvc_monitor_fail() {
+    local reason="$1"
+    printf '%s\n' "$reason" >"$PVC_MONITOR_FAILURE"
+    return 1
+  }
   while [[ ! -e "$PVC_MONITOR_STOP" ]]; do
-    if ! recovery_require_cluster_identity ||
-       ! recovery_require_pvc_identity ret-pvc ||
-       ! recovery_require_operation_lock ||
-       ! require_runner_quiescence ||
-       ! require_owned_restore_network_policy ||
-       ! recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD" ||
-       ! require_owned_restore_pod; then
-      printf 'failed\n' >"$PVC_MONITOR_FAILURE"
-      return 1
-    fi
+    pvc_monitor_stage sweep-start || {
+      pvc_monitor_fail stage-publication
+      return $?
+    }
+    pvc_monitor_stage cluster-identity || {
+      pvc_monitor_fail stage-publication
+      return $?
+    }
+    recovery_require_cluster_identity || {
+      pvc_monitor_fail failed
+      return $?
+    }
+    pvc_monitor_stage pvc-identity || {
+      pvc_monitor_fail stage-publication
+      return $?
+    }
+    recovery_require_pvc_identity ret-pvc || {
+      pvc_monitor_fail failed
+      return $?
+    }
+    pvc_monitor_stage operation-lock || {
+      pvc_monitor_fail stage-publication
+      return $?
+    }
+    recovery_require_operation_lock || {
+      pvc_monitor_fail failed
+      return $?
+    }
+    # The legacy runner watch (or durable runner monitor) is already an
+    # independent guard in STORAGE_STREAM_GUARD_ARGS and is audited by the
+    # same stream supervisor. Repeating its namespace/deployment/pod sweep
+    # here consumed the PVC guard's ten-second freshness budget without adding
+    # an independent safety fact; the exact runner quiescence check remains
+    # mandatory before arming the stream and after it stops.
+    pvc_monitor_stage network-policy || {
+      pvc_monitor_fail stage-publication
+      return $?
+    }
+    require_owned_restore_network_policy || {
+      pvc_monitor_fail failed
+      return $?
+    }
+    pvc_monitor_stage pvc-consumers || {
+      pvc_monitor_fail stage-publication
+      return $?
+    }
+    recovery_require_exact_pvc_consumers ret-pvc "$RESTORE_POD" || {
+      pvc_monitor_fail failed
+      return $?
+    }
+    pvc_monitor_stage restore-pod || {
+      pvc_monitor_fail stage-publication
+      return $?
+    }
+    require_owned_restore_pod || {
+      pvc_monitor_fail failed
+      return $?
+    }
+    pvc_monitor_stage progress-write || {
+      pvc_monitor_fail stage-publication
+      return $?
+    }
     progress=$((progress + 1))
     if ! recovery_write_stream_guard_progress "$PVC_MONITOR_PROGRESS" "$progress"; then
       printf 'progress_publish_failed\n' >"$PVC_MONITOR_FAILURE"
       return 1
     fi
+    pvc_monitor_stage "sleep-${PVC_MONITOR_POLL_SECONDS}" || {
+      pvc_monitor_fail stage-publication
+      return $?
+    }
     sleep "$PVC_MONITOR_POLL_SECONDS"
   done
 }
@@ -1310,6 +1509,7 @@ elif [[ "$RUNNER_WATCH_PID" =~ ^[1-9][0-9]*$ ]]; then
 fi
 PVC_MUTATION_STREAM_ARMED=1
 if gzip -cd "$RECOVERY_STORAGE_COPY" |
+  RECOVERY_STREAM_DIAGNOSTIC_CONTEXT=database-restore \
   recovery_kubectl_stream_mutate 3600 "${STORAGE_STREAM_GUARD_ARGS[@]}" -- \
     exec -i -n "$NAMESPACE" "$RESTORE_POD" -- tar -C /storage -xf -; then
   extraction_status=0
@@ -1322,6 +1522,25 @@ else
   monitor_status=0
 fi
 if [[ "$extraction_status" -ne 0 || "$monitor_status" -ne 0 ]]; then
+  printf 'storage_restore_extraction_status:%s\n' "$extraction_status" >&2
+  printf 'storage_restore_monitor_status:%s\n' "$monitor_status" >&2
+  monitor_stage=""
+  if [[ -f "$PVC_MONITOR_STAGE" ]]; then
+    monitor_stage="$(cat "$PVC_MONITOR_STAGE")"
+  fi
+  case "$monitor_stage" in
+    sweep-start|cluster-identity|pvc-identity|operation-lock|runner-quiescence|network-policy|pvc-consumers|restore-pod|progress-write|sleep-[0-9]*|sleep-[0-9]*.[0-9]*)
+      printf 'storage_restore_monitor_stage:%s\n' "$monitor_stage" >&2
+      ;;
+  esac
+  if [[ -s "$PVC_MONITOR_FAILURE" ]]; then
+    case "$(<"$PVC_MONITOR_FAILURE")" in
+      failed) printf 'storage_restore_monitor_detail:consumer-identity\n' >&2 ;;
+      progress_publish_failed) printf 'storage_restore_monitor_detail:progress-publication\n' >&2 ;;
+      stage-publication) printf 'storage_restore_monitor_detail:stage-publication\n' >&2 ;;
+      *) printf 'storage_restore_monitor_detail:unknown\n' >&2 ;;
+    esac
+  fi
   printf 'Storage extraction or its PVC exclusivity monitor failed.\n' >&2
   exit 1
 fi
@@ -1361,12 +1580,15 @@ fi
 require_runner_quiescence
 PVC_MUTATION_STREAM_ARMED=0
 REMOTE_RESTORE_STATE_RETAINED=0
-cleanup_restore_pod
-cleanup_restore_network_policy
 if ! stop_runner_watch; then
+  # Keep the exact helper, deny-all policy and lock bound to this operation so
+  # a watcher-close failure cannot orphan a newly verified storage root.
+  REMOTE_RESTORE_STATE_RETAINED=1
   printf 'Managed bot-runner event watcher failed during storage restore.\n' >&2
   exit 1
 fi
+cleanup_restore_pod
+cleanup_restore_network_policy
 RESTORE_PHASE="coordinated_hold"
 trap - ERR
 printf 'Storage restore validated and held quiescent for coordinated resume: checkpoint=%s pvc_uid=%s\n' \

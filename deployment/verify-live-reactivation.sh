@@ -8,10 +8,16 @@ set -uo pipefail
 umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+checkpoint_runner_generation_input="${RECOVERY_CHECKPOINT_RUNNER_GENERATION:-}"
 # shellcheck source=deployment/lib/reactivation-gate-functions.sh
 source "$SCRIPT_DIR/lib/reactivation-gate-functions.sh"
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
+# recovery-safety deliberately clears inherited process-local capabilities.
+# The checkpoint generation is immutable verified input, not a cleanup or
+# signalling capability, and the restore driver exports it for this child.
+RECOVERY_CHECKPOINT_RUNNER_GENERATION="$checkpoint_runner_generation_input"
+unset checkpoint_runner_generation_input
 VALUES_SOURCE_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 VALUES_FILE=""
 NAMESPACE="${NAMESPACE:-hcce}"
@@ -289,7 +295,7 @@ reticulum_deployment_uid=""
 reticulum_deployment_json="$(jq -ce \
   '[.items[] | select(.metadata.name == "reticulum")] | select(length == 1) | .[0]' \
   <<<"$deployments_json" 2>/dev/null || :)"
-if reactivation_reticulum_deployment_is_singleton "$reticulum_deployment_json"; then
+if reactivation_reticulum_deployment_is_singleton "$deployments_json"; then
   reticulum_deployment_uid="$(jq -er '.metadata.uid' <<<"$reticulum_deployment_json")"
   pass "Reticulum tiene autoridad singleton: replicas=1 y estrategia Recreate exacta"
 else
@@ -665,7 +671,7 @@ if printf '%s' "$deployments_json" | jq -e '
   port_forward_log="$(mktemp "${TMPDIR:-/tmp}/yenhubs-ret-capabilities.XXXXXX")"
   chmod 600 "$port_forward_log"
   recovery_kubectl port-forward --address 127.0.0.1 -n "$NAMESPACE" \
-    deployment/reticulum :4000 >"$port_forward_log" 2>&1 &
+    deployment/reticulum :4001 >"$port_forward_log" 2>&1 &
   port_forward_pid=$!
   forwarded_port=""
   attempt=0
@@ -676,7 +682,7 @@ if printf '%s' "$deployments_json" | jq -e '
       fail "El port-forward de Reticulum termino antes de anunciar puerto (status=$port_forward_status)"
       break
     fi
-    if forwarded_port="$(sed -nE 's/^Forwarding from 127\.0\.0\.1:([0-9]+) -> 4000$/\1/p' "$port_forward_log" | tail -1)" &&
+    if forwarded_port="$(sed -nE 's/^Forwarding from 127\.0\.0\.1:([0-9]+) -> 4001$/\1/p' "$port_forward_log" | tail -1)" &&
        [[ "$forwarded_port" =~ ^[0-9]+$ && "$forwarded_port" -gt 0 && "$forwarded_port" -le 65535 ]]; then
       break
     fi
@@ -693,9 +699,18 @@ if printf '%s' "$deployments_json" | jq -e '
         fail "El port-forward de Reticulum murio durante la sonda (status=$port_forward_status)"
         break
       fi
-      if reactivation_capture_output sitting_capabilities_candidate curl -fsS \
-        --connect-timeout 1 --max-time 1 \
-        "http://127.0.0.1:$forwarded_port/health/capabilities"; then
+      if [[ "$reactivation_profile" == cold-rebind-legacy-absent-v1 ]] &&
+         reactivation_capture_output sitting_capabilities_candidate curl -fsS \
+           --connect-timeout 1 --max-time 1 \
+           "http://127.0.0.1:$forwarded_port/health/" &&
+         reactivation_legacy_reticulum_health_is_acceptable \
+           "$sitting_capabilities_candidate"; then
+        sitting_capabilities="$sitting_capabilities_candidate"
+        break
+      elif [[ "$reactivation_profile" == durable-active ]] &&
+           reactivation_capture_output sitting_capabilities_candidate curl -fsS \
+             --connect-timeout 1 --max-time 1 \
+             "http://127.0.0.1:$forwarded_port/health/capabilities"; then
         sitting_capabilities="$sitting_capabilities_candidate"
         break
       fi
@@ -707,7 +722,11 @@ if printf '%s' "$deployments_json" | jq -e '
       fail "El port-forward de Reticulum no seguia vivo al aceptar la capacidad"
       sitting_capabilities=""
     fi
-    if reactivation_sitting_capabilities_are_acceptable "$sitting_capabilities"; then
+    if [[ "$reactivation_profile" == cold-rebind-legacy-absent-v1 ]] &&
+       reactivation_legacy_reticulum_health_is_acceptable "$sitting_capabilities"; then
+      pass "Reticulum confirma el health HTTP exacto de la imagen historica"
+    elif [[ "$reactivation_profile" == durable-active ]] &&
+         reactivation_sitting_capabilities_are_acceptable "$sitting_capabilities"; then
       pass "Reticulum confirma el contrato exacto de reservas protocol 2"
     else
       fail "Reticulum no confirma las semanticas protocol 2 de sitting"
@@ -810,7 +829,7 @@ if printf '%s' "$deployments_json" | jq -e '
   done
   if [[ -n "$port_forward_pid" && -n "$forwarded_port" ]]; then
     health=""; readiness=""; attempt=0
-    while [[ "$attempt" -lt 20 ]]; do
+    while [[ "$attempt" -lt 120 ]]; do
       if ! kill -0 "$port_forward_pid" 2>/dev/null; then
         if wait "$port_forward_pid"; then port_forward_status=0; else port_forward_status=$?; fi
         port_forward_pid=""
@@ -818,7 +837,9 @@ if printf '%s' "$deployments_json" | jq -e '
         break
       fi
       if reactivation_capture_output health_candidate curl -fsS --connect-timeout 1 --max-time 1 \
-        "http://127.0.0.1:$forwarded_port/health"; then
+        "http://127.0.0.1:$forwarded_port/health" &&
+         reactivation_bot_health_matches_profile \
+           "$health_candidate" "$reactivation_profile"; then
         health="$health_candidate"
       else
         health=""
@@ -833,7 +854,7 @@ if printf '%s' "$deployments_json" | jq -e '
         readiness=""
       fi
       if [[ -n "$health" && -n "$readiness" ]]; then break; fi
-      sleep 0.25
+      sleep 0.5
       attempt=$((attempt + 1))
     done
     if [[ -n "$port_forward_pid" ]] && ! kill -0 "$port_forward_pid" 2>/dev/null; then

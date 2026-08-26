@@ -129,7 +129,10 @@ fi
 
 sitting_capabilities_good='{"waypoint_reservation":{"protocol":2,"snapshot_state_version":"strictly_greater_than_events","state_version":"monotonic_safe_integer"}}'
 sitting_capabilities_extra='{"unexpected":true,"waypoint_reservation":{"protocol":2,"snapshot_state_version":"strictly_greater_than_events","state_version":"monotonic_safe_integer"}}'
-if reactivation_sitting_capabilities_are_acceptable "$sitting_capabilities_good" &&
+if reactivation_legacy_reticulum_health_is_acceptable ok &&
+  ! reactivation_legacy_reticulum_health_is_acceptable '' &&
+  ! reactivation_legacy_reticulum_health_is_acceptable '{"ok":true}' &&
+  reactivation_sitting_capabilities_are_acceptable "$sitting_capabilities_good" &&
   ! reactivation_sitting_capabilities_are_acceptable '' &&
   ! reactivation_sitting_capabilities_are_acceptable "${sitting_capabilities_good/\"protocol\":2/\"protocol\":1}" &&
   ! reactivation_sitting_capabilities_are_acceptable "${sitting_capabilities_good/\"monotonic_safe_integer\"/\"integer\"}" &&
@@ -361,14 +364,22 @@ deployments_legacy="$(jq -c '
   (.items[] | select(.metadata.name == "pgsql") |
     .spec.template.spec.containers[0].name) = "postgresql" |
   (.items[] | select(.metadata.name == "bot-orchestrator") |
-    .spec.template.spec.containers[0].env) = []
+    .spec.template.spec.containers[0].env) = [
+      {name:"RET_INTERNAL_ACCESS_HEADER",value:"x-ret-dashboard-access-key"}
+    ]
 ' <<<"$deployments_good")"
 expected_legacy_images="$(jq -c '
   with_entries(if .key == "pgsql/pgsql" then .key = "pgsql/postgresql" else . end)
 ' <<<"$expected_deployment_images")"
 deployments_legacy_with_runner_env="$(jq -c --arg runner "$bot_runner_image" '
   (.items[] | select(.metadata.name == "bot-orchestrator") |
-    .spec.template.spec.containers[0].env) = [{name:"BOT_RUNNER_IMAGE",value:$runner}]
+    .spec.template.spec.containers[0].env) += [{name:"BOT_RUNNER_IMAGE",value:$runner}]
+' <<<"$deployments_legacy")"
+deployments_legacy_with_modern_header="$(jq -c '
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.containers[0].env[] |
+    select(.name == "RET_INTERNAL_ACCESS_HEADER").value) =
+      "x-ret-bot-orchestrator-access-key"
 ' <<<"$deployments_legacy")"
 if reactivation_runner_image_matches_profile durable-active "$bot_runner_image" &&
    reactivation_runner_image_matches_profile cold-rebind-legacy-absent-v1 No &&
@@ -384,6 +395,11 @@ if reactivation_runner_image_matches_profile durable-active "$bot_runner_image" 
      "ghcr.io/yengalvez/hubs@sha256:$digest" \
      "ghcr.io/yengalvez/reticulum@sha256:$digest" \
      "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
+     "$expected_legacy_images" No cold-rebind-legacy-absent-v1 &&
+   ! reactivation_deployments_are_acceptable "$deployments_legacy_with_modern_header" \
+     "ghcr.io/yengalvez/hubs@sha256:$digest" \
+     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
+     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
      "$expected_legacy_images" No cold-rebind-legacy-absent-v1; then
   pass_test "legacy live inventory requires postgresql, runner image No and no durable parent binding"
 else
@@ -396,11 +412,18 @@ reticulum_singleton="$(jq -cn '
    spec:{replicas:1,strategy:{type:"Recreate"},selector:{matchLabels:{app:"reticulum"}},
      template:{metadata:{labels:{app:"reticulum"}}}}}
 ')"
+reticulum_singleton_raw_list="$(jq -cn --argjson reticulum "$reticulum_singleton" '
+  {apiVersion:"apps/v1",kind:"DeploymentList",metadata:{resourceVersion:"123"},
+   items:[($reticulum | del(.apiVersion,.kind))]}
+')"
 reticulum_hpas_clear='{"items":[{"spec":{"scaleTargetRef":{"apiVersion":"apps/v1","kind":"Deployment","name":"hubs"}}}]}'
 reticulum_hpa_targeted='{"items":[{"spec":{"scaleTargetRef":{"apiVersion":"apps/v1","kind":"Deployment","name":"reticulum"}}}]}'
 if reactivation_reticulum_deployment_is_singleton "$reticulum_singleton" &&
+  reactivation_reticulum_deployment_is_singleton "$reticulum_singleton_raw_list" &&
   ! reactivation_reticulum_deployment_is_singleton "$(jq -c '.spec.replicas = 2' <<<"$reticulum_singleton")" &&
   ! reactivation_reticulum_deployment_is_singleton "$(jq -c '.spec.strategy.rollingUpdate = {maxSurge:1}' <<<"$reticulum_singleton")" &&
+  ! reactivation_reticulum_deployment_is_singleton "$(jq -c '.metadata.resourceVersion = ""' <<<"$reticulum_singleton_raw_list")" &&
+  ! reactivation_reticulum_deployment_is_singleton "$(jq -c '.items += [.items[0]]' <<<"$reticulum_singleton_raw_list")" &&
   reactivation_hpas_do_not_target_reticulum "$reticulum_hpas_clear" &&
   ! reactivation_hpas_do_not_target_reticulum "$reticulum_hpa_targeted" &&
   grep -Eq 'recovery_require_pod_deployment_ownership.*reticulum' "$ROOT_DIR/deployment/preflight-reactivation.sh" &&
@@ -456,7 +479,7 @@ if ! grep -Eqi 'reservation[- ]v1|reservation v1|Reticulum v1|Hubs v1' \
    grep -Eq 'state_version' "$ROOT_DIR/deployment/README.md" &&
    grep -Eq 'snapshot_state_version' "$ROOT_DIR/deployment/README.md" &&
    grep -Eq '/health/capabilities' "$ROOT_DIR/deployment/README.md" &&
-   grep -Eq 'deployment/reticulum :4000' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
+   grep -Eq 'deployment/reticulum :4001' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
    grep -Eq 'reactivation_sitting_capabilities_are_acceptable' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
    grep -Eq 'WaypointReservation.capability_contract' "$reticulum_health_controller" &&
    grep -Eq 'get "/capabilities", HealthController, :capabilities' "$reticulum_router"; then
@@ -788,6 +811,26 @@ fi
 pass_test "live runner gate refreshes Deployment and parent Pod before the profile-exact final verifier"
 
 live_gate_path="$ROOT_DIR/deployment/verify-live-reactivation.sh"
+# shellcheck disable=SC2016 # The generation name is a literal source contract.
+generation_capture_line="$(grep -nF \
+  'checkpoint_runner_generation_input="${RECOVERY_CHECKPOINT_RUNNER_GENERATION:-}"' \
+  "$live_gate_path" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016 # The source expression is inspected literally.
+recovery_source_line="$(grep -nF \
+  'source "$SCRIPT_DIR/lib/recovery-safety.sh"' \
+  "$live_gate_path" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016 # The restoration expression is inspected literally.
+generation_restore_line="$(grep -nF \
+  'RECOVERY_CHECKPOINT_RUNNER_GENERATION="$checkpoint_runner_generation_input"' \
+  "$live_gate_path" | head -1 | cut -d: -f1)"
+if [[ ! "$generation_capture_line" =~ ^[1-9][0-9]*$ ||
+      ! "$recovery_source_line" =~ ^[1-9][0-9]*$ ||
+      ! "$generation_restore_line" =~ ^[1-9][0-9]*$ ||
+      "$generation_capture_line" -ge "$recovery_source_line" ||
+      "$recovery_source_line" -ge "$generation_restore_line" ]]; then
+  fail_test "live gate must preserve verified checkpoint generation across safety-library reset"
+fi
+pass_test "live gate preserves verified checkpoint generation across safety-library reset"
 runner_capture_call="$(awk '
   /^capture_bot_runner_pods\(\)/ { capture=1 }
   capture { print }
@@ -1404,8 +1447,11 @@ for aud065_test in \
   [[ "$(grep -Fc "/$aud065_test\"" "$aud065_aggregate")" == 1 ]] || \
     aud065_inventory_ok=false
 done
+# The section-input inventory intentionally names the same script. Match only
+# the executable run_security call instead of counting both roles.
+# shellcheck disable=SC2016 # The ROOT_DIR expression is a literal source contract.
 if [[ -x "$aud065_aggregate" && "$aud065_inventory_ok" == true ]] &&
-  [[ "$(grep -Fc 'scripts/test-aud065.sh' \
+  [[ "$(grep -Fxc '  "$ROOT_DIR/scripts/test-aud065.sh"' \
     "$ROOT_DIR/scripts/verify-project.sh")" == 1 ]] &&
   [[ "$(grep -Fc 'bash scripts/test-aud065.sh' \
     "$ROOT_DIR/.github/workflows/project-security.yml")" == 1 ]] &&

@@ -43,16 +43,57 @@ let failureStage = "arguments";
 const SAFE_BASELINE_FAILURE_CODES = new Set([
   "baseline_contract", "deployment_inventory", "deployments_list_contract",
   "file_contract", "file_size", "file_write", "kubectl_read", "owner_contract",
-  "pod_inventory", "pod_owner_contract", "pod_service_account_projection",
+  "pod_inventory", "pod_inventory_name_duplicate", "pod_inventory_uid_duplicate",
+  "pod_owner_contract", "pod_service_account_projection",
   "pod_spec_contract", "pod_template_contract", "pod_template_drift_baseline",
   "pods_list_contract", "replicaset_inventory", "replicasets_list_contract",
-  "reticulum_image_contract", "writer_pod_present"
+  "reticulum_image_contract", "writer_pod_present",
+  // The monitor's watch stage has the same fixed, payload-free error
+  // vocabulary. Keep these codes visible in the allowlisted diagnostic so a
+  // live watch failure is attributable without exposing Kubernetes output.
+  "deployment_event", "deployment_event_contract", "pod_event_contract",
+  "pod_event_gvk", "pod_event_metadata", "pod_event_namespace",
+  "pod_event_name", "pod_event_uid", "pod_event_resource-version",
+  "pod_event_labels", "pod_event_annotations", "pod_event_spec",
+  "pod_event_deletion",
+  "pod_event_drift", "pod_event_drift_history_missing",
+  "pod_event_drift_name", "pod_event_drift_uid", "pod_event_drift_role",
+  "pod_event_drift_owner", "pod_event_drift_fingerprint",
+  "pod_event_drift_admission", "pod_event_drift_object",
+  "pod_event_drift_active_name", "pod_event_drift_active_uid",
+  "pod_event_drift_active_role", "pod_event_drift_active_owner",
+  "pod_event_drift_active_fingerprint", "pod_event_drift_active_admission",
+  "pod_event_drift_active_object", "pod_event_drift_deleted_name",
+  "pod_event_drift_deleted_uid", "pod_event_drift_deleted_role",
+  "pod_event_drift_deleted_owner", "pod_event_drift_deleted_fingerprint",
+  "pod_event_drift_deleted_admission", "pod_event_drift_deleted_object",
+  "pod_event_drift_object_annotations", "pod_event_drift_object_creation",
+  "pod_event_drift_object_finalizers", "pod_event_drift_object_generate-name",
+  "pod_event_drift_object_generation", "pod_event_drift_object_labels",
+  "pod_event_drift_object_owners", "pod_event_drift_object_spec",
+  "pod_event_drift_object_multiple", "pod_event_drift_object_finalizers_annotations",
+  "pod_event_drift_object_finalizers_creation", "pod_event_drift_object_finalizers_generate-name",
+  "pod_event_drift_object_finalizers_generation", "pod_event_drift_object_finalizers_labels",
+  "pod_event_drift_object_finalizers_owners", "pod_event_drift_object_finalizers_spec",
+  "pod_event_drift_object_finalizers_multiple",
+  "pod_name_collision", "pod_template_drift_event",
+  "replicaset_event", "replicaset_event_contract", "watch_barrier_aborted",
+  "watch_barrier_state", "watch_bookmark_contract", "watch_closed",
+  "watch_drain_state", "watch_error_event", "watch_event_contract",
+  "watch_event_json", "watch_event_type", "watch_not_live", "watch_resource",
+  "watch_resource_version", "watch_spawn", "watch_stop_contract",
+  "watch_terminated", "writer_pod_event"
 ]);
 
 function fail(code) {
   const error = new Error(code);
   error.code = code;
   throw error;
+}
+
+function diagnosticToken(value) {
+  const text = String(value || "other");
+  return /^[a-z][a-z0-9_-]{0,63}$/.test(text) ? text : "other";
 }
 
 function object(value) {
@@ -1064,7 +1105,8 @@ function podTemplateFingerprint(value) {
   if (!object(value?.metadata) || !object(value?.spec)) fail("pod_template_contract");
   if (
     value.metadata.labels !== undefined && !object(value.metadata.labels) ||
-    value.metadata.annotations !== undefined && !object(value.metadata.annotations)
+    value.metadata.annotations !== undefined && value.metadata.annotations !== null &&
+      !object(value.metadata.annotations)
   ) fail("pod_template_contract");
   return sha256(canonicalJson({
     annotations: value.metadata.annotations || {},
@@ -1132,24 +1174,63 @@ function podObjectFingerprint(pod) {
   }));
 }
 
+function podObjectFingerprintComponents(pod) {
+  const metadata = pod.metadata;
+  const values = {
+    annotations: canonicalJson(metadata.annotations || {}),
+    creation: metadata.creationTimestamp || null,
+    finalizers: canonicalJson(metadata.finalizers || []),
+    "generate-name": metadata.generateName || null,
+    generation: metadata.generation || null,
+    labels: canonicalJson(metadata.labels || {}),
+    owners: canonicalJson(metadata.ownerReferences || []),
+    spec: canonicalJson(normalizePodSpec(pod.spec))
+  };
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, sha256(canonicalJson(value))])
+  );
+}
+
 function validatePodEnvelope(
   pod, namespace, code, allowDeleting = false, allowOmittedTypeMeta = false
 ) {
-  if (
-    !object(pod) ||
-    !exactOrOmittedTypeMeta(pod, "v1", "Pod", allowOmittedTypeMeta) ||
-    !object(pod.metadata) || pod.metadata.namespace !== namespace ||
-    typeof pod.metadata.name !== "string" || !pod.metadata.name ||
-    typeof pod.metadata.uid !== "string" || !pod.metadata.uid ||
-    typeof pod.metadata.resourceVersion !== "string" || !pod.metadata.resourceVersion ||
-    pod.metadata.labels !== undefined && !object(pod.metadata.labels) ||
-    pod.metadata.annotations !== undefined && !object(pod.metadata.annotations) ||
-    !object(pod.spec) || !allowDeleting && pod.metadata.deletionTimestamp !== undefined
-  ) fail(code);
+  const envelopeFail = suffix => fail(
+    code === "pod_event_contract" ? `pod_event_${suffix}` : code
+  );
+  if (!object(pod) ||
+      !exactOrOmittedTypeMeta(pod, "v1", "Pod", allowOmittedTypeMeta)) {
+    envelopeFail("gvk");
+  }
+  if (!object(pod.metadata)) envelopeFail("metadata");
+  if (pod.metadata.namespace !== namespace) envelopeFail("namespace");
+  if (typeof pod.metadata.name !== "string" || !pod.metadata.name) {
+    envelopeFail("name");
+  }
+  if (typeof pod.metadata.uid !== "string" || !pod.metadata.uid) {
+    envelopeFail("uid");
+  }
+  if (typeof pod.metadata.resourceVersion !== "string" ||
+      !pod.metadata.resourceVersion) {
+    envelopeFail("resource-version");
+  }
+  // Kubernetes may materialize an omitted annotations map as JSON null in a
+  // typed LIST/WATCH response. Treat only that null as the equivalent omission;
+  // labels and any other non-object value remain contract failures.
+  if (pod.metadata.labels !== undefined && !object(pod.metadata.labels)) {
+    envelopeFail("labels");
+  }
+  if (pod.metadata.annotations !== undefined && pod.metadata.annotations !== null &&
+      !object(pod.metadata.annotations)) {
+    envelopeFail("annotations");
+  }
+  if (!object(pod.spec)) envelopeFail("spec");
+  if (!allowDeleting && pod.metadata.deletionTimestamp !== undefined) {
+    envelopeFail("deletion");
+  }
 }
 
 function podIdentity(pod, owner, role = "service") {
-  return {
+  const identity = {
     name: pod.metadata.name,
     uid: pod.metadata.uid,
     resource_version: pod.metadata.resourceVersion,
@@ -1159,6 +1240,12 @@ function podIdentity(pod, owner, role = "service") {
     admission_fingerprint: podAdmissionFingerprint(pod),
     object_fingerprint: podObjectFingerprint(pod)
   };
+  // Keep diagnostic component hashes process-local and non-enumerable so the
+  // published baseline contract remains unchanged and no metadata is written.
+  Object.defineProperty(identity, "object_components", {
+    value: podObjectFingerprintComponents(pod), enumerable: false
+  });
+  return identity;
 }
 
 function reticulumImage(deployment) {
@@ -1194,6 +1281,7 @@ function validateStorageHelperPod(
   const container = containers[0];
   const volume = volumes[0];
   const mount = container?.volumeMounts?.[0];
+  const pvc = volume?.persistentVolumeClaim;
   const helperRole = storageHelperRole(options.operationOwner);
   const helperReadOnly = options.operationOwner === "checkpoint-backup";
   if (
@@ -1216,9 +1304,10 @@ function validateStorageHelperPod(
     (spec.initContainers || []).length !== 0 || (spec.ephemeralContainers || []).length !== 0 ||
     volumes.length !== 1 || !exactKeys(volume, ["name", "persistentVolumeClaim"]) ||
     volume.name !== "storage" ||
-    canonicalJson(volume.persistentVolumeClaim) !== canonicalJson({
-      claimName: "ret-pvc", readOnly: helperReadOnly
-    }) ||
+    !object(pvc) ||
+    Object.keys(pvc).some(key => !["claimName", "readOnly"].includes(key)) ||
+    pvc.claimName !== "ret-pvc" ||
+    (pvc.readOnly === undefined ? false : pvc.readOnly) !== helperReadOnly ||
     containers.length !== 1 || container?.name !== "helper" ||
     container.image !== baseline.storage_helper.image ||
     canonicalJson(container.command) !== canonicalJson(["sh", "-c", "sleep 3600"]) ||
@@ -1227,7 +1316,7 @@ function validateStorageHelperPod(
     (container.volumeDevices || []).length !== 0 ||
     !Array.isArray(container.volumeMounts) || container.volumeMounts.length !== 1 ||
     mount?.name !== "storage" || mount.mountPath !== "/storage" ||
-    mount.readOnly !== helperReadOnly ||
+    (mount.readOnly === undefined ? false : mount.readOnly) !== helperReadOnly ||
     (mount.subPath || "") !== "" || (mount.subPathExpr || "") !== "" ||
     container.lifecycle !== undefined && container.lifecycle !== null &&
       (!object(container.lifecycle) || Object.keys(container.lifecycle).length !== 0) ||
@@ -1353,7 +1442,8 @@ function captureBaseline(
   }
   const podNames = new Set(pods.map(item => item.name));
   const podUids = new Set(pods.map(item => item.uid));
-  if (podNames.size !== pods.length || podUids.size !== pods.length) fail("pod_inventory");
+  if (podNames.size !== pods.length) fail("pod_inventory_name_duplicate");
+  if (podUids.size !== pods.length) fail("pod_inventory_uid_duplicate");
   const reticulum = rawDeploymentByName.get("reticulum");
   return {
     schema_version: 3,
@@ -1562,11 +1652,13 @@ function baselineMaps(baseline) {
   };
 }
 
-function validateListedPod(pod, namespace, options, baseline, maps) {
-  validatePodEnvelope(pod, namespace, "pod_inventory", false, true);
+function validateListedPod(
+  pod, namespace, options, baseline, maps, allowDeleting = false
+) {
+  validatePodEnvelope(pod, namespace, "pod_inventory", allowDeleting, true);
   if (pod.metadata.name === baseline.storage_helper.name) {
     return validateStorageHelperPod(
-      pod, namespace, options, baseline, false, true
+      pod, namespace, options, baseline, allowDeleting, true
     );
   }
   const owner = controllerOwner(pod, "ReplicaSet");
@@ -1620,24 +1712,32 @@ function validateCurrentLists(
     fail("replicaset_inventory");
   }
   const seen = new Set();
+  const replicaSetIdentities = [];
   for (const replicaSet of replicaSetList.items) {
     validateReplicaSetEnvelope(replicaSet, namespace, "replicaset_inventory", true);
     const expected = maps.replicaSetByName.get(replicaSet.metadata?.name);
     if (!expected) fail("replicaset_added");
-    validateReplicaSetObject(
+    const identity = validateReplicaSetObject(
       replicaSet, namespace, maps.deploymentByUid, expected, false, true
     );
+    replicaSetIdentities.push(identity);
     seen.add(expected.name);
   }
   if (seen.size !== baseline.replica_sets.length) fail("replicaset_missing");
   const podList = listResource(kubectl, context, namespace, "pods", deadline);
   const podNames = new Set();
   const podUids = new Set();
+  const podIdentities = [];
   for (const pod of podList.items) {
-    const identity = validateListedPod(pod, namespace, options, baseline, maps);
-    if (podNames.has(identity.name) || podUids.has(identity.uid)) fail("pod_inventory");
+    const allowDeleting = pod.metadata?.name === baseline.storage_helper.name;
+    const identity = validateListedPod(
+      pod, namespace, options, baseline, maps, allowDeleting
+    );
+    if (podNames.has(identity.name)) fail("pod_inventory_name_duplicate");
+    if (podUids.has(identity.uid)) fail("pod_inventory_uid_duplicate");
     podNames.add(identity.name);
     podUids.add(identity.uid);
+    podIdentities.push(identity);
   }
   return {
     boundaries: {
@@ -1645,8 +1745,22 @@ function validateCurrentLists(
       replicasets: replicaSetList.metadata.resourceVersion,
       pods: podList.metadata.resourceVersion
     },
-    writer_deployments: writerDeployments.sort((left, right) => left.name.localeCompare(right.name))
+    writer_deployments: writerDeployments.sort((left, right) => left.name.localeCompare(right.name)),
+    replica_sets: replicaSetIdentities.sort((left, right) => left.name.localeCompare(right.name)),
+    pods: podIdentities.sort((left, right) => left.name.localeCompare(right.name))
   };
+}
+
+function reconcileRuntimeState(state, current) {
+  const activeNames = new Set();
+  for (const pod of current.pods || []) {
+    activeNames.add(pod.name);
+    state.podByName.set(pod.name, pod);
+    state.podHistoryByUid.set(pod.uid, pod);
+  }
+  for (const name of state.podByName.keys()) {
+    if (!activeNames.has(name)) state.podByName.delete(name);
+  }
 }
 
 function validateReceiptCurrentLists(
@@ -1708,8 +1822,12 @@ function validateReceiptCurrentLists(
   const podNames = new Set();
   const podUids = new Set();
   for (const pod of podList.items) {
-    const identity = validateListedPod(pod, namespace, options, baseline, maps);
-    if (podNames.has(identity.name) || podUids.has(identity.uid)) fail("pod_inventory");
+    const allowDeleting = pod.metadata?.name === baseline.storage_helper.name;
+    const identity = validateListedPod(
+      pod, namespace, options, baseline, maps, allowDeleting
+    );
+    if (podNames.has(identity.name)) fail("pod_inventory_name_duplicate");
+    if (podUids.has(identity.uid)) fail("pod_inventory_uid_duplicate");
     podNames.add(identity.name);
     podUids.add(identity.uid);
   }
@@ -1731,27 +1849,94 @@ function runtimeState(baseline) {
   const podByName = new Map();
   const podHistoryByUid = new Map();
   for (const pod of baseline.pods) {
-    podByName.set(pod.name, { ...pod });
-    podHistoryByUid.set(pod.uid, { ...pod });
+    const copy = { ...pod };
+    if (pod.object_components) {
+      Object.defineProperty(copy, "object_components", {
+        value: pod.object_components, enumerable: false
+      });
+    }
+    podByName.set(pod.name, copy);
+    podHistoryByUid.set(pod.uid, copy);
   }
   return { podByName, podHistoryByUid };
 }
 
-function samePodIdentity(actual, expected) {
-  return actual.name === expected.name && actual.uid === expected.uid &&
+function samePodIdentity(actual, expected, allowTerminationMetadataDrift = false) {
+  const coreIdentityMatches = actual.name === expected.name && actual.uid === expected.uid &&
     actual.role === expected.role && canonicalJson(actual.owner) === canonicalJson(expected.owner) &&
     actual.fingerprint === expected.fingerprint &&
-    actual.admission_fingerprint === expected.admission_fingerprint &&
-    actual.object_fingerprint === expected.object_fingerprint;
+    actual.admission_fingerprint === expected.admission_fingerprint;
+  if (!coreIdentityMatches) return false;
+  if (actual.object_fingerprint === expected.object_fingerprint) return true;
+  if (!allowTerminationMetadataDrift) return false;
+  const actualComponents = actual.object_components || {};
+  const expectedComponents = expected.object_components || {};
+  return [
+    "annotations", "creation", "generate-name", "labels", "owners", "spec"
+  ].every(component => actualComponents[component] === expectedComponents[component]);
+}
+
+function failPodIdentityDrift(actual, expected, prefix) {
+  if (actual.name !== expected.name) fail(`${prefix}_name`);
+  if (actual.uid !== expected.uid) fail(`${prefix}_uid`);
+  if (actual.role !== expected.role) fail(`${prefix}_role`);
+  if (canonicalJson(actual.owner) !== canonicalJson(expected.owner)) {
+    fail(`${prefix}_owner`);
+  }
+  if (actual.fingerprint !== expected.fingerprint) {
+    fail(`${prefix}_fingerprint`);
+  }
+  if (actual.admission_fingerprint !== expected.admission_fingerprint) {
+    fail(`${prefix}_admission`);
+  }
+  if (actual.object_fingerprint !== expected.object_fingerprint) {
+    const actualComponents = actual.object_components || {};
+    const expectedComponents = expected.object_components || {};
+    const differingComponents = [];
+    for (const component of [
+      "annotations", "creation", "finalizers", "generate-name", "generation",
+      "labels", "owners", "spec"
+    ]) {
+      if (actualComponents[component] !== expectedComponents[component]) {
+        differingComponents.push(component);
+      }
+    }
+    if (differingComponents.length === 1) {
+      fail(`pod_event_drift_object_${differingComponents[0]}`);
+    }
+    if (differingComponents.includes("finalizers")) {
+      const nonFinalizerComponents = differingComponents.filter(component => component !== "finalizers");
+      if (nonFinalizerComponents.length === 1) {
+        fail(`pod_event_drift_object_finalizers_${nonFinalizerComponents[0]}`);
+      }
+      fail("pod_event_drift_object_finalizers_multiple");
+    }
+    if (differingComponents.length > 1) fail("pod_event_drift_object_multiple");
+    fail(`${prefix}_object`);
+  }
+  fail(prefix);
 }
 
 function validatePodEvent(event, namespace, options, baseline, maps, state) {
-  const allowDeleting = event.type === "DELETED";
-  validatePodEnvelope(event.object, namespace, "pod_event_contract", allowDeleting);
+  const helperEvent = event.object?.metadata?.name === baseline.storage_helper.name;
+  // Kubernetes emits a MODIFIED event carrying deletionTimestamp before the
+  // terminal DELETED event. Permit that transition only for the exact owned
+  // storage helper; ordinary application Pods remain strict fail-closed.
+  const allowDeleting = event.type === "DELETED" ||
+    (helperEvent && event.type === "MODIFIED");
+  // The Kubernetes API can omit the object's GVK in a typed Pod watch event,
+  // just as it does for items in a typed PodList. The watch resource itself is
+  // already bound to /api/v1/.../pods, so accepting only this exact omission
+  // preserves the resource type while avoiding a false contract failure.
+  validatePodEnvelope(
+    event.object, namespace, "pod_event_contract", allowDeleting, true
+  );
   const pod = event.object;
   let identity;
-  if (pod.metadata.name === baseline.storage_helper.name) {
-    identity = validateStorageHelperPod(pod, namespace, options, baseline, allowDeleting);
+  if (helperEvent) {
+    identity = validateStorageHelperPod(
+      pod, namespace, options, baseline, allowDeleting, true
+    );
   } else {
     const owner = controllerOwner(pod, "ReplicaSet");
     const replicaSet = maps.replicaSetByUid.get(owner.uid);
@@ -1770,9 +1955,13 @@ function validatePodEvent(event, namespace, options, baseline, maps, state) {
   }
   const active = state.podByName.get(identity.name);
   const historical = state.podHistoryByUid.get(identity.uid);
+  const allowTerminationMetadataDrift = event.type === "DELETED" ||
+    (helperEvent && event.type === "MODIFIED");
   if (event.type === "ADDED") {
     if (historical) {
-      if (!samePodIdentity(identity, historical)) fail("pod_event_drift");
+      if (!samePodIdentity(identity, historical)) {
+        failPodIdentityDrift(identity, historical, "pod_event_drift");
+      }
       if (active && !samePodIdentity(identity, active)) fail("pod_name_collision");
       return;
     }
@@ -1782,12 +1971,20 @@ function validatePodEvent(event, namespace, options, baseline, maps, state) {
     state.podByName.set(identity.name, identity);
     state.podHistoryByUid.set(identity.uid, identity);
   } else if (event.type === "MODIFIED") {
-    if (!historical || !samePodIdentity(identity, historical)) fail("pod_event_drift");
-    if (active && !samePodIdentity(identity, active)) fail("pod_event_drift");
+    if (!historical) fail("pod_event_drift_history_missing");
+    if (!samePodIdentity(identity, historical, allowTerminationMetadataDrift)) {
+      failPodIdentityDrift(identity, historical, "pod_event_drift");
+    }
+    if (active && !samePodIdentity(identity, active, allowTerminationMetadataDrift)) {
+      failPodIdentityDrift(identity, active, "pod_event_drift_active");
+    }
     if (active) state.podByName.set(identity.name, identity);
     state.podHistoryByUid.set(identity.uid, identity);
   } else {
-    if (!historical || !samePodIdentity(identity, historical)) fail("pod_event_drift");
+    if (!historical) fail("pod_event_drift_history_missing");
+    if (!samePodIdentity(identity, historical, allowTerminationMetadataDrift)) {
+      failPodIdentityDrift(identity, historical, "pod_event_drift_deleted");
+    }
     if (active?.uid === identity.uid) state.podByName.delete(identity.name);
   }
 }
@@ -2050,20 +2247,23 @@ async function startWatchSession(options) {
       const fixtureImmediateBookmark = allowFixtureImmediateBookmark &&
         process.env.YENHUBS_RECOVERY_TEST_MODE === "local-fixture" &&
         context === "fixture-context" && sawBookmark;
+      const watchResult = () => options.reportWatchFreshness
+        ? { resourceVersion: latestVersion, needsRefresh: !sawBookmark }
+        : latestVersion;
       if (stopSent) {
         if (exit.signal !== "SIGTERM") fail("watch_stop_contract");
-        return latestVersion;
+        return watchResult();
       }
       if (intentionalStop) {
         if (!fixtureImmediateBookmark) fail("watch_not_live");
-        return latestVersion;
+        return watchResult();
       }
       if (exit.code !== 0 || exit.signal) fail("watch_terminated");
       if (
         performance.now() - startedAt < timeoutSeconds * 750 &&
         !fixtureImmediateBookmark
       ) fail("watch_closed");
-      return latestVersion;
+      return watchResult();
     })();
     return finalPromise;
   };
@@ -2862,12 +3062,27 @@ async function monitor(values) {
     const next = await Promise.all(["deployments", "replicasets", "pods"].map(resource =>
       watchOnce({
         ...monitoredOptions, state, resource,
-        resourceVersion: resourceVersions[resource]
+        resourceVersion: resourceVersions[resource],
+        reportWatchFreshness: true
       })
     ));
     ["deployments", "replicasets", "pods"].forEach((resource, index) => {
-      resourceVersions[resource] = next[index];
+      resourceVersions[resource] = next[index].resourceVersion;
     });
+    // DigitalOcean's Kubernetes API may close an otherwise healthy short
+    // watch without emitting a BOOKMARK.  Keeping the old resourceVersion in
+    // that case eventually reaches compaction and fails the recovery guard.
+    // Refresh all three validated Lists before the next watch so the state
+    // and every boundary move forward together, without accepting an
+    // unvalidated resourceVersion or losing the exact pod identity history.
+    if (next.some(result => result.needsRefresh)) {
+      const refreshed = validateCurrentLists(
+        monitoredOptions.kubectl, monitoredOptions.context,
+        monitoredOptions.namespace, monitoredOptions, baseline
+      );
+      reconcileRuntimeState(state, refreshed);
+      resourceVersions = { ...refreshed.boundaries };
+    }
     validateControlPlane(
       monitoredOptions.kubectl, monitoredOptions.context, monitoredOptions, baseline.lease
     );
@@ -2972,7 +3187,12 @@ try {
   }
   if (parsed?.mode === "monitor") {
     try {
-      writeRegular(parsed.values.get("--failure"), "checkpoint_writer_monitor_failed\n", 2048);
+      writeRegular(
+        parsed.values.get("--failure"),
+        `checkpoint_writer_monitor_failed:${diagnosticToken(failureStage)}:` +
+          `${diagnosticToken(error?.code)}\n`,
+        2048
+      );
     } catch {}
   }
   process.exitCode = 1;

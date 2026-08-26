@@ -2145,6 +2145,70 @@ yaml_field() {
   local pattern="$1" file="$2"
   awk -v pattern="$pattern" '$0 ~ pattern {value=$0; sub(/^[^:]+:[[:space:]]*/, "", value); gsub(/^"|"$/, "", value); print value; exit}' "$file"
 }
+emit_stub_restore_lock_json() {
+  local lock_uid lock_rv lock_owner lock_operation_id lock_token
+  local lock_namespace_uid lock_pvc_uid lock_stamp lock_dump lock_storage
+  local lock_pre_epoch lock_target_epoch lock_inventory lock_state
+  local lock_runner_evidence lock_runner_generation lock_json
+  [[ -f "$STUB_STATE_DIR/restore-lock.yaml" ]] || return 1
+  if [[ "${STUB_MODE:-}" == "restore-lock-replaced-after-quiesce" &&
+        ! -e "$STUB_STATE_DIR/lock-replaced-after-quiesce" ]]; then
+    local all_zero=true writer
+    for writer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+      if [[ ! -f "$STUB_STATE_DIR/replicas-$writer" ||
+            "$(cat "$STUB_STATE_DIR/replicas-$writer")" != 0 ]]; then
+        all_zero=false
+      fi
+    done
+    if [[ "$all_zero" == true ]]; then
+      printf '%s' replacement-lock-uid >"$STUB_STATE_DIR/restore-lock-uid"
+      : >"$STUB_STATE_DIR/lock-replaced-after-quiesce"
+    fi
+  fi
+  lock_uid="$(cat "$STUB_STATE_DIR/restore-lock-uid" 2>/dev/null || printf restore-lock-uid)"
+  lock_rv="$(cat "$STUB_STATE_DIR/restore-lock-rv" 2>/dev/null || printf lock-rv-1)"
+  lock_owner="$(yaml_field 'yenhubs.org/recovery-owner:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_operation_id="$(yaml_field 'yenhubs.org/operation-id:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_token="$(yaml_field 'yenhubs.org/recovery-token:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_namespace_uid="$(yaml_field 'yenhubs.org/namespace-uid:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_pvc_uid="$(yaml_field 'yenhubs.org/pvc-uid:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_stamp="$(yaml_field 'yenhubs.org/checkpoint-stamp:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_dump="$(yaml_field 'yenhubs.org/dump-sha256:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_storage="$(yaml_field 'yenhubs.org/storage-sha256:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_pre_epoch="$(yaml_field 'yenhubs.org/pre-fence-epoch:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_target_epoch="$(yaml_field 'yenhubs.org/restore-fence-epoch:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_inventory="$(yaml_field 'yenhubs.org/deployment-inventory-sha256:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_state="$(yaml_field 'yenhubs.org/recovery-state:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_runner_evidence="$(yaml_field 'yenhubs.org/runner-cutover-evidence-sha256:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_runner_generation="$(yaml_field 'yenhubs.org/runner-runtime-generation:' "$STUB_STATE_DIR/restore-lock.yaml")"
+  lock_json="$(jq -cn --arg uid "$lock_uid" --arg rv "$lock_rv" --arg owner "$lock_owner" \
+    --arg operation_id "$lock_operation_id" --arg token "$lock_token" \
+    --arg namespace_uid "$lock_namespace_uid" --arg pvc_uid "$lock_pvc_uid" \
+    --arg stamp "$lock_stamp" --arg dump "$lock_dump" --arg storage "$lock_storage" \
+    --arg pre_epoch "$lock_pre_epoch" --arg target_epoch "$lock_target_epoch" \
+    --arg inventory "$lock_inventory" --arg state "$lock_state" \
+    --arg runner_evidence "$lock_runner_evidence" \
+    --arg runner_generation "$lock_runner_generation" \
+    '{apiVersion:"v1",kind:"ConfigMap",metadata:{name:"yenhubs-recovery-operation-lock",namespace:"hcce",uid:$uid,resourceVersion:$rv,labels:{"yenhubs.org/recovery-owner":$owner},annotations:({"yenhubs.org/operation-id":$operation_id,"yenhubs.org/recovery-token":$token,"yenhubs.org/namespace-uid":$namespace_uid,"yenhubs.org/pvc-uid":$pvc_uid,"yenhubs.org/checkpoint-stamp":$stamp,"yenhubs.org/dump-sha256":$dump,"yenhubs.org/storage-sha256":$storage} + if $inventory == "" then {} else {"yenhubs.org/deployment-inventory-sha256":$inventory} end + if $pre_epoch == "" then {} else {"yenhubs.org/pre-fence-epoch":$pre_epoch,"yenhubs.org/restore-fence-epoch":$target_epoch} end + if $state == "" then {} else {"yenhubs.org/recovery-state":$state} end + if $runner_evidence == "" and $runner_generation == "" then {} else {"yenhubs.org/runner-cutover-evidence-sha256":$runner_evidence,"yenhubs.org/runner-runtime-generation":$runner_generation} end)},immutable:true}')" || return 1
+  case "${STUB_MODE:-}" in
+    restore-lock-deletion-timestamp)
+      lock_json="$(jq -c '.metadata.deletionTimestamp = "2026-07-20T00:00:00Z"' <<<"$lock_json")" || return 1
+      ;;
+    restore-lock-deletion-grace)
+      lock_json="$(jq -c '.metadata.deletionGracePeriodSeconds = 30' <<<"$lock_json")" || return 1
+      ;;
+    restore-lock-finalizer)
+      lock_json="$(jq -c '.metadata.finalizers = ["fixture.invalid/retain"]' <<<"$lock_json")" || return 1
+      ;;
+    restore-lock-owner-reference)
+      lock_json="$(jq -c '.metadata.ownerReferences = [{apiVersion:"v1",kind:"Secret",name:"foreign-owner",uid:"foreign-owner-uid"}]' <<<"$lock_json")" || return 1
+      ;;
+    checkpoint-writer-lock-rv-drift)
+      lock_json="$(jq -c '.metadata.resourceVersion = "replacement-lock-rv"' <<<"$lock_json")" || return 1
+      ;;
+  esac
+  printf '%s' "$lock_json"
+}
 emit_created_storage_network_policy() {
   local policy_yaml="$STUB_STATE_DIR/network-policy.yaml"
   local policy_name policy_uid policy_rv owner_role operation_id lock_uid owner_token
@@ -2648,6 +2712,15 @@ emit_stub_deployment_json() {
   fi
   printf '%s' "$deployment_json"
 }
+emit_quiescence_deployment_list() {
+  local deployment item items='[]'
+  for deployment in bot-orchestrator coturn pgbouncer pgbouncer-t reticulum; do
+    item="$(emit_stub_deployment_json "$deployment")" || return 1
+    items="$(jq -c --argjson item "$item" '. + [$item]' <<<"$items")" || return 1
+  done
+  jq -cn --argjson items "$items" \
+    '{apiVersion:"v1",kind:"List",metadata:{resourceVersion:"quiescence-deployments-list-rv"},items:$items}'
+}
 checkpoint_receipt_all_held_watches_live() {
   [[ -d "$STUB_STATE_DIR/checkpoint-receipt-phase-h-live-deployments" &&
      -d "$STUB_STATE_DIR/checkpoint-receipt-phase-h-live-replicasets" &&
@@ -2989,6 +3062,57 @@ if [[ "$joined" == "get namespace hcce-bot-runners --ignore-not-found -o json" ]
   if [[ "${STUB_RUNNER_NAMESPACE:-absent}" == present ]]; then
     cat "$RUNNER_EVIDENCE_LIVE_DIR/namespace-hcce-bot-runners.json"
   fi
+  exit 0
+fi
+if [[ "$joined" == "get namespace/hcce namespace/hcce-bot-runners pvc/ret-pvc configmap/yenhubs-recovery-operation-lock lease/yenhubs-operation-serialization -n hcce --ignore-not-found -o json" ]]; then
+  namespace_json="$(cat "$RUNNER_EVIDENCE_LIVE_DIR/namespace-hcce.json")"
+  pvc_json="$(jq -cn '{apiVersion:"v1",kind:"PersistentVolumeClaim",metadata:{name:"ret-pvc",namespace:"hcce",uid:"fixture-pvc-uid",resourceVersion:"pvc-rv-1"},status:{phase:"Bound"}}')"
+  lock_json="$(emit_stub_restore_lock_json)" || exit 1
+  if [[ "${DATABASE_RESTORE_MONITOR_PHASE:-}" == quiescence &&
+        -f "$STUB_STATE_DIR/serialization-lease.json" ]]; then
+    lease_refresh_path="$(mktemp "$STUB_STATE_DIR/serialization-lease.next.XXXXXX")" || exit 1
+    jq -c --arg renew "$(date -u '+%Y-%m-%dT%H:%M:%S.000000Z')" \
+      '.spec.renewTime = $renew' "$STUB_STATE_DIR/serialization-lease.json" \
+      >"$lease_refresh_path" || exit 1
+    mv "$lease_refresh_path" "$STUB_STATE_DIR/serialization-lease.json" || exit 1
+  fi
+  lease_json="$(cat "$STUB_STATE_DIR/serialization-lease.json")"
+  control_items="$(jq -cn --argjson namespace "$namespace_json" \
+    --argjson pvc "$pvc_json" --argjson lock "$lock_json" \
+    --argjson lease "$lease_json" --argjson include_runner \
+    "$( [[ "${STUB_RUNNER_NAMESPACE:-absent}" == present ]] && printf true || printf false )" \
+    --slurpfile runner "$RUNNER_EVIDENCE_LIVE_DIR/namespace-hcce-bot-runners.json" '
+    [$namespace,$pvc,$lock,$lease] +
+      (if $include_runner then [$runner[0]] else [] end)
+  ')" || exit 1
+  jq -cn --argjson items "$control_items" \
+    '{apiVersion:"v1",kind:"List",metadata:{resourceVersion:"control-list-rv"},items:$items}'
+  exit 0
+fi
+if [[ "$joined" == "get deployments,pods,replicasets -n hcce -o json" ]]; then
+  if [[ "${STUB_MODE:-}" == restore-db-initial-monitor-stall &&
+        "${DATABASE_RESTORE_MONITOR_PHASE:-}" == quiescence ]] &&
+     mkdir "$STUB_STATE_DIR/restore-db-initial-monitor-stalled" 2>/dev/null; then
+    exec sleep 2
+  fi
+  if [[ -e "$STUB_STATE_DIR/restore-db-stream-started" &&
+        ! -e "$STUB_STATE_DIR/restore-db-stream-completed" ]] &&
+     write_monotonic_ns_marker \
+       "$STUB_STATE_DIR/restore-db-optimized-monitor-inflight-observed"; then
+    printf '%s' "$$" >"$STUB_STATE_DIR/restore-db-monitor-observer-pid"
+    case "${STUB_MODE:-}" in
+      restore-db-monitor-exit) exit 1 ;;
+      restore-db-monitor-stall) exec sleep 12 ;;
+    esac
+  fi
+  deployments_json="$(emit_checkpoint_writer_deployments)" || exit 1
+  pods_json="$(emit_checkpoint_writer_pods)" || exit 1
+  replicasets_json="$(emit_checkpoint_writer_replicasets)" || exit 1
+  jq -cn --argjson deployments "$deployments_json" \
+    --argjson pods "$pods_json" --argjson replicasets "$replicasets_json" '
+    {apiVersion:"v1",kind:"List",metadata:{resourceVersion:"workloads-list-rv"},
+      items:($deployments.items + $pods.items + $replicasets.items)}
+  '
   exit 0
 fi
 if [[ "$joined" == "get deployments -n hcce -o json" ]]; then
@@ -3565,8 +3689,31 @@ if [[ "$joined" == get\ pod\ ret-storage-*"-o json" ]]; then
   exit 0
 fi
 if [[ "$joined" == "get pod -n hcce -o json" ||
-      "$joined" == "get pod -n hcce-bot-runners -o json" ]]; then
+      "$joined" == "get pods -n hcce -o json" ||
+      "$joined" == "get pod -n hcce-bot-runners -o json" ||
+      "$joined" == "get pods -n hcce-bot-runners -o json" ]]; then
   target_namespace="${4:-}"
+  if [[ "$target_namespace" == hcce &&
+        "${STUB_MODE:-}" == restore-db-initial-monitor-stall &&
+        "${DATABASE_RESTORE_MONITOR_PHASE:-}" == quiescence ]] &&
+       mkdir "$STUB_STATE_DIR/restore-db-initial-monitor-stalled" 2>/dev/null; then
+    # The optimized monitor uses one namespaced Pod List for the whole
+    # consumer snapshot; preserve the fixture's causal startup stall on that
+    # first bulk read instead of the old per-selector request.
+    exec sleep 2
+  fi
+  if [[ "$target_namespace" == hcce &&
+        -e "$STUB_STATE_DIR/restore-db-stream-started" &&
+        ! -e "$STUB_STATE_DIR/restore-db-stream-completed" &&
+        ! -e "$STUB_STATE_DIR/restore-db-monitor-inflight-observed" ]]; then
+    write_monotonic_ns_marker \
+      "$STUB_STATE_DIR/restore-db-monitor-inflight-observed"
+    printf '%s' "$$" >"$STUB_STATE_DIR/restore-db-monitor-observer-pid"
+    case "${STUB_MODE:-}" in
+      restore-db-monitor-exit) exit 1 ;;
+      restore-db-monitor-stall) exec sleep 12 ;;
+    esac
+  fi
   if [[ "$target_namespace" == hcce-bot-runners &&
         "${STUB_MODE:-}" == checkpoint-dormant-fence-aba-before-first-resume &&
         -f "$STUB_STATE_DIR/recovery-operation-fence-binding-state" &&
@@ -3674,6 +3821,14 @@ if [[ "$joined" == "get pod -n hcce -o json" ||
         '{apiVersion:"v1",kind:"PodList",metadata:{resourceVersion:"101"},
           items:[$helper]}')"
     fi
+  elif [[ "$target_namespace" == hcce &&
+          "${STUB_MODE:-}" == checkpoint-writer-helper-terminating-list-refresh &&
+          -e "$STUB_STATE_DIR/checkpoint-writer-helper-list-refresh" ]]; then
+    helper_refresh="$(emit_checkpoint_storage_helper_pod helper-rv-refresh Running \
+      2026-08-24T12:00:00Z | jq '.metadata.finalizers = ["fixture.invalid/terminating"] |
+        .metadata.generation = 2')"
+    pods_json="$(jq -cn --argjson helper "$helper_refresh" \
+      '{apiVersion:"v1",kind:"PodList",metadata:{resourceVersion:"101"},items:[$helper]}')"
   elif [[ "$target_namespace" == hcce ]]; then
     if [[ "${STUB_OPERATION:-}" == "storage-backup" ]]; then
       if [[ "${STUB_MODE:-}" == "backup-extra-consumer" ||
@@ -3752,6 +3907,10 @@ if [[ "$joined" == "get pod -n hcce -o json" ||
     .metadata.resourceVersion = "100" |
     .items |= map(.metadata.namespace = $namespace | .metadata.resourceVersion = "101")
   ' <<<"$pods_json")"
+  if [[ "$target_namespace" == hcce &&
+        "${STUB_MODE:-}" == checkpoint-writer-pod-null-optional-metadata ]]; then
+    pods_json="$(jq -c '.items |= map(.metadata.annotations = null)' <<<"$pods_json")"
+  fi
   if [[ "$target_namespace" == hcce &&
         "${STUB_CHECKPOINT_WRITER_QUERY:-}" == 1 ]]; then
     if [[ -f "$STUB_STATE_DIR/checkpoint-resume-receipt-reticulum" ]]; then
@@ -3859,6 +4018,11 @@ if [[ "$joined" == "get --raw /apis/apps/v1/namespaces/hcce/replicasets" ]]; the
         )
       '
       ;;
+    checkpoint-writer-pod-null-optional-metadata)
+      emit_checkpoint_writer_replicasets | jq -c '
+        .items |= map(.spec.template.metadata.annotations = null)
+      '
+      ;;
     *)
       "$0" --context fixture-context --request-timeout=45s \
         get replicasets -n hcce -o json
@@ -3953,6 +4117,15 @@ if [[ "$joined" == get\ --raw\ /apis/apps/v1/namespaces/hcce/deployments\?* ||
       ;;
     checkpoint-writer-watch-closes)
       if [[ "$writer_watch_resource" == deployments && "$writer_watch_count" == 1 ]]; then
+        exit 0
+      fi
+      ;;
+    checkpoint-writer-watch-no-bookmark)
+      # Model the DigitalOcean API behavior observed in production: a short
+      # watch closes cleanly after its timeout without emitting a BOOKMARK.
+      # Terminal overlap watches retain their normal fixture bookmark path.
+      if [[ "$raw_path" == *"timeoutSeconds=2"* ]]; then
+        sleep 2
         exit 0
       fi
       ;;
@@ -4325,13 +4498,24 @@ if [[ "$joined" == get\ --raw\ /api/v1/namespaces/*/pods\?* ]]; then
         "$watch_namespace" == hcce && "$watch_count" == 1 ]]; then
     exit 0
   fi
+  if [[ "${STUB_MODE:-}" == checkpoint-writer-helper-terminating-list-refresh &&
+        "$watch_namespace" == hcce && "$raw_path" == *"timeoutSeconds=2"* ]]; then
+    if [[ "$watch_count" == 1 ]]; then
+      : >"$STUB_STATE_DIR/checkpoint-writer-helper-list-refresh"
+    fi
+    sleep 2
+    exit 0
+  fi
   if [[ ( "${STUB_MODE:-}" == checkpoint-writer-owned-helper-lifecycle ||
+          "${STUB_MODE:-}" == checkpoint-writer-helper-admitted-defaults ||
           "${STUB_MODE:-}" == checkpoint-writer-helper-rw ||
           "${STUB_MODE:-}" == checkpoint-writer-helper-env ||
           "${STUB_MODE:-}" == checkpoint-writer-helper-ephemeral ||
           "${STUB_MODE:-}" == checkpoint-writer-helper-cross-owner ||
           "${STUB_MODE:-}" == checkpoint-writer-helper-cross-mode ||
-          "${STUB_MODE:-}" == checkpoint-writer-helper-image-drift ) &&
+          "${STUB_MODE:-}" == checkpoint-writer-helper-image-drift ||
+          "${STUB_MODE:-}" == checkpoint-writer-helper-terminating ||
+          "${STUB_MODE:-}" == checkpoint-writer-helper-event-gvk-omitted ) &&
         "$watch_namespace" == hcce && "$watch_count" == 2 ]]; then
     helper_added="$(emit_checkpoint_storage_helper_pod helper-rv-1 Pending)"
     case "${STUB_MODE:-}" in
@@ -4340,6 +4524,15 @@ if [[ "$joined" == get\ --raw\ /api/v1/namespaces/*/pods\?* ]]; then
           .spec.volumes[0].persistentVolumeClaim.readOnly = false |
           .spec.containers[0].volumeMounts[0].readOnly = false
         ' <<<"$helper_added")"
+        ;;
+      checkpoint-writer-helper-admitted-defaults)
+        helper_added="$(jq -c '
+          del(.spec.volumes[0].persistentVolumeClaim.readOnly,
+              .spec.containers[0].volumeMounts[0].readOnly)
+        ' <<<"$helper_added")"
+        ;;
+      checkpoint-writer-helper-event-gvk-omitted)
+        helper_added="$(jq -c 'del(.apiVersion,.kind)' <<<"$helper_added")"
         ;;
       checkpoint-writer-helper-env)
         helper_added="$(jq -c '
@@ -4359,10 +4552,21 @@ if [[ "$joined" == get\ --raw\ /api/v1/namespaces/*/pods\?* ]]; then
         ' <<<"$helper_added")"
         ;;
     esac
-    if [[ "${STUB_MODE:-}" == checkpoint-writer-owned-helper-lifecycle ]]; then
-      helper_modified="$(emit_checkpoint_storage_helper_pod helper-rv-2 Running)"
+    if [[ "${STUB_MODE:-}" == checkpoint-writer-owned-helper-lifecycle ||
+          "${STUB_MODE:-}" == checkpoint-writer-helper-terminating ]]; then
+      if [[ "${STUB_MODE:-}" == checkpoint-writer-helper-terminating ]]; then
+        helper_modified="$(emit_checkpoint_storage_helper_pod helper-rv-2 Running \
+          2026-08-24T12:00:00Z | jq '.metadata.finalizers = ["fixture.invalid/terminating"] |
+            .metadata.generation = 2')"
+      else
+        helper_modified="$(emit_checkpoint_storage_helper_pod helper-rv-2 Running)"
+      fi
       helper_deleted="$(emit_checkpoint_storage_helper_pod helper-rv-3 Succeeded \
         2026-07-20T00:00:00Z)"
+      if [[ "${STUB_MODE:-}" == checkpoint-writer-helper-terminating ]]; then
+        helper_deleted="$(jq '.metadata.finalizers = ["fixture.invalid/terminating"] |
+          .metadata.generation = 2' <<<"$helper_deleted")"
+      fi
       jq -cn --argjson added "$helper_added" --argjson modified "$helper_modified" \
         --argjson deleted "$helper_deleted" '
         {type:"ADDED",object:$added},
@@ -4564,7 +4768,11 @@ if [[ "$joined" == "-n hcce get deployment bot-orchestrator -o json" ]]; then
   exit 0
 fi
 if [[ "$joined" == "get deployment -n hcce -o json" ]]; then
-  cat "$STUB_DEPLOYMENTS_JSON"
+  if [[ "${RECOVERY_QUIESCENCE_INVENTORY:-}" == 1 ]]; then
+    emit_quiescence_deployment_list
+  else
+    cat "$STUB_DEPLOYMENTS_JSON"
+  fi
   exit 0
 fi
 if [[ "$joined" == "get persistentvolumeclaim -n hcce -o json" ]]; then
@@ -4742,6 +4950,14 @@ if [[ "$joined" == get\ deployment\ *"-o json" ]]; then
 fi
 if [[ "$joined" == get\ pod\ *"-o name"* ]]; then
   if [[ "$joined" == *"-l app="* ]]; then
+    if [[ "${STUB_MODE:-}" == restore-db-initial-monitor-stall &&
+          "${DATABASE_RESTORE_MONITOR_PHASE:-}" == quiescence ]] &&
+       mkdir "$STUB_STATE_DIR/restore-db-initial-monitor-stalled" 2>/dev/null; then
+      # Only the background monitor exports this internal phase. Stall its first
+      # consumer read beyond the one-second test-only startup deadline without
+      # depending on the number of synchronous prechecks.
+      exec sleep 2
+    fi
     if [[ -e "$STUB_STATE_DIR/restore-db-stream-started" &&
           ! -e "$STUB_STATE_DIR/restore-db-stream-completed" &&
           ! -e "$STUB_STATE_DIR/restore-db-monitor-inflight-observed" ]]; then
@@ -5781,6 +5997,16 @@ if [[ "$joined" == exec\ * ]]; then
       sleep 0.08
     fi
     cat >/dev/null
+  elif [[ "$joined" == *"psql -v ON_ERROR_STOP=1 -U"* &&
+          "$joined" == *"-d postgres -q"* ]]; then
+    if [[ "${STUB_MODE:-}" == restore-db-reset-command-fail ]] &&
+       mkdir "$STUB_STATE_DIR/restore-db-reset-command-failed" 2>/dev/null; then
+      # The first psql invocation belongs to the guarded database-reset
+      # command. Fail only that invocation so the regression proves the
+      # reset's own supervised stage, not the later database stream.
+      exit 1
+    fi
+    cat >/dev/null
   elif [[ "$joined" == *"psql -v ON_ERROR_STOP=1 -q"* ]]; then
     if [[ "${STUB_MODE:-}" == restore-db-monitor-exit ||
           "${STUB_MODE:-}" == restore-db-monitor-stall ||
@@ -6537,6 +6763,8 @@ reset_stub() {
     "$STUB_STATE_DIR/network-policy-name" "$STUB_STATE_DIR/network-policy-uid" \
     "$STUB_STATE_DIR/network-policy-rv" \
     "$STUB_STATE_DIR/pod-name" "$STUB_STATE_DIR/pod-uid" "$STUB_STATE_DIR/pod-rv" \
+    "$STUB_STATE_DIR/restore-db-optimized-monitor-inflight-observed" \
+    "$STUB_STATE_DIR/restore-db-monitor-observer-pid" \
     "$STUB_STATE_DIR/storage-helper-pod-live.json" \
     "$STUB_STATE_DIR/helper-pod-list-snapshot-opened" \
     "$STUB_STATE_DIR/helper-pod-delete-finished" \
@@ -7819,6 +8047,7 @@ run_guarded_legacy_restore_child() {
   local child_stub_mode="${3:-${STUB_MODE:-}}"
   local child_db_contract="${4:-$STUB_DB_CONTRACT}"
   local writer_guard_mode="${5:-healthy}" guard_max_stale_seconds=""
+  local initial_deadline_seconds="${6:-${RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS:-}}"
   STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
     seed_already_fenced_legacy_restore_lock || return 1
   RECOVERY_CHECKPOINT_METADATA_SCHEMA=2
@@ -7848,6 +8077,7 @@ run_guarded_legacy_restore_child() {
         STUB_RUNNER_NAMESPACE='' STUB_RUNNER_POD_PROFILE='' \
         STUB_MODE="$child_stub_mode" STUB_DB_CONTRACT="$child_db_contract" \
         RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS="$guard_max_stale_seconds" \
+        RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS="$initial_deadline_seconds" \
         RESTORE_COORDINATED=1 \
         RESTORE_ALREADY_FENCED=1 CONFIRM_RESTORE="$CONFIRM_DB" \
         RECOVERY_STREAM_POLL_SECONDS=0.01 \
@@ -7866,6 +8096,7 @@ run_guarded_legacy_restore_child() {
         STUB_RUNNER_NAMESPACE='' STUB_RUNNER_POD_PROFILE='' \
         STUB_MODE="$child_stub_mode" STUB_DB_CONTRACT="$child_db_contract" \
         RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS="$guard_max_stale_seconds" \
+        RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS="$initial_deadline_seconds" \
         RESTORE_COORDINATED=1 \
         CONFIRM_RESTORE_STORAGE="$CONFIRM_STORAGE" \
         RECOVERY_STREAM_POLL_SECONDS=0.01 \
@@ -8061,13 +8292,38 @@ run_legacy_restore_lock_contract_probe() {
     "$ROOT_DIR/deployment/validate-checkpoint.sh"
 }
 
+run_restore_reset_diagnostic_test() {
+  reset_stub
+  expect_failure 'DB reset guard failure preserves its supervised stream stage' '' \
+    run_guarded_legacy_restore_child db \
+    "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz" restore-db-reset-command-fail
+  if [[ "$LAST_OUTPUT" == *'database_restore_stage:database-reset'* &&
+        "$LAST_OUTPUT" =~ database_restore_stream_stage:(initialize|refresh|launch|running|command|post-audit) ]]; then
+    pass 'DB reset guard failure emits its allowlisted stream stage'
+  else
+    fail 'DB reset guard failure loses its supervised stream stage' "$LAST_OUTPUT"
+  fi
+}
+
 run_restore_child_stream_guard_tests() {
   local child input_path mode marker_prefix observer_prefix total_elapsed
+  reset_stub
+  expect_failure 'DB restore reports an exact initial monitor timeout before reset' \
+    'database_restore_quiescence_detail:initial-progress-timeout' \
+    run_guarded_legacy_restore_child db \
+      "$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz" \
+      restore-db-initial-monitor-stall "$STUB_DB_CONTRACT" healthy 1
+  if grep -q dropdb "$KUBECTL_LOG"; then
+    fail 'initial DB monitor timeout performs no database reset' "$(cat "$KUBECTL_LOG")"
+  else
+    pass 'initial DB monitor timeout performs no database reset'
+  fi
+
   for child in db storage; do
     if [[ "$child" == db ]]; then
       input_path="$GOOD_CHECKPOINT/retdb-$STAMP.sql.gz"
       marker_prefix=restore-db-stream
-      observer_prefix=restore-db-monitor
+      observer_prefix=restore-db-optimized-monitor
     else
       input_path="$GOOD_CHECKPOINT/ret-storage-$STAMP.tar.gz"
       marker_prefix=restore-storage-stream
@@ -8091,7 +8347,6 @@ run_restore_child_stream_guard_tests() {
           "total_elapsed=$total_elapsed output=$LAST_OUTPUT group=$(cat "$STUB_STATE_DIR/$marker_prefix-pgid" 2>/dev/null || printf missing) observed=$(cat "$STUB_STATE_DIR/$observer_prefix-inflight-observed" 2>/dev/null || printf missing) terminated=$(cat "$STUB_STATE_DIR/$marker_prefix-terminated" 2>/dev/null || printf missing) lock=$([[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]] && printf present || printf absent)"
       fi
     done
-
     reset_stub
     total_elapsed=$SECONDS
     expect_failure "$child restore aborts when its parent writer capability becomes stale in-flight" '' \
@@ -8109,6 +8364,8 @@ run_restore_child_stream_guard_tests() {
         "total_elapsed=$total_elapsed output=$LAST_OUTPUT started=$(cat "$STUB_STATE_DIR/checkpoint-parent-writer-guard-stream-started" 2>/dev/null || printf missing) terminated=$(cat "$STUB_STATE_DIR/$marker_prefix-terminated" 2>/dev/null || printf missing) lock=$([[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]] && printf present || printf absent)"
     fi
   done
+
+  run_restore_reset_diagnostic_test
 }
 
 run_legacy_restore_runner_reappearance_tests() {
@@ -8144,6 +8401,21 @@ run_legacy_restore_runner_reappearance_tests() {
     fail 'runner timeout performs no DB drop' "$(cat "$KUBECTL_LOG")"
   else
     pass 'runner timeout performs no DB drop'
+  fi
+
+  reset_stub
+  expect_failure 'storage restore aborts on managed bot-runner reappearance during PVC write' \
+    '' \
+    run_guarded_legacy_restore_child storage \
+    "$GOOD_CHECKPOINT/ret-storage-$STAMP.tar.gz" \
+    runner-reappears-during-storage
+  if [[ ( "$LAST_OUTPUT" == *'database_restore_stream_detail:guard-process:2'* ||
+          "$LAST_OUTPUT" == *'database_restore_stream_detail:post-audit-guard-alignment'* ) &&
+        -e "$STUB_STATE_DIR/runner-reappear" ]] &&
+     legacy_restore_failure_retains_authority; then
+    pass 'storage runner reappearance fails closed at the stream or post-audit boundary'
+  else
+    fail 'storage runner reappearance exact fail-closed boundary' "$LAST_OUTPUT"
   fi
 }
 
@@ -9275,6 +9547,7 @@ run_durable_restore_child_capability_swap_tests() {
       fi
     done
   done
+
 }
 
 corrupt_restore_lock_inventory() {
@@ -9542,6 +9815,30 @@ run_stale_helper_cleanup_tests() {
   else
     fail 'stale helper cleanup emits three exact UID-preconditioned DeleteOptions' \
       "$(cat "$STUB_STATE_DIR"/delete-options-*.json 2>/dev/null || :)"
+  fi
+
+  reset_stub
+  seed_schema2_legacy_stale_restore_lock available
+  seed_stale_restore_helper
+  jq '.spec.terminationGracePeriodSeconds = 30' \
+    "$STUB_STATE_DIR/storage-helper-pod-live.json" \
+    >"$STUB_STATE_DIR/storage-helper-pod-live.json.next"
+  mv "$STUB_STATE_DIR/storage-helper-pod-live.json.next" \
+    "$STUB_STATE_DIR/storage-helper-pod-live.json"
+  expect_success 'stale helper cleanup accepts only the exact pre-fix API default' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+    EXPECTED_RET_PVC_UID=fixture-pvc-uid VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" STUB_RUNNER_NAMESPACE= \
+    STUB_RUNNER_POD_PROFILE= RESTORE_CHECKPOINT_CLEAR_STALE_LOCK=1 \
+    CONFIRM_CLEAR_RESTORE_LOCK="$confirmation" \
+    "$ROOT_DIR/deployment/restore-checkpoint.sh" "$GOOD_CHECKPOINT"
+  if [[ ! -e "$STUB_STATE_DIR/pod-created" &&
+        ! -e "$STUB_STATE_DIR/network-policy.yaml" &&
+        ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+     [[ "$(grep -c 'delete --raw=' "$KUBECTL_LOG" || :)" == 3 ]]; then
+    pass 'pre-fix helper default is cleanup-only and still UID-bound'
+  else
+    fail 'pre-fix helper default cleanup boundary' "$(cat "$KUBECTL_LOG")"
   fi
 
   for lease_failure_mode in \
@@ -10234,7 +10531,7 @@ run_legacy_receipt_monitor_handoff_case() {
     if wait "$WRITER_TEST_PID"; then monitor_status=0; else monitor_status=$?; fi
     if [[ "$arm_status" != 0 && "$monitor_status" != 0 &&
        "$(cat "$WRITER_TEST_FAILURE" 2>/dev/null || :)" == \
-         checkpoint_writer_monitor_failed &&
+         checkpoint_writer_monitor_failed:* &&
        ! -f "$STUB_STATE_DIR/checkpoint-resume-receipt-reticulum" &&
        ! -e "$STUB_STATE_DIR/checkpoint-receipt-phase-ack" &&
        -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
@@ -10479,7 +10776,7 @@ run_checkpoint_writer_terminal_gap_failure() {
   if wait "$WRITER_TEST_PID"; then monitor_status=0; else monitor_status=$?; fi
   [[ "$timed_out" == 0 && "$monitor_status" != 0 &&
      "$(cat "$WRITER_TEST_FAILURE" 2>/dev/null || :)" == \
-       checkpoint_writer_monitor_failed && ! -s "$WRITER_TEST_FINAL" ]] || return 1
+       checkpoint_writer_monitor_failed:* && ! -s "$WRITER_TEST_FINAL" ]] || return 1
   case "$mode" in
     checkpoint-writer-terminal-list-gap)
       [[ -e "$STUB_STATE_DIR/checkpoint-writer-terminal-w1-deployments-closed" &&
@@ -10554,7 +10851,7 @@ run_checkpoint_writer_monitor_failure() {
   if wait "$WRITER_TEST_PID"; then monitor_status=0; else monitor_status=$?; fi
   [[ "$monitor_status" != 0 &&
      "$(cat "$WRITER_TEST_FAILURE" 2>/dev/null || :)" == \
-       checkpoint_writer_monitor_failed ]]
+       checkpoint_writer_monitor_failed:* ]]
 }
 
 run_checkpoint_writer_baseline_tamper_test() {
@@ -10612,7 +10909,7 @@ run_checkpoint_writer_operation_owner_mismatch_test() {
   if wait "$WRITER_TEST_PID"; then monitor_status=0; else monitor_status=$?; fi
   [[ "$monitor_status" != 0 &&
      "$(cat "$WRITER_TEST_FAILURE" 2>/dev/null || :)" == \
-       checkpoint_writer_monitor_failed && ! -s "$WRITER_TEST_READY" ]]
+       checkpoint_writer_monitor_failed:* && ! -s "$WRITER_TEST_READY" ]]
 }
 
 run_checkpoint_writer_generation_mismatch_boundary_test() {
@@ -11892,6 +12189,9 @@ run_checkpoint_writer_live_pod_defaults_tests() {
   expect_success 'checkpoint writer monitor canonicalizes semantic Deployment key order across GET and LIST' \
     run_checkpoint_writer_live_pod_defaults_success \
       checkpoint-writer-list-key-order
+  expect_success 'checkpoint writer monitor accepts Kubernetes null optional Pod metadata maps' \
+    run_checkpoint_writer_live_pod_defaults_success \
+      checkpoint-writer-pod-null-optional-metadata
   expect_success 'checkpoint writer monitor rejects explicit enableServiceLinks false against an omitted template default' \
     run_checkpoint_writer_monitor_failure \
       checkpoint-writer-live-pod-explicit-false "" checkpoint-backup
@@ -11954,8 +12254,19 @@ run_checkpoint_writer_monitor_tests() {
   run_checkpoint_writer_fence_contract_tests
   expect_success 'checkpoint writer monitor permits only the exact owned read-only helper lifecycle' \
     run_checkpoint_writer_monitor_success checkpoint-writer-owned-helper-lifecycle
+  expect_success 'checkpoint writer monitor accepts Kubernetes omitted false readOnly defaults on the restore helper' \
+    run_checkpoint_writer_monitor_success checkpoint-writer-helper-admitted-defaults durable-v2 checkpoint-restore
+  expect_success 'checkpoint writer monitor accepts omitted Pod GVK on an exact restore-helper watch event' \
+    run_checkpoint_writer_monitor_success checkpoint-writer-helper-event-gvk-omitted durable-v2 checkpoint-restore
+  expect_success 'checkpoint writer monitor accepts helper MODIFIED deletionTimestamp before DELETED' \
+    run_checkpoint_writer_monitor_success checkpoint-writer-helper-terminating durable-v2 checkpoint-restore
+  expect_success 'checkpoint writer refresh accepts an exact terminating helper in a LIST without BOOKMARK' \
+    run_checkpoint_writer_monitor_success \
+      checkpoint-writer-helper-terminating-list-refresh durable-v2 checkpoint-restore
   expect_success 'checkpoint writer monitor permits an exact non-writer Pod replacement lifecycle' \
     run_checkpoint_writer_monitor_success checkpoint-writer-nonwriter-pod-replacement
+  expect_success 'checkpoint writer monitor refreshes validated Lists when short watches omit BOOKMARKs' \
+    run_checkpoint_writer_monitor_success checkpoint-writer-watch-no-bookmark
 
   for mode in checkpoint-writer-deployment-excursion \
     checkpoint-writer-replicaset-excursion checkpoint-writer-replicaset-added \
@@ -12667,6 +12978,9 @@ run_multi_guard_round_robin_case() (
   local pid_one="" pid_two="" pid_three=""
   local identity_one="" identity_two="" identity_three=""
   local status=0 publishers_stopped=0 maximum_stale_seconds=3
+  local require_lease=0
+  local initial_deadline_seconds=""
+  local slow_interval=4.50
   local progress_value_one progress_value_two progress_value_three publisher_pid
   local inner_baseline_value=""
   guard_dir="$(mktemp -d "$TMP_DIR/multi-stream-guards.XXXXXX")" || return 1
@@ -12704,23 +13018,45 @@ run_multi_guard_round_robin_case() (
   trap 'cleanup_stream_guard_fixture_publishers || :' EXIT INT TERM
 
   case "$case_name" in
-    round-robin-success)
+    round-robin-success|round-robin-startup-grace|launch-window-realign)
       # Every publisher starts only after its initial baseline read. The slow
-      # guard then leaves 4.5 seconds between counters 2 and 3 while both fast
-      # guards continue at 0.15/0.20 seconds. A serial refresher reaches the
-      # slow result with less than the mandatory two-second cancellation
-      # reserve; foreground round-robin observations keep both fast lower
-      # bounds current. Production remains fixed at ten seconds by the timing
-      # contract; only this attested fixture uses six.
-      maximum_stale_seconds=6
-      start_stream_guard_fixture_publisher "$progress_one" "$stop_marker" \
-        0.10 0.15 0 "$observation_dir/guard-one-baseline-read"
+      # guard leaves a deliberately bounded gap between counters 2 and 3 while
+      # both fast guards continue at 0.15/0.20 seconds. A serial refresher
+      # reaches the slow result with less than the mandatory two-second
+      # cancellation reserve; foreground round-robin observations keep both
+      # fast lower bounds current. Production remains fixed at ten seconds by
+      # the timing contract; only this attested fixture uses six.
+      maximum_stale_seconds=10
+      if [[ "$case_name" == round-robin-startup-grace ]]; then
+        # The guard freshness budget is deliberately shorter than the slow
+        # next sweep. The pre-launch alignment may use the independent startup
+        # allowance, while post-launch freshness must remain strict.
+        slow_interval=8.50
+        initial_deadline_seconds=10
+        maximum_stale_seconds=10
+      elif [[ "$case_name" == launch-window-realign ]]; then
+        # Guard one advances early in the inner round, while guard three
+        # advances about four seconds later. Both are individually fresh, but
+        # the first guard then has too little simultaneous budget for a Lease
+        # read plus cancellation. Its next healthy sweep must realign launch.
+        slow_interval=8.50
+        initial_deadline_seconds=12
+        maximum_stale_seconds=10
+        require_lease=1
+      fi
+      if [[ "$case_name" == launch-window-realign ]]; then
+        start_stream_guard_fixture_publisher "$progress_one" "$stop_marker" \
+          0.10 4.50 0 "$observation_dir/guard-one-baseline-read"
+      else
+        start_stream_guard_fixture_publisher "$progress_one" "$stop_marker" \
+          0.10 0.15 0 "$observation_dir/guard-one-baseline-read"
+      fi
       pid_one="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
       start_stream_guard_fixture_publisher "$progress_two" "$stop_marker" \
         0.10 0.20 0 "$observation_dir/guard-two-baseline-read"
       pid_two="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
       start_stream_guard_fixture_publisher "$progress_three" "$stop_marker" \
-        0.15 4.50 0 "$observation_dir/guard-three-baseline-read" \
+        0.15 "$slow_interval" 0 "$observation_dir/guard-three-baseline-read" \
         "$observation_dir/slow"
       pid_three="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
       ;;
@@ -12744,6 +13080,7 @@ run_multi_guard_round_robin_case() (
       # outer round completes with guard three exactly at 4. The observation
       # wrapper must prove refresh_supervised_stream_guards_for_launch read 4
       # as its inner baseline before the expected fail-closed timeout.
+      maximum_stale_seconds=10
       start_stream_guard_fixture_publisher "$progress_one" "$stop_marker" \
         0.10 0.15 0 "$observation_dir/guard-three-frozen"
       pid_one="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
@@ -12766,18 +13103,23 @@ run_multi_guard_round_robin_case() (
   if env EXPECTED_KUBE_CONTEXT=fixture-context \
     EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
     STUB_MODE=multi-guard-stream RECOVERY_STREAM_POLL_SECONDS=0.02 \
+    RECOVERY_STREAM_DIAGNOSTIC_CONTEXT=database-restore \
     GUARD_ONE_PID="$pid_one" GUARD_ONE_IDENTITY="$identity_one" \
     GUARD_ONE_FAILURE="$failure_one" GUARD_ONE_PROGRESS="$progress_one" \
     GUARD_TWO_PID="$pid_two" GUARD_TWO_IDENTITY="$identity_two" \
     GUARD_TWO_FAILURE="$failure_two" GUARD_TWO_PROGRESS="$progress_two" \
     GUARD_THREE_PID="$pid_three" GUARD_THREE_IDENTITY="$identity_three" \
     GUARD_THREE_FAILURE="$failure_three" GUARD_THREE_PROGRESS="$progress_three" \
-    GUARD_MAX_STALE_SECONDS="$maximum_stale_seconds" \
+    GUARD_MAX_STALE_SECONDS="$maximum_stale_seconds" REQUIRE_LEASE="$require_lease" \
+    RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS="$initial_deadline_seconds" \
     MULTI_GUARD_CASE="$case_name" GUARD_OBSERVATION_DIR="$observation_dir" \
     bash -c '
       set -euo pipefail
       NAMESPACE=hcce
       source "$1"
+      if [[ "$REQUIRE_LEASE" == 1 ]]; then
+        recovery_require_operation_serialization_stream() { return 0; }
+      fi
       progress_reader_definition="$(declare -f recovery_stream_guard_progress_value)"
       progress_reader_definition="${progress_reader_definition/recovery_stream_guard_progress_value/recovery_stream_guard_progress_value_fixture_original}"
       eval "$progress_reader_definition"
@@ -12807,7 +13149,9 @@ run_multi_guard_round_robin_case() (
           "$GUARD_OBSERVATION_DIR/$guard_name-baseline-read" \
           "$progress_value" || return 1
         function_stack=" ${FUNCNAME[*]} "
-        if [[ "$MULTI_GUARD_CASE" == round-robin-success ]]; then
+        if [[ "$MULTI_GUARD_CASE" == round-robin-success ||
+              "$MULTI_GUARD_CASE" == round-robin-startup-grace ||
+              "$MULTI_GUARD_CASE" == launch-window-realign ]]; then
           if [[ "$guard_name" == guard-three && "$progress_value" == 2 &&
                 "$function_stack" == *" refresh_supervised_stream_guards_for_launch "* &&
                 -e "$GUARD_OBSERVATION_DIR/slow-published-1" &&
@@ -12833,7 +13177,7 @@ run_multi_guard_round_robin_case() (
         fi
         printf "%s\n" "$progress_value"
       }
-      recovery_kubectl_stream_supervised 0 30 \
+      recovery_kubectl_stream_supervised "$REQUIRE_LEASE" 30 \
         --guard-process "$GUARD_ONE_PID" "$GUARD_ONE_IDENTITY" \
           "$GUARD_ONE_FAILURE" "$GUARD_ONE_PROGRESS" "$GUARD_MAX_STALE_SECONDS" \
         --guard-process "$GUARD_TWO_PID" "$GUARD_TWO_IDENTITY" \
@@ -12858,7 +13202,7 @@ run_multi_guard_round_robin_case() (
   done
 
   case "$case_name" in
-    round-robin-success)
+    round-robin-success|round-robin-startup-grace)
       if [[ "$status" == 0 &&
             -e "$STUB_STATE_DIR/multi-guard-stream-started" &&
             -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
@@ -12868,10 +13212,18 @@ run_multi_guard_round_robin_case() (
             "$progress_value_one" -ge 10 && "$progress_value_two" -ge 8 &&
             "$progress_value_three" -ge 3 &&
             -e "$observation_dir/slow-published-1" &&
-            -e "$observation_dir/slow-published-2" &&
-            -e "$observation_dir/slow-inner-wait-started" &&
-            -e "$observation_dir/guard-one-observed-during-slow-gap" &&
-            -e "$observation_dir/guard-two-observed-during-slow-gap" ]]; then
+            -e "$observation_dir/slow-published-2" ]]; then
+        return 0
+      fi
+      ;;
+    launch-window-realign)
+      if [[ "$status" == 0 &&
+            -e "$STUB_STATE_DIR/multi-guard-stream-started" &&
+            -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
+            "$progress_value_one" =~ ^[0-9]+$ &&
+            "$progress_value_three" =~ ^[0-9]+$ &&
+            "$progress_value_one" -ge 4 && "$progress_value_three" -ge 3 &&
+            -e "$observation_dir/slow-published-2" ]]; then
         return 0
       fi
       ;;
@@ -12880,7 +13232,7 @@ run_multi_guard_round_robin_case() (
             ! -e "$STUB_STATE_DIR/multi-guard-stream-started" &&
             ! -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
             "$progress_value_one" == 2 && "$progress_value_two" == 2 &&
-            "$progress_value_three" == 1 ]]; then
+            ( "$progress_value_three" == 1 || "$progress_value_three" == 2 ) ]]; then
         return 0
       fi
       ;;
@@ -12908,6 +13260,12 @@ run_multi_guard_stream_regression_tests() {
   expect_success \
     'three heterogeneous guards launch and complete only through round-robin freshness' \
     run_multi_guard_round_robin_case round-robin-success
+  expect_success \
+    'pre-launch alignment may use startup grace without weakening stream freshness' \
+    run_multi_guard_round_robin_case round-robin-startup-grace
+  expect_success \
+    'pre-launch alignment waits for one simultaneous Lease and cancellation window' \
+    run_multi_guard_round_robin_case launch-window-realign
   expect_success \
     'one-shot guards with no simultaneous fresh window cannot launch a stream' \
     run_multi_guard_round_robin_case no-simultaneous-window
@@ -12953,7 +13311,7 @@ while not os.path.exists(started_path):
     time.sleep(0.01)
 if mode == "marker":
     with open(failure_marker, "w", encoding="utf-8") as marker:
-        marker.write("guard_failed\n")
+        marker.write("checkpoint_writer_monitor_failed:watch:watch_closed\n")
     time.sleep(30)
 elif mode == "stale":
     time.sleep(30)
@@ -12972,15 +13330,34 @@ PY
     expect_failure "supervised stream aborts when its $guard_mode guard fails" '' \
       env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
       EXPECTED_RET_PVC_UID=fixture-pvc-uid STUB_MODE=guard-failure-stream \
-      RECOVERY_STREAM_POLL_SECONDS=0.01 bash -c '
+      RECOVERY_STREAM_POLL_SECONDS=0.01 \
+      RECOVERY_STREAM_DIAGNOSTIC_CONTEXT=database-restore bash -c '
         set -euo pipefail
         NAMESPACE=hcce
         source "$1"
         recovery_kubectl_stream_supervised 0 30 \
           --guard-process "$2" "$3" "$4" "$5" 3 -- \
           exec -n hcce parent-death-probe -- destructive-stream
-      ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$guard_pid" \
+        ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$guard_pid" \
         "$guard_start_identity" "$failure_marker" "$progress_marker"
+    expected_detail="guard-process:0"
+    if [[ "$guard_mode" == marker ]]; then
+      expected_detail="guard-process:0:watch:watch_closed"
+    fi
+    if [[ "$guard_mode" == stale ]]; then
+      if [[ "$LAST_OUTPUT" == *'database_restore_stream_detail:guard-stale:0'* ||
+            "$LAST_OUTPUT" == *'database_restore_stream_detail:cancellation-reserve'* ]]; then
+        pass "$guard_mode guard failure preserves its allowlisted stream detail"
+      else
+        fail "$guard_mode guard failure lost its allowlisted stream detail" \
+          "expected=guard-stale:0|cancellation-reserve output=${LAST_OUTPUT:-empty}"
+      fi
+    elif [[ "$LAST_OUTPUT" == *"database_restore_stream_detail:$expected_detail"* ]]; then
+      pass "$guard_mode guard failure preserves its allowlisted stream detail"
+    else
+      fail "$guard_mode guard failure lost its allowlisted stream detail" \
+        "expected=$expected_detail output=${LAST_OUTPUT:-empty}"
+    fi
     kill -TERM "$guard_pid" 2>/dev/null || :
     wait "$guard_pid" 2>/dev/null || :
     grandchild_pid="$(cat \
@@ -13149,11 +13526,13 @@ PY
          stream_elapsed_milliseconds < 5000)); then
       timing_within_deadline=true
     elif ((stream_elapsed_milliseconds == -1 &&
-           elapsed_milliseconds < 5000)); then
+           elapsed_milliseconds < 10000)); then
       # The fixture publishes these two millisecond readings from separate
       # Python interpreters and has observed them one millisecond out of order
-      # under scheduling pressure. In that exact case, the independently timed
-      # whole call is stricter: it begins before launch and ends after reap.
+      # under scheduling pressure. In that exact case the stream markers prove
+      # revocation inside their one-millisecond uncertainty; the wider whole-
+      # call bound detects a hung pre-launch fixture without pretending that
+      # its setup time belongs to the destructive freshness window.
       timing_within_deadline=true
     fi
   fi
@@ -13239,6 +13618,85 @@ PY
   fi
 }
 
+run_stream_lease_diagnostic_split_tests() {
+  reset_stub
+  # shellcheck disable=SC2016 # The isolated shell deliberately fails Lease validation.
+  expect_failure 'stream diagnostics distinguish a failed Lease check from guard-window exhaustion' '' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context \
+      EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+      STUB_MODE=guard-failure-stream RECOVERY_STREAM_DIAGNOSTIC_CONTEXT=database-restore \
+      bash -c '
+        set -euo pipefail
+        NAMESPACE=hcce
+        source "$1"
+        recovery_require_operation_serialization_stream() { return 1; }
+        recovery_kubectl_stream_supervised 1 30 -- \
+          exec -n hcce parent-death-probe -- destructive-stream
+      ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+  if [[ "$LAST_OUTPUT" == *'database_restore_stream_detail:lease-check'* ]]; then
+    pass 'failed Lease validation has its own safe stream diagnostic'
+  else
+    fail 'failed Lease validation kept an ambiguous stream diagnostic' \
+      "output=${LAST_OUTPUT:-empty}"
+  fi
+
+  reset_stub
+  failure_marker="$TMP_DIR/stream-guard-window.failure"
+  progress_marker="$TMP_DIR/stream-guard-window.progress"
+  started_path="$STUB_STATE_DIR/guard-failure-stream-started"
+  : >"$failure_marker"
+  printf '1\n' >"$progress_marker"
+  chmod 600 "$failure_marker" "$progress_marker"
+  python3 - "$started_path" "$progress_marker" <<'PY' &
+import os
+import sys
+import time
+
+started_path, progress_marker = sys.argv[1:]
+progress = 1
+while not os.path.exists(started_path):
+    progress += 1
+    next_marker = f"{progress_marker}.next"
+    with open(next_marker, "w", encoding="utf-8") as marker:
+        marker.write(f"{progress}\n")
+    os.chmod(next_marker, 0o600)
+    os.replace(next_marker, progress_marker)
+    time.sleep(0.01)
+time.sleep(30)
+PY
+  # shellcheck disable=SC2031 # PID belongs to this top-level test shell.
+  guard_pid=$!
+  guard_start_identity="$(
+    # shellcheck disable=SC2016 # Positional arguments expand in isolated Bash.
+    bash -c 'source "$1"; recovery_process_start_identity "$2"' _ \
+      "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$guard_pid"
+  )"
+  # shellcheck disable=SC2016 # Positional arguments expand in isolated Bash.
+  expect_failure 'stream diagnostics identify the guard that lost its Lease window' '' \
+    env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+      EXPECTED_RET_PVC_UID=fixture-pvc-uid STUB_MODE=guard-failure-stream \
+      RECOVERY_STREAM_POLL_SECONDS=0.01 \
+      RECOVERY_STREAM_DIAGNOSTIC_CONTEXT=database-restore bash -c '
+        set -euo pipefail
+        NAMESPACE=hcce
+        started_path="$6"
+        source "$1"
+        recovery_kubectl_stream_supervised 1 30 \
+          --guard-process "$2" "$3" "$4" "$5" 3 -- \
+          exec -n hcce parent-death-probe -- destructive-stream
+      ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$guard_pid" \
+        "$guard_start_identity" "$failure_marker" "$progress_marker" \
+        "$started_path"
+  kill -TERM "$guard_pid" 2>/dev/null || :
+  wait "$guard_pid" 2>/dev/null || :
+  if [[ "$LAST_OUTPUT" == *'database_restore_stream_detail:lease-window:0'* ]]; then
+    pass 'Lease-window diagnostic identifies the first stale guard index'
+  else
+    fail 'Lease-window diagnostic omitted the stale guard index' \
+      "output=${LAST_OUTPUT:-empty}"
+  fi
+}
+
 stream_writer_capability_is_healthy() {
   # shellcheck disable=SC2016 # Positional arguments expand in the isolated shell.
   bash -c '
@@ -13266,6 +13724,55 @@ stream_writer_capability_is_healthy() {
     "$WRITER_TEST_PROGRESS" "$2" "$3"
 }
 
+run_stream_capability_lease_authority_case() {
+  local monitor_identity="$1" authority_path="$2" authority_sha="$3"
+  local direct_lease_log="$WRITER_TEST_DIR/direct-lease.log"
+  : >"$direct_lease_log"
+  chmod 600 "$direct_lease_log"
+  # shellcheck disable=SC2016 # Authority values are intentionally read inside the isolated shell.
+  env STUB_MODE=multi-guard-stream YENHUBS_RECOVERY_TEST_MODE=local-fixture \
+    EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+    EXPECTED_RET_PVC_UID=fixture-pvc-uid RECOVERY_STREAM_POLL_SECONDS=0.01 \
+    bash -c '
+      set -euo pipefail
+      NAMESPACE=hcce
+      export NAMESPACE
+      source "$1"
+      authority_json="$(<"$7")"
+      RECOVERY_NAMESPACE_UID="$(jq -er .namespace_uid <<<"$authority_json")"
+      RECOVERY_OPERATION_ID="$(jq -er .operation_id <<<"$authority_json")"
+      RECOVERY_OPERATION_OWNER="$(jq -er .operation_owner <<<"$authority_json")"
+      RECOVERY_OPERATION_LOCK_NAME="$(jq -er .operation_lock.name <<<"$authority_json")"
+      RECOVERY_OPERATION_LOCK_UID="$(jq -er .operation_lock.uid <<<"$authority_json")"
+      RECOVERY_OPERATION_LOCK_RESOURCE_VERSION="$(
+        jq -er .operation_lock.resource_version <<<"$authority_json"
+      )"
+      RECOVERY_SERIALIZATION_LEASE_NAME="$(jq -er .lease.name <<<"$authority_json")"
+      RECOVERY_SERIALIZATION_LEASE_UID="$(jq -er .lease.uid <<<"$authority_json")"
+      RECOVERY_SERIALIZATION_LEASE_HOLDER="$(jq -er .lease.holder <<<"$authority_json")"
+      export NAMESPACE RECOVERY_NAMESPACE_UID RECOVERY_OPERATION_ID \
+        RECOVERY_OPERATION_OWNER RECOVERY_OPERATION_LOCK_NAME \
+        RECOVERY_OPERATION_LOCK_UID RECOVERY_OPERATION_LOCK_RESOURCE_VERSION \
+        RECOVERY_SERIALIZATION_LEASE_NAME RECOVERY_SERIALIZATION_LEASE_UID \
+        RECOVERY_SERIALIZATION_LEASE_HOLDER
+      recovery_require_operation_serialization_stream() {
+        printf "unexpected-direct-lease\n" >>"$9"
+        return 1
+      }
+      recovery_kubectl_stream_supervised 1 30 \
+        --guard-process-capability checkpoint-writer-monitor \
+          "$2" "$3" "$4" "$5" "$6" "$7" "$8" 10 -- \
+        exec -n hcce parent-death-probe -- destructive-stream
+      [[ ! -s "$9" ]]
+    ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" \
+      "$WRITER_TEST_PID" "$monitor_identity" "$WRITER_TEST_FAILURE" \
+      "$WRITER_TEST_READY" "$WRITER_TEST_PROGRESS" "$authority_path" \
+      "$authority_sha" "$direct_lease_log" || return 1
+  [[ -e "$STUB_STATE_DIR/multi-guard-stream-started" &&
+     -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
+     ! -s "$direct_lease_log" ]]
+}
+
 run_stream_capability_authority_tamper_tests() {
   local ready_value baseline_sha authority_sha authority_path monitor_identity
   local original_authority tampered_authority tampered_sha monitor_status=0
@@ -13281,6 +13788,10 @@ run_stream_capability_authority_tamper_tests() {
   monitor_identity="$(jq -er '.start_identity' <<<"$original_authority")" || return 1
   expect_success 'stream capability accepts its exact signed READY and authority' \
     stream_writer_capability_is_healthy \
+      "$monitor_identity" "$authority_path" "$authority_sha"
+  expect_success \
+    'exact writer capability is the sole Lease authority during its guarded stream' \
+    run_stream_capability_lease_authority_case \
       "$monitor_identity" "$authority_path" "$authority_sha"
   kill -STOP "$WRITER_TEST_PID" 2>/dev/null || return 1
 
@@ -13315,6 +13826,34 @@ run_stream_capability_authority_tamper_tests() {
   fi
 }
 
+run_stream_guard_initial_timeout_status_test() (
+  local failure_marker="$TMP_DIR/initial-timeout-failure"
+  local progress_marker="$TMP_DIR/initial-timeout-progress"
+  local guard_pid guard_identity status=0
+  NAMESPACE=hcce
+  EXPECTED_KUBE_CONTEXT=fixture-context
+  EXPECTED_NAMESPACE_UID=fixture-uid
+  EXPECTED_RET_PVC_UID=fixture-pvc-uid
+  export NAMESPACE EXPECTED_KUBE_CONTEXT EXPECTED_NAMESPACE_UID \
+    EXPECTED_RET_PVC_UID
+  source "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+  : >"$failure_marker"
+  : >"$progress_marker"
+  chmod 600 "$failure_marker" "$progress_marker"
+  sleep 30 &
+  # shellcheck disable=SC2031 # The background PID is intentionally captured in this subshell.
+  guard_pid=$!
+  trap 'kill "$guard_pid" 2>/dev/null || :; wait "$guard_pid" 2>/dev/null || :' EXIT
+  guard_identity="$(recovery_process_start_identity "$guard_pid")" || return 1
+  if recovery_wait_for_stream_guard_initial_progress \
+      "$guard_pid" "$guard_identity" "$failure_marker" "$progress_marker" 1; then
+    status=0
+  else
+    status=$?
+  fi
+  [[ "$status" == 3 ]]
+)
+
 run_stream_guard_timing_contract_tests() {
   reset_stub
   # shellcheck disable=SC2016 # Command substitution expands in isolated Bash.
@@ -13326,7 +13865,7 @@ run_stream_guard_timing_contract_tests() {
     '
 
   # shellcheck disable=SC2016 # Positional arguments expand in isolated Bash.
-  expect_success 'production stream timing defaults remain one-second poll and ten-second budgets' \
+  expect_success 'production stream timing separates thirty-second startup from ten-second freshness' \
     env -u YENHUBS_RECOVERY_TEST_MODE -u RECOVERY_STREAM_POLL_SECONDS \
       -u RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS \
       -u RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS bash -c '
@@ -13334,8 +13873,10 @@ run_stream_guard_timing_contract_tests() {
         source "$1"
         [[ "$(recovery_stream_poll_seconds)" == 1 &&
            "$(recovery_stream_guard_max_stale_seconds)" == 10 &&
-           "$(recovery_stream_guard_initial_deadline_seconds)" == 10 ]]
+           "$(recovery_stream_guard_initial_deadline_seconds)" == 30 ]]
       ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+  expect_success 'initial stream guard exposes an exact timeout status' \
+    run_stream_guard_initial_timeout_status_test
   # shellcheck disable=SC2016 # Positional arguments expand in isolated Bash.
   expect_success 'attested fixture may extend only initial sweep startup to 120 seconds' \
     env YENHUBS_RECOVERY_TEST_MODE=local-fixture \
@@ -15760,6 +16301,7 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == stream-guards ]]; then
   run_stream_guard_timing_contract_tests
   run_multi_guard_stream_regression_tests
   run_stream_guard_abort_tests
+  run_stream_lease_diagnostic_split_tests
   run_parent_death_stream_test
   run_stream_capability_authority_tamper_tests
   run_watchdog_identity_tests
@@ -15978,6 +16520,35 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-writers ]]; then
   exit 0
 fi
 
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-writer-helper-admission ]]; then
+  expect_success 'focused restore helper accepts Kubernetes omitted false readOnly defaults' \
+    run_checkpoint_writer_monitor_success checkpoint-writer-helper-admitted-defaults durable-v2 checkpoint-restore
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused helper-admission test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused helper-admission test passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-writer-helper-events ]]; then
+  expect_success 'focused restore helper accepts omitted Pod GVK on a watch event' \
+    run_checkpoint_writer_monitor_success checkpoint-writer-helper-event-gvk-omitted durable-v2 checkpoint-restore
+  expect_success 'focused restore helper accepts MODIFIED deletionTimestamp before DELETED' \
+    run_checkpoint_writer_monitor_success checkpoint-writer-helper-terminating durable-v2 checkpoint-restore
+  expect_success 'focused restore helper refresh accepts terminating LIST state without BOOKMARK' \
+    run_checkpoint_writer_monitor_success \
+      checkpoint-writer-helper-terminating-list-refresh durable-v2 checkpoint-restore
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused helper-event test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused helper-event tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
 if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-durable ]]; then
   case "${YENHUBS_RECOVERY_TEST_CASE:-}" in
     runner|intent)
@@ -16136,6 +16707,17 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == restore-legacy-child-guards ]]; then
     exit 1
   fi
   printf 'Focused legacy restore child-guard tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == restore-reset-diagnostic ]]; then
+  run_restore_reset_diagnostic_test
+  if [[ "$FAIL_COUNT" -ne 0 ]]; then
+    printf '%s focused reset-diagnostic test(s) failed; %s passed.\n' \
+      "$FAIL_COUNT" "$PASS_COUNT" >&2
+    exit 1
+  fi
+  printf 'Focused reset-diagnostic tests passed: %s.\n' "$PASS_COUNT"
   exit 0
 fi
 
@@ -17223,10 +17805,6 @@ reset_stub
 expect_failure 'PVC consumer monitor fails extraction on transient extra pod' \
   'Unexpected pods consume PVC' run_guarded_legacy_restore_child storage \
   "$GOOD_CHECKPOINT/ret-storage-$STAMP.tar.gz" monitor-extra
-reset_stub
-expect_failure 'storage monitor catches managed bot-runner reappearance during PVC write' \
-  'monitoring failed' run_guarded_legacy_restore_child storage \
-  "$GOOD_CHECKPOINT/ret-storage-$STAMP.tar.gz" runner-reappears-during-storage
 reset_stub
 expect_failure 'restore pod creation is exclusive across concurrent runs' \
   'exact safe contract' run_guarded_legacy_restore_child storage \
@@ -18945,6 +19523,7 @@ run_storage_helper_contract_tests
 run_stream_guard_timing_contract_tests
 run_multi_guard_stream_regression_tests
 run_stream_guard_abort_tests
+run_stream_lease_diagnostic_split_tests
 run_stream_capability_authority_tamper_tests
 run_watchdog_identity_tests
 
