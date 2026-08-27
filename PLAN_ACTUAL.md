@@ -1,6 +1,6 @@
 # PLAN ACTUAL — cerrar H5 y volver a features
 
-Version: **v11.12**
+Version: **v11.13**
 Ultima revision: **27 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El historial de
 intentos vive en `docs/session-changelog.md`; no se reanuda trabajo desde él.
@@ -256,8 +256,14 @@ ocupada ni procesos residuales.
   El foco positivo exacto pasa **47/47**; la regresión de coordinación pasa
   **50/50** y la matriz de aborto del monitor PostgreSQL pasa **63/63**.
   ShellCheck sobre los tres scripts modificados, gitlinks, diff-check y
-  Gitleaks también están verdes. Estado: **ACTIVE**; faltan únicamente un
-  commit, un CI verde y merge #18.
+  Gitleaks también están verdes. El CI `33048676041` sobre `0b38b0d` conservó
+  esos gates y PostgreSQL verdes, pero reveló siete regresiones del supervisor:
+  una reserva local de 1 s hacía imposible una ventana estricta de 3 s y los
+  diagnósticos ligeros habían cambiado de nombre. La corrección no amplía
+  plazos: la observación local queda dentro de la reserva de cancelación ya
+  existente y reutiliza los diagnósticos públicos anteriores. Los dos focos
+  exactos pasan **92/92** y **53/53**. Estado: **ACTIVE**; faltan únicamente el
+  commit correctivo, un CI verde y merge #18.
 - [ ] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md` después
   del merge real y declarar H5 cerrado. Estado: **WAITING** por la integración
   raíz; el siguiente trabajo será features.

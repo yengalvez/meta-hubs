@@ -1585,7 +1585,6 @@ recovery_kubectl_stream_supervised() {
     local supervised_stream_guard_remaining_milliseconds_value=""
     local supervised_stream_guard_remaining_index=""
     local guard_cancel_reserve_milliseconds=2000
-    local guard_launch_continuity_reserve_milliseconds=1000
     local -a guard_last_progress=() guard_last_progress_milliseconds=()
     local -a guard_last_observation_milliseconds=()
     # shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap below.
@@ -1652,17 +1651,15 @@ recovery_kubectl_stream_supervised() {
          "$requested_launch_budget_milliseconds" =~ ^[1-9][0-9]*$ ]] || return 2
       # The isolated child is already blocked at its private gate when this
       # alignment runs. Derive the launch budget from the capabilities that
-      # still have to execute: the final lightweight continuity observation
-      # and cancellation need fixed reserves; an unguarded Lease needs one
-      # complete bounded GET as well. An exact
+      # still have to execute: cancellation needs its fixed reserve; an
+      # unguarded Lease needs one complete bounded GET as well. The final
+      # lightweight continuity observation is local and remains inside that
+      # cancellation reserve. An exact
       # checkpoint-writer capability already validates this operation's Lease,
       # lock and identity on every progress round, so repeating a synchronous
       # Lease GET would create a second clock and the false three-guard race
       # that this supervisor is meant to remove.
-      launch_budget_required_milliseconds=$((
-        guard_cancel_reserve_milliseconds +
-        guard_launch_continuity_reserve_milliseconds
-      ))
+      launch_budget_required_milliseconds="$guard_cancel_reserve_milliseconds"
       if [[ "$require_lease" == 1 && -z "$lease_authority_guard_index" ]]; then
         launch_budget_required_milliseconds=$((
           launch_budget_required_milliseconds + 1000
@@ -1815,6 +1812,7 @@ recovery_kubectl_stream_supervised() {
       done
     }
     supervised_stream_guards_are_continuously_healthy() {
+      local guard_failure_detail=""
       # A complete immutable authority/baseline audit accepts each capability
       # before launch. During the stream, the monitor's authority-bound counter
       # is its causal attestation that another complete live sweep passed.
@@ -1824,7 +1822,12 @@ recovery_kubectl_stream_supervised() {
         if ! recovery_stream_guard_process_is_healthy \
           "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
           "${guard_failure_markers[$index]}"; then
-          stream_record_diagnostic "guard-continuity-process:$index"
+          if guard_failure_detail="$(recovery_stream_guard_failure_detail \
+            "${guard_failure_markers[$index]}" 2>/dev/null)"; then
+            stream_record_diagnostic "guard-process:$index:$guard_failure_detail"
+          else
+            stream_record_diagnostic "guard-process:$index"
+          fi
           return 1
         fi
         if [[ -n "${guard_authority_sha256s[$index]}" ]]; then
@@ -1834,7 +1837,7 @@ recovery_kubectl_stream_supervised() {
              [[ "$(recovery_monitor_authority_sha256_for_ready \
                "${guard_ready_markers[$index]}" 2>/dev/null || :)" != \
                "${guard_authority_sha256s[$index]}" ]]; then
-            stream_record_diagnostic "guard-continuity-authority:$index"
+            stream_record_diagnostic "guard-process:$index"
             return 1
           fi
         fi
@@ -1843,12 +1846,12 @@ recovery_kubectl_stream_supervised() {
         if ! current_progress="$(recovery_stream_guard_progress_value \
           "${guard_progress_markers[$index]}" \
           "${guard_authority_sha256s[$index]}")"; then
-          stream_record_diagnostic "guard-continuity-progress:$index"
+          stream_record_diagnostic "guard-progress-read:$index"
           return 1
         fi
         previous_progress="${guard_last_progress[$index]}"
         if ((current_progress < previous_progress)); then
-          stream_record_diagnostic "guard-continuity-regression:$index"
+          stream_record_diagnostic "guard-progress-regression:$index"
           return 1
         elif ((current_progress > previous_progress)); then
           guard_last_progress[index]="$current_progress"
@@ -1860,7 +1863,7 @@ recovery_kubectl_stream_supervised() {
       for index in "${!guard_pids[@]}"; do
         if ((current_milliseconds - guard_last_progress_milliseconds[index] >=
           guard_maximum_stale_seconds[index] * 1000)); then
-          stream_record_diagnostic "guard-continuity-stale:$index"
+          stream_record_diagnostic "guard-stale:$index"
           return 1
         fi
       done

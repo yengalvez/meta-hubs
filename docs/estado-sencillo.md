@@ -15,7 +15,11 @@ fusionar el código raíz. Cloud ya está integrado y el PR #18 sigue abierto. E
 falló solo el positivo que combinaba tres monitores y un dump detenido de forma
 artificial. La causa ya está corregida localmente: pasan el positivo **47/47**,
 la coordinación **50/50**, los abortos seguros **63/63**, ShellCheck, gitlinks y
-Gitleaks. Todavía no se ha subido ni cuenta como CI verde.
+Gitleaks. El primer CI del candidato encontró siete incompatibilidades en otras
+pruebas del mismo supervisor: una reserva nueva agotaba por sí sola la ventana
+más corta y habían cambiado nombres diagnósticos estables. Se corrigió sin
+ampliar ningún plazo y los focos exactos pasan **92/92** y **53/53**. Este último
+ajuste todavía no se ha subido ni cuenta como CI verde.
 
 ## Lo que ya está demostrado
 
@@ -50,9 +54,10 @@ Gitleaks. Todavía no se ha subido ni cuenta como CI verde.
 La plataforma restaurada ya funciona y no necesita otra intervención. El
 cambio local elimina comprobaciones completas repetidas dentro del mismo ciclo
 y separa dos responsabilidades de prueba que estaban duplicadas. Las
-regresiones dirigidas y el análisis estático ya están verdes. Falta subir un
-commit, obtener un único examen verde y fusionar #18. No se repite el restore,
-no se toca DigitalOcean y no se vuelven a ejecutar los bloques ya aceptados.
+regresiones dirigidas y el análisis estático ya están verdes, incluidos los
+siete casos que encontró GitHub. Falta subir el commit correctivo, obtener un
+único examen verde y fusionar #18. No se repite el restore, no se toca
+DigitalOcean y no se vuelven a ejecutar los bloques ya aceptados.
 
 Las tres acciones que no debe fingir una prueba automática ya han pasado:
 avatar real, chat privado y audio bidireccional con dos participantes.
