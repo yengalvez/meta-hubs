@@ -990,9 +990,10 @@ YAML
     env VALUES_FILE="$GREENFIELD_VALUES" \
     "$ROOT_DIR/deployment/preflight-greenfield.sh" \
     "$GREENFIELD_BUNDLE" "$GREENFIELD_RECEIPT"
-  if [[ "$LAST_OUTPUT" == *'PASS offline'* &&
+  if [[ "$LAST_OUTPUT" == *'PASS  Root y submodulos son checkouts limpios'* &&
+        "$LAST_OUTPUT" == *'PASS offline'* &&
         "$LAST_OUTPUT" == *'no autoriza crear recursos'* ]]; then
-    pass 'greenfield preflight remains offline and preserves the cost gate'
+    pass 'greenfield preflight requires clean provenance and preserves the offline cost gate'
   else
     fail 'greenfield preflight result is explicit' "$LAST_OUTPUT"
   fi
@@ -1014,6 +1015,49 @@ YAML
     "$ROOT_DIR/deployment/preflight-greenfield.sh" \
     "$GREENFIELD_BUNDLE" "$GREENFIELD_RECEIPT"
   recovery_finish_focus 'Focused greenfield preflight'
+fi
+
+if recovery_focus_selected git-provenance; then
+  PROVENANCE_ROOT="$TMP_DIR/provenance-root"
+  mkdir -p "$PROVENANCE_ROOT/hubs" "$PROVENANCE_ROOT/hubs-cloud"
+  for repository in "$PROVENANCE_ROOT" "$PROVENANCE_ROOT/hubs" \
+    "$PROVENANCE_ROOT/hubs-cloud"; do
+    git -C "$repository" init -q
+    git -C "$repository" config user.email fixture@example.invalid
+    git -C "$repository" config user.name 'YenHubs Fixture'
+  done
+  printf 'hubs/\nhubs-cloud/\n' >"$PROVENANCE_ROOT/.gitignore"
+  git -C "$PROVENANCE_ROOT" add .gitignore
+  git -C "$PROVENANCE_ROOT" commit -qm root
+  for repository in "$PROVENANCE_ROOT/hubs" "$PROVENANCE_ROOT/hubs-cloud"; do
+    printf 'clean\n' >"$repository/fixture.txt"
+    git -C "$repository" add fixture.txt
+    git -C "$repository" commit -qm fixture
+  done
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_success 'git provenance accepts clean root and subrepositories' bash -c '
+    set -euo pipefail
+    source "$1"
+    yenhubs_require_clean_source_tree "$2"
+  ' _ "$ROOT_DIR/deployment/lib/git-provenance.sh" "$PROVENANCE_ROOT"
+  printf 'dirty\n' >>"$PROVENANCE_ROOT/hubs/fixture.txt"
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_failure 'git provenance rejects modified tracked submodule bytes' \
+    'not a clean direct checkout: hubs' bash -c '
+      set -euo pipefail
+      source "$1"
+      yenhubs_require_clean_source_tree "$2"
+    ' _ "$ROOT_DIR/deployment/lib/git-provenance.sh" "$PROVENANCE_ROOT"
+  git -C "$PROVENANCE_ROOT/hubs" restore fixture.txt
+  printf 'untracked\n' >"$PROVENANCE_ROOT/hubs-cloud/local-only.txt"
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_failure 'git provenance rejects untracked submodule bytes' \
+    'not a clean direct checkout: hubs-cloud' bash -c '
+      set -euo pipefail
+      source "$1"
+      yenhubs_require_clean_source_tree "$2"
+    ' _ "$ROOT_DIR/deployment/lib/git-provenance.sh" "$PROVENANCE_ROOT"
+  recovery_finish_focus 'Focused git provenance'
 fi
 
 SIZE_FIXTURE="$TMP_DIR/file-size-fixture"
@@ -17164,6 +17208,12 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-process-local ]]; then
     STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
     RECOVERY_STREAM_POLL_SECONDS=0.01 \
     "$ROOT_DIR/deployment/create-checkpoint.sh" "$process_local_checkpoint"
+  if [[ "$LAST_OUTPUT" == *'YENHUBS_TIMING operation=checkpoint'* &&
+        "$LAST_OUTPUT" == *'result=success'* ]]; then
+    pass 'focused process-local checkpoint emits terminal timing evidence'
+  else
+    fail 'focused process-local checkpoint timing evidence' "$LAST_OUTPUT"
+  fi
   reset_stub
   expect_failure 'focused mixed PostgreSQL identity blocks checkpoint before downtime' \
     'historical AUD-065 contract' \

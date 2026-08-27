@@ -22,6 +22,8 @@ VALUES_SOURCE_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 VALUES_FILE=""
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
+# shellcheck source=deployment/lib/git-provenance.sh
+source "$SCRIPT_DIR/lib/git-provenance.sh"
 # shellcheck source=deployment/lib/reactivation-gate-functions.sh
 source "$SCRIPT_DIR/lib/reactivation-gate-functions.sh"
 reactivation_install_cleanup_traps ""
@@ -40,6 +42,11 @@ for command_name in git kubectl doctl jq node; do
     exit 1
   fi
 done
+
+yenhubs_require_clean_source_tree "$ROOT_DIR" || {
+  printf 'Freeze capture requires clean root, hubs and hubs-cloud worktrees.\n' >&2
+  exit 1
+}
 
 recovery_require_cluster_identity
 

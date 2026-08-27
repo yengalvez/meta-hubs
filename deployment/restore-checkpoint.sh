@@ -75,6 +75,31 @@ DUMP_PATH="$CHECKPOINT_DIR/retdb-$stamp.sql.gz"
 STORAGE_PATH="$CHECKPOINT_DIR/ret-storage-$stamp.tar.gz"
 
 RESTORE_PHASE="validating"
+RESTORE_TIMING_TOTAL_STARTED_SECONDS=$SECONDS
+RESTORE_TIMING_STAGE_STARTED_SECONDS=$SECONDS
+RESTORE_TIMING_REPORTED=0
+RESTORE_TIMING_RESULT_OVERRIDE=""
+
+restore_transition_phase() {
+  local next_phase="$1" now="$SECONDS"
+  [[ -n "$next_phase" ]] || return 2
+  if [[ "$next_phase" != "$RESTORE_PHASE" ]]; then
+    printf 'YENHUBS_TIMING operation=restore stage=%s stage_seconds=%s total_seconds=%s result=complete\n' \
+      "$RESTORE_PHASE" "$((now - RESTORE_TIMING_STAGE_STARTED_SECONDS))" \
+      "$((now - RESTORE_TIMING_TOTAL_STARTED_SECONDS))" >&2
+    RESTORE_PHASE="$next_phase"
+    RESTORE_TIMING_STAGE_STARTED_SECONDS="$now"
+  fi
+}
+
+restore_report_timing() {
+  local result="$1" now="$SECONDS"
+  [[ "$RESTORE_TIMING_REPORTED" == 0 ]] || return 0
+  printf 'YENHUBS_TIMING operation=restore stage=%s stage_seconds=%s total_seconds=%s result=%s\n' \
+    "$RESTORE_PHASE" "$((now - RESTORE_TIMING_STAGE_STARTED_SECONDS))" \
+    "$((now - RESTORE_TIMING_TOTAL_STARTED_SECONDS))" "$result" >&2
+  RESTORE_TIMING_REPORTED=1
+}
 LIVE_CONTRACT=""
 CONSUMERS=(reticulum pgbouncer pgbouncer-t bot-orchestrator coturn)
 ORIGINAL_REPLICAS=()
@@ -1602,11 +1627,16 @@ clear_stale_restore_lock() {
 
 cleanup_driver() {
   local entry_status=$?
+  local timing_result=failure
   local snapshot_path snapshot_parent snapshot_base
   if [[ "$RESTORE_CLEANUP_IN_PROGRESS" == 1 ]]; then
     return "$entry_status"
   fi
   RESTORE_CLEANUP_IN_PROGRESS=1
+  [[ "$entry_status" == 0 ]] && timing_result=success
+  [[ -z "$RESTORE_TIMING_RESULT_OVERRIDE" ]] || \
+    timing_result="$RESTORE_TIMING_RESULT_OVERRIDE"
+  restore_report_timing "$timing_result"
   # Cleanup is terminal for this process. Prevent a second EXIT/ERR or a
   # cooperative signal from re-entering fail-close while watcher/Lease
   # capabilities are being revoked.
@@ -1986,7 +2016,7 @@ prepare_restore_fence() {
     printf 'The durable restore-fence protocol cannot restore a legacy checkpoint.\n' >&2
     return 1
   }
-  RESTORE_PHASE="quiescing"
+  restore_transition_phase quiescing
   capture_runner_role_for_failclose
   capture_consumer_contracts_at_replicas 1 1
   # From this point onward failure/interruption must retain the lock and
@@ -2030,7 +2060,7 @@ prepare_restore_fence() {
   reconcile_checkpoint_runner_quiescence
   require_runner_absence_stable
   require_durable_checkpoint_evidence_live quiesced-source dormant
-  RESTORE_PHASE="fence-prepared"
+  restore_transition_phase fence-prepared
 }
 
 validate_restored_database_contract() {
@@ -2384,7 +2414,7 @@ run_legacy_in_place_restore() {
   RECOVERY_FENCE_TARGET_EPOCH=""
   RECOVERY_OPERATION_STATE=legacy-in-place
   require_legacy_restore_confirmation
-  RESTORE_PHASE=locking
+  restore_transition_phase locking
   recovery_require_restore_target_binding
   recovery_require_checkpoint_generation_matches_live \
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" "$VALUES_SOURCE_FILE"
@@ -2399,7 +2429,7 @@ run_legacy_in_place_restore() {
   recovery_require_live_images_match_checkpoint \
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
   acquire_restore_lock
-  RESTORE_PHASE=legacy-in-place
+  restore_transition_phase legacy-in-place
   capture_consumer_contracts_at_replicas 1 1
   # A receipt is an unfinished authority transfer from an earlier operation.
   # Reject it before downtime while this process's new lock is still safely
@@ -2587,7 +2617,7 @@ run_legacy_in_place_restore() {
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
   require_owned_restore_lock
   release_restore_lock
-  RESTORE_PHASE=complete
+  restore_transition_phase complete
   release_restore_serialization
   trap - ERR
   printf 'Legacy in-place checkpoint restore completed without crossing runner generation: checkpoint=%s namespace=%s\n' \
@@ -2635,7 +2665,7 @@ run_cold_rebind_restore() {
     return 1
   }
 
-  RESTORE_PHASE=locking
+  restore_transition_phase locking
   acquire_restore_serialization
   recovery_require_cluster_identity
   recovery_require_pvc_identity ret-pvc
@@ -2649,7 +2679,7 @@ run_cold_rebind_restore() {
   }
   acquire_restore_lock
   [[ "$RESTORE_OPERATION_ID" == "$RECOVERY_COLD_REBIND_OPERATION_ID" ]] || return 1
-  RESTORE_PHASE=cold-rebind
+  restore_transition_phase cold-rebind
   capture_consumer_contracts_at_replicas 0 1
   for index in "${!CONSUMERS[@]}"; do
     recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
@@ -2803,7 +2833,7 @@ run_cold_rebind_restore() {
     return 1
   fi
   release_restore_lock
-  RESTORE_PHASE=complete
+  restore_transition_phase complete
   release_restore_serialization
   trap - ERR
   printf 'Cold rebind completed from freeze=%s into new cluster=%s namespace_uid=%s pvc_uid=%s.\n' \
@@ -2857,6 +2887,7 @@ driver_failed() {
 driver_interrupted() {
   local status="$1"
   RESTORE_INTERRUPT_IN_PROGRESS=1
+  RESTORE_TIMING_RESULT_OVERRIDE=interrupted
   trap - EXIT ERR
   trap '' INT TERM
   if [[ "$RESTORE_LOCK_RELEASE_ON_INTERRUPT" == 1 ]]; then
@@ -3002,7 +3033,7 @@ if [[ "$PREPARE_FENCE" == "1" ]]; then
     "$VALUES_SOURCE_FILE")"
   RECOVERY_OPERATION_STATE=restore-fence-prepared
   require_restore_fence_confirmation CONFIRM_PREPARE_RESTORE_FENCE prepare-fence
-  RESTORE_PHASE="locking"
+  restore_transition_phase locking
   recovery_require_cluster_identity
   recovery_require_pvc_identity ret-pvc
   recovery_require_restore_target_binding
@@ -3036,7 +3067,7 @@ if [[ "$PREPARE_FENCE" == "1" ]]; then
   # Re-read it after every quiescence/evidence check to reject disappearance or
   # ABA replacement during the final verification window.
   require_owned_restore_lock
-  RESTORE_PHASE="fence-prepared"
+  restore_transition_phase fence-prepared
   release_restore_serialization
   trap - ERR
   printf 'Restore fence prepared and locked: checkpoint=%s namespace=%s lock_uid=%s operation_id=%s\n' \
@@ -3066,7 +3097,7 @@ if [[ "$EXECUTE_FENCED" == "1" ]]; then
   fi
   require_restore_fence_confirmation CONFIRM_EXECUTE_RESTORE_FENCE execute-fenced
   capture_inert_runner_role_for_failclose
-  RESTORE_PHASE="fence-prepared"
+  restore_transition_phase fence-prepared
   recovery_require_cluster_identity
   recovery_require_pvc_identity ret-pvc
   recovery_require_restore_target_binding
@@ -3143,7 +3174,7 @@ if [[ "$FINALIZE_REACTIVATION" == "1" ]]; then
   # authorizes reductive mutation.
   capture_finalizer_failclose_contracts
   require_owned_restore_lock
-  RESTORE_PHASE="finalizing-reactivation"
+  restore_transition_phase finalizing-reactivation
   for index in "${!CONSUMERS[@]}"; do
     recovery_require_consumer_contract_entry \
       "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" 1 \
@@ -3166,7 +3197,7 @@ if [[ "$FINALIZE_REACTIVATION" == "1" ]]; then
   require_durable_checkpoint_evidence_live active-target dormant
   require_owned_restore_lock
   release_restore_lock
-  RESTORE_PHASE="complete"
+  restore_transition_phase complete
   release_restore_serialization
   trap - ERR
   printf 'Restore reactivation finalized and its exact lock released: checkpoint=%s namespace=%s\n' \
@@ -3177,7 +3208,7 @@ fi
 DB_CONFIRMATION="$(recovery_confirmation_value retdb)"
 STORAGE_CONFIRMATION="$(recovery_confirmation_value ret-pvc "$RECOVERY_PVC_UID")"
 
-RESTORE_PHASE="db"
+restore_transition_phase db
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 require_owned_restore_lock
@@ -3215,7 +3246,7 @@ recovery_require_operation_serialization
 require_restore_monitors_healthy
 require_durable_checkpoint_evidence_live quiesced-target active
 
-RESTORE_PHASE="storage"
+restore_transition_phase storage
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 require_owned_restore_lock
@@ -3253,7 +3284,7 @@ recovery_require_operation_serialization
 require_restore_monitors_healthy
 require_durable_checkpoint_evidence_live quiesced-target active
 
-RESTORE_PHASE="validating-live"
+restore_transition_phase validating-live
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 recovery_require_exact_pvc_consumers ret-pvc
@@ -3294,7 +3325,7 @@ recovery_database_contracts_match "$RECOVERY_DATABASE_CONTRACT_COPY" "$LIVE_CONT
   exit 1
 }
 
-RESTORE_PHASE="completing-fenced"
+restore_transition_phase completing-fenced
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
 require_owned_restore_lock
@@ -3319,7 +3350,7 @@ attest_restore_operation_fence_active \
   "$RESTORE_OPERATION_FENCE_PRE_TRANSITION_ACTIVE_IDENTITY"
 RESTORE_OPERATION_FENCE_PRE_TRANSITION_ACTIVE_IDENTITY=""
 require_durable_checkpoint_evidence_live quiesced-target active
-RESTORE_PHASE="awaiting-reactivation"
+restore_transition_phase awaiting-reactivation
 release_restore_serialization
 trap - ERR
 printf 'Coordinated checkpoint restore completed and remains fenced: checkpoint=%s namespace=%s pvc_uid=%s lock_uid=%s\n' \

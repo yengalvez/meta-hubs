@@ -2353,6 +2353,14 @@ The complete client lifecycle and offboarding checklist is maintained in
 this abbreviated sequence unless the complete checkpoint has passed both
 restore preflights and exists in a second encrypted location.
 
+Before the customer cutoff, use a clean root checkout with clean initialized
+`hubs` and `hubs-cloud` submodules, place the public site behind the approved
+maintenance barrier and record the cutoff time. Keep that barrier in place
+until the two encrypted copies and receipt pass and the billable inventory is
+zero. `create-checkpoint.sh` resumes its internal writers after publishing; that
+is not permission to reopen the customer surface. Any accepted customer or
+administrator write after the recorded cutoff invalidates the shutdown bundle.
+
 ```bash
 # 1. Create the commercial freeze bundle using the metadata inputs documented
 # in deployment/client-instance-lifecycle.md.
@@ -2367,21 +2375,38 @@ VALUES_FILE=/private/path/to/input-values.yaml \
 
 # 3. Confirm cluster and LB that will be removed
 doctl kubernetes cluster list
+doctl compute droplet list
 doctl compute load-balancer list
+doctl compute volume list
+doctl compute snapshot list
+doctl compute reserved-ip list
 
 # 4. Only after an explicit owner approval, delete the named DOKS cluster.
 doctl kubernetes cluster delete hubs-ce --force
 
 # 5. Verify the residual resources and billing surface; never assume cascade.
 doctl kubernetes cluster list
+doctl compute droplet list
 doctl compute load-balancer list
 doctl compute volume list
+doctl compute snapshot list
+doctl compute reserved-ip list
+
+# 6. If an exact resource from the pre-delete inventory remains, delete only
+# that reviewed ID. These are examples, not a wildcard cleanup.
+doctl compute droplet delete '<droplet-id>' --force
+doctl compute load-balancer delete '<load-balancer-uuid>' --force
+doctl compute volume delete '<volume-uuid>' --force
+
+# 7. Repeat the read-only inventory. Shutdown is not complete until every
+# project-owned billable resource intended for removal is absent.
 ```
 
 Expected result:
 
 - the site goes offline until rebuilt
-- DOKS node, managed LB, and attached block storage stop billing
+- DOKS node, managed LB, and attached block storage stop billing only after the
+  final readback proves they are absent
 - two verified encrypted bundle copies plus the protected receipt remain the
   source of truth for future recovery
 
@@ -2406,11 +2431,14 @@ When resuming the project:
 7. Require the live verifier to finish with zero failures/warnings, then cold
    test login, room entry, audio, cameras, avatar, Admin and Spoke.
 
-The full lifecycle checklist for this rebuild is maintained in:
+Both checkpoint and restore emit `YENHUBS_TIMING` lines with stage and total
+seconds. Preserve them with the operation evidence. Also record the outer
+reactivation envelope from cost approval before DOKS creation through final
+cold-browser acceptance; internal script timing cannot include provider, DNS or
+human-browser stages.
 
-```bash
-/Users/Shared/Gits/YenHubs/deployment/client-instance-lifecycle.md
-```
+The full lifecycle checklist for this rebuild is maintained in
+`deployment/client-instance-lifecycle.md` in the same clean checkout.
 
 ## References
 
