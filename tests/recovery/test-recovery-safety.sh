@@ -16117,6 +16117,12 @@ if recovery_focus_selected cold-rebind-execute; then
       STUB_LIVE_REACTIVATION_MANIFEST_FILE="$RUNNER_CONTROL_PLANE_MANIFEST_FIXTURE" \
       RECOVERY_STREAM_POLL_SECONDS=0.01 \
       "$ROOT_DIR/deployment/restore-checkpoint.sh" "$FREEZE_BUNDLE"
+  if [[ "$LAST_OUTPUT" == *'YENHUBS_TIMING operation=restore'* &&
+        "$LAST_OUTPUT" == *'result=success'* ]]; then
+    pass 'cold rebind emits terminal restore timing evidence'
+  else
+    fail 'cold rebind restore timing evidence' "$LAST_OUTPUT"
+  fi
   if checkpoint_all_writers_at 1 && checkpoint_all_writer_rollouts_observed &&
      checkpoint_resume_receipts_absent &&
      [[ ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
