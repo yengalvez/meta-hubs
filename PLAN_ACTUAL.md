@@ -1,6 +1,6 @@
 # PLAN ACTUAL — cerrar H5 y volver a features
 
-Version: **v11.13**
+Version: **v11.14 — CERRADO**
 Ultima revision: **27 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El historial de
 intentos vive en `docs/session-changelog.md`; no se reanuda trabajo desde él.
@@ -242,10 +242,10 @@ ocupada ni procesos residuales.
   gitlinks y todos los recibos exactos. El falso positivo `SC2317` del runner
   sobre el callback de `trap EXIT` se acotó solo en el workflow y solo para esa
   biblioteca, sin invalidar recovery ni H5.
-- [ ] Integrar primero el commit de `hubs-cloud`, después el gitlink y los
+- [x] Integrar primero el commit de `hubs-cloud`, después el gitlink y los
   cambios raíz, siguiendo `docs/development-workflow.md`. Cloud ya está en
   `master` como `6d9ee9e998f636fcf61a4928cd2a275829768259`; el PR raíz #18
-  sigue abierto. El run final `33021997403` sobre `63c4509` terminó con
+  permaneció abierto durante la estabilización. El run `33021997403` sobre `63c4509` terminó con
   PostgreSQL verde y solo los positivos DB `553/554` rojos. La causa local
   quedó aislada: el supervisor repetía auditorías completas ya acreditadas por
   tres monitores y el caso positivo durable duplicaba además la espera
@@ -262,11 +262,15 @@ ocupada ni procesos residuales.
   diagnósticos ligeros habían cambiado de nombre. La corrección no amplía
   plazos: la observación local queda dentro de la reserva de cancelación ya
   existente y reutiliza los diagnósticos públicos anteriores. Los dos focos
-  exactos pasan **92/92** y **53/53**. Estado: **ACTIVE**; faltan únicamente el
-  commit correctivo, un CI verde y merge #18.
-- [ ] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md` después
-  del merge real y declarar H5 cerrado. Estado: **WAITING** por la integración
-  raíz; el siguiente trabajo será features.
+  exactos pasan **92/92** y **53/53**. El commit correctivo `370d078` pasó el
+  único CI final `33073636287`: PostgreSQL 12.19/14.23, gitlinks, Gitleaks,
+  Actionlint, ShellCheck y recovery **894/894**. La PR raíz #18 se fusionó en
+  `main` como `feee36b9f3e226463192737d40848b56ec707d92`; sus gitlinks fijan
+  Hubs `ce8390a8905fa38fa0acdb10d5f94290981477ec` y Cloud
+  `6d9ee9e998f636fcf61a4928cd2a275829768259`. Estado: **DONE**.
+- [x] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md` después
+  del merge real y declarar H5 cerrado. Estado: **DONE**; el siguiente trabajo
+  es features.
 
 ## Reglas anti-loop y parada
 
@@ -286,10 +290,11 @@ ocupada ni procesos residuales.
 
 ## Confianza operativa
 
-**Alta para M4 y para la base funcional de M5.** La operación final demostró DB,
+**Alta y cerrada para H5.** La operación final demostró DB,
 medios, reanudación, infraestructura, HTTPS y ghost runner con cero
 fallos/avisos y cierre limpio; la batería final pasó 894/894. Ya no queda otro
 restore. La aceptación humana completa está demostrada: avatar neutral, chat
-privado y dos participantes con audio bidireccional. Cloud está integrado y el
-gitlink candidato está validado, pero la raíz aún no está fusionada. **H5 está
-funcionalmente aceptado; falta cerrar la integración de #18.**
+privado y dos participantes con audio bidireccional. Cloud y los dos gitlinks
+están integrados; el CI final y el merge raíz son verdes y verificables. **H5
+está funcional y técnicamente cerrado; la siguiente cola corresponde a
+features.**

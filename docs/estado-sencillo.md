@@ -9,17 +9,11 @@ de datos y sus medios originales. El verificador de producción terminó con
 **0 fallos y 0 avisos**, y la batería local final pasó **894 de 894 pruebas**.
 No hace falta repetir otro restore ni volver a crear DigitalOcean.
 
-La recuperación y la aceptación humana están terminadas. Falta únicamente
-fusionar el código raíz. Cloud ya está integrado y el PR #18 sigue abierto. El
-último examen de GitHub dejó verdes PostgreSQL y el resto de seguridad, pero
-falló solo el positivo que combinaba tres monitores y un dump detenido de forma
-artificial. La causa ya está corregida localmente: pasan el positivo **47/47**,
-la coordinación **50/50**, los abortos seguros **63/63**, ShellCheck, gitlinks y
-Gitleaks. El primer CI del candidato encontró siete incompatibilidades en otras
-pruebas del mismo supervisor: una reserva nueva agotaba por sí sola la ventana
-más corta y habían cambiado nombres diagnósticos estables. Se corrigió sin
-ampliar ningún plazo y los focos exactos pasan **92/92** y **53/53**. Este último
-ajuste todavía no se ha subido ni cuenta como CI verde.
+La recuperación, la aceptación humana y la integración están terminadas. El CI
+final `33073636287` pasó PostgreSQL 12.19/14.23, gitlinks, Gitleaks, Actionlint,
+ShellCheck y las **894/894** regresiones de recovery. La PR raíz #18 se fusionó
+en `main` como `feee36b`; Cloud y los dos punteros exactos están integrados.
+**H5 está cerrado y el proyecto puede volver a features.**
 
 ## Lo que ya está demostrado
 
@@ -46,28 +40,22 @@ ajuste todavía no se ha subido ni cuenta como CI verde.
   `894/894`, H5 `174/174`, HCCE, composición, advisories, static, security y
   Reticulum.
 - El finalizador confirmó los dos gitlinks y todos los recibos exactos.
-- Cloud quedó integrado en `6d9ee9e`; el PR raíz #18 contiene el gitlink y el
-  cierre H5, pero todavía no está fusionado en `main`.
+- Cloud quedó integrado en `6d9ee9e`; la raíz `main` contiene los gitlinks
+  exactos de Hubs `ce8390a` y Cloud `6d9ee9e` mediante el merge `feee36b`.
 
 ## Qué falta para cerrar H5
 
-La plataforma restaurada ya funciona y no necesita otra intervención. El
-cambio local elimina comprobaciones completas repetidas dentro del mismo ciclo
-y separa dos responsabilidades de prueba que estaban duplicadas. Las
-regresiones dirigidas y el análisis estático ya están verdes, incluidos los
-siete casos que encontró GitHub. Falta subir el commit correctivo, obtener un
-único examen verde y fusionar #18. No se repite el restore, no se toca
-DigitalOcean y no se vuelven a ejecutar los bloques ya aceptados.
+Nada. La plataforma funciona, el CI final está verde y la integración raíz está
+fusionada. No se repite el restore ni se vuelve a abrir H5 sin requisitos o
+evidencia nuevos.
 
 Las tres acciones que no debe fingir una prueba automática ya han pasado:
 avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Lo que toca ahora
 
-1. Publicar el candidato local ya validado.
-2. Obtener un único CI verde de #18 y fusionarlo.
-3. Volver a desarrollar features.
-4. Mantener este recovery como capacidad operativa, sin reabrir H5 salvo que
+1. Volver a desarrollar features.
+2. Mantener este recovery como capacidad operativa, sin reabrir H5 salvo que
    cambien sus requisitos o aparezca evidencia nueva.
 
 ## Qué no se va a hacer
@@ -79,8 +67,8 @@ avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Cuánto queda
 
-Queda el cierre técnico: un commit, un CI verde y merge de #18. La validación
-local, recuperación, producción, aceptación humana y recibos ya están resueltos.
+**0 % de H5 pendiente.** Validación, recuperación, producción, aceptación
+humana, CI, gitlinks y merge están resueltos.
 
 ## Cuándo se para
 
