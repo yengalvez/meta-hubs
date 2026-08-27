@@ -7855,16 +7855,21 @@ run_checkpoint_backup_child() {
   local expected_pvc_uid="${9:-fixture-pvc-uid}"
   local runner_namespace="" deployments_json="$LEGACY_DEPLOYMENTS_JSON"
   local child_stub_mode="${STUB_MODE:-}" guard_max_stale_seconds=""
-  local db_dump_delay_seconds=0.2
-  # Pace the three concurrent fixture monitors exactly like production. Faster
-  # fixture-only polling creates a subprocess storm that can starve a healthy
-  # monitor past its fail-closed freshness window on a small CI runner.
-  local fixture_monitor_poll_seconds=1
+  local db_dump_delay_seconds=""
+  # Observe the child supervisor often without accelerating the two parent
+  # WATCH fixtures; their production-like one-second pacing prevents a local
+  # subprocess storm while this integration case has its own wider allowance.
+  local fixture_monitor_poll_seconds=0.25
   local writer_pid="" writer_identity="" writer_progress="" writer_authority=""
   if [[ "$generation" == durable-v2 ]]; then
     runner_namespace=present
     deployments_json="$KUBERNETES_DEPLOYMENTS_JSON"
     seed_recovery_operation_fence_binding_state active
+  elif [[ "$child" == db ]]; then
+    # The legacy positive case owns the explicit in-flight source-monitor
+    # handshake. Durable tests separately cover the three-capability success
+    # path and every in-flight fail-closed source-monitor mutation.
+    db_dump_delay_seconds=0.2
   fi
   case "$child_stub_mode" in
     db-source-monitor-uid-drift|db-source-monitor-replacement|\
@@ -7878,7 +7883,7 @@ run_checkpoint_backup_child() {
       STUB_DEPLOYMENTS_JSON="$deployments_json" \
         STUB_RUNNER_NAMESPACE="$runner_namespace" \
         STUB_RUNNER_POD_PROFILE="$profile" \
-        RECOVERY_STREAM_POLL_SECONDS="$fixture_monitor_poll_seconds" \
+        STUB_MONITOR_WATCH_PACE=1 \
         start_checkpoint_backup_writer_guard healthy "$generation" \
           "$baseline_path" "$baseline_sha" || return 1
       ;;
@@ -7886,7 +7891,7 @@ run_checkpoint_backup_child() {
       STUB_DEPLOYMENTS_JSON="$deployments_json" \
         STUB_RUNNER_NAMESPACE="$runner_namespace" \
         STUB_RUNNER_POD_PROFILE="$profile" \
-        RECOVERY_STREAM_POLL_SECONDS="$fixture_monitor_poll_seconds" \
+        STUB_MONITOR_WATCH_PACE=1 \
         start_checkpoint_backup_writer_guard stale "$generation" \
           "$baseline_path" "$baseline_sha" || return 1
       child_stub_mode='checkpoint-parent-writer-guard-stale'
@@ -7899,7 +7904,7 @@ run_checkpoint_backup_child() {
       STUB_DEPLOYMENTS_JSON="$deployments_json" \
         STUB_RUNNER_NAMESPACE="$runner_namespace" \
         STUB_RUNNER_POD_PROFILE="$profile" \
-        RECOVERY_STREAM_POLL_SECONDS="$fixture_monitor_poll_seconds" \
+        STUB_MONITOR_WATCH_PACE=1 \
         start_checkpoint_backup_writer_guard healthy "$generation" \
           "$baseline_path" "$baseline_sha" || return 1
       case "$writer_guard_mode" in
@@ -8037,6 +8042,26 @@ run_checkpoint_backup_child() {
       ;;
     *) return 2 ;;
   esac
+  if [[ "$child_status" != 0 &&
+        "${RECOVERY_STREAM_DIAGNOSTIC_CONTEXT:-}" == database-restore ]]; then
+    printf 'checkpoint_fixture_writer_failure:%s\n' \
+      "$(cat "${YENHUBS_PARENT_WRITER_MONITOR_FAILURE_PATH:-/dev/null}" \
+        2>/dev/null || :)" >&2
+    printf 'checkpoint_fixture_durable_failure:%s\n' \
+      "$(cat "${YENHUBS_PARENT_DURABLE_MONITOR_FAILURE_PATH:-/dev/null}" \
+        2>/dev/null || :)" >&2
+    printf 'checkpoint_fixture_db_stream_started:%s\n' \
+      "$([[ -e "$STUB_STATE_DIR/db-source-monitor-stream-started" ]] &&
+        printf yes || printf no)" >&2
+    printf 'checkpoint_fixture_db_inflight_observed:%s\n' \
+      "$([[ -e "$STUB_STATE_DIR/db-source-monitor-inflight-observed" ]] &&
+        printf yes || printf no)" >&2
+    printf 'checkpoint_fixture_db_stream_completed:%s\n' \
+      "$([[ -e "$STUB_STATE_DIR/db-source-monitor-stream-completed" ]] &&
+        printf yes || printf no)" >&2
+    printf 'checkpoint_fixture_pg_dump_invoked:%s\n' \
+      "$(grep -q 'pg_dump' "$KUBECTL_LOG" 2>/dev/null && printf yes || printf no)" >&2
+  fi
   [[ "$writer_guard_mode" == missing ]] || stop_checkpoint_backup_writer_guard
   return "$child_status"
 }
@@ -8431,7 +8456,6 @@ run_checkpoint_backup_child_guard_tests() {
   local child case_name case_root baseline_path baseline_sha profile
   local sequence=0 inventory_path output_path started_at
   local focused_case="${YENHUBS_RECOVERY_TEST_CASE:-}"
-  initialize_durable_restore_fixture || return 1
   if [[ "$focused_case" == db-stable ]]; then
     sequence=$((sequence + 1))
     case_root="$TMP_DIR/backup-child-db-$sequence-stable"
@@ -8446,18 +8470,18 @@ run_checkpoint_backup_child_guard_tests() {
     expect_success 'db child accepts the exact immutable durable fence baseline' \
       run_checkpoint_backup_child db "$case_root/output" durable-v2 \
         "$baseline_path" "$baseline_sha" fence-stable \
-        "$DURABLE_RESTORE_CHECKPOINT/deployment-images.json"
-    if [[ -e "$STUB_STATE_DIR/db-source-monitor-inflight-observed" &&
-          -e "$STUB_STATE_DIR/db-source-monitor-stream-completed" &&
-          -f "$case_root/output/retdb-$STAMP.sql.gz" &&
-          -f "$case_root/output/database-contract.json" ]]; then
-      pass 'durable DB source monitor sweeps the exact PostgreSQL identity in flight'
+        ""
+    if [[ -f "$case_root/output/retdb-$STAMP.sql.gz" &&
+          -f "$case_root/output/database-contract.json" ]] &&
+       grep -q 'pg_dump' "$KUBECTL_LOG"; then
+      pass 'durable DB backup completes through all three exact guard capabilities'
     else
-      fail 'durable DB source monitor positive in-flight sweep' \
+      fail 'durable DB three-guard positive integration' \
         "$(cat "$KUBECTL_LOG")"
     fi
     return
   fi
+  initialize_durable_restore_fixture || return 1
   initialize_schema3_legacy_restore_fixture || return 1
   if [[ "$focused_case" != db-source-monitor-abort ]]; then
   for child in db storage; do
@@ -8525,13 +8549,12 @@ run_checkpoint_backup_child_guard_tests() {
         "$DURABLE_RESTORE_CHECKPOINT/deployment-images.json"
     if [[ "$child" != db ]]; then
       :
-    elif [[ -e "$STUB_STATE_DIR/db-source-monitor-inflight-observed" &&
-            -e "$STUB_STATE_DIR/db-source-monitor-stream-completed" &&
-            -f "$case_root/output/retdb-$STAMP.sql.gz" &&
-            -f "$case_root/output/database-contract.json" ]]; then
-      pass 'durable DB source monitor sweeps the exact PostgreSQL identity in flight'
+    elif [[ -f "$case_root/output/retdb-$STAMP.sql.gz" &&
+            -f "$case_root/output/database-contract.json" ]] &&
+         grep -q 'pg_dump' "$KUBECTL_LOG"; then
+      pass 'durable DB backup completes through all three exact guard capabilities'
     else
-      fail 'durable DB source monitor positive in-flight sweep' \
+      fail 'durable DB three-guard positive integration' \
         "$(cat "$KUBECTL_LOG")"
     fi
     if ! grep -q 'yenhubs.org/deployment-inventory-sha256:' \

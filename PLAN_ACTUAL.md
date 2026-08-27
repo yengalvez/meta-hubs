@@ -1,6 +1,6 @@
 # PLAN ACTUAL — cerrar H5 y volver a features
 
-Version: **v11.10**
+Version: **v11.12**
 Ultima revision: **27 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El historial de
 intentos vive en `docs/session-changelog.md`; no se reanuda trabajo desde él.
@@ -245,10 +245,19 @@ ocupada ni procesos residuales.
 - [ ] Integrar primero el commit de `hubs-cloud`, después el gitlink y los
   cambios raíz, siguiendo `docs/development-workflow.md`. Cloud ya está en
   `master` como `6d9ee9e998f636fcf61a4928cd2a275829768259`; el PR raíz #18
-  sigue abierto. Sobre `b22aa9e`, el run de `push` `32994112165` pasó completo
-  y el run simultáneo de PR `32993940396` repitió el único fallo no
-  determinista del fixture DB. Estado: **ACTIVE** hasta obtener un único CI
-  verde y fusionar #18.
+  sigue abierto. El run final `33021997403` sobre `63c4509` terminó con
+  PostgreSQL verde y solo los positivos DB `553/554` rojos. La causa local
+  quedó aislada: el supervisor repetía auditorías completas ya acreditadas por
+  tres monitores y el caso positivo durable duplicaba además la espera
+  ``en vuelo`` que ya cubren los casos legacy/negativos. El candidato local
+  conserva una validación completa antes de abrir, observa durante el stream
+  proceso/fallo/autoridad/progreso/caducidad, reserva continuidad y cancelación,
+  y separa la integración durable positiva de la prueba específica en vuelo.
+  El foco positivo exacto pasa **47/47**; la regresión de coordinación pasa
+  **50/50** y la matriz de aborto del monitor PostgreSQL pasa **63/63**.
+  ShellCheck sobre los tres scripts modificados, gitlinks, diff-check y
+  Gitleaks también están verdes. Estado: **ACTIVE**; faltan únicamente un
+  commit, un CI verde y merge #18.
 - [ ] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md` después
   del merge real y declarar H5 cerrado. Estado: **WAITING** por la integración
   raíz; el siguiente trabajo será features.

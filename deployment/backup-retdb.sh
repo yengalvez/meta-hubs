@@ -106,9 +106,20 @@ unset YENHUBS_PARENT_LEASE_HOLDER YENHUBS_PARENT_LEASE_UID \
   YENHUBS_PARENT_PROCESS_PID YENHUBS_PARENT_PROCESS_START_IDENTITY
 
 require_parent_writer_monitor_capability() {
-  [[ "$(recovery_monitor_authority_sha256_for_ready \
-      "$PARENT_WRITER_MONITOR_READY_PATH" 2>/dev/null || :)" == \
-     "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" ]] &&
+  local observed_authority_sha256=""
+  observed_authority_sha256="$(recovery_monitor_authority_sha256_for_ready \
+    "$PARENT_WRITER_MONITOR_READY_PATH" 2>/dev/null || :)"
+  if [[ -z "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" ]]; then
+    printf 'database_restore_parent_monitor_detail:authority-export\n' >&2
+    return 1
+  elif [[ -z "$observed_authority_sha256" ]]; then
+    printf 'database_restore_parent_monitor_detail:ready-read\n' >&2
+    return 1
+  elif [[ "$observed_authority_sha256" != \
+          "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" ]]; then
+    printf 'database_restore_parent_monitor_detail:ready-mismatch\n' >&2
+    return 1
+  fi
   recovery_require_checkpoint_writer_monitor_healthy \
     "$PARENT_WRITER_MONITOR_CONTRACT_PATH" \
     "$PARENT_WRITER_MONITOR_CONTRACT_SHA256" \
@@ -119,8 +130,8 @@ require_parent_writer_monitor_capability() {
     "$PARENT_WRITER_MONITOR_PID" \
     "$PARENT_WRITER_MONITOR_START_IDENTITY" \
     "$CHECKPOINT_RUNNER_GENERATION" \
-    "$RECOVERY_OPERATION_OWNER" &&
-    recovery_stream_guard_progress_value \
+    "$RECOVERY_OPERATION_OWNER" || return 1
+  recovery_stream_guard_progress_value \
       "$PARENT_WRITER_MONITOR_PROGRESS_PATH" \
       "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" >/dev/null
 }

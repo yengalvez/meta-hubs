@@ -1585,6 +1585,7 @@ recovery_kubectl_stream_supervised() {
     local supervised_stream_guard_remaining_milliseconds_value=""
     local supervised_stream_guard_remaining_index=""
     local guard_cancel_reserve_milliseconds=2000
+    local guard_launch_continuity_reserve_milliseconds=1000
     local -a guard_last_progress=() guard_last_progress_milliseconds=()
     local -a guard_last_observation_milliseconds=()
     # shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap below.
@@ -1651,13 +1652,17 @@ recovery_kubectl_stream_supervised() {
          "$requested_launch_budget_milliseconds" =~ ^[1-9][0-9]*$ ]] || return 2
       # The isolated child is already blocked at its private gate when this
       # alignment runs. Derive the launch budget from the capabilities that
-      # still have to execute: cancellation always needs its fixed reserve;
-      # an unguarded Lease needs one complete bounded GET as well. An exact
+      # still have to execute: the final lightweight continuity observation
+      # and cancellation need fixed reserves; an unguarded Lease needs one
+      # complete bounded GET as well. An exact
       # checkpoint-writer capability already validates this operation's Lease,
       # lock and identity on every progress round, so repeating a synchronous
       # Lease GET would create a second clock and the false three-guard race
       # that this supervisor is meant to remove.
-      launch_budget_required_milliseconds="$guard_cancel_reserve_milliseconds"
+      launch_budget_required_milliseconds=$((
+        guard_cancel_reserve_milliseconds +
+        guard_launch_continuity_reserve_milliseconds
+      ))
       if [[ "$require_lease" == 1 && -z "$lease_authority_guard_index" ]]; then
         launch_budget_required_milliseconds=$((
           launch_budget_required_milliseconds + 1000
@@ -1700,7 +1705,8 @@ recovery_kubectl_stream_supervised() {
       # This is still a pre-launch startup gate: a healthy guard may need the
       # wider startup allowance to publish its next complete sweep. The
       # destructive stream itself remains capped by each guard's ten-second
-      # freshness budget and is re-audited immediately after this loop.
+      # freshness budget. Every guard receives a complete signed audit in the
+      # final loop round, followed by one lightweight continuity observation.
       while [[ "${#guard_pids[@]}" -gt 0 ]]; do
         for index in "${!guard_pids[@]}"; do
           recovery_stream_guard_process_is_healthy \
@@ -1760,7 +1766,7 @@ recovery_kubectl_stream_supervised() {
         fi
         sleep "$poll_seconds"
       done
-      supervised_stream_guards_are_healthy
+      return 0
     }
     supervised_stream_guards_are_healthy() {
       local guard_failure_detail=""
@@ -1804,6 +1810,57 @@ recovery_kubectl_stream_supervised() {
         if ((current_milliseconds - guard_last_progress_milliseconds[index] >=
           guard_maximum_stale_seconds[index] * 1000)); then
           stream_record_diagnostic "guard-stale:$index"
+          return 1
+        fi
+      done
+    }
+    supervised_stream_guards_are_continuously_healthy() {
+      # A complete immutable authority/baseline audit accepts each capability
+      # before launch. During the stream, the monitor's authority-bound counter
+      # is its causal attestation that another complete live sweep passed.
+      # Recheck the immutable handshake, process, failure and progress without
+      # duplicating every monitor's full Kubernetes/baseline audit.
+      for index in "${!guard_pids[@]}"; do
+        if ! recovery_stream_guard_process_is_healthy \
+          "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
+          "${guard_failure_markers[$index]}"; then
+          stream_record_diagnostic "guard-continuity-process:$index"
+          return 1
+        fi
+        if [[ -n "${guard_authority_sha256s[$index]}" ]]; then
+          if ! recovery_read_private_file_once \
+              "${guard_authority_paths[$index]}" 65536 \
+              "${guard_authority_sha256s[$index]}" >/dev/null ||
+             [[ "$(recovery_monitor_authority_sha256_for_ready \
+               "${guard_ready_markers[$index]}" 2>/dev/null || :)" != \
+               "${guard_authority_sha256s[$index]}" ]]; then
+            stream_record_diagnostic "guard-continuity-authority:$index"
+            return 1
+          fi
+        fi
+        previous_observation_milliseconds="${guard_last_observation_milliseconds[$index]}"
+        observation_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+        if ! current_progress="$(recovery_stream_guard_progress_value \
+          "${guard_progress_markers[$index]}" \
+          "${guard_authority_sha256s[$index]}")"; then
+          stream_record_diagnostic "guard-continuity-progress:$index"
+          return 1
+        fi
+        previous_progress="${guard_last_progress[$index]}"
+        if ((current_progress < previous_progress)); then
+          stream_record_diagnostic "guard-continuity-regression:$index"
+          return 1
+        elif ((current_progress > previous_progress)); then
+          guard_last_progress[index]="$current_progress"
+          guard_last_progress_milliseconds[index]="$previous_observation_milliseconds"
+        fi
+        guard_last_observation_milliseconds[index]="$observation_milliseconds"
+      done
+      current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+      for index in "${!guard_pids[@]}"; do
+        if ((current_milliseconds - guard_last_progress_milliseconds[index] >=
+          guard_maximum_stale_seconds[index] * 1000)); then
+          stream_record_diagnostic "guard-continuity-stale:$index"
           return 1
         fi
       done
@@ -2007,16 +2064,14 @@ os.execvp(sys.argv[3], sys.argv[3:])
       supervised_stream_cleanup
       return 1
     fi
-    if ! supervised_stream_guards_are_healthy; then
-      supervised_stream_cleanup
-      return 1
+    if [[ "$require_lease" == 1 && -z "$lease_authority_guard_index" ]]; then
+      if ! supervised_stream_require_lease_within_guard_budget; then
+        stream_record_diagnostic "${supervised_stream_lease_failure_detail:-lease-budget}"
+        supervised_stream_cleanup
+        return 1
+      fi
     fi
-    if ! supervised_stream_require_lease_within_guard_budget; then
-      stream_record_diagnostic "${supervised_stream_lease_failure_detail:-lease-budget}"
-      supervised_stream_cleanup
-      return 1
-    fi
-    if ! supervised_stream_guards_are_healthy; then
+    if ! supervised_stream_guards_are_continuously_healthy; then
       supervised_stream_cleanup
       return 1
     fi
@@ -2068,18 +2123,22 @@ os.execvp(sys.argv[3], sys.argv[3:])
         supervised_stream_cleanup
         return 1
       fi
-      if ! supervised_stream_guards_are_healthy; then
+      if ! supervised_stream_guards_are_continuously_healthy; then
         supervised_stream_cleanup
         return 1
       fi
-      if ! supervised_stream_require_lease_within_guard_budget; then
-        stream_record_diagnostic "${supervised_stream_lease_failure_detail:-lease-budget}"
-        supervised_stream_cleanup
-        return 1
-      fi
-      if ! supervised_stream_guards_are_healthy; then
-        supervised_stream_cleanup
-        return 1
+      if [[ "$require_lease" == 1 && -z "$lease_authority_guard_index" ]]; then
+        if ! supervised_stream_require_lease_within_guard_budget; then
+          stream_record_diagnostic "${supervised_stream_lease_failure_detail:-lease-budget}"
+          supervised_stream_cleanup
+          return 1
+        fi
+        # The external Lease request consumes part of the current freshness
+        # window, so re-observe every capability-bound progress marker after it.
+        if ! supervised_stream_guards_are_continuously_healthy; then
+          supervised_stream_cleanup
+          return 1
+        fi
       fi
       if ! supervised_stream_guard_has_cancellation_reserve; then
         stream_record_diagnostic cancellation-reserve
@@ -10274,6 +10333,13 @@ os.execvp(sys.argv[2], sys.argv[2:])
   return 1
 }
 
+recovery_monitor_health_diagnostic() {
+  local detail="$1"
+  [[ "${RECOVERY_STREAM_DIAGNOSTIC_CONTEXT:-}" == database-restore ]] &&
+    printf 'database_restore_parent_monitor_detail:%s\n' "$detail" >&2
+  return 1
+}
+
 recovery_require_checkpoint_writer_monitor_healthy() {
   local contract_path="$1" contract_sha256="$2" baseline_path="$3"
   local baseline_sha256="$4" failure_path="$5" ready_path="$6" watcher_pid="$7"
@@ -10283,29 +10349,42 @@ recovery_require_checkpoint_writer_monitor_healthy() {
      "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
      "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" ]] || return 2
   [[ "$watcher_pid" =~ ^[1-9][0-9]*$ ]] || return 2
-  recovery_runner_watch_marker_is_exact "$failure_path" || return 1
-  recovery_runner_watch_marker_is_exact "$ready_path" || return 1
-  [[ ! -s "$failure_path" ]] || return 1
-  authority_path="$(recovery_monitor_authority_path "$ready_path")" || return 1
+  recovery_runner_watch_marker_is_exact "$failure_path" ||
+    recovery_monitor_health_diagnostic failure-path || return 1
+  recovery_runner_watch_marker_is_exact "$ready_path" ||
+    recovery_monitor_health_diagnostic ready-path || return 1
+  [[ ! -s "$failure_path" ]] ||
+    recovery_monitor_health_diagnostic failure-marker || return 1
+  authority_path="$(recovery_monitor_authority_path "$ready_path")" ||
+    recovery_monitor_health_diagnostic authority-path || return 1
   authority_sha256="$(recovery_monitor_authority_sha256_for_ready \
-    "$ready_path")" || return 1
-  stop_path="$(jq -er '.paths.stop' "$authority_path")" || return 1
-  progress_path="$(jq -er '.paths.progress' "$authority_path")" || return 1
-  final_path="$(jq -er '.paths.final' "$authority_path")" || return 1
+    "$ready_path")" || recovery_monitor_health_diagnostic ready-authority || return 1
+  stop_path="$(jq -er '.paths.stop' "$authority_path")" ||
+    recovery_monitor_health_diagnostic authority-stop || return 1
+  progress_path="$(jq -er '.paths.progress' "$authority_path")" ||
+    recovery_monitor_health_diagnostic authority-progress || return 1
+  final_path="$(jq -er '.paths.final' "$authority_path")" ||
+    recovery_monitor_health_diagnostic authority-final || return 1
   recovery_checkpoint_writer_monitor_authority_is_exact \
     "$authority_path" "$authority_sha256" "$contract_path" \
     "$contract_sha256" "$baseline_path" "$stop_path" "$failure_path" \
     "$ready_path" "$progress_path" "$final_path" "$watcher_pid" \
-    "$watcher_identity" "$runtime_generation" "$operation_owner" || return 1
+    "$watcher_identity" "$runtime_generation" "$operation_owner" ||
+    recovery_monitor_health_diagnostic authority-contract || return 1
   ready_value="$(<"$ready_path")"
-  [[ "$ready_value" == "ready:$baseline_sha256:$authority_sha256" ]] || return 1
+  [[ "$ready_value" == "ready:$baseline_sha256:$authority_sha256" ]] ||
+    recovery_monitor_health_diagnostic ready-contract || return 1
   recovery_stream_guard_progress_value \
-    "$progress_path" "$authority_sha256" >/dev/null || return 1
-  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" || return 1
+    "$progress_path" "$authority_sha256" >/dev/null ||
+    recovery_monitor_health_diagnostic progress || return 1
+  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" ||
+    recovery_monitor_health_diagnostic process-before-boundary || return 1
   recovery_checkpoint_writer_monitor_boundary_json \
     "$contract_path" "$contract_sha256" "$baseline_path" \
-    "$baseline_sha256" "$runtime_generation" "$operation_owner" >/dev/null || return 1
-  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity"
+    "$baseline_sha256" "$runtime_generation" "$operation_owner" >/dev/null ||
+    recovery_monitor_health_diagnostic live-boundary || return 1
+  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" ||
+    recovery_monitor_health_diagnostic process-after-boundary
 }
 
 recovery_stop_checkpoint_writer_monitor() {

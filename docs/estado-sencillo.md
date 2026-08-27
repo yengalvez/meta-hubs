@@ -10,9 +10,12 @@ de datos y sus medios originales. El verificador de producción terminó con
 No hace falta repetir otro restore ni volver a crear DigitalOcean.
 
 La recuperación y la aceptación humana están terminadas. Falta únicamente
-fusionar el código raíz: Cloud ya está integrado, pero el PR #18 sigue abierto
-porque dos exámenes idénticos de GitHub dieron un resultado distinto en una
-prueba local sensible a la carga. Uno pasó 894/894 y el otro falló solo ese caso.
+fusionar el código raíz. Cloud ya está integrado y el PR #18 sigue abierto. El
+último examen de GitHub dejó verdes PostgreSQL y el resto de seguridad, pero
+falló solo el positivo que combinaba tres monitores y un dump detenido de forma
+artificial. La causa ya está corregida localmente: pasan el positivo **47/47**,
+la coordinación **50/50**, los abortos seguros **63/63**, ShellCheck, gitlinks y
+Gitleaks. Todavía no se ha subido ni cuenta como CI verde.
 
 ## Lo que ya está demostrado
 
@@ -44,19 +47,22 @@ prueba local sensible a la carga. Uno pasó 894/894 y el otro falló solo ese ca
 
 ## Qué falta para cerrar H5
 
-La plataforma restaurada ya funciona y no necesita otra intervención. Solo hay
-que estabilizar el ritmo del fixture que simula tres monitores simultáneos,
-obtener un único examen verde y fusionar #18. No se repite el restore, no se
-toca DigitalOcean y no se vuelven a ejecutar los bloques ya aceptados.
+La plataforma restaurada ya funciona y no necesita otra intervención. El
+cambio local elimina comprobaciones completas repetidas dentro del mismo ciclo
+y separa dos responsabilidades de prueba que estaban duplicadas. Las
+regresiones dirigidas y el análisis estático ya están verdes. Falta subir un
+commit, obtener un único examen verde y fusionar #18. No se repite el restore,
+no se toca DigitalOcean y no se vuelven a ejecutar los bloques ya aceptados.
 
 Las tres acciones que no debe fingir una prueba automática ya han pasado:
 avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Lo que toca ahora
 
-1. Terminar el único CI de #18 y fusionarlo.
-2. Volver a desarrollar features.
-3. Mantener este recovery como capacidad operativa, sin reabrir H5 salvo que
+1. Publicar el candidato local ya validado.
+2. Obtener un único CI verde de #18 y fusionarlo.
+3. Volver a desarrollar features.
+4. Mantener este recovery como capacidad operativa, sin reabrir H5 salvo que
    cambien sus requisitos o aparezca evidencia nueva.
 
 ## Qué no se va a hacer
@@ -68,8 +74,8 @@ avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Cuánto queda
 
-Queda un único cierre técnico: CI verde y merge de #18. La recuperación, la
-aceptación humana y los recibos ya están resueltos.
+Queda el cierre técnico: un commit, un CI verde y merge de #18. La validación
+local, recuperación, producción, aceptación humana y recibos ya están resueltos.
 
 ## Cuándo se para
 
