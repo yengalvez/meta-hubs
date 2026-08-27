@@ -66,8 +66,9 @@ YenHubs/
 
 ```bash
 ./scripts/audit-upstream.sh
-./scripts/verify-project.sh
-./scripts/verify-project.sh --full
+./scripts/verify-project.sh --list-sections
+./scripts/verify-project.sh --section <nombre> --evidence-dir <directorio-privado-0700>
+./scripts/verify-project.sh --finalize --evidence-dir <directorio-privado-0700>
 BACKUP_DIR=/absolute/path/to/fresh-checkpoint ./deployment/preflight-reactivation.sh
 ./deployment/verify-live-reactivation.sh
 ```

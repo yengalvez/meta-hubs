@@ -9,8 +9,8 @@ operativa.
 | Necesidad | Documento |
 | --- | --- |
 | Entender el estado actual en lenguaje sencillo | `docs/estado-sencillo.md` |
-| Continuar la unica meta activa | `docs/active-goal-plan-2026-07-18.md` |
-| Ver auditoria, decision y riesgos vigentes | `docs/audit-general-2026-08-09.md` |
+| Continuar la unica meta activa | `../PLAN_ACTUAL.md` |
+| Ver auditoria final y riesgos historicos | `docs/auditoria-final-h5-2026-08-20.md` |
 | Ver el contrato minimo de hibernacion | `docs/client-hibernation-design-v1.md` |
 | Desarrollar o integrar upstream | `docs/development-workflow.md` |
 | Saber que personalizaciones preservar | `docs/customization-inventory.md` |
@@ -39,13 +39,18 @@ contradicen el plan activo.
 
 ```bash
 ./scripts/audit-upstream.sh
-./scripts/verify-project.sh --full
+./scripts/verify-project.sh --list-sections
+./scripts/verify-project.sh --section <nombre> --evidence-dir <directorio-privado-0700>
+./scripts/verify-project.sh --finalize --evidence-dir <directorio-privado-0700>
 ./deployment/preflight-reactivation.sh
 ./deployment/create-checkpoint.sh
 ```
 
-`--full` incluye el bloque normal; no ejecutar ambos seguidos sobre los mismos
-bytes. El comando normal se reserva para iteracion intermedia.
+`--full` ejecuta todas las secciones y recopila todos los fallos, pero no obliga
+a repetir recibos verdes exactos. Cada recibo v2 liga el núcleo común y solo el
+comando y toolchain de su sección, por lo que cambiar otra sección no lo
+invalida. El finalizador acepta únicamente evidencias ligadas a las entradas
+actuales; los advisories caducan a las 24 horas.
 
 Antes del checkpoint, exportar `EXPECTED_KUBE_CONTEXT` y
 `EXPECTED_NAMESPACE_UID` siguiendo `deployment/client-instance-lifecycle.md`.

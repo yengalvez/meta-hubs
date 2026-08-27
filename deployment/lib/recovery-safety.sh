@@ -48,6 +48,17 @@ RECOVERY_OPERATION_IDENTITY_PREBOUND=0
 RECOVERY_OPERATION_LOCK_GLOBAL_NAME="yenhubs-recovery-operation-lock"
 RECOVERY_SERIALIZATION_LEASE_NAME="yenhubs-operation-serialization"
 RECOVERY_OPERATION_FENCE_POLICY_NAME="recovery-operation-pod-fence.yenhubs.org"
+RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME="freeze-checkpoint-pod-create-fence.yenhubs.org"
+RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY=""
+RECOVERY_FREEZE_CHECKPOINT_FENCE_FAILURE_STAGE=""
+RECOVERY_FREEZE_CHECKPOINT_FENCE_PROBE_FAILURE=""
+RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID=""
+RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_RV=""
+RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID=""
+RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_RV=""
+RECOVERY_FREEZE_CHECKPOINT_FENCE_INPUT_JSON=""
+RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_CREATE_ATTEMPTED=0
+RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_CREATE_ATTEMPTED=0
 # Lease ownership and heartbeat paths/PIDs are process-local capabilities.
 # Never honor inherited values: an environment value must not let cleanup
 # signal a foreign PID or overwrite/remove an arbitrary path.
@@ -568,6 +579,412 @@ recovery_kubectl_mutate() {
   [[ "$mutation_status" == 0 ]] || return "$mutation_status"
 }
 
+recovery_freeze_checkpoint_fence_helper() {
+  local deployment_dir
+  deployment_dir="$(cd "$RECOVERY_SAFETY_DIR/.." && pwd -P)" || return 1
+  printf '%s/freeze-checkpoint-admission-fence.mjs\n' "$deployment_dir"
+}
+
+recovery_freeze_checkpoint_fence_input_json() {
+  local helper_image="$1"
+  [[ "$NAMESPACE" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ &&
+     -n "${RECOVERY_NAMESPACE_UID:-}" &&
+     "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ &&
+     -n "${RECOVERY_OPERATION_LOCK_UID:-}" &&
+     -n "${RECOVERY_OPERATION_LOCK_RESOURCE_VERSION:-}" &&
+     -n "${RECOVERY_SERIALIZATION_LEASE_UID:-}" &&
+     -n "${RECOVERY_SERIALIZATION_LEASE_HOLDER:-}" &&
+     "$helper_image" =~ @sha256:[a-f0-9]{64}$ ]] || return 2
+  jq -cnS --arg namespace "$NAMESPACE" \
+    --arg namespace_uid "$RECOVERY_NAMESPACE_UID" \
+    --arg operation_id "$RECOVERY_OPERATION_ID" \
+    --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
+    --arg lock_resource_version "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION" \
+    --arg lease_uid "$RECOVERY_SERIALIZATION_LEASE_UID" \
+    --arg lease_holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
+    --arg helper_image "$helper_image" '{namespace:$namespace,
+      namespace_uid:$namespace_uid,operation_id:$operation_id,lock_uid:$lock_uid,
+      lock_resource_version:$lock_resource_version,lease_uid:$lease_uid,
+      lease_holder:$lease_holder,helper_image:$helper_image}'
+}
+
+recovery_freeze_checkpoint_fence_build_pair() {
+  local input_json="$1" helper
+  helper="$(recovery_freeze_checkpoint_fence_helper)" || return 1
+  recovery_require_regular_direct_file "$helper" || return 1
+  printf '%s' "$input_json" | command node "$helper" build
+}
+
+recovery_freeze_checkpoint_fence_object_is_exact() {
+  local kind="$1" object_json="$2" input_json="$3"
+  local require_observed="${4:-false}" require_identity="${5:-true}" helper
+  [[ "$kind" == policy || "$kind" == binding ]] || return 2
+  [[ "$require_observed" == true || "$require_observed" == false ]] || return 2
+  [[ "$require_identity" == true || "$require_identity" == false ]] || return 2
+  helper="$(recovery_freeze_checkpoint_fence_helper)" || return 1
+  jq -cn --argjson object "$object_json" --argjson input "$input_json" \
+    --argjson identity "$require_identity" \
+    --argjson observed "$require_observed" \
+    '{object:$object,input:$input,require_identity:$identity,require_observed:$observed}' |
+    command node "$helper" "validate-$kind" >/dev/null
+}
+
+recovery_freeze_checkpoint_fence_pair_absent() {
+  local policy binding
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  policy="$(recovery_kubectl get validatingadmissionpolicy \
+    "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME" --ignore-not-found -o json)" || return 1
+  binding="$(recovery_kubectl get validatingadmissionpolicybinding \
+    "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME" --ignore-not-found -o json)" || return 1
+  [[ -z "$policy" && -z "$binding" ]]
+}
+
+recovery_freeze_checkpoint_fence_capability_json() {
+  local input_json="$1" policy_json="$2" binding_json="$3"
+  recovery_freeze_checkpoint_fence_object_is_exact \
+    policy "$policy_json" "$input_json" true || return 1
+  recovery_freeze_checkpoint_fence_object_is_exact \
+    binding "$binding_json" "$input_json" false || return 1
+  jq -cnS --argjson input "$input_json" \
+    --arg policy_uid "$(jq -er '.metadata.uid' <<<"$policy_json")" \
+    --arg policy_rv "$(jq -er '.metadata.resourceVersion' <<<"$policy_json")" \
+    --arg binding_uid "$(jq -er '.metadata.uid' <<<"$binding_json")" \
+    --arg binding_rv "$(jq -er '.metadata.resourceVersion' <<<"$binding_json")" \
+    '{schema_version:1,input:$input,policy:{uid:$policy_uid,resource_version:$policy_rv},
+      binding:{uid:$binding_uid,resource_version:$binding_rv}}'
+}
+
+recovery_require_freeze_checkpoint_fence() {
+  local capability_json="$1" policy_json binding_json input_json current
+  jq -e '(keys|sort)==["binding","input","policy","schema_version"] and
+    .schema_version==1 and (.policy|keys|sort)==["resource_version","uid"] and
+    (.binding|keys|sort)==["resource_version","uid"]' >/dev/null \
+    <<<"$capability_json" || return 1
+  input_json="$(jq -cS '.input' <<<"$capability_json")" || return 1
+  [[ "$input_json" == "$(recovery_freeze_checkpoint_fence_input_json \
+    "$(jq -er '.helper_image' <<<"$input_json")")" ]] || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  policy_json="$(recovery_kubectl get validatingadmissionpolicy \
+    "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME" -o json)" || return 1
+  binding_json="$(recovery_kubectl get validatingadmissionpolicybinding \
+    "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME" -o json)" || return 1
+  current="$(recovery_freeze_checkpoint_fence_capability_json \
+    "$input_json" "$policy_json" "$binding_json")" || return 1
+  [[ "$current" == "$capability_json" ]] || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock
+}
+
+recovery_freeze_checkpoint_fence_probe_document() {
+  local input_json="$1" probe="$2"
+  case "$probe" in
+    generic)
+      jq -cn --arg namespace "$NAMESPACE" '{apiVersion:"v1",kind:"Pod",metadata:{
+        generateName:"freeze-fence-generic-probe-",namespace:$namespace},spec:{
+        automountServiceAccountToken:false,restartPolicy:"Never",containers:[{
+          name:"probe",image:"registry.k8s.io/pause:3.10"}]}}'
+      ;;
+    helper)
+      jq -cn --arg namespace "$NAMESPACE" \
+        --arg operation_id "$(jq -er '.operation_id' <<<"$input_json")" \
+        --arg lock_uid "$(jq -er '.lock_uid' <<<"$input_json")" \
+        --arg image "$(jq -er '.helper_image' <<<"$input_json")" '{
+        apiVersion:"v1",kind:"Pod",metadata:{name:("ret-storage-backup-" +
+          ($operation_id[0:12])),
+          namespace:$namespace,labels:{"yenhubs.org/recovery-owner":"ret-storage-backup",
+            "yenhubs.org/operation-id":$operation_id},annotations:{
+            "yenhubs.org/operation-lock-uid":$lock_uid,
+            "yenhubs.org/operation-id":$operation_id}},spec:{
+          automountServiceAccountToken:false,enableServiceLinks:false,restartPolicy:"Never",
+          terminationGracePeriodSeconds:1,
+          activeDeadlineSeconds:3600,securityContext:{runAsNonRoot:true,runAsUser:1000,
+            runAsGroup:1000,fsGroup:1000,fsGroupChangePolicy:"OnRootMismatch",
+            seccompProfile:{type:"RuntimeDefault"}},containers:[{name:"helper",image:$image,
+            command:["sh","-c","sleep 3600"],securityContext:{allowPrivilegeEscalation:false,
+              readOnlyRootFilesystem:true,capabilities:{drop:["ALL"]}},volumeMounts:[{
+              name:"storage",mountPath:"/storage",readOnly:true}]}],volumes:[{name:"storage",
+            persistentVolumeClaim:{claimName:"ret-pvc",readOnly:true}}]}}'
+      ;;
+    *) return 2 ;;
+  esac
+}
+
+recovery_probe_freeze_checkpoint_fence() {
+  local capability_json="$1" input_json document diagnostic status=0
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_PROBE_FAILURE=preconditions
+  input_json="$(jq -cS '.input' <<<"$capability_json")" || return 1
+  recovery_require_freeze_checkpoint_fence "$capability_json" || return 1
+  document="$(recovery_freeze_checkpoint_fence_probe_document \
+    "$input_json" generic)" || return 1
+  if diagnostic="$(printf '%s' "$document" | \
+      recovery_kubectl create --dry-run=server -f - 2>&1)"; then status=0; else status=$?; fi
+  if [[ "$status" == 0 ]]; then
+    RECOVERY_FREEZE_CHECKPOINT_FENCE_PROBE_FAILURE=generic-allowed
+    return 1
+  fi
+  if [[ "$diagnostic" != *"$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME"* ]]; then
+    RECOVERY_FREEZE_CHECKPOINT_FENCE_PROBE_FAILURE=generic-unattributed
+    return 1
+  fi
+  if [[ "$diagnostic" != *'freeze checkpoint Pod fence denies'* ]]; then
+    RECOVERY_FREEZE_CHECKPOINT_FENCE_PROBE_FAILURE=generic-message-mismatch
+    return 1
+  fi
+  document="$(recovery_freeze_checkpoint_fence_probe_document \
+    "$input_json" helper)" || return 1
+  if ! diagnostic="$(printf '%s' "$document" | \
+      recovery_kubectl create --dry-run=server -f - 2>&1)"; then
+    RECOVERY_FREEZE_CHECKPOINT_FENCE_PROBE_FAILURE="helper-denied"
+    return 1
+  fi
+  if [[ "$diagnostic" == *"$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME"* ]]; then
+    RECOVERY_FREEZE_CHECKPOINT_FENCE_PROBE_FAILURE="helper-attributed"
+    return 1
+  fi
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_PROBE_FAILURE=""
+}
+
+recovery_create_freeze_checkpoint_fence() {
+  local helper_image="$1" input_json pair policy_doc binding_doc
+  local policy_json="" binding_json="" dry_policy_json="" dry_binding_json=""
+  local status=0 attempt=0
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_FAILURE_STAGE=preconditions
+  [[ -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY" ]] || return 2
+  input_json="$(recovery_freeze_checkpoint_fence_input_json "$helper_image")" || return 1
+  pair="$(recovery_freeze_checkpoint_fence_build_pair "$input_json")" || return 1
+  policy_doc="$(jq -c '.policy' <<<"$pair")" || return 1
+  binding_doc="$(jq -c '.binding' <<<"$pair")" || return 1
+  recovery_freeze_checkpoint_fence_pair_absent || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_FAILURE_STAGE=dry-run-policy
+  dry_policy_json="$(recovery_kubectl create --dry-run=server -f - -o json \
+    <<<"$policy_doc")" || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  recovery_freeze_checkpoint_fence_object_is_exact \
+    policy "$dry_policy_json" "$input_json" false false || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_FAILURE_STAGE=dry-run-binding
+  dry_binding_json="$(recovery_kubectl create --dry-run=server -f - -o json \
+    <<<"$binding_doc")" || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  recovery_freeze_checkpoint_fence_object_is_exact \
+    binding "$dry_binding_json" "$input_json" false false || return 1
+  recovery_freeze_checkpoint_fence_pair_absent || return 1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_INPUT_JSON="$input_json"
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_CREATE_ATTEMPTED=1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_FAILURE_STAGE="policy-create-readback"
+  if recovery_kubectl create -f - -o json \
+      <<<"$policy_doc" >/dev/null; then :; else :; fi
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  policy_json="$(recovery_kubectl get validatingadmissionpolicy \
+    "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME" -o json)" || return 1
+  recovery_freeze_checkpoint_fence_object_is_exact \
+    policy "$policy_json" "$input_json" false || return 1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID="$(jq -er '.metadata.uid' \
+    <<<"$policy_json")" || return 1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_RV="$(jq -er '.metadata.resourceVersion' \
+    <<<"$policy_json")" || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_CREATE_ATTEMPTED=1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_FAILURE_STAGE="binding-create-readback"
+  if recovery_kubectl create -f - -o json \
+      <<<"$binding_doc" >/dev/null; then :; else :; fi
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  binding_json="$(recovery_kubectl get validatingadmissionpolicybinding \
+    "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME" -o json)" || return 1
+  recovery_freeze_checkpoint_fence_object_is_exact \
+    binding "$binding_json" "$input_json" false || return 1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID="$(jq -er '.metadata.uid' \
+    <<<"$binding_json")" || return 1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_RV="$(jq -er '.metadata.resourceVersion' \
+    <<<"$binding_json")" || return 1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_FAILURE_STAGE="policy-observation"
+  while ((attempt < 60)); do
+    policy_json="$(recovery_kubectl get validatingadmissionpolicy \
+      "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME" -o json)" || return 1
+    if recovery_freeze_checkpoint_fence_object_is_exact \
+        policy "$policy_json" "$input_json" true &&
+       [[ "$(jq -er '.metadata.uid' <<<"$policy_json")" == \
+            "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID" && \
+          "$(jq -er '.metadata.resourceVersion' <<<"$policy_json")" == \
+            "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_RV" ]]; then break; fi
+    attempt=$((attempt + 1))
+    sleep "${RECOVERY_WAIT_RETRY_DELAY_SECONDS:-1}"
+  done
+  ((attempt < 60)) || return 1
+  binding_json="$(recovery_kubectl get validatingadmissionpolicybinding \
+    "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME" -o json)" || return 1
+  [[ "$(jq -er '.metadata.uid' <<<"$binding_json")" == \
+       "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID" && \
+     "$(jq -er '.metadata.resourceVersion' <<<"$binding_json")" == \
+       "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_RV" ]] || return 1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY="$(
+    recovery_freeze_checkpoint_fence_capability_json \
+      "$input_json" "$policy_json" "$binding_json"
+  )" || return 1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_FAILURE_STAGE=probe
+  if ! recovery_probe_freeze_checkpoint_fence \
+      "$RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY"; then
+    # shellcheck disable=SC2034 # Read by create-checkpoint.sh after sourcing.
+    RECOVERY_FREEZE_CHECKPOINT_FENCE_FAILURE_STAGE="probe-${RECOVERY_FREEZE_CHECKPOINT_FENCE_PROBE_FAILURE:-unknown}"
+    status=1
+  fi
+  [[ "$status" == 0 ]] || return 1
+}
+
+recovery_delete_cluster_fence_object_once() {
+  local kind="$1" uid="$2" resource_version="$3" api_path current delete_options
+  case "$kind" in
+    policy) api_path="/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicies/$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME" ;;
+    binding) api_path="/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicybindings/$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME" ;;
+    *) return 2 ;;
+  esac
+  delete_options="$(jq -cn --arg uid "$uid" --arg rv "$resource_version" '{apiVersion:"v1",
+    kind:"DeleteOptions",propagationPolicy:"Foreground",
+    preconditions:{uid:$uid,resourceVersion:$rv}}')" || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  if recovery_kubectl delete --raw="$api_path" -f - \
+      <<<"$delete_options" >/dev/null 2>&1; then :; else :; fi
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  current="$(recovery_kubectl get "validatingadmissionpolicy$([[ "$kind" == binding ]] && printf binding)" \
+    "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME" --ignore-not-found -o json)" || return 1
+  [[ -z "$current" ]]
+}
+
+recovery_delete_freeze_checkpoint_fence() {
+  local capability_json="$1" binding_uid binding_rv policy_uid policy_rv
+  recovery_require_freeze_checkpoint_fence "$capability_json" || return 1
+  binding_uid="$(jq -er '.binding.uid' <<<"$capability_json")" || return 1
+  binding_rv="$(jq -er '.binding.resource_version' <<<"$capability_json")" || return 1
+  policy_uid="$(jq -er '.policy.uid' <<<"$capability_json")" || return 1
+  policy_rv="$(jq -er '.policy.resource_version' <<<"$capability_json")" || return 1
+  recovery_delete_cluster_fence_object_once binding "$binding_uid" "$binding_rv" || return 1
+  recovery_delete_cluster_fence_object_once policy "$policy_uid" "$policy_rv" || return 1
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_CAPABILITY=""
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID=""
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_RV=""
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID=""
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_RV=""
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_INPUT_JSON=""
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_CREATE_ATTEMPTED=0
+  RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_CREATE_ATTEMPTED=0
+}
+
+recovery_reconcile_freeze_checkpoint_fence_create_attempt() {
+  local kind="$1" current resource
+  [[ -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_INPUT_JSON" ]] || return 1
+  case "$kind" in
+    policy) resource=validatingadmissionpolicy ;;
+    binding) resource=validatingadmissionpolicybinding ;;
+    *) return 2 ;;
+  esac
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  current="$(recovery_kubectl get "$resource" \
+    "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_NAME" \
+    --ignore-not-found -o json)" || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  if [[ -z "$current" ]]; then
+    if [[ "$kind" == policy ]]; then
+      RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_CREATE_ATTEMPTED=0
+      RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID=""
+      RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_RV=""
+    else
+      RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_CREATE_ATTEMPTED=0
+      RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID=""
+      RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_RV=""
+    fi
+    return 0
+  fi
+  recovery_freeze_checkpoint_fence_object_is_exact \
+    "$kind" "$current" "$RECOVERY_FREEZE_CHECKPOINT_FENCE_INPUT_JSON" false || return 1
+  if [[ "$kind" == policy ]]; then
+    RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID="$(jq -er '.metadata.uid' \
+      <<<"$current")" || return 1
+    RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_RV="$(jq -er '.metadata.resourceVersion' \
+      <<<"$current")" || return 1
+  else
+    RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID="$(jq -er '.metadata.uid' \
+      <<<"$current")" || return 1
+    RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_RV="$(jq -er '.metadata.resourceVersion' \
+      <<<"$current")" || return 1
+  fi
+}
+
+recovery_cleanup_partial_freeze_checkpoint_fence() {
+  local status=0
+  if [[ "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_CREATE_ATTEMPTED" == 1 ||
+        -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID" ||
+        -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_RV" ]]; then
+    if [[ -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID" ||
+          -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_RV" ]]; then
+      if [[ -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID" ||
+            -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_RV" ]] ||
+         ! recovery_reconcile_freeze_checkpoint_fence_create_attempt binding; then
+        status=1
+      fi
+    fi
+  fi
+  if [[ "$status" == 0 &&
+        -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID" &&
+        -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_RV" ]]; then
+    recovery_delete_cluster_fence_object_once binding \
+      "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID" \
+      "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_RV" || status=1
+    if [[ "$status" == 0 ]]; then
+      RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID=""
+      RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_RV=""
+      RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_CREATE_ATTEMPTED=0
+    fi
+  fi
+  if [[ "$status" == 0 &&
+        ( "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_CREATE_ATTEMPTED" == 1 ||
+          -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID" ||
+          -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_RV" ) ]]; then
+    if [[ -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID" ||
+          -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_RV" ]]; then
+      if [[ -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID" ||
+            -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_RV" ]] ||
+         ! recovery_reconcile_freeze_checkpoint_fence_create_attempt policy; then
+        status=1
+      fi
+    fi
+  fi
+  if [[ "$status" == 0 && -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID" &&
+        -n "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_RV" ]]; then
+    recovery_delete_cluster_fence_object_once policy \
+      "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID" \
+      "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_RV" || status=1
+    if [[ "$status" == 0 ]]; then
+      RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID=""
+      RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_RV=""
+      RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_CREATE_ATTEMPTED=0
+    fi
+  fi
+  if [[ "$status" == 0 &&
+        "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_CREATE_ATTEMPTED" == 0 &&
+        "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_CREATE_ATTEMPTED" == 0 &&
+        -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_POLICY_UID" &&
+        -z "$RECOVERY_FREEZE_CHECKPOINT_FENCE_BINDING_UID" ]]; then
+    RECOVERY_FREEZE_CHECKPOINT_FENCE_INPUT_JSON=""
+  fi
+  [[ "$status" == 0 ]]
+}
+
 recovery_monitor_authority_path() {
   local ready_path="$1"
   [[ "$ready_path" == /* ]] || return 2
@@ -769,6 +1186,15 @@ recovery_stream_guard_process_is_healthy() {
   recovery_process_identity_is_live "$guard_pid" "$guard_start_identity"
 }
 
+recovery_stream_guard_failure_detail() {
+  local failure_marker="$1" failure_value
+  recovery_runner_watch_marker_is_exact "$failure_marker" || return 1
+  failure_value="$(<"$failure_marker")"
+  [[ "$failure_value" =~ ^checkpoint_writer_monitor_failed:([a-z][a-z0-9_-]{0,63}):([a-z][a-z0-9_-]{0,63})$ ]] ||
+    return 1
+  printf '%s:%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+}
+
 recovery_stream_guard_progress_value() {
   local progress_marker="$1" expected_authority_sha256="${2:-}"
   local progress_value parsed_authority_sha256 parsed_counter
@@ -846,7 +1272,7 @@ recovery_stream_guard_initial_deadline_seconds() {
     # This is only the startup allowance before any destructive stream can
     # begin. Once a complete sweep exists, the independent production
     # staleness budget remains capped at ten seconds.
-    printf '10\n'
+    printf '30\n'
     return 0
   fi
   recovery_require_local_fixture_attestation || return 1
@@ -870,7 +1296,10 @@ recovery_wait_for_stream_guard_initial_progress() {
       return 0
     fi
     current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
-    ((current_milliseconds - started_milliseconds < maximum_seconds * 1000)) || return 1
+    # Status 3 is reserved for an observed startup timeout. Callers that only
+    # need fail-closed behavior may treat it as any other failure; callers with
+    # a closed diagnostic vocabulary can preserve the exact cause.
+    ((current_milliseconds - started_milliseconds < maximum_seconds * 1000)) || return 3
     sleep "$poll_seconds"
   done
 }
@@ -906,13 +1335,14 @@ recovery_wait_for_stream_guard_progress_after() {
 recovery_kubectl_stream_supervised() {
   local require_lease="$1" maximum_seconds="$2"
   shift 2
-  local poll_seconds caller_pid="$$"
+  local poll_seconds initial_deadline_seconds caller_pid="$$"
+  local stream_outer_stage=arguments stream_outer_detail=""
   local caller_start_identity guard_pid guard_start_identity failure_marker
   local ready_marker progress_marker maximum_stale_seconds index authority_kind
   local authority_path authority_sha256 existing_index
   local current_progress previous_progress observation_milliseconds
   local previous_observation_milliseconds current_milliseconds
-  local all_guards_fresh
+  local all_guards_fresh lease_authority_guard_index=""
   local -a guard_pids=() guard_start_identities=() guard_failure_markers=()
   local -a guard_ready_markers=() guard_authority_paths=()
   local -a guard_authority_sha256s=() guard_authority_kinds=()
@@ -922,7 +1352,20 @@ recovery_kubectl_stream_supervised() {
   local -a guard_fresh_progress_milliseconds=()
   local -a guard_fresh_observation_milliseconds=()
   local -a guard_fresh_advanced=()
-  [[ "$require_lease" == 0 || "$require_lease" == 1 ]] || return 2
+  stream_outer_fail() {
+    local status="${1:-1}" detail="${2:-$stream_outer_detail}"
+    if [[ "$status" != 0 &&
+          "${RECOVERY_STREAM_DIAGNOSTIC_CONTEXT:-}" == database-restore ]]; then
+      printf 'database_restore_stream_stage:%s\n' "$stream_outer_stage" >&2
+      [[ -n "$detail" ]] &&
+        printf 'database_restore_stream_detail:%s\n' "$detail" >&2
+    fi
+    return "$status"
+  }
+  [[ "$require_lease" == 0 || "$require_lease" == 1 ]] || {
+    stream_outer_fail 2 arguments
+    return $?
+  }
   # Optional guards precede `--` and are repeatable:
   # --guard-process PID START_IDENTITY FAILURE_MARKER PROGRESS_MARKER MAX_STALE_SECONDS
   # --guard-process-capability KIND PID START_IDENTITY FAILURE_MARKER
@@ -934,7 +1377,10 @@ recovery_kubectl_stream_supervised() {
     authority_path=""
     authority_sha256=""
     if [[ "$1" == --guard-process ]]; then
-      [[ "$#" -ge 6 ]] || return 2
+      [[ "$#" -ge 6 ]] || {
+        stream_outer_fail 2 arguments
+        return $?
+      }
       guard_pid="$2"
       guard_start_identity="$3"
       failure_marker="$4"
@@ -942,7 +1388,10 @@ recovery_kubectl_stream_supervised() {
       maximum_stale_seconds="$6"
       shift 6
     else
-      [[ "$#" -ge 10 ]] || return 2
+      [[ "$#" -ge 10 ]] || {
+        stream_outer_fail 2 arguments
+        return $?
+      }
       authority_kind="$2"
       guard_pid="$3"
       guard_start_identity="$4"
@@ -953,16 +1402,28 @@ recovery_kubectl_stream_supervised() {
       authority_sha256="$9"
       maximum_stale_seconds="${10}"
       [[ "$authority_kind" == checkpoint-writer-monitor ||
-         "$authority_kind" == durable-runner-quiescence-monitor ]] || return 2
+         "$authority_kind" == durable-runner-quiescence-monitor ]] || {
+        stream_outer_fail 2 guard-authority
+        return $?
+      }
       [[ "$ready_marker" == /* && "$authority_path" == /* &&
-         "$authority_sha256" =~ ^[a-f0-9]{64}$ ]] || return 2
+         "$authority_sha256" =~ ^[a-f0-9]{64}$ ]] || {
+        stream_outer_fail 2 guard-authority
+        return $?
+      }
       shift 10
     fi
     [[ "$guard_pid" =~ ^[1-9][0-9]*$ && -n "$guard_start_identity" &&
        "$failure_marker" == /* && "$progress_marker" == /* &&
-       "$maximum_stale_seconds" =~ ^([1-9]|[1-9][0-9])$ ]] || return 2
+       "$maximum_stale_seconds" =~ ^([1-9]|[1-9][0-9])$ ]] || {
+      stream_outer_fail 2 guard-arguments
+      return $?
+    }
     for existing_index in "${!guard_pids[@]}"; do
-      [[ "${guard_pids[$existing_index]}" != "$guard_pid" ]] || return 2
+      [[ "${guard_pids[$existing_index]}" != "$guard_pid" ]] || {
+        stream_outer_fail 2 guard-duplicate
+        return $?
+      }
     done
     guard_pids+=("$guard_pid")
     guard_start_identities+=("$guard_start_identity")
@@ -973,12 +1434,34 @@ recovery_kubectl_stream_supervised() {
     guard_authority_sha256s+=("$authority_sha256")
     guard_authority_kinds+=("$authority_kind")
     guard_maximum_stale_seconds+=("$maximum_stale_seconds")
+    if [[ "$authority_kind" == checkpoint-writer-monitor ]]; then
+      [[ -z "$lease_authority_guard_index" ]] || {
+        stream_outer_fail 2 guard-lease-authority-duplicate
+        return $?
+      }
+      lease_authority_guard_index="$((${#guard_pids[@]} - 1))"
+    fi
   done
   if [[ "${1:-}" == -- ]]; then
     shift
   fi
-  [[ "$maximum_seconds" =~ ^[1-9][0-9]*$ && "$#" -gt 0 ]] || return 2
-  poll_seconds="$(recovery_stream_poll_seconds)" || return 1
+  [[ "$maximum_seconds" =~ ^[1-9][0-9]*$ && "$#" -gt 0 ]] || {
+    stream_outer_fail 2 arguments
+    return $?
+  }
+  stream_outer_stage=guard-baseline
+  poll_seconds="$(recovery_stream_poll_seconds)" || {
+    stream_outer_fail 1 poll-interval
+    return $?
+  }
+  # This foreground round is still before the destructive child exists. Use
+  # the bounded startup allowance while every guard publishes one complete
+  # sweep; once the child is launched, each guard returns to the independent
+  # ten-second production freshness budget below.
+  initial_deadline_seconds="$(recovery_stream_guard_initial_deadline_seconds)" || {
+    stream_outer_fail 1 initial-deadline
+    return $?
+  }
   for index in "${!guard_pids[@]}"; do
     recovery_stream_guard_process_is_healthy \
       "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
@@ -986,13 +1469,23 @@ recovery_kubectl_stream_supervised() {
       "${guard_progress_markers[$index]}" \
       "${guard_authority_paths[$index]}" \
       "${guard_authority_sha256s[$index]}" \
-      "${guard_authority_kinds[$index]}" || return 1
+      "${guard_authority_kinds[$index]}" || {
+      stream_outer_fail 1 "guard-process:$index"
+      return $?
+    }
     guard_baseline_observation_milliseconds[index]="$(
       recovery_monotonic_milliseconds
-    )" || return 1
+    )" || {
+      stream_outer_fail 1 "guard-clock:$index"
+      return $?
+    }
     guard_baseline_progress[index]="$(recovery_stream_guard_progress_value \
       "${guard_progress_markers[$index]}" \
-      "${guard_authority_sha256s[$index]}")" || return 1
+      "${guard_authority_sha256s[$index]}")" ||
+      {
+        stream_outer_fail 1 "guard-progress:$index"
+        return $?
+      }
     guard_fresh_progress[index]="${guard_baseline_progress[$index]}"
     guard_fresh_observation_milliseconds[index]="${guard_baseline_observation_milliseconds[$index]}"
     guard_fresh_progress_milliseconds[index]=""
@@ -1014,14 +1507,29 @@ recovery_kubectl_stream_supervised() {
         "${guard_progress_markers[$index]}" \
         "${guard_authority_paths[$index]}" \
         "${guard_authority_sha256s[$index]}" \
-        "${guard_authority_kinds[$index]}" || return 1
+        "${guard_authority_kinds[$index]}" || {
+        stream_outer_fail 1 "guard-process:$index"
+        return $?
+      }
       previous_observation_milliseconds="${guard_fresh_observation_milliseconds[$index]}"
-      observation_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+      observation_milliseconds="$(recovery_monotonic_milliseconds)" ||
+        {
+          stream_outer_fail 1 "guard-clock:$index"
+          return $?
+        }
       current_progress="$(recovery_stream_guard_progress_value \
         "${guard_progress_markers[$index]}" \
-        "${guard_authority_sha256s[$index]}")" || return 1
+        "${guard_authority_sha256s[$index]}")" ||
+        {
+          stream_outer_fail 1 "guard-progress:$index"
+          return $?
+        }
       previous_progress="${guard_fresh_progress[$index]}"
-      ((current_progress >= previous_progress)) || return 1
+      ((current_progress >= previous_progress)) ||
+        {
+          stream_outer_fail 1 "guard-regression:$index"
+          return $?
+        }
       if ((current_progress > previous_progress)); then
         guard_fresh_progress[index]="$current_progress"
         guard_fresh_progress_milliseconds[index]="$previous_observation_milliseconds"
@@ -1029,32 +1537,75 @@ recovery_kubectl_stream_supervised() {
       fi
       guard_fresh_observation_milliseconds[index]="$observation_milliseconds"
     done
-    current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+    current_milliseconds="$(recovery_monotonic_milliseconds)" ||
+      {
+        stream_outer_fail 1 guard-clock
+        return $?
+      }
     all_guards_fresh=true
     for index in "${!guard_pids[@]}"; do
       if [[ "${guard_fresh_advanced[$index]}" != 1 ]]; then
         all_guards_fresh=false
         ((current_milliseconds - guard_baseline_observation_milliseconds[index] <
-          guard_maximum_stale_seconds[index] * 1000)) || return 1
+          initial_deadline_seconds * 1000)) ||
+        {
+          stream_outer_fail 1 "guard-stale:$index:$((current_milliseconds - guard_baseline_observation_milliseconds[index])):${guard_fresh_progress[$index]}"
+          return $?
+        }
       elif ((current_milliseconds - guard_fresh_progress_milliseconds[index] >=
         guard_maximum_stale_seconds[index] * 1000)); then
-        return 1
+        {
+          stream_outer_fail 1 "guard-stale:$index:$((current_milliseconds - guard_fresh_progress_milliseconds[index])):${guard_fresh_progress[$index]}"
+          return $?
+        }
       fi
     done
     [[ "$all_guards_fresh" != true ]] || break
     sleep "$poll_seconds"
   done
-  caller_start_identity="$(recovery_process_start_identity "$caller_pid")" || return 1
-  command -v python3 >/dev/null 2>&1 || return 127
+  stream_outer_stage=launch
+  caller_start_identity="$(recovery_process_start_identity "$caller_pid")" || {
+    stream_outer_fail 1 caller-identity
+    return $?
+  }
+  command -v python3 >/dev/null 2>&1 || {
+    stream_outer_fail 127 python3
+    return $?
+  }
   (
     local stream_pid="" stream_start_identity="" stream_gate=""
     local stream_status=0 stream_started_milliseconds index
+    local stream_diagnostic_stage=initialize stream_diagnostic_status=0
+    local stream_diagnostic_detail=""
+    local refresh_deadline_seconds=""
     local current_progress previous_progress observation_milliseconds
     local previous_observation_milliseconds current_milliseconds
     local remaining_milliseconds lease_budget_milliseconds lease_timeout_seconds
+    local supervised_stream_lease_failure_detail=""
+    local supervised_stream_guard_remaining_milliseconds_value=""
+    local supervised_stream_guard_remaining_index=""
     local guard_cancel_reserve_milliseconds=2000
     local -a guard_last_progress=() guard_last_progress_milliseconds=()
     local -a guard_last_observation_milliseconds=()
+    # shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap below.
+    report_stream_diagnostic() {
+      stream_diagnostic_status=$?
+      trap - EXIT
+      if [[ "$stream_diagnostic_status" != 0 &&
+            "${RECOVERY_STREAM_DIAGNOSTIC_CONTEXT:-}" == database-restore ]]; then
+        printf 'database_restore_stream_stage:%s\n' \
+          "$stream_diagnostic_stage" >&2
+        [[ -n "$stream_diagnostic_detail" ]] &&
+          printf 'database_restore_stream_detail:%s\n' \
+            "$stream_diagnostic_detail" >&2
+      fi
+      exit "$stream_diagnostic_status"
+    }
+    stream_record_diagnostic() {
+      [[ -n "$stream_diagnostic_detail" ]] ||
+        stream_diagnostic_detail="$1"
+    }
+    trap report_stream_diagnostic EXIT
     initialize_supervised_stream_guards() {
       for index in "${!guard_pids[@]}"; do
         recovery_stream_guard_process_is_healthy \
@@ -1086,10 +1637,37 @@ recovery_kubectl_stream_supervised() {
       done
     }
     refresh_supervised_stream_guards_for_launch() {
+      local requested_launch_budget_milliseconds="${1:-}"
       local all_refresh_guards_fresh
+      local launch_alignment_started_milliseconds
+      local launch_budget_required_milliseconds
       local -a refresh_baseline_progress=()
       local -a refresh_baseline_observation_milliseconds=()
       local -a refresh_advanced=()
+      launch_alignment_started_milliseconds="$(
+        recovery_monotonic_milliseconds
+      )" || return 1
+      [[ -z "$requested_launch_budget_milliseconds" ||
+         "$requested_launch_budget_milliseconds" =~ ^[1-9][0-9]*$ ]] || return 2
+      # The isolated child is already blocked at its private gate when this
+      # alignment runs. Derive the launch budget from the capabilities that
+      # still have to execute: cancellation needs its fixed reserve; an
+      # unguarded Lease needs one complete bounded GET as well. The final
+      # lightweight continuity observation is local and remains inside that
+      # cancellation reserve. An exact
+      # checkpoint-writer capability already validates this operation's Lease,
+      # lock and identity on every progress round, so repeating a synchronous
+      # Lease GET would create a second clock and the false three-guard race
+      # that this supervisor is meant to remove.
+      launch_budget_required_milliseconds="$guard_cancel_reserve_milliseconds"
+      if [[ "$require_lease" == 1 && -z "$lease_authority_guard_index" ]]; then
+        launch_budget_required_milliseconds=$((
+          launch_budget_required_milliseconds + 1000
+        ))
+      fi
+      if [[ -n "$requested_launch_budget_milliseconds" ]]; then
+        launch_budget_required_milliseconds="$requested_launch_budget_milliseconds"
+      fi
       # Capture one current baseline for every guard before waiting for any of
       # them. An increment observed here may have happened after the prior
       # observation, so update its lower bound causally, but it does not satisfy
@@ -1121,6 +1699,11 @@ recovery_kubectl_stream_supervised() {
       # Require another causally observed increment from every guard, while
       # continuing to observe fast guards so their lower bounds can remain
       # simultaneously fresh as the slowest healthy guard completes a sweep.
+      # This is still a pre-launch startup gate: a healthy guard may need the
+      # wider startup allowance to publish its next complete sweep. The
+      # destructive stream itself remains capped by each guard's ten-second
+      # freshness budget. Every guard receives a complete signed audit in the
+      # final loop round, followed by one lightweight continuity observation.
       while [[ "${#guard_pids[@]}" -gt 0 ]]; do
         for index in "${!guard_pids[@]}"; do
           recovery_stream_guard_process_is_healthy \
@@ -1152,33 +1735,65 @@ recovery_kubectl_stream_supervised() {
           if [[ "${refresh_advanced[$index]}" != 1 ]]; then
             all_refresh_guards_fresh=false
             ((current_milliseconds - refresh_baseline_observation_milliseconds[index] <
-              guard_maximum_stale_seconds[index] * 1000)) || return 1
+              refresh_deadline_seconds * 1000)) || return 1
           elif ((current_milliseconds - guard_last_progress_milliseconds[index] >=
             guard_maximum_stale_seconds[index] * 1000)); then
             return 1
           fi
         done
-        [[ "$all_refresh_guards_fresh" != true ]] || break
+        if [[ "$all_refresh_guards_fresh" == true ]]; then
+          supervised_stream_guard_remaining_milliseconds >/dev/null || return 1
+          remaining_milliseconds="$supervised_stream_guard_remaining_milliseconds_value"
+          if ((remaining_milliseconds > launch_budget_required_milliseconds)); then
+            break
+          fi
+          # All guards advanced, but not inside one simultaneous launch
+          # window. Keep observing under the independent startup allowance;
+          # do not weaken any guard's production freshness deadline.
+          if ((current_milliseconds - launch_alignment_started_milliseconds >=
+            refresh_deadline_seconds * 1000)); then
+            stream_record_diagnostic \
+              "lease-window:${supervised_stream_guard_remaining_index}:${remaining_milliseconds}"
+            return 1
+          fi
+          index="$supervised_stream_guard_remaining_index"
+          refresh_baseline_progress[index]="${guard_last_progress[$index]}"
+          refresh_baseline_observation_milliseconds[index]="$current_milliseconds"
+          refresh_advanced[index]=0
+        fi
         sleep "$poll_seconds"
       done
-      supervised_stream_guards_are_healthy
+      return 0
     }
     supervised_stream_guards_are_healthy() {
+      local guard_failure_detail=""
       for index in "${!guard_pids[@]}"; do
-        recovery_stream_guard_process_is_healthy \
+        if ! recovery_stream_guard_process_is_healthy \
           "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
           "${guard_failure_markers[$index]}" "${guard_ready_markers[$index]}" \
           "${guard_progress_markers[$index]}" \
           "${guard_authority_paths[$index]}" \
           "${guard_authority_sha256s[$index]}" \
-          "${guard_authority_kinds[$index]}" || return 1
+          "${guard_authority_kinds[$index]}"; then
+          if guard_failure_detail="$(recovery_stream_guard_failure_detail \
+            "${guard_failure_markers[$index]}" 2>/dev/null)"; then
+            stream_record_diagnostic "guard-process:$index:$guard_failure_detail"
+          else
+            stream_record_diagnostic "guard-process:$index"
+          fi
+          return 1
+        fi
         previous_observation_milliseconds="${guard_last_observation_milliseconds[$index]}"
         observation_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
-        current_progress="$(recovery_stream_guard_progress_value \
+        if ! current_progress="$(recovery_stream_guard_progress_value \
           "${guard_progress_markers[$index]}" \
-          "${guard_authority_sha256s[$index]}")" || return 1
+          "${guard_authority_sha256s[$index]}")"; then
+          stream_record_diagnostic "guard-progress-read:$index"
+          return 1
+        fi
         previous_progress="${guard_last_progress[$index]}"
         if ((current_progress < previous_progress)); then
+          stream_record_diagnostic "guard-progress-regression:$index"
           return 1
         elif ((current_progress > previous_progress)); then
           guard_last_progress[index]="$current_progress"
@@ -1191,13 +1806,73 @@ recovery_kubectl_stream_supervised() {
         current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
         if ((current_milliseconds - guard_last_progress_milliseconds[index] >=
           guard_maximum_stale_seconds[index] * 1000)); then
+          stream_record_diagnostic "guard-stale:$index"
+          return 1
+        fi
+      done
+    }
+    supervised_stream_guards_are_continuously_healthy() {
+      local guard_failure_detail=""
+      # A complete immutable authority/baseline audit accepts each capability
+      # before launch. During the stream, the monitor's authority-bound counter
+      # is its causal attestation that another complete live sweep passed.
+      # Recheck the immutable handshake, process, failure and progress without
+      # duplicating every monitor's full Kubernetes/baseline audit.
+      for index in "${!guard_pids[@]}"; do
+        if ! recovery_stream_guard_process_is_healthy \
+          "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
+          "${guard_failure_markers[$index]}"; then
+          if guard_failure_detail="$(recovery_stream_guard_failure_detail \
+            "${guard_failure_markers[$index]}" 2>/dev/null)"; then
+            stream_record_diagnostic "guard-process:$index:$guard_failure_detail"
+          else
+            stream_record_diagnostic "guard-process:$index"
+          fi
+          return 1
+        fi
+        if [[ -n "${guard_authority_sha256s[$index]}" ]]; then
+          if ! recovery_read_private_file_once \
+              "${guard_authority_paths[$index]}" 65536 \
+              "${guard_authority_sha256s[$index]}" >/dev/null ||
+             [[ "$(recovery_monitor_authority_sha256_for_ready \
+               "${guard_ready_markers[$index]}" 2>/dev/null || :)" != \
+               "${guard_authority_sha256s[$index]}" ]]; then
+            stream_record_diagnostic "guard-process:$index"
+            return 1
+          fi
+        fi
+        previous_observation_milliseconds="${guard_last_observation_milliseconds[$index]}"
+        observation_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+        if ! current_progress="$(recovery_stream_guard_progress_value \
+          "${guard_progress_markers[$index]}" \
+          "${guard_authority_sha256s[$index]}")"; then
+          stream_record_diagnostic "guard-progress-read:$index"
+          return 1
+        fi
+        previous_progress="${guard_last_progress[$index]}"
+        if ((current_progress < previous_progress)); then
+          stream_record_diagnostic "guard-progress-regression:$index"
+          return 1
+        elif ((current_progress > previous_progress)); then
+          guard_last_progress[index]="$current_progress"
+          guard_last_progress_milliseconds[index]="$previous_observation_milliseconds"
+        fi
+        guard_last_observation_milliseconds[index]="$observation_milliseconds"
+      done
+      current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+      for index in "${!guard_pids[@]}"; do
+        if ((current_milliseconds - guard_last_progress_milliseconds[index] >=
+          guard_maximum_stale_seconds[index] * 1000)); then
+          stream_record_diagnostic "guard-stale:$index"
           return 1
         fi
       done
     }
     supervised_stream_guard_remaining_milliseconds() {
-      local minimum_remaining="" guard_deadline
+      local minimum_remaining="" minimum_index="" guard_deadline
       if [[ "${#guard_pids[@]}" == 0 ]]; then
+        supervised_stream_guard_remaining_milliseconds_value=2147483647
+        supervised_stream_guard_remaining_index=-1
         printf '2147483647\n'
         return 0
       fi
@@ -1211,17 +1886,40 @@ recovery_kubectl_stream_supervised() {
         if [[ -z "$minimum_remaining" ]] ||
            ((remaining_milliseconds < minimum_remaining)); then
           minimum_remaining="$remaining_milliseconds"
+          minimum_index="$index"
         fi
       done
+      supervised_stream_guard_remaining_milliseconds_value="$minimum_remaining"
+      supervised_stream_guard_remaining_index="$minimum_index"
       printf '%s\n' "$minimum_remaining"
     }
     supervised_stream_require_lease_within_guard_budget() {
       local cancellation_reserve_milliseconds="${1:-$guard_cancel_reserve_milliseconds}"
-      [[ "$cancellation_reserve_milliseconds" =~ ^[0-9]+$ ]] || return 2
+      supervised_stream_lease_failure_detail=""
+      if [[ ! "$cancellation_reserve_milliseconds" =~ ^[0-9]+$ ]]; then
+        supervised_stream_lease_failure_detail=lease-parameter
+        return 2
+      fi
       [[ "$require_lease" == 1 ]] || return 0
-      remaining_milliseconds="$(
-        supervised_stream_guard_remaining_milliseconds
-      )" || return 1
+      if [[ -n "$lease_authority_guard_index" ]]; then
+        index="$lease_authority_guard_index"
+        if ! recovery_stream_guard_process_is_healthy \
+          "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
+          "${guard_failure_markers[$index]}" "${guard_ready_markers[$index]}" \
+          "${guard_progress_markers[$index]}" \
+          "${guard_authority_paths[$index]}" \
+          "${guard_authority_sha256s[$index]}" \
+          "${guard_authority_kinds[$index]}"; then
+          supervised_stream_lease_failure_detail=lease-authority
+          return 1
+        fi
+        return 0
+      fi
+      supervised_stream_guard_remaining_milliseconds >/dev/null || {
+        supervised_stream_lease_failure_detail=lease-window-read
+        return 1
+      }
+      remaining_milliseconds="$supervised_stream_guard_remaining_milliseconds_value"
       if [[ "${#guard_pids[@]}" == 0 ]]; then
         lease_timeout_seconds=5
       else
@@ -1231,7 +1929,10 @@ recovery_kubectl_stream_supervised() {
         # kubectl accepts a whole-second request timeout. Refuse to start a
         # Lease GET unless at least one complete second remains after reserving
         # enough time to detect the outcome, revoke the stream and reap it.
-        ((lease_budget_milliseconds >= 1000)) || return 1
+        if ((lease_budget_milliseconds < 1000)); then
+          supervised_stream_lease_failure_detail="lease-window:${supervised_stream_guard_remaining_index}:${remaining_milliseconds}"
+          return 1
+        fi
         lease_timeout_seconds=$((lease_budget_milliseconds / 1000))
         ((lease_timeout_seconds <= 5)) || lease_timeout_seconds=5
         # A deliberately short (five-second or smaller) guard needs room for
@@ -1243,13 +1944,15 @@ recovery_kubectl_stream_supervised() {
           lease_timeout_seconds=1
         fi
       fi
-      recovery_require_operation_serialization_stream "$lease_timeout_seconds"
+      if ! recovery_require_operation_serialization_stream "$lease_timeout_seconds"; then
+        supervised_stream_lease_failure_detail=lease-check
+        return 1
+      fi
     }
     supervised_stream_guard_has_cancellation_reserve() {
       [[ "${#guard_pids[@]}" != 0 ]] || return 0
-      remaining_milliseconds="$(
-        supervised_stream_guard_remaining_milliseconds
-      )" || return 1
+      supervised_stream_guard_remaining_milliseconds >/dev/null || return 1
+      remaining_milliseconds="$supervised_stream_guard_remaining_milliseconds_value"
       ((remaining_milliseconds > guard_cancel_reserve_milliseconds))
     }
     supervised_stream_child_is_running() {
@@ -1295,11 +1998,10 @@ recovery_kubectl_stream_supervised() {
     }
     trap 'supervised_stream_cleanup; exit 130' INT TERM
     recovery_process_identity_is_live "$caller_pid" "$caller_start_identity" || return 1
+    stream_diagnostic_stage=initialize
     initialize_supervised_stream_guards || return 1
-    # A multi-guard stream must not inherit most of its ten-second budget from
-    # sequential startup waits. Obtain another complete sweep from every guard
-    # while no destructive child exists, then authorize the gated launch.
-    refresh_supervised_stream_guards_for_launch || return 1
+    refresh_deadline_seconds="$(recovery_stream_guard_initial_deadline_seconds)" || return 1
+    stream_diagnostic_stage=launch
     stream_gate="$(mktemp "${TMPDIR:-/tmp}/yenhubs-stream-gate.XXXXXX")" || return 1
     chmod 600 "$stream_gate" || {
       rm -f -- "$stream_gate"
@@ -1317,7 +2019,7 @@ import sys
 import time
 os.setsid()
 gate_path = sys.argv[1]
-deadline = time.monotonic() + 5
+deadline = time.monotonic() + float(sys.argv[2])
 while True:
     try:
         with open(gate_path, "rb") as gate:
@@ -1331,19 +2033,53 @@ while True:
     if time.monotonic() >= deadline:
         sys.exit(1)
     time.sleep(0.01)
-os.execvp(sys.argv[2], sys.argv[2:])
-' "$stream_gate" kubectl --context "$EXPECTED_KUBE_CONTEXT" \
+os.execvp(sys.argv[3], sys.argv[3:])
+' "$stream_gate" "$((refresh_deadline_seconds + 10))" \
+      kubectl --context "$EXPECTED_KUBE_CONTEXT" \
         --request-timeout="${maximum_seconds}s" "$@" <&0 &
     stream_pid=$!
     if ! stream_start_identity="$(recovery_process_start_identity "$stream_pid")"; then
       supervised_stream_cleanup
       return 1
     fi
-    if ! recovery_process_identity_is_live "$caller_pid" "$caller_start_identity" ||
-       ! supervised_stream_guards_are_healthy ||
-       ! supervised_stream_require_lease_within_guard_budget ||
-       ! supervised_stream_guards_are_healthy ||
-       ! supervised_stream_guard_has_cancellation_reserve; then
+    if ! recovery_process_identity_is_live "$caller_pid" "$caller_start_identity"; then
+      stream_record_diagnostic caller-identity
+      supervised_stream_cleanup
+      return 1
+    fi
+    # The exact isolated child now exists but cannot exec kubectl until the
+    # private gate receives `go`. Align every guard after all variable process
+    # setup, so that setup time cannot consume the destructive freshness
+    # window. Cleanup revokes the gated child on every alignment failure.
+    stream_diagnostic_stage=refresh
+    if ! refresh_supervised_stream_guards_for_launch; then
+      supervised_stream_cleanup
+      return 1
+    fi
+    stream_diagnostic_stage=launch
+    if ! recovery_process_identity_is_live "$stream_pid" "$stream_start_identity"; then
+      stream_record_diagnostic stream-identity
+      supervised_stream_cleanup
+      return 1
+    fi
+    if ! recovery_process_identity_is_live "$caller_pid" "$caller_start_identity"; then
+      stream_record_diagnostic caller-identity
+      supervised_stream_cleanup
+      return 1
+    fi
+    if [[ "$require_lease" == 1 && -z "$lease_authority_guard_index" ]]; then
+      if ! supervised_stream_require_lease_within_guard_budget; then
+        stream_record_diagnostic "${supervised_stream_lease_failure_detail:-lease-budget}"
+        supervised_stream_cleanup
+        return 1
+      fi
+    fi
+    if ! supervised_stream_guards_are_continuously_healthy; then
+      supervised_stream_cleanup
+      return 1
+    fi
+    if ! supervised_stream_guard_has_cancellation_reserve; then
+      stream_record_diagnostic cancellation-reserve
       supervised_stream_cleanup
       return 1
     fi
@@ -1355,6 +2091,12 @@ os.execvp(sys.argv[2], sys.argv[2:])
       supervised_stream_cleanup
       return 1
     }
+    stream_diagnostic_stage=running
+    # The gate opened only after an exact guard/Lease/cancellation audit. Do
+    # not repeat the same API Lease GET immediately in the same scheduling
+    # slice; begin periodic supervision after its configured poll interval.
+    # One second remains well inside the fixed ten-second freshness contract.
+    sleep "$poll_seconds"
     while :; do
       if ! recovery_process_identity_is_live \
           "$stream_pid" "$stream_start_identity"; then
@@ -1363,6 +2105,7 @@ os.execvp(sys.argv[2], sys.argv[2:])
         # that completed child from a still-running process whose numeric PID no
         # longer matches; only the latter is an identity failure.
         if supervised_stream_child_is_running; then
+          stream_record_diagnostic stream-identity
           supervised_stream_cleanup
           return 1
         fi
@@ -1374,25 +2117,40 @@ os.execvp(sys.argv[2], sys.argv[2:])
       }
       if ((current_milliseconds - stream_started_milliseconds >=
         maximum_seconds * 1000)); then
+        stream_record_diagnostic stream-timeout
         supervised_stream_cleanup
         return 1
       fi
       if ! recovery_process_identity_is_live "$caller_pid" "$caller_start_identity"; then
+        stream_record_diagnostic caller-identity
         supervised_stream_cleanup
         return 1
       fi
-      if ! supervised_stream_guards_are_healthy; then
+      if ! supervised_stream_guards_are_continuously_healthy; then
         supervised_stream_cleanup
         return 1
       fi
-      if ! supervised_stream_require_lease_within_guard_budget ||
-         ! supervised_stream_guards_are_healthy ||
-         ! supervised_stream_guard_has_cancellation_reserve; then
+      if [[ "$require_lease" == 1 && -z "$lease_authority_guard_index" ]]; then
+        if ! supervised_stream_require_lease_within_guard_budget; then
+          stream_record_diagnostic "${supervised_stream_lease_failure_detail:-lease-budget}"
+          supervised_stream_cleanup
+          return 1
+        fi
+        # The external Lease request consumes part of the current freshness
+        # window, so re-observe every capability-bound progress marker after it.
+        if ! supervised_stream_guards_are_continuously_healthy; then
+          supervised_stream_cleanup
+          return 1
+        fi
+      fi
+      if ! supervised_stream_guard_has_cancellation_reserve; then
+        stream_record_diagnostic cancellation-reserve
         supervised_stream_cleanup
         return 1
       fi
       sleep "$poll_seconds"
     done
+    stream_diagnostic_stage="command"
     if wait "$stream_pid"; then stream_status=0; else stream_status=$?; fi
     if [[ "$stream_status" != 0 ]]; then
       recovery_stop_reaped_isolated_process_group "$stream_pid"
@@ -1401,13 +2159,35 @@ os.execvp(sys.argv[2], sys.argv[2:])
     stream_start_identity=""
     rm -f -- "$stream_gate"
     stream_gate=""
-    recovery_process_identity_is_live "$caller_pid" "$caller_start_identity" || return 1
-    supervised_stream_guards_are_healthy || return 1
+    stream_diagnostic_stage=post-audit
+    if ! recovery_process_identity_is_live "$caller_pid" "$caller_start_identity"; then
+      stream_record_diagnostic caller-identity
+      return 1
+    fi
+    # The destructive child has completed and been reaped. Obtain one complete
+    # post-stream sweep from every guard and align them inside a simultaneous
+    # Lease window before accepting the boundary. This uses only the bounded
+    # pre-launch/startup allowance; production freshness remains unchanged.
+    if ! refresh_supervised_stream_guards_for_launch 1000; then
+      stream_record_diagnostic post-audit-guard-alignment
+      return 1
+    fi
+    if ! supervised_stream_guards_are_healthy; then
+      stream_record_diagnostic post-audit-guard
+      return 1
+    fi
     # The local stream group has already been waited and reaped. The final
     # Lease/guard audit still fails closed, but no cancellation reserve is
     # needed once there is no destructive capability left to revoke.
-    supervised_stream_require_lease_within_guard_budget 0 || return 1
-    supervised_stream_guards_are_healthy || return 1
+    if ! supervised_stream_require_lease_within_guard_budget 0; then
+      stream_record_diagnostic \
+        "${supervised_stream_lease_failure_detail:-post-audit-lease}"
+      return 1
+    fi
+    if ! supervised_stream_guards_are_healthy; then
+      stream_record_diagnostic post-audit-guard
+      return 1
+    fi
     return "$stream_status"
   )
 }
@@ -2954,14 +3734,17 @@ recovery_deployment_inventory_is_acceptable() {
          $repository == "mozillareality/nearspark")
       elif ($pair == "pgbouncer/pgbouncer" or $pair == "pgbouncer-t/pgbouncer-t") then
         ($repository == "ghcr.io/yengalvez/pgbouncer" or
+         $repository == "docker.io/mozillareality/pgbouncer" or
          $repository == "docker.io/edoburu/pgbouncer" or
          $repository == "edoburu/pgbouncer")
       elif $pair == "photomnemonic/photomnemonic" then $repository == "ghcr.io/yengalvez/photomnemonic"
       elif ($pair == "pgsql/pgsql" or $pair == "pgsql/postgresql") then
         ($repository == "ghcr.io/yengalvez/postgres" or
+         $repository == "docker.io/mozillareality/postgres" or
          $repository == "docker.io/library/postgres" or $repository == "postgres")
       elif $pair == "reticulum/postgrest" then
         ($repository == "ghcr.io/yengalvez/postgrest" or
+         $repository == "docker.io/mozillareality/postgrest" or
          $repository == "docker.io/postgrest/postgrest" or
          $repository == "postgrest/postgrest")
       elif $pair == "reticulum/reticulum" then $repository == "ghcr.io/yengalvez/reticulum"
@@ -3457,10 +4240,15 @@ EOF
   fi
 }
 
-recovery_require_live_process_local_runner_exact() {
+recovery_require_live_process_local_runner_contract_exact() {
   local values_path="$1" expected_image parent_json reticulum_json pgsql_json
   local ret_config_json configs_json residual_state
+  local strategy_scope="${2:-strict-recreate}"
   local parser_path="$RECOVERY_SAFETY_DIR/../parse-local-values.mjs"
+
+  [[ "$strategy_scope" == strict-recreate ||
+     "$strategy_scope" == freeze-checkpoint ||
+     "$strategy_scope" == cold-rebind-target ]] || return 2
 
   recovery_private_values_file_is_acceptable "$values_path" || {
     printf 'The process-local checkpoint gate requires one direct owner-only VALUES_FILE.\n' >&2
@@ -3488,7 +4276,8 @@ recovery_require_live_process_local_runner_exact() {
     recovery_kubectl get secret configs -n "$NAMESPACE" -o json
   )" || return 1
 
-  jq -e --arg namespace "$NAMESPACE" --arg image "$expected_image" '
+  jq -e --arg namespace "$NAMESPACE" --arg image "$expected_image" \
+    --arg strategy_scope "$strategy_scope" '
     def one_env($name):
       [(.spec.template.spec.containers[0].env // [])[] | select(.name == $name)];
     def literal_env($name; $value):
@@ -3515,12 +4304,29 @@ recovery_require_live_process_local_runner_exact() {
     .metadata.name == "bot-orchestrator" and .metadata.namespace == $namespace and
     (.metadata.uid | type == "string" and length > 0) and
     (.metadata.resourceVersion | type == "string" and length > 0) and
-    .spec.strategy.type == "Recreate" and
+    (if $strategy_scope == "strict-recreate" or
+        $strategy_scope == "cold-rebind-target" then
+       .spec.strategy.type == "Recreate"
+     else
+       (.spec.strategy.type == "Recreate" or
+        (.spec.strategy.type == "RollingUpdate" and
+         ((.spec.strategy | keys) | sort) == ["rollingUpdate","type"] and
+         ((.spec.strategy.rollingUpdate | keys) | sort) ==
+           ["maxSurge","maxUnavailable"] and
+         all((.spec.strategy.rollingUpdate.maxSurge,
+              .spec.strategy.rollingUpdate.maxUnavailable);
+           (type == "number" and floor == . and . >= 0) or
+           (type == "string" and test("^(0|[1-9][0-9]*)(%?)$")))))
+     end) and
     .spec.selector == {matchLabels:{app:"bot-orchestrator"}} and
     .spec.template.metadata.labels.app == "bot-orchestrator" and
     .spec.template.spec.automountServiceAccountToken == false and
     ((.spec.template.spec.serviceAccountName // "default") == "default") and
-    ((.spec.template.spec.imagePullSecrets // []) == []) and
+    (if $strategy_scope == "cold-rebind-target" then
+       (.spec.template.spec.imagePullSecrets // []) == [{name:"bot-images-pull"}]
+     else
+       (.spec.template.spec.imagePullSecrets // []) == []
+     end) and
     ((.spec.template.spec.initContainers // []) == []) and
     ((.spec.template.spec.ephemeralContainers // []) == []) and
     ((.spec.template.spec.hostNetwork // false) == false) and
@@ -3609,14 +4415,30 @@ recovery_require_live_process_local_runner_exact() {
     printf 'The live configs Secret contains isolated-runner credentials; refusing process-local fallback.\n' >&2
     return 1
   }
-  jq -e --arg namespace "$NAMESPACE" '
+  jq -e --arg namespace "$NAMESPACE" --arg strategy_scope "$strategy_scope" '
     .apiVersion == "v1" and .kind == "ConfigMap" and
     .metadata.name == "ret-config" and .metadata.namespace == $namespace and
     .metadata.deletionTimestamp == null and
-    ([((.data // {})[] | select(type == "string"))] | join("\n")) as $text |
+    ((.data // {})["config.toml.template"] | select(type == "string")) as $text |
+    ([((.data // {})[] | select(type == "string"))] | join("\n")) as $all_text |
     (["<BOT_RUNNER_ACCESS_KEY>", "<BOT_ORCHESTRATOR_ACCESS_KEY>",
-      "<DASHBOARD_ACCESS_KEY>", "<BOT_RUNNER_RECOVERY_EPOCH>",
-      "Ret.BotOrchestrator"] | all(. as $marker | ($text | contains($marker) | not)))
+      "<DASHBOARD_ACCESS_KEY>", "<BOT_RUNNER_RECOVERY_EPOCH>"] |
+      all(. as $marker | ($all_text | contains($marker) | not))) and
+    ($all_text | [scan("(?m)^\\[ret\\.\u0022Elixir\\.Ret\\.BotOrchestrator\u0022\\]$")] |
+      length) as $all_section_count |
+    ($text | [scan("(?m)^\\[ret\\.\u0022Elixir\\.Ret\\.BotOrchestrator\u0022\\]$")] |
+      length) as $template_section_count |
+    if $strategy_scope == "strict-recreate" then
+      $all_section_count == 0
+    elif $strategy_scope == "cold-rebind-target" then
+      $all_section_count == 1 and $template_section_count == 1 and
+      ($text | [scan("(?m)^\\[ret\\.\u0022Elixir\\.Ret\\.BotOrchestrator\u0022\\]\\r?\\nendpoint = \u0022http://bot-orchestrator\\.<POD_NS>:5001\u0022\\r?\\naccess_key = \u0022<BOT_ACCESS_KEY>\u0022(?:\\r?\\n[ \\t]*)*(?:\\r?\\n(?=\\[)|$)")] | length) == 1
+    elif $all_section_count == 0 then
+      true
+    else
+      $all_section_count == 1 and $template_section_count == 1 and
+      ($text | [scan("(?m)^\\[ret\\.\u0022Elixir\\.Ret\\.BotOrchestrator\u0022\\]\\r?\\nendpoint = \u0022http://bot-orchestrator\\.<POD_NS>:5001\u0022\\r?\\naccess_key = \u0022<BOT_ACCESS_KEY>\u0022(?:\\r?\\n[ \\t]*)*(?:\\r?\\n(?=\\[)|$)")] | length) == 1
+    end
   ' >/dev/null <<<"$ret_config_json" || {
     printf 'The live Reticulum config contains isolated-runner markers; refusing process-local fallback.\n' >&2
     return 1
@@ -3627,6 +4449,29 @@ recovery_require_live_process_local_runner_exact() {
     return 1
   }
   recovery_require_no_managed_bot_runner_pods || return 1
+}
+
+# Restore, rotation and general inventory callers always retain the historical
+# exact Recreate requirement. Environment markers must never widen this gate.
+recovery_require_live_process_local_runner_exact() {
+  recovery_require_live_process_local_runner_contract_exact "$1" strict-recreate
+}
+
+# A freshly generated legacy cold-rebind target keeps the process-local
+# Reticulum endpoint and the single GHCR pull-secret reference needed by the
+# private bot-orchestrator image.  This scope is intentionally separate from
+# the historical in-place/restore gate above.
+recovery_require_live_process_local_cold_rebind_target_exact() {
+  recovery_require_live_process_local_runner_contract_exact \
+    "$1" cold-rebind-target
+}
+
+recovery_require_live_process_local_freeze_checkpoint_exact() {
+  local values_path="$1" checkpoint_format="$2" runner_mode="$3"
+  [[ "$checkpoint_format" == freeze-bundle-v1 &&
+     "$runner_mode" == process-local ]] || return 2
+  recovery_require_live_process_local_runner_contract_exact \
+    "$values_path" freeze-checkpoint
 }
 
 recovery_checkpoint_runner_mode_candidate() {
@@ -3690,8 +4535,12 @@ recovery_checkpoint_runner_mode_candidate() {
 
 recovery_require_checkpoint_runner_mode_exact() {
   local values_path="$1" expected_mode="${2:-}" candidate_mode
+  local process_local_scope="${3:-strict-recreate}"
   [[ -z "$expected_mode" || "$expected_mode" == process-local ||
      "$expected_mode" == kubernetes-pod ]] || return 2
+  [[ "$process_local_scope" == strict-recreate ||
+     "$process_local_scope" == freeze-checkpoint ||
+     "$process_local_scope" == cold-rebind-target ]] || return 2
   candidate_mode="$(recovery_checkpoint_runner_mode_candidate)" || {
     printf 'Could not classify the live checkpoint runner boundary.\n' >&2
     return 1
@@ -3702,7 +4551,15 @@ recovery_require_checkpoint_runner_mode_exact() {
   fi
   case "$candidate_mode" in
     process-local)
-      recovery_require_live_process_local_runner_exact "$values_path" || return 1
+      if [[ "$process_local_scope" == freeze-checkpoint ]]; then
+        recovery_require_live_process_local_freeze_checkpoint_exact \
+          "$values_path" freeze-bundle-v1 process-local || return 1
+      elif [[ "$process_local_scope" == cold-rebind-target ]]; then
+        recovery_require_live_process_local_cold_rebind_target_exact \
+          "$values_path" || return 1
+      else
+        recovery_require_live_process_local_runner_exact "$values_path" || return 1
+      fi
       ;;
     kubernetes-pod)
       # Any isolated-runner signal selects this branch.  A partial bootstrap,
@@ -3816,7 +4673,12 @@ recovery_require_checkpoint_generation_matches_live() {
   case "$expected_generation" in
     legacy-absent)
       [[ "$mode" == process-local ]] || return 1
-      recovery_require_live_process_local_runner_exact "$values_path"
+      if [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind ]]; then
+        recovery_require_live_process_local_cold_rebind_target_exact \
+          "$values_path"
+      else
+        recovery_require_live_process_local_runner_exact "$values_path"
+      fi
       ;;
     durable-v2)
       [[ "$mode" == kubernetes-pod ]] || return 1
@@ -4549,6 +5411,9 @@ recovery_sql_dump_has_complete_marker() {
     BEGIN {
       marker_count=0
       marker_line=0
+      terminal_separator_count=0
+      terminal_separator_line=0
+      terminal_other=0
       restrict_count=0
       restrict_line=0
       restrict_token=""
@@ -4557,10 +5422,10 @@ recovery_sql_dump_has_complete_marker() {
       unrestrict_token=""
       last_nonempty=""
     }
-    NF { last_nonempty=$0 }
     $0 == "-- PostgreSQL database dump complete" {
       marker_count++
       marker_line=NR
+      last_nonempty=$0
       next
     }
     $1 == "\\restrict" {
@@ -4569,6 +5434,7 @@ recovery_sql_dump_has_complete_marker() {
           length($2) < 32 || length($2) > 128) invalid=1
       restrict_token=$2
       restrict_line=NR
+      last_nonempty=$0
       next
     }
     $1 == "\\unrestrict" {
@@ -4577,15 +5443,33 @@ recovery_sql_dump_has_complete_marker() {
           length($2) < 32 || length($2) > 128) invalid=1
       unrestrict_token=$2
       unrestrict_line=NR
+      last_nonempty=$0
       next
     }
+    marker_count > 0 && NF {
+      if ($0 == "--") {
+        terminal_separator_count++
+        terminal_separator_line=NR
+      } else {
+        terminal_other=1
+      }
+    }
+    NF { last_nonempty=$0 }
     END {
-      if (invalid || marker_count != 1) exit 2
+      if (invalid || marker_count != 1 || terminal_other ||
+          terminal_separator_count > 1) exit 2
       if (restrict_count == 0 && unrestrict_count == 0 &&
-          last_nonempty == "-- PostgreSQL database dump complete") exit 0
+          (last_nonempty == "-- PostgreSQL database dump complete" ||
+           (terminal_separator_count == 1 &&
+            terminal_separator_line > marker_line &&
+            last_nonempty == "--"))) exit 0
       if (restrict_count == 1 && unrestrict_count == 1 &&
           restrict_token == unrestrict_token &&
           restrict_line < marker_line && marker_line < unrestrict_line &&
+          (terminal_separator_count == 0 ||
+           (terminal_separator_count == 1 &&
+            marker_line < terminal_separator_line &&
+            terminal_separator_line < unrestrict_line)) &&
           last_nonempty == "\\unrestrict " unrestrict_token) exit 0
       exit 2
     }
@@ -4928,6 +5812,332 @@ recovery_require_deployment_contract() {
   IFS=$'\t' read -r uid resource_version replicas selector fingerprint <<<"$contract"
   [[ "$uid" == "$expected_uid" && "$replicas" == "$expected_replicas" &&
      "$selector" == "$expected_selector" && "$fingerprint" == "$expected_fingerprint" ]]
+}
+
+# Bind the complete mutable Deployment control surface used by a process-local
+# freeze before any lock acquisition. A later call with the expected contract
+# requires byte-for-byte equality of UID, resourceVersion, generation and full
+# spec, so strategy selection cannot race across the lock window.
+recovery_capture_process_local_freeze_parent_contract_exact() {
+  local expected_contract="${1:-}" deployment_json contract_json
+  deployment_json="$(recovery_kubectl get deployment bot-orchestrator \
+    -n "$NAMESPACE" -o json)" || return 1
+  contract_json="$(jq -cer '
+    select(.apiVersion == "apps/v1" and .kind == "Deployment") |
+    select(.metadata.name == "bot-orchestrator") |
+    select(.metadata.namespace | type == "string" and length > 0) |
+    select(.metadata.uid | type == "string" and length > 0) |
+    select(.metadata.resourceVersion | type == "string" and length > 0) |
+    select((.metadata.deletionTimestamp // null) == null) |
+    select(.metadata.generation | type == "number" and floor == . and . >= 1) |
+    select((.spec | type) == "object" and .spec.replicas == 1) |
+    select(.spec.strategy.type == "Recreate" or
+      .spec.strategy.type == "RollingUpdate") |
+    select(.status.observedGeneration == .metadata.generation) |
+    select((.status.replicas // 0) == 1 and
+      (.status.updatedReplicas // 0) == 1 and
+      (.status.readyReplicas // 0) == 1 and
+      (.status.availableReplicas // 0) == 1 and
+      (.status.unavailableReplicas // 0) == 0) |
+    {schema_version:1,name:.metadata.name,uid:.metadata.uid,
+     resource_version:.metadata.resourceVersion,
+     generation:.metadata.generation,spec:.spec}
+  ' <<<"$deployment_json")" || {
+    printf 'The process-local freeze parent is not at one stable ready boundary.\n' >&2
+    return 1
+  }
+  if [[ -n "$expected_contract" ]]; then
+    jq -e --argjson expected "$expected_contract" '. == $expected' \
+      >/dev/null <<<"$contract_json" || {
+      printf 'The process-local freeze parent changed across lock acquisition.\n' >&2
+      return 1
+    }
+  fi
+  printf '%s\n' "$contract_json"
+}
+
+# Capture one stable process-local RollingUpdate parent boundary. This helper
+# is intentionally specific to freeze checkpoint creation: it proves that one
+# fully observed Deployment has exactly one current ReplicaSet and, at the
+# running boundary, exactly one Ready Pod. Historical ReplicaSets owned by the
+# same Deployment are accepted only when completely inert. The returned JSON
+# retains the Deployment's
+# UID, resourceVersion, generation and complete spec for later replica-only
+# compare-and-set mutations.
+recovery_capture_process_local_freeze_parent_boundary_exact() {
+  local boundary="$1" baseline_json="${2:-}" expected_generation="${3:-}"
+  local expected_replicas expected_ready deployment_before deployment_after
+  local hpa_json replica_sets_json pods_json pods_path contract_json
+  case "$boundary" in
+    ready-one)
+      expected_replicas=1
+      expected_ready=1
+      ;;
+    zero)
+      expected_replicas=0
+      expected_ready=0
+      ;;
+    *) return 2 ;;
+  esac
+  [[ -z "$expected_generation" ||
+     "$expected_generation" =~ ^[1-9][0-9]*$ ]] || return 2
+  if [[ -n "$baseline_json" ]]; then
+    jq -e '
+      type == "object" and .schema_version == 1 and
+      .name == "bot-orchestrator" and
+      (.uid | type == "string" and length > 0) and
+      (.resource_version | type == "string" and length > 0) and
+      (.generation | type == "number" and floor == . and . >= 1) and
+      (.spec | type == "object") and .spec.replicas == 1 and
+      .spec.strategy.type == "RollingUpdate" and
+      (.replica_set.name | type == "string" and length > 0) and
+      (.replica_set.uid | type == "string" and length > 0)
+    ' >/dev/null <<<"$baseline_json" || return 2
+  fi
+
+  deployment_before="$(recovery_kubectl get deployment bot-orchestrator \
+    -n "$NAMESPACE" -o json)" || return 1
+  hpa_json="$(recovery_kubectl_get_namespaced_list \
+    horizontalpodautoscalers "$NAMESPACE")" || return 1
+  replica_sets_json="$(recovery_kubectl_get_namespaced_list \
+    replicasets "$NAMESPACE")" || return 1
+  pods_path="/api/v1/namespaces/$NAMESPACE/pods?labelSelector=app%3Dbot-orchestrator"
+  pods_json="$(recovery_kubectl get --raw "$pods_path")" || return 1
+  deployment_after="$(recovery_kubectl get deployment bot-orchestrator \
+    -n "$NAMESPACE" -o json)" || return 1
+
+  jq -e '
+    .apiVersion == "autoscaling/v2" and
+    .kind == "HorizontalPodAutoscalerList" and
+    (.items | type == "array") and
+    ([.items[] | select(
+      .spec.scaleTargetRef.apiVersion == "apps/v1" and
+      .spec.scaleTargetRef.kind == "Deployment" and
+      .spec.scaleTargetRef.name == "bot-orchestrator")] | length) == 0
+  ' >/dev/null <<<"$hpa_json" || {
+    printf 'A HorizontalPodAutoscaler targets bot-orchestrator; refusing checkpoint scaling.\n' >&2
+    return 1
+  }
+  jq -e '
+    .apiVersion == "apps/v1" and .kind == "ReplicaSetList" and
+    (.metadata.resourceVersion | type == "string" and length > 0) and
+    (.items | type == "array")
+  ' >/dev/null <<<"$replica_sets_json" || return 1
+  jq -e '
+    .apiVersion == "v1" and .kind == "PodList" and
+    (.metadata.resourceVersion | type == "string" and length > 0) and
+    (.items | type == "array")
+  ' >/dev/null <<<"$pods_json" || return 1
+
+  contract_json="$(jq -cne \
+    --arg boundary "$boundary" \
+    --argjson expected_replicas "$expected_replicas" \
+    --argjson expected_ready "$expected_ready" \
+    --arg expected_generation "$expected_generation" \
+    --argjson before "$deployment_before" \
+    --argjson after "$deployment_after" \
+    --argjson replica_sets "$replica_sets_json" \
+    --argjson pods "$pods_json" \
+    --argjson baseline "${baseline_json:-null}" '
+    def count($value): ($value // 0);
+    def listed_item_gvk($value; $api_version; $kind):
+      ($value.apiVersion == null or $value.apiVersion == $api_version) and
+      ($value.kind == null or $value.kind == $kind);
+    def stable_deployment($value):
+      $value.apiVersion == "apps/v1" and $value.kind == "Deployment" and
+      $value.metadata.name == "bot-orchestrator" and
+      ($value.metadata.namespace | type == "string" and length > 0) and
+      ($value.metadata.uid | type == "string" and length > 0) and
+      ($value.metadata.resourceVersion | type == "string" and length > 0) and
+      (($value.metadata.deletionTimestamp // null) == null) and
+      ($value.metadata.generation | type == "number" and floor == . and . >= 1) and
+      $value.spec.replicas == $expected_replicas and
+      $value.spec.strategy.type == "RollingUpdate" and
+      $value.spec.selector == {matchLabels:{app:"bot-orchestrator"}} and
+      $value.spec.template.metadata.labels.app == "bot-orchestrator" and
+      $value.status.observedGeneration == $value.metadata.generation and
+      count($value.status.replicas) == $expected_replicas and
+      count($value.status.updatedReplicas) == $expected_replicas and
+      count($value.status.readyReplicas) == $expected_ready and
+      count($value.status.availableReplicas) == $expected_ready and
+      count($value.status.unavailableReplicas) == 0;
+    def current_rs_projection($rs; $deployment):
+      ($rs.spec.selector.matchLabels["pod-template-hash"] // null) as $hash |
+      ($deployment.metadata.annotations["deployment.kubernetes.io/revision"] // null)
+        as $deployment_revision |
+      ($rs.metadata.annotations["deployment.kubernetes.io/revision"] // null)
+        as $rs_revision |
+      ($hash | type == "string" and length > 0) and
+      ($deployment_revision | type == "string" and length > 0) and
+      $rs_revision == $deployment_revision and
+      $rs.spec.selector == {matchLabels:
+        ($deployment.spec.selector.matchLabels + {"pod-template-hash":$hash})} and
+      $rs.spec.template.metadata.labels["pod-template-hash"] == $hash and
+      ($rs.spec.template | del(.metadata.labels["pod-template-hash"])) ==
+        $deployment.spec.template;
+    ([ $replica_sets.items[] |
+       select([.metadata.ownerReferences[]? |
+         select(.apiVersion == "apps/v1" and .kind == "Deployment" and
+           .controller == true and .name == "bot-orchestrator" and
+           .uid == $after.metadata.uid)] | length == 1) ]) as $owned_rs |
+    ([ $owned_rs[] |
+       select(current_rs_projection(.; $after)) ]) as $current_rs |
+    ($current_rs[0]) as $rs |
+    ([ $owned_rs[] | select(.metadata.uid != $rs.metadata.uid) ]) as $historical_rs |
+    (stable_deployment($before) and stable_deployment($after) and
+    ({uid:$before.metadata.uid,resourceVersion:$before.metadata.resourceVersion,
+      generation:$before.metadata.generation,spec:$before.spec,status:$before.status} ==
+     {uid:$after.metadata.uid,resourceVersion:$after.metadata.resourceVersion,
+      generation:$after.metadata.generation,spec:$after.spec,status:$after.status}) and
+    (if $expected_generation == "" then true else
+       $after.metadata.generation == ($expected_generation | tonumber)
+     end) and
+    ($current_rs | length) == 1 and
+    all($historical_rs[];
+      listed_item_gvk(.; "apps/v1"; "ReplicaSet") and
+      ((.metadata.deletionTimestamp // null) == null) and
+      (.metadata.name | type == "string" and length > 0) and
+      (.metadata.uid | type == "string" and length > 0) and
+      (.metadata.resourceVersion | type == "string" and length > 0) and
+      (.metadata.generation | type == "number" and floor == . and . >= 1) and
+      .spec.replicas == 0 and count(.status.replicas) == 0 and
+      count(.status.readyReplicas) == 0 and
+      count(.status.availableReplicas) == 0) and
+    listed_item_gvk($rs; "apps/v1"; "ReplicaSet") and
+    (($rs.metadata.deletionTimestamp // null) == null) and
+    ($rs.metadata.name | type == "string" and length > 0) and
+    ($rs.metadata.uid | type == "string" and length > 0) and
+    ($rs.metadata.resourceVersion | type == "string" and length > 0) and
+    ($rs.metadata.generation | type == "number" and floor == . and . >= 1) and
+    $rs.metadata.labels.app == "bot-orchestrator" and
+    $rs.spec.replicas == $expected_replicas and
+    current_rs_projection($rs; $after) and
+    count($rs.status.replicas) == $expected_replicas and
+    count($rs.status.readyReplicas) == $expected_ready and
+    count($rs.status.availableReplicas) == $expected_ready and
+    ([ $pods.items[] | select(.metadata.labels.app == "bot-orchestrator") ] |
+      length) == $expected_replicas and
+    (if $expected_replicas == 0 then true else
+       ([ $pods.items[] | select(.metadata.labels.app == "bot-orchestrator") ][0]) as $pod |
+       listed_item_gvk($pod; "v1"; "Pod") and
+       (($pod.metadata.deletionTimestamp // null) == null) and
+       ($pod.metadata.name | type == "string" and length > 0) and
+       ($pod.metadata.uid | type == "string" and length > 0) and
+       ([ $pod.metadata.ownerReferences[]? |
+          select(.apiVersion == "apps/v1" and .kind == "ReplicaSet" and
+            .controller == true and .name == $rs.metadata.name and
+            .uid == $rs.metadata.uid) ] | length) == 1 and
+       $pod.status.phase == "Running" and
+       ([ $pod.status.conditions[]? |
+          select(.type == "Ready" and .status == "True") ] | length) == 1
+     end) and
+    (if $baseline == null then true else
+       $after.metadata.uid == $baseline.uid and
+       $after.spec == ($baseline.spec | .replicas = $expected_replicas) and
+       $rs.metadata.name == $baseline.replica_set.name and
+       $rs.metadata.uid == $baseline.replica_set.uid
+     end)) |
+    select(.) |
+    {schema_version:1,boundary:$boundary,name:"bot-orchestrator",
+     uid:$after.metadata.uid,resource_version:$after.metadata.resourceVersion,
+     generation:$after.metadata.generation,spec:$after.spec,
+     replica_set:{name:$rs.metadata.name,uid:$rs.metadata.uid,
+       resource_version:$rs.metadata.resourceVersion,generation:$rs.metadata.generation,
+       spec:$rs.spec},
+     pod:(if $expected_replicas == 0 then null else
+       ([ $pods.items[] | select(.metadata.labels.app == "bot-orchestrator") ][0] |
+        {name:.metadata.name,uid:.metadata.uid}) end)}
+  ')" || {
+    printf 'The process-local RollingUpdate parent is not at the exact %s boundary.\n' \
+      "$boundary" >&2
+    return 1
+  }
+  printf '%s\n' "$contract_json"
+}
+
+# Mutate only spec.replicas for the captured RollingUpdate parent. The full
+# Deployment spec, UID, resourceVersion and generation are server-side JSON
+# Patch tests; no metadata receipt or template field is added by this lane.
+recovery_process_local_freeze_parent_poststate_exact() {
+  local deployment_json="$1" expected_uid="$2" old_resource_version="$3"
+  local expected_generation="$4" desired_spec="$5"
+  jq -er --arg uid "$expected_uid" --arg old_rv "$old_resource_version" \
+    --argjson generation "$expected_generation" \
+    --argjson desired_spec "$desired_spec" '
+    select(.apiVersion == "apps/v1" and .kind == "Deployment") |
+    select(.metadata.name == "bot-orchestrator" and .metadata.uid == $uid) |
+    select(.metadata.resourceVersion | type == "string" and
+      length > 0 and . != $old_rv) |
+    select(.metadata.generation == $generation and
+      (.metadata.deletionTimestamp // null) == null and .spec == $desired_spec) |
+    [.metadata.resourceVersion, (.metadata.generation | tostring)] | @tsv
+  ' <<<"$deployment_json"
+}
+
+recovery_scale_process_local_freeze_parent_replicas_exact() {
+  local baseline_json="$1" expected_resource_version="$2"
+  local expected_generation="$3" expected_replicas="$4" desired_replicas="$5"
+  local expected_uid expected_spec desired_spec patch response live_json
+  [[ "$expected_generation" =~ ^[1-9][0-9]*$ &&
+     ( "$expected_replicas:$desired_replicas" == "1:0" ||
+       "$expected_replicas:$desired_replicas" == "0:1" ) ]] || return 2
+  expected_uid="$(jq -er '
+    select(.schema_version == 1 and .name == "bot-orchestrator" and
+      .spec.replicas == 1 and .spec.strategy.type == "RollingUpdate") |
+    .uid
+  ' <<<"$baseline_json")" || return 2
+  expected_spec="$(jq -c --argjson replicas "$expected_replicas" \
+    '.spec | .replicas = $replicas' <<<"$baseline_json")" || return 2
+  desired_spec="$(jq -c --argjson replicas "$desired_replicas" \
+    '.spec | .replicas = $replicas' <<<"$baseline_json")" || return 2
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  live_json="$(recovery_kubectl get deployment bot-orchestrator \
+    -n "$NAMESPACE" -o json)" || return 1
+  jq -e --arg uid "$expected_uid" --arg rv "$expected_resource_version" \
+    --argjson generation "$expected_generation" \
+    --argjson expected_spec "$expected_spec" '
+    .apiVersion == "apps/v1" and .kind == "Deployment" and
+    .metadata.name == "bot-orchestrator" and
+    .metadata.uid == $uid and .metadata.resourceVersion == $rv and
+    .metadata.generation == $generation and
+    (.metadata.deletionTimestamp // null) == null and
+    .spec == $expected_spec
+  ' >/dev/null <<<"$live_json" || return 1
+  patch="$(jq -cn --arg uid "$expected_uid" \
+    --arg resource_version "$expected_resource_version" \
+    --argjson generation "$expected_generation" \
+    --argjson expected_spec "$expected_spec" \
+    --argjson desired_replicas "$desired_replicas" '[
+      {op:"test",path:"/metadata/uid",value:$uid},
+      {op:"test",path:"/metadata/resourceVersion",value:$resource_version},
+      {op:"test",path:"/metadata/generation",value:$generation},
+      {op:"test",path:"/spec",value:$expected_spec},
+      {op:"replace",path:"/spec/replicas",value:$desired_replicas}
+    ]')" || return 1
+  if ! response="$(recovery_kubectl_mutate patch deployment bot-orchestrator \
+      -n "$NAMESPACE" --type=json --patch="$patch" -o json)"; then
+    # A transport/nonzero result is ambiguous. Reconcile exactly once and
+    # only against the unique committed post-state; never issue another PATCH.
+    recovery_require_operation_serialization || return 1
+    recovery_require_operation_lock || return 1
+    live_json="$(recovery_kubectl get deployment bot-orchestrator \
+      -n "$NAMESPACE" -o json)" || return 1
+    recovery_process_local_freeze_parent_poststate_exact \
+      "$live_json" "$expected_uid" "$expected_resource_version" \
+      "$((expected_generation + 1))" "$desired_spec"
+    return
+  fi
+  recovery_process_local_freeze_parent_poststate_exact \
+    "$response" "$expected_uid" "$expected_resource_version" \
+    "$((expected_generation + 1))" "$desired_spec" >/dev/null || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  live_json="$(recovery_kubectl get deployment bot-orchestrator \
+    -n "$NAMESPACE" -o json)" || return 1
+  recovery_process_local_freeze_parent_poststate_exact \
+    "$live_json" "$expected_uid" "$expected_resource_version" \
+    "$((expected_generation + 1))" "$desired_spec"
 }
 
 recovery_capture_checkpoint_resume_receipt_contract() {
@@ -6790,7 +8000,7 @@ recovery_release_operation_lock() {
 
 recovery_delete_namespaced_with_uid() {
   recovery_delete_namespaced_with_uid_in_namespace \
-    "$NAMESPACE" "$1" "$2" "$3" "${4:-60}"
+    "$NAMESPACE" "$1" "$2" "$3" "${4:-60}" "" "${5:-Foreground}"
 }
 
 recovery_delete_namespaced_with_uid_in_namespace() {
@@ -6800,11 +8010,14 @@ recovery_delete_namespaced_with_uid_in_namespace() {
   local uid="$4"
   local timeout_seconds="${5:-60}"
   local expected_resource_version="${6:-}"
-  local api_path current_json current_uid started
+  local propagation_policy="${7:-Foreground}"
+  local api_path current_json current_uid delete_options delete_status=0 started
   [[ "$target_namespace" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ &&
      "$name" =~ ^[A-Za-z0-9._-]+$ && -n "$uid" &&
      ( -z "$expected_resource_version" ||
        "$expected_resource_version" =~ ^[A-Za-z0-9._:-]+$ ) &&
+     ( "$propagation_policy" == Foreground ||
+       "$propagation_policy" == Background ) &&
      "$timeout_seconds" =~ ^[0-9]+$ && "$timeout_seconds" -gt 0 ]] || return 2
   case "$kind" in
     configmap)
@@ -6820,12 +8033,20 @@ recovery_delete_namespaced_with_uid_in_namespace() {
       return 2
       ;;
   esac
-  if ! jq -cn --arg uid "$uid" --arg resource_version "$expected_resource_version" '{
+  delete_options="$(jq -cn --arg uid "$uid" --arg resource_version "$expected_resource_version" \
+    --arg propagation_policy "$propagation_policy" '{
       apiVersion:"v1", kind:"DeleteOptions",
-      propagationPolicy:"Foreground",
+      propagationPolicy:$propagation_policy,
       preconditions:({uid:$uid} +
         (if $resource_version == "" then {} else {resourceVersion:$resource_version} end))
-    }' | recovery_kubectl_mutate delete --raw="$api_path" -f - >/dev/null; then
+    }')" || return 1
+  if recovery_kubectl_mutate delete --raw="$api_path" -f - \
+      <<<"$delete_options" >/dev/null; then
+    delete_status=0
+  else
+    delete_status=$?
+  fi
+  if [[ "$delete_status" != 0 ]]; then
     printf 'UID/resourceVersion-preconditioned deletion failed for %s/%s.\n' \
       "$kind" "$name" >&2
     return 1
@@ -6900,8 +8121,10 @@ recovery_storage_helper_pod_is_exact() {
   local role="$4"
   local image="$5"
   local read_only="$6"
+  local metadata_mode="${7:-legacy}"
   local wrapped_json
   [[ "$read_only" == true || "$read_only" == false ]] || return 2
+  [[ "$metadata_mode" == legacy || "$metadata_mode" == freeze-fence ]] || return 2
   wrapped_json="$(jq -ce '{items:[.]}' <<<"$pod_json")" || return 1
   recovery_pod_pvc_mount_is_exact \
     "$wrapped_json" "$pod_name" helper ret-pvc /storage || return 1
@@ -6911,6 +8134,7 @@ recovery_storage_helper_pod_is_exact() {
     --arg operation_id "$RECOVERY_OPERATION_ID" \
     --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
     --arg operation_token "$RECOVERY_OPERATION_TOKEN" \
+    --arg metadata_mode "$metadata_mode" \
     --argjson read_only "$read_only" '
     .apiVersion == "v1" and .kind == "Pod" and
     .metadata.name == $pod and .metadata.uid == $uid and
@@ -6923,12 +8147,17 @@ recovery_storage_helper_pod_is_exact() {
       "yenhubs.org/recovery-owner":$role,
       "yenhubs.org/operation-id":$operation_id
     } and
-    (.metadata.annotations // {}) == {
-      "yenhubs.org/operation-lock-uid":$lock_uid,
-      "yenhubs.org/operation-token":$operation_token
-    } and
+    (.metadata.annotations // {}) ==
+      (if $metadata_mode == "freeze-fence" then {
+        "yenhubs.org/operation-lock-uid":$lock_uid,
+        "yenhubs.org/operation-id":$operation_id
+      } else {
+        "yenhubs.org/operation-lock-uid":$lock_uid,
+        "yenhubs.org/operation-token":$operation_token
+      } end) and
     .spec.automountServiceAccountToken == false and
     .spec.enableServiceLinks == false and .spec.restartPolicy == "Never" and
+    .spec.terminationGracePeriodSeconds == 1 and
     .spec.activeDeadlineSeconds == 3600 and
     (.spec.hostNetwork // false) == false and (.spec.hostPID // false) == false and
     (.spec.hostIPC // false) == false and (.spec.shareProcessNamespace // false) == false and
@@ -7016,10 +8245,12 @@ recovery_storage_helper_network_policy_is_exact() {
       "yenhubs.org/operation-lock-uid":$lock_uid,
       "yenhubs.org/operation-token":$operation_token
     } and
-    (.spec | keys | sort) == ["egress", "ingress", "podSelector", "policyTypes"] and
+    (((.spec | keys | sort) == ["podSelector", "policyTypes"]) or
+     ((.spec | keys | sort) == ["egress", "ingress", "podSelector", "policyTypes"] and
+      .spec.ingress == [] and .spec.egress == [])) and
     .spec.podSelector == {matchLabels:{"yenhubs.org/operation-id":$operation_id}} and
     (.spec.policyTypes | sort) == ["Egress", "Ingress"] and
-    .spec.ingress == [] and .spec.egress == []
+    ((.spec | has("ingress")) == (.spec | has("egress")))
   ' >/dev/null 2>&1 <<<"$policy_json"
 }
 
@@ -9105,6 +10336,13 @@ os.execvp(sys.argv[2], sys.argv[2:])
   return 1
 }
 
+recovery_monitor_health_diagnostic() {
+  local detail="$1"
+  [[ "${RECOVERY_STREAM_DIAGNOSTIC_CONTEXT:-}" == database-restore ]] &&
+    printf 'database_restore_parent_monitor_detail:%s\n' "$detail" >&2
+  return 1
+}
+
 recovery_require_checkpoint_writer_monitor_healthy() {
   local contract_path="$1" contract_sha256="$2" baseline_path="$3"
   local baseline_sha256="$4" failure_path="$5" ready_path="$6" watcher_pid="$7"
@@ -9114,29 +10352,42 @@ recovery_require_checkpoint_writer_monitor_healthy() {
      "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
      "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" ]] || return 2
   [[ "$watcher_pid" =~ ^[1-9][0-9]*$ ]] || return 2
-  recovery_runner_watch_marker_is_exact "$failure_path" || return 1
-  recovery_runner_watch_marker_is_exact "$ready_path" || return 1
-  [[ ! -s "$failure_path" ]] || return 1
-  authority_path="$(recovery_monitor_authority_path "$ready_path")" || return 1
+  recovery_runner_watch_marker_is_exact "$failure_path" ||
+    recovery_monitor_health_diagnostic failure-path || return 1
+  recovery_runner_watch_marker_is_exact "$ready_path" ||
+    recovery_monitor_health_diagnostic ready-path || return 1
+  [[ ! -s "$failure_path" ]] ||
+    recovery_monitor_health_diagnostic failure-marker || return 1
+  authority_path="$(recovery_monitor_authority_path "$ready_path")" ||
+    recovery_monitor_health_diagnostic authority-path || return 1
   authority_sha256="$(recovery_monitor_authority_sha256_for_ready \
-    "$ready_path")" || return 1
-  stop_path="$(jq -er '.paths.stop' "$authority_path")" || return 1
-  progress_path="$(jq -er '.paths.progress' "$authority_path")" || return 1
-  final_path="$(jq -er '.paths.final' "$authority_path")" || return 1
+    "$ready_path")" || recovery_monitor_health_diagnostic ready-authority || return 1
+  stop_path="$(jq -er '.paths.stop' "$authority_path")" ||
+    recovery_monitor_health_diagnostic authority-stop || return 1
+  progress_path="$(jq -er '.paths.progress' "$authority_path")" ||
+    recovery_monitor_health_diagnostic authority-progress || return 1
+  final_path="$(jq -er '.paths.final' "$authority_path")" ||
+    recovery_monitor_health_diagnostic authority-final || return 1
   recovery_checkpoint_writer_monitor_authority_is_exact \
     "$authority_path" "$authority_sha256" "$contract_path" \
     "$contract_sha256" "$baseline_path" "$stop_path" "$failure_path" \
     "$ready_path" "$progress_path" "$final_path" "$watcher_pid" \
-    "$watcher_identity" "$runtime_generation" "$operation_owner" || return 1
+    "$watcher_identity" "$runtime_generation" "$operation_owner" ||
+    recovery_monitor_health_diagnostic authority-contract || return 1
   ready_value="$(<"$ready_path")"
-  [[ "$ready_value" == "ready:$baseline_sha256:$authority_sha256" ]] || return 1
+  [[ "$ready_value" == "ready:$baseline_sha256:$authority_sha256" ]] ||
+    recovery_monitor_health_diagnostic ready-contract || return 1
   recovery_stream_guard_progress_value \
-    "$progress_path" "$authority_sha256" >/dev/null || return 1
-  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" || return 1
+    "$progress_path" "$authority_sha256" >/dev/null ||
+    recovery_monitor_health_diagnostic progress || return 1
+  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" ||
+    recovery_monitor_health_diagnostic process-before-boundary || return 1
   recovery_checkpoint_writer_monitor_boundary_json \
     "$contract_path" "$contract_sha256" "$baseline_path" \
-    "$baseline_sha256" "$runtime_generation" "$operation_owner" >/dev/null || return 1
-  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity"
+    "$baseline_sha256" "$runtime_generation" "$operation_owner" >/dev/null ||
+    recovery_monitor_health_diagnostic live-boundary || return 1
+  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" ||
+    recovery_monitor_health_diagnostic process-after-boundary
 }
 
 recovery_stop_checkpoint_writer_monitor() {

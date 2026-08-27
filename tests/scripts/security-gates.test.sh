@@ -26,6 +26,56 @@ fail_test() {
   exit 1
 }
 
+if [[ "${YENHUBS_SECURITY_GATES_TEST_FOCUS:-}" == image-pair-trust ]]; then
+  printf -v digest '%064d' 0
+  historical_pgbouncer="docker.io/mozillareality/pgbouncer@sha256:$digest"
+  historical_postgres="docker.io/mozillareality/postgres@sha256:$digest"
+  historical_postgrest="docker.io/mozillareality/postgrest@sha256:$digest"
+
+  if reactivation_image_for_pair_is_trusted \
+      pgbouncer/pgbouncer "$historical_pgbouncer" &&
+     reactivation_image_for_pair_is_trusted \
+      pgbouncer-t/pgbouncer-t "$historical_pgbouncer" &&
+     reactivation_image_for_pair_is_trusted pgsql/pgsql "$historical_postgres" &&
+     reactivation_image_for_pair_is_trusted \
+      pgsql/postgresql "$historical_postgres" &&
+     reactivation_image_for_pair_is_trusted \
+      reticulum/postgrest "$historical_postgrest"; then
+    pass_test "exact historical Mozilla repositories require a 64-hex digest"
+  else
+    fail_test "historical Mozilla repository positive matrix"
+  fi
+
+  if ! reactivation_image_for_pair_is_trusted pgbouncer/pgbouncer \
+      "docker.io/mozillareality/pgbouncer-lookalike@sha256:$digest" &&
+     ! reactivation_image_for_pair_is_trusted pgsql/pgsql \
+      "docker.io/mozillareality/postgres-lookalike@sha256:$digest" &&
+     ! reactivation_image_for_pair_is_trusted reticulum/postgrest \
+      "docker.io/mozillareality/postgrest-lookalike@sha256:$digest" &&
+     ! reactivation_image_for_pair_is_trusted pgbouncer/pgbouncer \
+      "docker.io/mozillareality/pgbouncer:latest"; then
+    pass_test "Mozilla lookalikes and nondigest references remain rejected"
+  else
+    fail_test "historical Mozilla repository negative matrix"
+  fi
+
+  if ! reactivation_image_for_pair_is_trusted pgsql/pgsql \
+      "$historical_pgbouncer" &&
+     ! reactivation_image_for_pair_is_trusted reticulum/postgrest \
+      "$historical_postgres" &&
+     ! reactivation_image_for_pair_is_trusted pgbouncer-t/pgbouncer-t \
+      "$historical_postgrest" &&
+     ! reactivation_image_for_pair_is_trusted pgsql/postgrest \
+      "$historical_postgrest"; then
+    pass_test "historical repositories cannot cross pair or key boundaries"
+  else
+    fail_test "historical Mozilla pair restriction matrix"
+  fi
+
+  printf 'Focused image pair trust tests passed: %s.\n' "$test_count"
+  exit 0
+fi
+
 if reactivation_live_result_is_clean 0 0 &&
   ! reactivation_live_result_is_clean 1 0 &&
   ! reactivation_live_result_is_clean 0 1 &&
@@ -33,6 +83,18 @@ if reactivation_live_result_is_clean 0 0 &&
   pass_test "live acceptance requires zero failures and zero warnings"
 else
   fail_test "live acceptance status matrix"
+fi
+
+if [[ "$(reactivation_target_profile in-place '')" == durable-active &&
+      "$(reactivation_target_profile in-place durable-v2)" == durable-active &&
+      "$(reactivation_target_profile cold-rebind legacy-absent)" == \
+        cold-rebind-legacy-absent-v1 ]] &&
+   ! reactivation_target_profile cold-rebind durable-v2 >/dev/null 2>&1 &&
+   ! reactivation_target_profile in-place legacy-absent >/dev/null 2>&1 &&
+   ! reactivation_target_profile cold-rebind '' >/dev/null 2>&1; then
+  pass_test "live profile resolver accepts only durable active or exact cold-rebind legacy-absent"
+else
+  fail_test "live profile resolver matrix"
 fi
 
 bot_health_good='{"ok":true,"runner_backend_default":"ghost","runner_backend_canary_room_count":0,"ghost_navigation_mode":"navmesh_preferred","ghost_navigation_require_navmesh":true,"llm_enabled":true,"model":"gpt-5-nano","max_bots_per_room":10,"max_active_rooms":5}'
@@ -48,9 +110,29 @@ else
   fail_test "bot liveness contract"
 fi
 
+legacy_bot_health_good='{"ok":true,"rooms":1,"active_rooms":1,"queued_rooms":0,"max_active_rooms":5,"max_chromium_rooms":1,"max_bots_per_room":10,"llm_enabled":true,"model":"gpt-5-nano","runner_backend_default":"ghost","runner_backend_canary_hubs":[],"ghost_navigation_mode":"navmesh_preferred","runner_backends":{"VJopCY3":"ghost"},"active_hubs":["VJopCY3"],"queued_hubs":[]}'
+if reactivation_bot_health_matches_profile "$bot_health_good" durable-active &&
+   reactivation_bot_health_matches_profile \
+     "$legacy_bot_health_good" cold-rebind-legacy-absent-v1 &&
+   ! reactivation_bot_health_matches_profile \
+     "$legacy_bot_health_good" durable-active &&
+   ! reactivation_bot_health_matches_profile \
+     "${legacy_bot_health_good/\"ghost\"/\"chromium\"}" \
+     cold-rebind-legacy-absent-v1 &&
+   ! reactivation_bot_health_matches_profile \
+     "${legacy_bot_health_good/\"active_rooms\":1/\"active_rooms\":0}" \
+     cold-rebind-legacy-absent-v1; then
+  pass_test "legacy process-local health requires active ghost rooms and the exact historical schema"
+else
+  fail_test "profile-specific bot health contract"
+fi
+
 sitting_capabilities_good='{"waypoint_reservation":{"protocol":2,"snapshot_state_version":"strictly_greater_than_events","state_version":"monotonic_safe_integer"}}'
 sitting_capabilities_extra='{"unexpected":true,"waypoint_reservation":{"protocol":2,"snapshot_state_version":"strictly_greater_than_events","state_version":"monotonic_safe_integer"}}'
-if reactivation_sitting_capabilities_are_acceptable "$sitting_capabilities_good" &&
+if reactivation_legacy_reticulum_health_is_acceptable ok &&
+  ! reactivation_legacy_reticulum_health_is_acceptable '' &&
+  ! reactivation_legacy_reticulum_health_is_acceptable '{"ok":true}' &&
+  reactivation_sitting_capabilities_are_acceptable "$sitting_capabilities_good" &&
   ! reactivation_sitting_capabilities_are_acceptable '' &&
   ! reactivation_sitting_capabilities_are_acceptable "${sitting_capabilities_good/\"protocol\":2/\"protocol\":1}" &&
   ! reactivation_sitting_capabilities_are_acceptable "${sitting_capabilities_good/\"monotonic_safe_integer\"/\"integer\"}" &&
@@ -278,17 +360,70 @@ else
   fail_test "exact live deployment inventory contract"
 fi
 
+deployments_legacy="$(jq -c '
+  (.items[] | select(.metadata.name == "pgsql") |
+    .spec.template.spec.containers[0].name) = "postgresql" |
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.containers[0].env) = [
+      {name:"RET_INTERNAL_ACCESS_HEADER",value:"x-ret-dashboard-access-key"}
+    ]
+' <<<"$deployments_good")"
+expected_legacy_images="$(jq -c '
+  with_entries(if .key == "pgsql/pgsql" then .key = "pgsql/postgresql" else . end)
+' <<<"$expected_deployment_images")"
+deployments_legacy_with_runner_env="$(jq -c --arg runner "$bot_runner_image" '
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.containers[0].env) += [{name:"BOT_RUNNER_IMAGE",value:$runner}]
+' <<<"$deployments_legacy")"
+deployments_legacy_with_modern_header="$(jq -c '
+  (.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.containers[0].env[] |
+    select(.name == "RET_INTERNAL_ACCESS_HEADER").value) =
+      "x-ret-bot-orchestrator-access-key"
+' <<<"$deployments_legacy")"
+if reactivation_runner_image_matches_profile durable-active "$bot_runner_image" &&
+   reactivation_runner_image_matches_profile cold-rebind-legacy-absent-v1 No &&
+   ! reactivation_runner_image_matches_profile durable-active No &&
+   ! reactivation_runner_image_matches_profile \
+     cold-rebind-legacy-absent-v1 "$bot_runner_image" &&
+   reactivation_deployments_are_acceptable "$deployments_legacy" \
+     "ghcr.io/yengalvez/hubs@sha256:$digest" \
+     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
+     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
+     "$expected_legacy_images" No cold-rebind-legacy-absent-v1 &&
+   ! reactivation_deployments_are_acceptable "$deployments_legacy_with_runner_env" \
+     "ghcr.io/yengalvez/hubs@sha256:$digest" \
+     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
+     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
+     "$expected_legacy_images" No cold-rebind-legacy-absent-v1 &&
+   ! reactivation_deployments_are_acceptable "$deployments_legacy_with_modern_header" \
+     "ghcr.io/yengalvez/hubs@sha256:$digest" \
+     "ghcr.io/yengalvez/reticulum@sha256:$digest" \
+     "ghcr.io/yengalvez/bot-orchestrator@sha256:$digest" \
+     "$expected_legacy_images" No cold-rebind-legacy-absent-v1; then
+  pass_test "legacy live inventory requires postgresql, runner image No and no durable parent binding"
+else
+  fail_test "legacy deployment inventory profile"
+fi
+
 reticulum_singleton="$(jq -cn '
   {apiVersion:"apps/v1",kind:"Deployment",
    metadata:{name:"reticulum",namespace:"hcce",uid:"reticulum-uid"},
    spec:{replicas:1,strategy:{type:"Recreate"},selector:{matchLabels:{app:"reticulum"}},
      template:{metadata:{labels:{app:"reticulum"}}}}}
 ')"
+reticulum_singleton_raw_list="$(jq -cn --argjson reticulum "$reticulum_singleton" '
+  {apiVersion:"apps/v1",kind:"DeploymentList",metadata:{resourceVersion:"123"},
+   items:[($reticulum | del(.apiVersion,.kind))]}
+')"
 reticulum_hpas_clear='{"items":[{"spec":{"scaleTargetRef":{"apiVersion":"apps/v1","kind":"Deployment","name":"hubs"}}}]}'
 reticulum_hpa_targeted='{"items":[{"spec":{"scaleTargetRef":{"apiVersion":"apps/v1","kind":"Deployment","name":"reticulum"}}}]}'
 if reactivation_reticulum_deployment_is_singleton "$reticulum_singleton" &&
+  reactivation_reticulum_deployment_is_singleton "$reticulum_singleton_raw_list" &&
   ! reactivation_reticulum_deployment_is_singleton "$(jq -c '.spec.replicas = 2' <<<"$reticulum_singleton")" &&
   ! reactivation_reticulum_deployment_is_singleton "$(jq -c '.spec.strategy.rollingUpdate = {maxSurge:1}' <<<"$reticulum_singleton")" &&
+  ! reactivation_reticulum_deployment_is_singleton "$(jq -c '.metadata.resourceVersion = ""' <<<"$reticulum_singleton_raw_list")" &&
+  ! reactivation_reticulum_deployment_is_singleton "$(jq -c '.items += [.items[0]]' <<<"$reticulum_singleton_raw_list")" &&
   reactivation_hpas_do_not_target_reticulum "$reticulum_hpas_clear" &&
   ! reactivation_hpas_do_not_target_reticulum "$reticulum_hpa_targeted" &&
   grep -Eq 'recovery_require_pod_deployment_ownership.*reticulum' "$ROOT_DIR/deployment/preflight-reactivation.sh" &&
@@ -344,7 +479,7 @@ if ! grep -Eqi 'reservation[- ]v1|reservation v1|Reticulum v1|Hubs v1' \
    grep -Eq 'state_version' "$ROOT_DIR/deployment/README.md" &&
    grep -Eq 'snapshot_state_version' "$ROOT_DIR/deployment/README.md" &&
    grep -Eq '/health/capabilities' "$ROOT_DIR/deployment/README.md" &&
-   grep -Eq 'deployment/reticulum :4000' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
+   grep -Eq 'deployment/reticulum :4001' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
    grep -Eq 'reactivation_sitting_capabilities_are_acceptable' "$ROOT_DIR/deployment/verify-live-reactivation.sh" &&
    grep -Eq 'WaypointReservation.capability_contract' "$reticulum_health_controller" &&
    grep -Eq 'get "/capabilities", HealthController, :capabilities' "$reticulum_router"; then
@@ -426,6 +561,59 @@ if reactivation_network_policies_are_exact "$network_policies_good" &&
   pass_test "six-policy parent inventory binds cross-namespace runner ingress and rejects extras"
 else
   fail_test "exact global NetworkPolicy inventory contract"
+fi
+network_policies_legacy="$(jq -c '
+  .items |= map(select(.metadata.name != "bot-orchestrator-ingress"))
+' <<<"$network_policies_good")"
+if reactivation_network_policies_are_exact \
+     "$network_policies_legacy" cold-rebind-legacy-absent-v1 &&
+   ! reactivation_network_policies_are_exact \
+     "$network_policies_good" cold-rebind-legacy-absent-v1 &&
+   ! reactivation_network_policies_are_exact \
+     "$network_policies_legacy" durable-active; then
+  pass_test "legacy NetworkPolicy profile requires durable runner ingress to be absent"
+else
+  fail_test "legacy NetworkPolicy inventory contract"
+fi
+
+legacy_pull_encoded='eyJhdXRocyI6eyJnaGNyLmlvIjp7ImF1dGgiOiJmaXh0dXJlIn19fQ=='
+legacy_pull_secret="$(jq -cn --arg encoded "$legacy_pull_encoded" '
+  {apiVersion:"v1",kind:"Secret",
+   metadata:{name:"bot-images-pull",namespace:"hcce"},
+   type:"kubernetes.io/dockerconfigjson",data:{".dockerconfigjson":$encoded}}
+')"
+if reactivation_legacy_pull_secret_is_acceptable \
+     "$legacy_pull_secret" hcce "$legacy_pull_encoded" &&
+   ! reactivation_legacy_pull_secret_is_acceptable \
+     "$legacy_pull_secret" hcce-bot-runners "$legacy_pull_encoded" &&
+   ! reactivation_legacy_pull_secret_is_acceptable \
+     "$(jq -c '.data.extra = "rogue"' <<<"$legacy_pull_secret")" \
+     hcce "$legacy_pull_encoded"; then
+  pass_test "legacy primary Pull Secret is exact without accepting a runner-namespace Secret"
+else
+  fail_test "legacy primary Pull Secret contract"
+fi
+if (
+     recovery_require_live_process_local_cold_rebind_target_exact() {
+       [[ "$1" == /private/values.yaml ]]
+     }
+     recovery_runner_isolation_residual_state() { printf 'absent\n'; }
+     recovery_require_no_managed_bot_runner_pods() { return 0; }
+     reactivation_legacy_live_runtime_is_exact \
+       /private/values.yaml hcce "$legacy_pull_secret" "$legacy_pull_encoded"
+   ) &&
+   ! (
+     recovery_require_live_process_local_cold_rebind_target_exact() { return 0; }
+     recovery_runner_isolation_residual_state() { printf 'present\n'; }
+     recovery_require_no_managed_bot_runner_pods() { return 0; }
+     reactivation_legacy_live_runtime_is_exact \
+       /private/values.yaml hcce "$legacy_pull_secret" "$legacy_pull_encoded"
+   ) &&
+   [[ "$(grep -Fc 'reactivation_legacy_live_runtime_is_exact' \
+     "$ROOT_DIR/deployment/verify-live-reactivation.sh")" == 2 ]]; then
+  pass_test "real live legacy branch requires exact process-local state and rejects durable residue"
+else
+  fail_test "real live legacy profile branch"
 fi
 
 parser_values="$temp_root/parser-values.yaml"
@@ -611,7 +799,7 @@ deployment_refresh_line="$(grep -nF 'recovery_kubectl get deployment bot-orchest
 # shellcheck disable=SC2016
 parent_refresh_line="$(grep -nF 'recovery_kubectl get pod "$runner_parent_name"' \
   "$ROOT_DIR/deployment/verify-live-reactivation.sh" | tail -1 | cut -d: -f1)"
-runner_verifier_line="$(grep -nF 'verify-bot-runner-pods.mjs' \
+runner_verifier_line="$(grep -nF 'verify_final_runner_profile_snapshot; then' \
   "$ROOT_DIR/deployment/verify-live-reactivation.sh" | tail -1 | cut -d: -f1)"
 if [[ ! "$deployment_refresh_line" =~ ^[0-9]+$ ||
       ! "$parent_refresh_line" =~ ^[0-9]+$ ||
@@ -620,9 +808,29 @@ if [[ ! "$deployment_refresh_line" =~ ^[0-9]+$ ||
       "$parent_refresh_line" -ge "$runner_verifier_line" ]]; then
   fail_test "live runner gate must refresh Deployment and parent Pod immediately before verification"
 fi
-pass_test "live runner gate refreshes Deployment and parent Pod before the exact final verifier"
+pass_test "live runner gate refreshes Deployment and parent Pod before the profile-exact final verifier"
 
 live_gate_path="$ROOT_DIR/deployment/verify-live-reactivation.sh"
+# shellcheck disable=SC2016 # The generation name is a literal source contract.
+generation_capture_line="$(grep -nF \
+  'checkpoint_runner_generation_input="${RECOVERY_CHECKPOINT_RUNNER_GENERATION:-}"' \
+  "$live_gate_path" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016 # The source expression is inspected literally.
+recovery_source_line="$(grep -nF \
+  'source "$SCRIPT_DIR/lib/recovery-safety.sh"' \
+  "$live_gate_path" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016 # The restoration expression is inspected literally.
+generation_restore_line="$(grep -nF \
+  'RECOVERY_CHECKPOINT_RUNNER_GENERATION="$checkpoint_runner_generation_input"' \
+  "$live_gate_path" | head -1 | cut -d: -f1)"
+if [[ ! "$generation_capture_line" =~ ^[1-9][0-9]*$ ||
+      ! "$recovery_source_line" =~ ^[1-9][0-9]*$ ||
+      ! "$generation_restore_line" =~ ^[1-9][0-9]*$ ||
+      "$generation_capture_line" -ge "$recovery_source_line" ||
+      "$recovery_source_line" -ge "$generation_restore_line" ]]; then
+  fail_test "live gate must preserve verified checkpoint generation across safety-library reset"
+fi
+pass_test "live gate preserves verified checkpoint generation across safety-library reset"
 runner_capture_call="$(awk '
   /^capture_bot_runner_pods\(\)/ { capture=1 }
   capture { print }
@@ -1239,8 +1447,11 @@ for aud065_test in \
   [[ "$(grep -Fc "/$aud065_test\"" "$aud065_aggregate")" == 1 ]] || \
     aud065_inventory_ok=false
 done
+# The section-input inventory intentionally names the same script. Match only
+# the executable run_security call instead of counting both roles.
+# shellcheck disable=SC2016 # The ROOT_DIR expression is a literal source contract.
 if [[ -x "$aud065_aggregate" && "$aud065_inventory_ok" == true ]] &&
-  [[ "$(grep -Fc 'scripts/test-aud065.sh' \
+  [[ "$(grep -Fxc '  "$ROOT_DIR/scripts/test-aud065.sh"' \
     "$ROOT_DIR/scripts/verify-project.sh")" == 1 ]] &&
   [[ "$(grep -Fc 'bash scripts/test-aud065.sh' \
     "$ROOT_DIR/.github/workflows/project-security.yml")" == 1 ]] &&

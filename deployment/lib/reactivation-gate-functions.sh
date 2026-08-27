@@ -148,6 +148,38 @@ reactivation_image_override_is_exact() {
   esac
 }
 
+reactivation_target_profile() {
+  local target_mode="${1:-in-place}"
+  local runner_generation="${2:-}"
+  case "$target_mode:$runner_generation" in
+    in-place:|in-place:durable-v2)
+      printf 'durable-active\n'
+      ;;
+    cold-rebind:legacy-absent)
+      printf 'cold-rebind-legacy-absent-v1\n'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+reactivation_runner_image_matches_profile() {
+  local profile="$1"
+  local image="$2"
+  case "$profile" in
+    durable-active)
+      reactivation_image_override_is_exact bot-runner "$image"
+      ;;
+    cold-rebind-legacy-absent-v1)
+      [[ "$image" == No ]]
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+}
+
 reactivation_image_for_pair_is_trusted() {
   local pair="$1"
   local image="$2"
@@ -182,6 +214,7 @@ reactivation_image_for_pair_is_trusted() {
       ;;
     pgbouncer/pgbouncer | pgbouncer-t/pgbouncer-t)
       [[ "$repository" == ghcr.io/yengalvez/pgbouncer ||
+         "$repository" == docker.io/mozillareality/pgbouncer ||
          "$repository" == docker.io/edoburu/pgbouncer ||
          "$repository" == edoburu/pgbouncer ]]
       ;;
@@ -190,10 +223,12 @@ reactivation_image_for_pair_is_trusted() {
       ;;
     pgsql/pgsql | pgsql/postgresql)
       [[ "$repository" == ghcr.io/yengalvez/postgres ||
+         "$repository" == docker.io/mozillareality/postgres ||
          "$repository" == docker.io/library/postgres || "$repository" == postgres ]]
       ;;
     reticulum/postgrest)
       [[ "$repository" == ghcr.io/yengalvez/postgrest ||
+         "$repository" == docker.io/mozillareality/postgrest ||
          "$repository" == docker.io/postgrest/postgrest ||
          "$repository" == postgrest/postgrest ]]
       ;;
@@ -283,6 +318,61 @@ reactivation_bot_health_is_acceptable() {
   ' >/dev/null 2>&1 <<<"$payload"
 }
 
+reactivation_legacy_bot_health_is_acceptable() {
+  local payload="${1:-}"
+  [[ -n "$payload" ]] || return 1
+  jq -e '
+    . as $root |
+    type == "object" and
+    ((keys | sort) == [
+      "active_hubs", "active_rooms", "ghost_navigation_mode", "llm_enabled",
+      "max_active_rooms", "max_bots_per_room", "max_chromium_rooms", "model",
+      "ok", "queued_hubs", "queued_rooms", "rooms", "runner_backend_canary_hubs",
+      "runner_backend_default", "runner_backends"
+    ]) and
+    .ok == true and .runner_backend_default == "ghost" and
+    .runner_backend_canary_hubs == [] and
+    .ghost_navigation_mode == "navmesh_preferred" and
+    .llm_enabled == true and .model == "gpt-5-nano" and
+    .max_bots_per_room == 10 and
+    (.max_active_rooms | type == "number" and floor == . and . >= 1 and . <= 10) and
+    (.max_chromium_rooms | type == "number" and floor == . and . >= 1) and
+    (.rooms | type == "number" and floor == . and . > 0) and
+    (.active_rooms | type == "number" and floor == . and . > 0 and
+      . <= $root.max_active_rooms and . <= $root.rooms) and
+    (.queued_rooms | type == "number" and floor == . and . >= 0) and
+    (.active_hubs | type == "array" and length == $root.active_rooms) and
+    (.queued_hubs | type == "array" and length == $root.queued_rooms) and
+    ((.active_hubs + .queued_hubs) | all(.[];
+      type == "string" and test("^[^\u0000-\u001f\u007f]{1,64}$"))) and
+    ((.active_hubs + .queued_hubs) | unique | length) ==
+      ((.active_hubs + .queued_hubs) | length) and
+    (.runner_backends | type == "object") and
+    ((.runner_backends | keys | sort) == (.active_hubs | sort)) and
+    all(.runner_backends[]; . == "ghost")
+  ' >/dev/null 2>&1 <<<"$payload"
+}
+
+reactivation_legacy_reticulum_health_is_acceptable() {
+  [[ "${1:-}" == "ok" ]]
+}
+
+reactivation_bot_health_matches_profile() {
+  local payload="${1:-}"
+  local profile="${2:-durable-active}"
+  case "$profile" in
+    durable-active)
+      reactivation_bot_health_is_acceptable "$payload"
+      ;;
+    cold-rebind-legacy-absent-v1)
+      reactivation_legacy_bot_health_is_acceptable "$payload"
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+}
+
 reactivation_sitting_capabilities_are_acceptable() {
   local payload="${1:-}"
   [[ -n "$payload" ]] || return 1
@@ -305,14 +395,23 @@ reactivation_deployments_are_acceptable() {
   local bot_image="$4"
   local expected_images_json="$5"
   local runner_image="${6:-}"
+  local profile="${7:-durable-active}"
+  local postgres_container=pgsql
   [[ -n "$payload" ]] || return 1
+  [[ "$profile" == durable-active ||
+     "$profile" == cold-rebind-legacy-absent-v1 ]] || return 2
+  if [[ "$profile" == cold-rebind-legacy-absent-v1 ]]; then
+    postgres_container=postgresql
+  fi
   reactivation_image_map_is_trusted "$expected_images_json" || return 1
-  reactivation_image_override_is_exact bot-runner "$runner_image" || return 1
+  reactivation_runner_image_matches_profile "$profile" "$runner_image" || return 1
   jq -e \
     --arg hubs "$hubs_image" \
     --arg reticulum "$reticulum_image" \
     --arg bot "$bot_image" \
     --arg runner "$runner_image" \
+    --arg profile "$profile" \
+    --arg postgres_container "$postgres_container" \
     --argjson expected_images "$expected_images_json" '
     def expected_deployments:
       ["bot-orchestrator", "coturn", "dialog", "haproxy", "hubs", "nearspark",
@@ -320,7 +419,8 @@ reactivation_deployments_are_acceptable() {
     def expected_pairs:
       ["bot-orchestrator/bot-orchestrator", "coturn/coturn", "dialog/dialog",
        "haproxy/haproxy", "hubs/hubs", "nearspark/nearspark", "pgbouncer/pgbouncer",
-       "pgbouncer-t/pgbouncer-t", "photomnemonic/photomnemonic", "pgsql/pgsql",
+       "pgbouncer-t/pgbouncer-t", "photomnemonic/photomnemonic",
+       ("pgsql/" + $postgres_container),
        "reticulum/postgrest", "reticulum/reticulum", "spoke/spoke"];
     type == "object" and (.items | type == "array") and
     ($expected_images | type == "object") and
@@ -358,9 +458,19 @@ reactivation_deployments_are_acceptable() {
       select(.name == "reticulum") | .image] == [$reticulum]) and
     ([.items[] | select(.metadata.name == "bot-orchestrator") | .spec.template.spec.containers[] |
       select(.name == "bot-orchestrator") | .image] == [$bot]) and
-    ([.items[] | select(.metadata.name == "bot-orchestrator") |
-      .spec.template.spec.containers[] | select(.name == "bot-orchestrator") |
-      (.env // [])[] | select(.name == "BOT_RUNNER_IMAGE") | .value] == [$runner])
+    (if $profile == "durable-active" then
+       ([.items[] | select(.metadata.name == "bot-orchestrator") |
+         .spec.template.spec.containers[] | select(.name == "bot-orchestrator") |
+         (.env // [])[] | select(.name == "BOT_RUNNER_IMAGE") | .value] == [$runner])
+     else
+       ([.items[] | select(.metadata.name == "bot-orchestrator") |
+         .spec.template.spec.containers[] | select(.name == "bot-orchestrator") |
+         (.env // [])[] | select(.name == "BOT_RUNNER_IMAGE")] | length) == 0 and
+       ([.items[] | select(.metadata.name == "bot-orchestrator") |
+         .spec.template.spec.containers[] | select(.name == "bot-orchestrator") |
+         (.env // [])[] | select(.name == "RET_INTERNAL_ACCESS_HEADER") | .value] ==
+        ["x-ret-dashboard-access-key"])
+     end)
   ' >/dev/null 2>&1 <<<"$payload"
 }
 
@@ -368,14 +478,24 @@ reactivation_reticulum_deployment_is_singleton() {
   local payload="${1:-}"
   [[ -n "$payload" ]] || return 1
   jq -e '
-    .apiVersion == "apps/v1" and .kind == "Deployment" and
-    .metadata.name == "reticulum" and
-    (.metadata.namespace | type == "string" and length > 0) and
-    (.metadata.uid | type == "string" and length > 0) and
-    .spec.replicas == 1 and
-    .spec.strategy == {type:"Recreate"} and
-    .spec.selector.matchLabels.app == "reticulum" and
-    .spec.template.metadata.labels.app == "reticulum"
+    def exact_reticulum:
+      .metadata.name == "reticulum" and
+      (.metadata.namespace | type == "string" and length > 0) and
+      (.metadata.uid | type == "string" and length > 0) and
+      .spec.replicas == 1 and
+      .spec.strategy == {type:"Recreate"} and
+      .spec.selector.matchLabels.app == "reticulum" and
+      .spec.template.metadata.labels.app == "reticulum";
+    if .apiVersion == "apps/v1" and .kind == "Deployment" then
+      exact_reticulum
+    elif .apiVersion == "apps/v1" and .kind == "DeploymentList" and
+         (.metadata.resourceVersion | type == "string" and length > 0) and
+         (.items | type == "array") then
+      [.items[] | select(.metadata.name == "reticulum")] as $matches |
+      ($matches | length) == 1 and ($matches[0] | exact_reticulum)
+    else
+      false
+    end
   ' >/dev/null 2>&1 <<<"$payload"
 }
 
@@ -431,8 +551,11 @@ reactivation_bot_control_plane_is_acceptable() {
 
 reactivation_network_policies_are_exact() {
   local payload="$1"
+  local profile="${2:-durable-active}"
   [[ -n "$payload" ]] || return 1
-  jq -e '
+  [[ "$profile" == durable-active ||
+     "$profile" == cold-rebind-legacy-absent-v1 ]] || return 2
+  jq -e --arg profile "$profile" '
     def policy($name): [.items[] | select(.metadata.name == $name)] | if length == 1 then .[0].spec else null end;
     def ingress_contract($name; $target; $sources; $port):
       policy($name) as $spec |
@@ -453,25 +576,28 @@ reactivation_network_policies_are_exact() {
        "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24",
        "224.0.0.0/4", "240.0.0.0/4"];
     type == "object" and (.items | type == "array") and
-    ([.items[].metadata.name] | sort) == ([
-      "bot-orchestrator-ingress", "pgbouncer-ingress", "pgbouncer-t-ingress",
-      "pgsql-ingress", "photomnemonic-ingress", "photomnemonic-egress"
-    ] | sort) and
-    ([.items[].metadata.name] | unique | length) == 6 and
-    (policy("bot-orchestrator-ingress")) == {
-      podSelector:{matchLabels:{app:"bot-orchestrator"}},
-      policyTypes:["Ingress"],
-      ingress:[{
-        from:[
-          {podSelector:{matchLabels:{app:"reticulum"}}},
-          {
-            podSelector:{matchLabels:{app:"bot-runner","yenhubs.org/managed-by":"bot-orchestrator"}},
-            namespaceSelector:{matchLabels:{"kubernetes.io/metadata.name":"hcce-bot-runners"}}
-          }
-        ],
-        ports:[{protocol:"TCP",port:5001}]
-      }]
-    } and
+    ([.items[].metadata.name] | sort) == (([
+      "pgbouncer-ingress", "pgbouncer-t-ingress", "pgsql-ingress",
+      "photomnemonic-ingress", "photomnemonic-egress"
+    ] + (if $profile == "durable-active" then ["bot-orchestrator-ingress"] else [] end)) | sort) and
+    ([.items[].metadata.name] | unique | length) ==
+      (if $profile == "durable-active" then 6 else 5 end) and
+    (if $profile == "durable-active" then
+       (policy("bot-orchestrator-ingress")) == {
+         podSelector:{matchLabels:{app:"bot-orchestrator"}},
+         policyTypes:["Ingress"],
+         ingress:[{
+           from:[
+             {podSelector:{matchLabels:{app:"reticulum"}}},
+             {
+               podSelector:{matchLabels:{app:"bot-runner","yenhubs.org/managed-by":"bot-orchestrator"}},
+               namespaceSelector:{matchLabels:{"kubernetes.io/metadata.name":"hcce-bot-runners"}}
+             }
+           ],
+           ports:[{protocol:"TCP",port:5001}]
+         }]
+       }
+     else true end) and
     ingress_contract("pgbouncer-ingress"; "pgbouncer"; ["reticulum"]; 5432) and
     ingress_contract("pgbouncer-t-ingress"; "pgbouncer-t"; ["reticulum"]; 5432) and
     ingress_contract("pgsql-ingress"; "pgsql"; ["pgbouncer", "pgbouncer-t"]; 5432) and
@@ -502,6 +628,39 @@ reactivation_network_policies_are_exact() {
     ([$web.ports[] | ((.protocol // "TCP") + ":" + (.port | tostring))] | sort) == ["TCP:443", "TCP:80"] and
     all($web.ports[]; (keys | sort) == ["port", "protocol"])
   ' >/dev/null 2>&1 <<<"$payload"
+}
+
+reactivation_legacy_pull_secret_is_acceptable() {
+  local payload="$1"
+  local namespace="$2"
+  local encoded="$3"
+  [[ -n "$payload" && -n "$namespace" && -n "$encoded" ]] || return 1
+  jq -e --arg namespace "$namespace" --arg encoded "$encoded" '
+    .apiVersion == "v1" and .kind == "Secret" and
+    .metadata.name == "bot-images-pull" and
+    .metadata.namespace == $namespace and
+    (.metadata.deletionTimestamp // null) == null and
+    .type == "kubernetes.io/dockerconfigjson" and
+    (.data | type == "object") and
+    (.data | keys) == [".dockerconfigjson"] and
+    .data[".dockerconfigjson"] == $encoded
+  ' >/dev/null 2>&1 <<<"$payload"
+}
+
+reactivation_legacy_live_runtime_is_exact() {
+  local values_path="$1"
+  local namespace="$2"
+  local pull_secret_payload="$3"
+  local pull_config="$4"
+  local residual_state
+  [[ -n "$values_path" && -n "$namespace" ]] || return 2
+  recovery_require_live_process_local_cold_rebind_target_exact \
+    "$values_path" || return 1
+  residual_state="$(recovery_runner_isolation_residual_state)" || return 1
+  [[ "$residual_state" == absent ]] || return 1
+  recovery_require_no_managed_bot_runner_pods || return 1
+  reactivation_legacy_pull_secret_is_acceptable \
+    "$pull_secret_payload" "$namespace" "$pull_config"
 }
 
 reactivation_bot_readiness_payload_is_well_formed() {

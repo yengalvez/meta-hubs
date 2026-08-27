@@ -1346,11 +1346,21 @@ clear_stale_restore_lock() {
   case "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" in
     legacy-absent)
       [[ "$RECOVERY_RUNNER_RUNTIME_GENERATION" == legacy-absent &&
-         "$lock_state" == legacy-in-place &&
          -z "$pre_epoch" && -z "$target_epoch" &&
          "$inventory_sha" == "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256" ]] ||
         return 1
-      RECOVERY_OPERATION_STATE=legacy-in-place
+      case "$lock_state" in
+        legacy-in-place)
+          [[ "${RESTORE_TARGET_MODE:-in-place}" != cold-rebind ]] || return 1
+          ;;
+        cold-rebind)
+          [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind &&
+             "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 ]] ||
+            return 1
+          ;;
+        *) return 1 ;;
+      esac
+      RECOVERY_OPERATION_STATE="$lock_state"
       RECOVERY_FENCE_PRE_EPOCH=""
       RECOVERY_FENCE_TARGET_EPOCH=""
       ;;
@@ -2685,6 +2695,9 @@ run_cold_rebind_restore() {
   require_restore_writer_monitor_healthy
   VALUES_FILE="$VALUES_SOURCE_FILE" RESTORE_TARGET_MODE=cold-rebind \
   RESTORE_COORDINATED=1 CONFIRM_RESTORE_STORAGE="$storage_confirmation" \
+  RESTORE_STORAGE_CLEAR_ORPHAN_ROOT="${RESTORE_STORAGE_CLEAR_ORPHAN_ROOT:-0}" \
+  RESTORE_STORAGE_ORPHAN_SOURCE_OPERATION_ID="${RESTORE_STORAGE_ORPHAN_SOURCE_OPERATION_ID:-}" \
+  CONFIRM_RESTORE_ORPHAN_ROOT="${CONFIRM_RESTORE_ORPHAN_ROOT:-}" \
   YENHUBS_PARENT_LEASE_HOLDER="$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
   YENHUBS_PARENT_LEASE_UID="$RECOVERY_SERIALIZATION_LEASE_UID" \
   YENHUBS_PARENT_PROCESS_PID="$RECOVERY_SERIALIZATION_PARENT_PID" \
