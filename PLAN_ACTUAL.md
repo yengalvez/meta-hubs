@@ -1,7 +1,7 @@
 # PLAN ACTUAL — cerrar H5 y volver a features
 
-Version: **v11.14 — CERRADO**
-Ultima revision: **27 de agosto de 2026 (Europe/Madrid)**
+Version: **v11.15 — H5 CERRADO; HARDENING OPERATIVO LOCAL CERRADO**
+Ultima revision: **28 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El historial de
 intentos vive en `docs/session-changelog.md`; no se reanuda trabajo desde él.
 
@@ -271,6 +271,41 @@ ocupada ni procesos residuales.
 - [x] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md` después
   del merge real y declarar H5 cerrado. Estado: **DONE**; el siguiente trabajo
   es features.
+
+### M6. Hardening operativo posterior a H5, solo local
+
+- [x] Mantener H5 cerrado: este trabajo no repite restore, no toca producción,
+  DigitalOcean, topología, costes, imágenes ni datos de clientes.
+- [x] Endurecer la hibernación para conservar la barrera hasta demostrar
+  custodia y lectura cero, limpiar residuos solo por identidad exacta, rechazar
+  checkouts sucios y emitir tiempos por etapa. Commits locales base `7caf3c4`
+  y `d9c6119`.
+- [x] Auditar el único `--full` sobre `d9c6119`. Las secciones recovery/H5
+  acumularon fallos de `stream-timeout` bajo la ejecución monolítica y
+  Reticulum intentó usar un rol local `postgres` inexistente; las demás
+  secciones terminaron verdes. No hubo efecto externo y no se repitió el
+  `--full`.
+- [x] Descartar una regresión funcional mediante los focos exactos, sin repetir
+  bloques verdes: cold rebind **50/50**, concurrencia restore **49/49** y PID
+  durable en vuelo **50/50**.
+- [x] Hacer reanudable la verificación local: los recibos implícitos viven en
+  una caché privada estable fuera del checkout y Reticulum usa el rol de la
+  cuenta macOS, conservando `postgres` en Linux CI y un override explícito.
+  El arnés pasa **18/18**; Reticulum pasa **462 tests + 5 properties** y la
+  segunda invocación reutiliza el recibo exacto sin repetir las pruebas.
+- [x] Corregir la telemetría terminal del checkpoint: una vez comunicado
+  `failure`, la limpieza no puede emitir después una transición `complete`.
+  El foco process-local pasa **91/91**, incluida una única salida terminal de
+  fallo y cero mutaciones de writers ante identidad PostgreSQL incompatible.
+- [x] Cerrar el candidato local con sintaxis Bash, ShellCheck proporcional y
+  `git diff --check` verdes. No existe autorización pendiente para investigar
+  ni para repetir suites; publicar este hardening es una entrega posterior y
+  no bloquea features ni la operación actual del metaverso.
+
+**M6: DONE local.** El fallo del `--full` no demuestra una rotura del producto:
+quedó explicado por una mezcla de carga monolítica, estado no limpio durante
+una reproducción y configuración local de PostgreSQL. Se corrigieron el método
+reanudable y la telemetría sin reabrir H5.
 
 ## Reglas anti-loop y parada
 

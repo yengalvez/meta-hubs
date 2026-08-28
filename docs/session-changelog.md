@@ -1,5 +1,14 @@
 # Session Changelog
 
+## 2026-08-28 (hardening operativo local posterior a H5)
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-08-28 | Se auditó el único `./scripts/verify-project.sh --full` sobre `d9c6119`, sin relanzarlo. | Recovery/H5 agruparon fallos `stream-timeout` bajo la carga monolítica y Reticulum falló porque el Mac no tiene el rol local `postgres`; el resto de secciones quedó verde. No hubo acceso ni cambios en producción, DigitalOcean o GitHub. |
+| 2026-08-28 | Se reprodujeron solo las familias afectadas. | Cold rebind pasó `50/50`, concurrencia restore `49/49` y el caso durable DB `inflight-pid` pasó `50/50`. La reproducción inicialmente bloqueada por el nuevo guard de checkout sucio pasó al ejecutarse sobre el commit limpio `1a3b297`; no se reprodujo una regresión funcional del restore. |
+| 2026-08-28 | Se corrigió el método local de verificación. | Los recibos implícitos usan una caché privada estable fuera del checkout, Reticulum selecciona el rol macOS local y conserva `postgres` en Linux CI, con override explícito. El arnés pasa `18/18`; Reticulum pasa `462 tests + 5 properties` y una segunda invocación reutilizó el recibo exacto sin repetirlos. |
+| 2026-08-28 | Se impidieron transiciones de telemetría después de un resultado terminal del checkpoint y se añadió la regresión exacta. | El foco process-local pasa `91/91`: el fallo emite una sola salida terminal `failure`, no un `complete` posterior, y realiza cero mutaciones de writers. Bash, ShellCheck proporcional y `git diff --check` pasan. No se ejecutó otro `--full`, restore, despliegue ni mutación externa. |
+
 ## 2026-08-26 (M4: sonda Reticulum HTTP/TLS)
 
 | Time | Action | Result |

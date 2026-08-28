@@ -1,6 +1,6 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **27 de agosto de 2026**
+Ultima actualización: **28 de agosto de 2026**
 
 ## Respuesta corta
 
@@ -14,6 +14,12 @@ final `33073636287` pasó PostgreSQL 12.19/14.23, gitlinks, Gitleaks, Actionlint
 ShellCheck y las **894/894** regresiones de recovery. La PR raíz #18 se fusionó
 en `main` como `feee36b`; Cloud y los dos punteros exactos están integrados.
 **H5 está cerrado y el proyecto puede volver a features.**
+
+La revisión operativa posterior también está cerrada localmente. El único
+`--full` adicional no descubrió una rotura del metaverso: mezcló timeouts bajo
+carga monolítica con un rol PostgreSQL local incorrecto. Los casos exactos de
+recuperación pasan por separado y el verificador ahora conserva recibos para no
+repetir secciones verdes. No se ha tocado producción para hacer esta corrección.
 
 ## Lo que ya está demostrado
 
@@ -58,11 +64,16 @@ avatar real, chat privado y audio bidireccional con dos participantes.
 2. Mantener este recovery como capacidad operativa, sin reabrir H5 salvo que
    cambien sus requisitos o aparezca evidencia nueva.
 
+El hardening operativo nuevo está en una rama local. Publicarlo más adelante
+no es requisito para que el metaverso actual funcione ni para empezar features.
+
 ## Qué no se va a hacer
 
 - No habrá otro restore, checkpoint, clúster ni copia nueva.
 - No se mezclará la imagen durable moderna con el restore histórico.
 - No se repetirán las 894 pruebas mientras sus bytes no cambien.
+- No se repetirá el `--full` posterior: sus fallos ya tienen diagnóstico y
+  focales exactas verdes.
 - No se tocarán costes, topología o secretos para cerrar esta fase.
 
 ## Cuánto queda
