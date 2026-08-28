@@ -1,6 +1,6 @@
 # PLAN ACTUAL — Sitting v2 autoritativo
 
-Version: **v2 — EJECUTABLE LOCAL; EFECTOS EXTERNOS EN ESPERA**
+Version: **v2.1 — FUENTE CONGELADA; STAGING EN ESPERA**
 Ultima revision: **28 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El plan de transición
 cerrado se conserva en
@@ -111,33 +111,45 @@ de imágenes, staging, Spoke, credenciales, DigitalOcean ni producción.
 
 ### S2. Refrescar evidencia local sobre los bytes exactos
 
-- [ ] Ejecutar la unidad contractual y enumeración Playwright de Sitting sin
+- [x] Ejecutar la unidad contractual y enumeración Playwright de Sitting sin
   contactar una URL remota.
-  - Estado: **READY**.
+  - Estado: **DONE**.
   - Verificación: `npm ci`, `npm run test:unit` y
     `npm run test:sitting -- --list` en `tests/browser`.
-- [ ] Ejecutar Hubs focal: TypeScript, lint de la superficie afectada y las
+  - Evidencia: unidad browser **11/11** y exactamente un E2E Sitting enumerado;
+    no se abrió ni contactó una URL remota.
+- [x] Ejecutar Hubs focal: TypeScript, lint de la superficie afectada y las
   pruebas AVA de reserva, identidad, intentos y diagnóstico de waypoints.
-  - Estado: **READY**.
-  - Hecho cuando: cero fallos sobre `ce8390a`; no se atribuye un build todavía.
-- [ ] Ejecutar Reticulum focal: dependencias locked, format/compile estricto y
+  - Estado: **DONE**.
+  - Evidencia: TypeScript y lint dirigido correctos; AVA Sitting **48/48**
+    sobre `ce8390a`. El aviso de datos Browserslist antiguos no es first-party
+    ni alteró el resultado. No se atribuye un build todavía.
+- [x] Ejecutar Reticulum focal: dependencias locked, format/compile estricto y
   las dos suites de reserva/modelo y canal contra PostgreSQL local.
-  - Estado: **READY**.
-  - Hecho cuando: concurrencia, idempotencia, lease, canal y privacidad pasan
-    sobre `6d9ee9e`.
-- [ ] Ejecutar composición/diff-check y registrar la evidencia exacta.
-  - Estado: **READY** después de los tres focos.
+  - Estado: **DONE**.
+  - Evidencia: dependencias locked, format y compilación estricta correctos;
+    las dos suites pasan **20/20** contra PostgreSQL local sobre `6d9ee9e`.
+    Los warnings emitidos al compilar dependencias legacy no pertenecen al
+    código first-party y la compilación estricta terminó con código cero.
+- [x] Ejecutar composición/diff-check y registrar la evidencia exacta.
+  - Estado: **DONE**.
+  - Evidencia: **2/2** gitlinks verificados, `git diff --check` correcto en
+    root/Hubs/Cloud, los tres árboles limpios y ningún proceso de prueba
+    residual.
   - Nota: no se repite `--full`; no cambiaron bytes de producto y el gate final
     sectioned solo será necesario si una corrección invalida su cierre.
 
 ### S3. Resolver solo defectos demostrados
 
-- [ ] Si todos los focos pasan, declarar que no hace falta implementación nueva
+- [x] Si todos los focos pasan, declarar que no hace falta implementación nueva
   y congelar los dos commits fuente.
-  - Estado: **WAITING** de S2.
+  - Estado: **DONE**.
+  - Evidencia: Hubs `ce8390a8905fa38fa0acdb10d5f94290981477ec` y Cloud
+    `6d9ee9e998f636fcf61a4928cd2a275829768259` quedan congelados como fuentes
+    candidatas; no se modificó código de producto.
 - [ ] Si falla un foco, corregir únicamente su causa en el subrepo dueño,
   repetir el verificador más cercano y actualizar el gitlink raíz.
-  - Estado: **WAITING** de evidencia; no es trabajo preventivo.
+  - Estado: **SKIPPED — ningún foco demostró un defecto**.
   - Regla: dos fallos equivalentes sin nueva evidencia producen STOP y
     replanteamiento, no otro intento ciego.
 
@@ -188,10 +200,11 @@ de imágenes, staging, Spoke, credenciales, DigitalOcean ni producción.
 
 ## Estado de trabajo
 
-- Completado: S0 ramas y S1 gap/release boundary.
-- Activo: S2 validación local focal.
-- Ready: browser contract, Hubs focal y Reticulum focal.
-- Waiting: S3 por resultados; S4/S5 por evidencia y autorización externa.
+- Completado: S0 ramas, S1 gap/release boundary, S2 evidencia local y S3
+  congelación de las fuentes candidatas.
+- Activo: ninguno; el trabajo local autorizado está cerrado.
+- Ready: S4 en cuanto exista autorización externa y un target staging exacto.
+- Waiting: S4/S5 por autorización, builds trazables y aceptación externa.
 - Bloqueos técnicos: ninguno.
 - Efectos externos realizados: ninguno.
 
@@ -223,8 +236,8 @@ de imágenes, staging, Spoke, credenciales, DigitalOcean ni producción.
 ## Punto de menor confianza
 
 No existe todavía un target staging identificado y aceptado. Eso no invalida la
-fuente ni bloquea S2, pero sí impide afirmar que Sitting v2 funciona entre dos
-navegadores reales. La comprobación más barata, después de cerrar los focos
-locales, es inventariar read-only la capacidad actual y proponer un único target
-aislado con coste cero o coste explícito. Hasta entonces no se crea ningún
-recurso ni se toca producción.
+fuente ni sus pruebas focales, pero sí impide afirmar que Sitting v2 funciona
+entre dos navegadores reales. La comprobación más barata, después de cerrar los
+focos locales, es inventariar read-only la capacidad actual y proponer un único
+target aislado con coste cero o coste explícito. Hasta entonces no se crea
+ningún recurso ni se toca producción.

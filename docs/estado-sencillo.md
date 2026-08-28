@@ -65,11 +65,23 @@ avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Lo que toca ahora
 
-1. Refrescar las pruebas locales focales de Sitting v2 sobre los commits
-   actuales.
-2. Si pasan, congelar Hubs y Reticulum sin reprogramar la feature.
-3. Pedir después autorización para construir únicamente esas dos imágenes y
-   preparar una aceptación staging aislada con dos navegadores.
+La parte local de Sitting v2 ya está cerrada. No ha hecho falta reprogramar la
+feature:
+
+- browser: **11/11** unidades y un único E2E Sitting enumerado, sin abrir una
+  URL remota;
+- Hubs: TypeScript, lint dirigido y **48/48** pruebas Sitting;
+- Reticulum: dependencias locked, format, compilación estricta y **20/20**
+  pruebas contra PostgreSQL local;
+- composición: **2/2** gitlinks, diff-check y los tres árboles limpios.
+
+Las fuentes candidatas quedan congeladas en Hubs `ce8390a` y Cloud/Reticulum
+`6d9ee9e`. No se cambió código de producto y no se repitió el `--full`.
+
+Lo siguiente ya no es otra ronda local: hace falta autorizar la inspección
+externa/build y concretar un staging aislado. Después se construyen únicamente
+Hubs y Reticulum, se prueba la carrera con dos navegadores y, solo si pasa, se
+propone la ventana productiva.
 
 El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`, está en la rama
 local `codex/sitting-v2` y conserva los gitlinks exactos. Los worktrees
@@ -96,10 +108,10 @@ no es requisito para que el metaverso actual funcione ni para empezar features.
 **0 % de H5 pendiente.** Validación, recuperación, producción, aceptación
 humana, CI, gitlinks y merge están resueltos.
 
-La preparación para features está **100 % terminada**. Sitting v2 tiene la
-implementación fuente integrada, pero la feature comercial no se contará como
-terminada hasta pasar pruebas actuales, staging de dos navegadores y aceptación
-productiva. No se convierte source existente en un porcentaje live ficticio.
+La preparación para features está **100 % terminada**. En Sitting v2, la fuente
+y su validación local están terminadas. La feature comercial aún necesita los
+builds trazables, staging de dos navegadores y aceptación productiva. No se
+convierte source existente en un porcentaje live ficticio.
 
 ## Cuándo se para
 

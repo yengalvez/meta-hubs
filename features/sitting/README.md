@@ -10,9 +10,11 @@ verdad. La exclusión se resuelve en Reticulum mediante el protocolo Phoenix de
 reservas de waypoint v2 y leases persistidos en PostgreSQL. El estado NAF se
 mantiene solo como representación derivada para compatibilidad visual.
 
-> Estado: implementación candidata validada localmente. Todavía no se ha
-> ejecutado la aceptación de dos navegadores en staging ni se ha desplegado o
-> aceptado en live.
+> Estado: fuentes candidatas congeladas en Hubs `ce8390a` y Reticulum
+> `6d9ee9e`. La validación focal actual pasa browser **11/11**, Hubs **48/48** y
+> Reticulum **20/20**, además de checks estrictos y composición limpia. Todavía
+> no se ha ejecutado la aceptación de dos navegadores en staging ni se ha
+> desplegado o aceptado en live.
 
 ## Cómo authorizar una silla en Spoke
 

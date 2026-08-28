@@ -2,17 +2,23 @@
 
 ## Estado actual
 
-La implementación candidata tiene evidencia local, pero no tiene todavía
-aceptación de navegador contra staging ni evidencia de despliegue/live.
+La implementación candidata, congelada en Hubs `ce8390a` y Cloud/Reticulum
+`6d9ee9e`, tiene evidencia local fresca del 28 de agosto de 2026, pero no tiene
+todavía aceptación de navegador contra staging ni evidencia de despliegue/live.
 
-Validación local registrada antes de la integración final:
+Validación focal actual:
 
-- suites AVA del coordinador e identidad de waypoint correctas;
-- Hubs: `npm run check` y lint dirigido correctos;
-- pruebas dirigidas de Reticulum correctas;
-- suite completa local de Reticulum correcta, incluidas sus propiedades y solo
-  las exclusiones esperadas;
-- Reticulum: compilación con warnings tratados como errores correcta.
+- arnés browser: **11/11** unidades y exactamente un E2E Sitting enumerado, sin
+  URL remota;
+- Hubs: `npm run check`, lint dirigido y las cinco familias AVA Sitting
+  **48/48**;
+- Reticulum: dependencias locked, format y compilación estricta correctos; las
+  dos suites de reserva/modelo y canal pasan **20/20** contra PostgreSQL local;
+- composición: **2/2** gitlinks, diff-check y árboles root/Hubs/Cloud limpios.
+
+No cambió ningún byte de producto durante esta validación. Los avisos de datos
+Browserslist y de compilación de dependencias legacy fueron no first-party y
+los comandos estrictos terminaron con código cero.
 
 Estos resultados no sustituyen la carrera real entre dos navegadores, la
 revisión visual ni el cold-browser posterior al rollout.
@@ -39,15 +45,23 @@ Antes del E2E:
 
 ## Gates locales
 
-Desde la raíz:
+Durante una iteración con cambios de producto, el gate rápido desde la raíz es:
 
 ```bash
 ./scripts/verify-project.sh
+```
+
+Un candidato final cuyos bytes de producto hayan cambiado ejecuta una sola vez:
+
+```bash
 ./scripts/verify-project.sh --full
 ```
 
-El gate completo enumera las pruebas Playwright pero no ejecuta el E2E remoto:
-no existe una URL staging por defecto y no debe inventarse una.
+`--full` ya incluye el bloque normal: no deben ejecutarse ambos consecutivamente
+sobre los mismos bytes. En el corte actual no se repitió `--full` porque no hubo
+cambio de producto y su evidencia final seguía aplicando. El gate completo
+enumera Playwright pero no ejecuta el E2E remoto: no existe una URL staging por
+defecto y no debe inventarse una.
 
 Para validar el arnés sin acceder a una sala:
 
