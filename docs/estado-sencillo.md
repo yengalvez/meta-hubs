@@ -22,8 +22,9 @@ recuperación pasan por separado y el verificador ahora conserva recibos para no
 repetir secciones verdes. No se ha tocado producción para hacer esta corrección.
 
 El plan de H5 se ha guardado completo en `OLD/docs/` y ya no dirige trabajo.
-La transición corta de `PLAN_ACTUAL.md` ya creó un worktree limpio y corrigió
-los estados documentales obsoletos. Solo falta elegir una primera feature.
+La transición corta ya creó un worktree limpio y corrigió los estados
+documentales obsoletos. Se eligió **Sitting v2** y el nuevo `PLAN_ACTUAL.md`
+dirige exclusivamente esa feature.
 
 ## Lo que ya está demostrado
 
@@ -64,13 +65,19 @@ avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Lo que toca ahora
 
-1. Elegir una única primera feature: **Sitting v2** —recomendada— o **GLB
-   neutral** como alternativa visible más pequeña.
-2. Abrir después una rama y un plan específico solo para la elegida.
+1. Refrescar las pruebas locales focales de Sitting v2 sobre los commits
+   actuales.
+2. Si pasan, congelar Hubs y Reticulum sin reprogramar la feature.
+3. Pedir después autorización para construir únicamente esas dos imágenes y
+   preparar una aceptación staging aislada con dos navegadores.
 
 El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`, está en la rama
-local `codex/feature-transition` y conserva los gitlinks exactos. Los worktrees
+local `codex/sitting-v2` y conserva los gitlinks exactos. Los worktrees
 antiguos no se han limpiado, reutilizado ni borrado.
+
+El código autoritativo ya existe en Hubs y Reticulum. Producción conserva los
+commits anteriores y solo demuestra sitting histórico; la carrera v2 todavía
+necesita build, staging y aceptación antes de cualquier promoción.
 
 El hardening operativo nuevo está en una rama local. Publicarlo más adelante
 no es requisito para que el metaverso actual funcione ni para empezar features.
@@ -89,9 +96,10 @@ no es requisito para que el metaverso actual funcione ni para empezar features.
 **0 % de H5 pendiente.** Validación, recuperación, producción, aceptación
 humana, CI, gitlinks y merge están resueltos.
 
-La preparación para features está **100 % terminada**. La implementación de la
-primera feature sigue en **0 %** porque todavía debe elegirse entre Sitting v2
-y GLB neutral; no se ha fingido avance de producto con trabajo organizativo.
+La preparación para features está **100 % terminada**. Sitting v2 tiene la
+implementación fuente integrada, pero la feature comercial no se contará como
+terminada hasta pasar pruebas actuales, staging de dos navegadores y aceptación
+productiva. No se convierte source existente en un porcentaje live ficticio.
 
 ## Cuándo se para
 

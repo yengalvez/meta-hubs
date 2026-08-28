@@ -7,7 +7,7 @@ checkouts históricos. No es una cola de borrado. `Detrás/delante` compara cada
 
 | Ruta | Rama | Cambios | Detrás | Delante | Clasificación |
 | --- | --- | ---: | ---: | ---: | --- |
-| `/Users/Shared/Gits/YenHubs-features` | `codex/feature-transition` | 0 | 0 | 5 | base activa limpia |
+| `/Users/Shared/Gits/YenHubs-features` | `codex/sitting-v2` | 0 | 0 | 6 | feature activa limpia |
 | `/Users/Shared/Gits/YenHubs-client-hibernation` | `codex/hibernation-ops-hardening` | 0 | 0 | 5 | base limpia conservada; no editar para features |
 | `/Users/Shared/Gits/YenHubs` | `codex/recovery-closure` | 28 | 63 | 14 | preservar; no limpiar ni reutilizar |
 | `/Users/Shared/Gits/YenHubs-aud078-root` | `codex/aud078-root-integration` | 3 | 64 | 0 | preservar; revisar solo en una tarea futura específica |
@@ -20,8 +20,8 @@ checkouts históricos. No es una cola de borrado. `Detrás/delante` compara cada
 | `/Users/Shared/Gits/YenHubs-gitleaks-policy-bootstrap` | `codex/gitleaks-policy-bootstrap` | 0 | 121 | 0 | histórico limpio; revisar después |
 | `/Users/Shared/Gits/YenHubs-recovery-safety-final` | `codex/recovery-safety-final` | 0 | 122 | 1 | histórico limpio; revisar después |
 
-Los submódulos del worktree activo están inicializados y limpios en Hubs
+Los submódulos del worktree activo están inicializados, limpios y en la rama
+local `codex/sitting-v2`, con Hubs
 `ce8390a8905fa38fa0acdb10d5f94290981477ec` y Cloud
-`6d9ee9e998f636fcf61a4928cd2a275829768259`. Permanecen desacoplados y sin
-ediciones; antes de tocar uno se creará una rama `codex/<feature>` desde ese
-commit exacto.
+`6d9ee9e998f636fcf61a4928cd2a275829768259`. Permanecen sin ediciones; un fallo
+causal decidirá si alguno necesita un commit nuevo.

@@ -1,241 +1,230 @@
-# PLAN ACTUAL — transición limpia a la siguiente feature
+# PLAN ACTUAL — Sitting v2 autoritativo
 
-Version: **v1 — EJECUTABLE HASTA ELEGIR UNA FEATURE**
+Version: **v2 — EJECUTABLE LOCAL; EFECTOS EXTERNOS EN ESPERA**
 Ultima revision: **28 de agosto de 2026 (Europe/Madrid)**
-Autoridad: **este fichero es la única cola ejecutable**. El plan cerrado de H5
-se conserva completo en
-`OLD/docs/PLAN_ACTUAL-h5-cerrado-2026-08-28.md`. El historial de sesión no
-decide el orden de trabajo.
+Autoridad: **este fichero es la única cola ejecutable**. El plan de transición
+cerrado se conserva en
+`OLD/docs/PLAN_ACTUAL-feature-transition-2026-08-28.md`.
 
 ## Resultado buscado
 
-Salir de recovery de forma definitiva y abrir una sola feature de producto en
-un entorno Git limpio, privado y reproducible, sin arrastrar ramas antiguas ni
-mezclar feature, actualización upstream, modernización de infraestructura o
-limpieza histórica.
+Entregar Sitting v2 para que dos personas que pulsan **Sit** sobre la misma
+silla nunca puedan quedar sentadas simultáneamente: Reticulum concede un único
+lease autoritativo, el ganador se mueve y replica su pose, el perdedor permanece
+de pie, y Stand, handoff y desconexión liberan la silla de forma observable.
 
-Este plan termina cuando exista:
+La feature termina únicamente cuando:
 
-1. un worktree limpio para features, basado en el corte local aceptado;
-2. documentación de estado coherente con el Git actual y el runtime aceptado;
-3. una única feature elegida por el propietario;
-4. un plan v2 específico para esa feature, con alcance y aceptación
-   observables.
+1. la fuente exacta de Hubs y Reticulum pasa las pruebas locales aplicables;
+2. las imágenes de esos mismos commits se construyen por GitHub Actions y se
+   fijan por digest;
+3. staging demuestra la carrera con dos navegadores, pose remota, Stand,
+   relevo y cierre abrupto sin errores;
+4. producción recibe los mismos digests en orden Reticulum primero y Hubs
+   después, con checkpoint, rollback preparado, navegador frío y verificador
+   live con cero fallos y cero avisos.
 
-No implementa todo el backlog y no convierte la transición en otro proyecto
-indefinido.
+Un test unitario, un build o la existencia del código no sustituyen la carrera
+real. La feature tampoco obliga a promover el runtime durable de bots.
 
-## Estado confirmado
+## Decisión y estado confirmado
 
-- H5 está cerrado. La hibernación y recuperación productivas, DB, medios,
-  navegador, audio, bots históricos, integración y CI final están aceptados.
-- El hardening operativo posterior está cerrado localmente en
-  `codex/hibernation-ops-hardening`; su corte de transición `407353d` está
-  limpio y contiene cinco commits sobre `origin/main`. No se ha publicado y no
-  bloquea features.
-- El checkout `/Users/Shared/Gits/YenHubs` no se usa para trabajo nuevo: su
-  rama `codex/recovery-closure` está 14 commits por delante y 63 por detrás de
-  `origin/main`, con cambios versionados y material sin seguimiento que se
-  preserva sin limpiar.
-- El corte fuente integrado fija Hubs
-  `ce8390a8905fa38fa0acdb10d5f94290981477ec` y Hubs Cloud
+- El propietario eligió **Sitting v2** el 28 de agosto de 2026.
+- Workspace raíz: `/Users/Shared/Gits/YenHubs-features`, rama local
+  `codex/sitting-v2`, sobre el commit de transición `8c0d547`.
+- Hubs: rama local `codex/sitting-v2` en
+  `ce8390a8905fa38fa0acdb10d5f94290981477ec`.
+- Cloud: rama local `codex/sitting-v2` en
   `6d9ee9e998f636fcf61a4928cd2a275829768259`.
-- Producción conserva parte del runtime histórico aceptado. Integración en Git
-  no equivale a imagen construida, staging, despliegue ni aceptación live del
-  runtime moderno.
-- Tercera persona, Obsidian Aurora, landing, español, full-body/Mixamo, bots
-  históricos con navmesh/chat, sitting básico, Admin, Spoke operativo e
-  hibernación ya existen. No se reimplementan.
+- Los commits Hubs `9c2da562b` y `3f18bdf24`, Cloud `ce20e20` y el arnés raíz
+  `875642e` son ancestros de esos cortes. La implementación, migraciones y E2E
+  ya existen; no se reescriben sin un fallo causal nuevo.
+- El runtime productivo recuperado conserva Hubs `a7214eb88` y Reticulum/Cloud
+  `5a82de5`, ambos anteriores a Sitting v2. La aceptación H5 demostró sitting
+  histórico, no el protocolo v2 ni su carrera multiusuario.
+- Sitting v2 necesita únicamente una imagen Hubs y una imagen Reticulum del
+  corte actual. No necesita construir parent/runner de bots, Spoke, Dialog,
+  Photomnemonic ni Coturn.
 
-## Alcance y límites
+## Requisitos de producto
 
-Incluido en esta transición:
+1. Una silla válida tiene identidad Spoke estable y los flags `Disable motion`,
+   `Can be occupied` y `Can be clicked`.
+2. Reticulum/PostgreSQL es la única autoridad de exclusión; NAF es una
+   proyección visual y nunca concede ocupación.
+3. Dos reservas simultáneas producen exactamente un ganador y un perdedor.
+4. El cliente solo se mueve después del `ok` autoritativo correlacionado.
+5. El estado público no expone identidad, UUID de lease ni datos privados.
+6. `player-info.isSitting` y la posición del avatar muestran al ganador sentado
+   de forma coherente en ambos clientes.
+7. Stand libera, apaga la pose y elige un waypoint no ocupable.
+8. Tras liberar, el perdedor puede reclamar la misma silla.
+9. Cierre limpio libera inmediatamente; el lease de 15 segundos protege la
+   desconexión no observable.
+10. Hubs v2 ante servidor antiguo o capacidad inválida falla cerrado. Un cliente
+    antiguo puede convivir con Reticulum v2, pero esa ventana no acepta sillas.
+11. No hay warnings/errores first-party, excepciones, requests fallidas ni HTTP
+    `>= 400` durante la aceptación.
 
-- crear un worktree local limpio y una rama para la feature elegida;
-- verificar los dos gitlinks y ramas de los submódulos antes de editar;
-- corregir solo bloques de estado obsoletos que puedan provocar trabajo
-  repetido;
-- elegir una feature y sustituir este plan por su plan específico.
+## Alcance, no objetivos y autoridad
 
-Fuera de alcance hasta una autorización o plan posterior:
+Incluido:
 
-- borrar, limpiar, fusionar o reutilizar los worktrees históricos;
-- publicar commits, abrir PR, ejecutar GitHub Actions o hacer deploy;
-- tocar DigitalOcean, producción, DNS, credenciales, datos o costes;
-- ejecutar otro restore, checkpoint o `verify-project.sh --full`;
-- modernizar Spoke, certificar capacidad, actualizar upstream o implementar
-  varias features a la vez.
+- contrato y tests Sitting existentes en Hubs, Reticulum y browser;
+- corrección local de un defecto solo si un verificador aplicable lo demuestra;
+- build trazable de Hubs y Reticulum, staging y promoción productiva posterior;
+- documentación, rollback y aceptación cold desktop/mobile.
 
-Git puede permanecer completamente local y privado durante diseño,
-implementación y pruebas locales. Publicar en un repositorio privado solo será
-necesario si más adelante se autoriza CI, construcción de imágenes o rollout.
+Fuera de alcance:
 
-## Candidatas de producto
+- GLB neutral, personalidad de bots, runtime durable de bots o capacidad CCU;
+- actualización upstream, modernización de Spoke o cambio de topología general;
+- rediseñar recovery, repetir H5 o limpiar worktrees históricos;
+- editar la escena principal para crear fixtures de prueba;
+- revertir destructivamente la migración con leases activos.
 
-### 1. Sitting autoritativo v2 — recomendada
-
-El código cliente/servidor está integrado, pero faltan staging, carrera real de
-dos navegadores y aceptación live. Cierra la brecha concreta de doble ocupación
-de una silla y reutiliza trabajo ya hecho en vez de crear otra arquitectura.
-
-### 2. Carga neutral de avatares GLB — alternativa rápida y visible
-
-El flujo privado existe en fuente. Falta aceptar el nombre neutral en live y
-realizar un guardado real con un GLB reciente, idealmente un piloto local
-MPFB/MakeHuman, comprobando preview, privacidad y persistencia.
-
-### 3. Personalidad individual por bot — feature posterior
-
-Hoy todos los bots de una sala comparten prompt. Personalidad, instrucciones o
-memoria por bot requieren esquema persistido, Admin/UI, límites y aislamiento.
-No se mezcla con la promoción del runtime durable.
-
-### Backlog no ejecutable en este plan
-
-- runtime durable de bots: promoción técnica separada antes de prometerlo como
-  runtime público moderno;
-- VR físico y mejoras opcionales de cámara como zoom/colisión;
-- capacidad física: certificación antes de prometer cifras de concurrencia;
-- Spoke legacy: modernización incremental de mantenimiento, no feature de
-  cliente;
-- proveedor de avatares embebido: bloqueado hasta decisión contractual,
-  privacidad y coste.
+Autorizado ahora: trabajo local reversible, ramas, documentación y pruebas
+locales proporcionales. No están autorizados todavía push, Actions, publicación
+de imágenes, staging, Spoke, credenciales, DigitalOcean ni producción.
 
 ## Plan de producción
 
-### F0. Conservar el cierre anterior
+### S0. Cerrar la transición y fijar ramas
 
-- [x] Archivar completo el plan H5 anterior en
-  `OLD/docs/PLAN_ACTUAL-h5-cerrado-2026-08-28.md`.
+- [x] Elegir Sitting v2 y descartar GLB neutral de esta cola.
   - Estado: **DONE**.
-  - Evidencia: el archivo histórico existe, se declara no ejecutable y está
-    indexado en `OLD/README.md`.
-- [x] Mantener H5 y el hardening local cerrados, sin repetir pruebas ni
-  trasladarlos a la nueva cola.
+  - Evidencia: elección `1` del propietario.
+- [x] Abrir ramas `codex/sitting-v2` en root, Hubs y Cloud desde los cortes
+  exactos aceptados.
   - Estado: **DONE**.
+  - Evidencia: los tres árboles están limpios; Hubs `ce8390a`, Cloud `6d9ee9e`.
 
-### F1. Preparar un workspace limpio y privado
+### S1. Confirmar el gap real
 
-- [x] Crear `/Users/Shared/Gits/YenHubs-features` como worktree nuevo desde el
-  commit limpio que contiene este plan.
+- [x] Contrastar source, historial y runtime aceptado.
   - Estado: **DONE**.
-  - Hecho cuando: `git status` está limpio y la rama no contiene ni absorbe el
-    checkout histórico `codex/recovery-closure`.
-  - Evidencia: rama local `codex/feature-transition` creada desde `407353d`;
-    checkout limpio antes de iniciar F2.
-- [x] Inicializar y verificar los gitlinks exactos Hubs `ce8390a` y Cloud
-  `6d9ee9e`; antes de editar un submódulo, crear su propia rama
-  `codex/<feature>` desde la base correcta.
+  - Evidencia: el código y los tests v2 son ancestros del source actual; las
+    imágenes live proceden de commits anteriores.
+- [x] Limitar la release a Hubs + Reticulum.
   - Estado: **DONE**.
-  - Hecho cuando: los dos objetos existen, coinciden con el root y ningún
-    submódulo editable está en una rama equivocada.
-  - Evidencia: ambos submódulos están inicializados, limpios y desacoplados en
-    `ce8390a8905fa38fa0acdb10d5f94290981477ec` y
-    `6d9ee9e998f636fcf61a4928cd2a275829768259`. No se editaron; su rama exacta
-    se abrirá solo después de F3.
-- [x] Inventariar los worktrees existentes solo por ruta, rama, limpieza y
-  relación con `origin/main`.
-  - Estado: **DONE**.
-  - Hecho cuando: quedan clasificados como conservar, revisar después o base
-    activa, sin borrar ni mover bytes.
-  - Evidencia: `docs/worktree-inventory-2026-08-28.md`; no se limpió, movió ni
-    eliminó ningún checkout histórico.
+  - Consecuencia: no se construyen ni despliegan imágenes no relacionadas.
 
-### F2. Reconciliar la documentación que puede causar loops
+### S2. Refrescar evidencia local sobre los bytes exactos
 
-- [x] Actualizar únicamente los bloques de estado de
-  `features/bots/README.md`, `docs/customization-inventory.md` y
-  `docs/spoke-legacy-audit-2026-07.md` que aún presentan merges o gitlinks ya
-  cerrados como pendientes.
-  - Estado: **DONE**.
-  - Hecho cuando: cada documento distingue `implementado`, `integrado`,
-    `construido`, `live`, `aceptado` y `pendiente`, sin reescribir el historial.
-  - Evidencia: los tres documentos fijan root `origin/main=4811101`, Hubs
-    `ce8390a` y Cloud `6d9ee9e`; eliminan como pendientes los merges/gitlinks
-    cerrados y mantienen el runtime durable fuera de la aceptación live.
-- [x] Comprobar que los documentos activos remiten únicamente a este plan y
-  que `OLD/` sigue siendo evidencia opcional, nunca una cola.
-  - Estado: **DONE**.
-  - Verificación: enlaces dirigidos, búsqueda de referencias ejecutables
-    obsoletas y `git diff --check`; no requiere suites de producto.
-  - Evidencia: `docs/completion-plan-2026-07-18.md` ya remite a
-    `../PLAN_ACTUAL.md`; el antiguo plan H5 se declara histórico y no hay otra
-    autoridad ejecutable. `git diff --check` pasa.
+- [ ] Ejecutar la unidad contractual y enumeración Playwright de Sitting sin
+  contactar una URL remota.
+  - Estado: **READY**.
+  - Verificación: `npm ci`, `npm run test:unit` y
+    `npm run test:sitting -- --list` en `tests/browser`.
+- [ ] Ejecutar Hubs focal: TypeScript, lint de la superficie afectada y las
+  pruebas AVA de reserva, identidad, intentos y diagnóstico de waypoints.
+  - Estado: **READY**.
+  - Hecho cuando: cero fallos sobre `ce8390a`; no se atribuye un build todavía.
+- [ ] Ejecutar Reticulum focal: dependencias locked, format/compile estricto y
+  las dos suites de reserva/modelo y canal contra PostgreSQL local.
+  - Estado: **READY**.
+  - Hecho cuando: concurrencia, idempotencia, lease, canal y privacidad pasan
+    sobre `6d9ee9e`.
+- [ ] Ejecutar composición/diff-check y registrar la evidencia exacta.
+  - Estado: **READY** después de los tres focos.
+  - Nota: no se repite `--full`; no cambiaron bytes de producto y el gate final
+    sectioned solo será necesario si una corrección invalida su cierre.
 
-### F3. Elegir una única feature
+### S3. Resolver solo defectos demostrados
 
-- [ ] El propietario elige **Sitting v2** o **GLB neutral** como primera
-  feature. Sitting v2 es la recomendación técnica; GLB neutral es la
-  alternativa visible más pequeña.
-  - Estado: **WAITING — decisión de producto**.
-  - La espera no bloquea F1 ni F2.
-- [ ] Tras la elección, crear la rama exacta y reemplazar este plan por v2 con
-  un único resultado, requisitos, no objetivos, pruebas y aceptación.
-  - Estado: **WAITING** de la elección.
-  - Hecho cuando: ninguna otra candidata aparece como trabajo ejecutable.
+- [ ] Si todos los focos pasan, declarar que no hace falta implementación nueva
+  y congelar los dos commits fuente.
+  - Estado: **WAITING** de S2.
+- [ ] Si falla un foco, corregir únicamente su causa en el subrepo dueño,
+  repetir el verificador más cercano y actualizar el gitlink raíz.
+  - Estado: **WAITING** de evidencia; no es trabajo preventivo.
+  - Regla: dos fallos equivalentes sin nueva evidencia producen STOP y
+    replanteamiento, no otro intento ciego.
 
-### F4. Delimitar la frontera de release de la feature elegida
+### S4. Construir y aceptar en staging
 
-- [ ] Comparar el source exacto con el runtime aceptado antes de decidir qué
-  imágenes necesita la feature; no usar documentos históricos como estado
-  live.
-  - Estado: **WAITING** de F3.
-- [ ] Separar cualquier promoción del runtime moderno de la implementación de
-  producto. Si la feature necesita backend moderno, su rollout compatible se
-  prueba primero en staging y no se combina con upstream, Spoke o capacidad.
-  - Estado: **WAITING** de F3.
-- [ ] Definir rollback y aceptación real antes del primer efecto externo.
-  - Estado: **WAITING** de F3.
-  - Nota: este plan no autoriza build, staging, producción ni coste.
+- [ ] Autorizar el efecto externo y el target staging exacto, incluido cualquier
+  coste o uso compartido del clúster.
+  - Estado: **WAITING — autorización posterior**.
+  - Decisión mínima: staging aislado sin crear un clúster nuevo por defecto; si
+    no es viable, presentar coste/topología antes de crear recursos.
+- [ ] Construir Hubs y Reticulum por los workflows aprobados y resolver ambos
+  artefactos a digests con procedencia del commit exacto.
+  - Estado: **WAITING** de autorización y S3.
+- [ ] Preparar una sala/escena staging desechable con una silla y un waypoint de
+  salida; no usar ni modificar la escena principal como fixture.
+  - Estado: **WAITING** del target staging.
+- [ ] Desplegar staging en dos generaciones: Reticulum/migración conservando
+  Hubs anterior, verificar compatibilidad legacy, y después Hubs v2.
+  - Estado: **WAITING** de builds y staging.
+- [ ] Ejecutar `tests/browser/sitting-occupancy.spec.mjs` con dos contextos y
+  revisar manualmente `remote-seated-pose.png`.
+  - Estado: **WAITING** del rollout staging.
+  - Aceptación: los once requisitos de producto pasan sin warnings ni errores.
+
+### S5. Promover los mismos digests a producción
+
+- [ ] Autorizar la ventana productiva exacta y crear checkpoint DB+medios.
+  - Estado: **WAITING — efecto productivo**.
+- [ ] Revisar el `kubectl diff` generado y aplicar Reticulum primero, Hubs
+  después, sin cambios no relacionados.
+  - Estado: **WAITING** de staging verde y autorización.
+- [ ] Reiniciar Reticulum tras Hubs, ejecutar navegador frío desktop/mobile y
+  `./deployment/verify-live-reactivation.sh` con cero fallos y cero avisos.
+  - Estado: **WAITING** del rollout.
+- [ ] Cerrar la feature con evidencia, commits/digests, rollback y estado humano.
+  - Estado: **WAITING** de aceptación live.
+
+## Rollback
+
+1. Ante un fallo cliente/UX, volver primero Hubs al digest anterior.
+2. Mantener Reticulum v2 y su tabla: acepta clientes legacy y evita una
+   migración destructiva.
+3. Si el fallo es exclusivamente Reticulum y Hubs v2 aún no se desplegó,
+   conservar Hubs anterior y volver al digest Reticulum previo solo tras probar
+   que no existen leases activos.
+4. No borrar la tabla ni sus datos como rollback normal.
+5. Conservar checkpoint y digests anteriores hasta cerrar aceptación.
 
 ## Estado de trabajo
 
-- Completado: F0 archivo H5, F1 workspace limpio y F2 reconciliación
-  documental.
-- Activo: ninguno; no queda trabajo independiente que no anticipe la elección.
-- Waiting: F3 decisión del propietario entre Sitting v2 y GLB neutral.
+- Completado: S0 ramas y S1 gap/release boundary.
+- Activo: S2 validación local focal.
+- Ready: browser contract, Hubs focal y Reticulum focal.
+- Waiting: S3 por resultados; S4/S5 por evidencia y autorización externa.
 - Bloqueos técnicos: ninguno.
-- Reanudación: elegir una de las dos opciones; entonces se abre su rama exacta
-  y este plan se sustituye por v2.
 - Efectos externos realizados: ninguno.
 
 ## Reglas anti-loop
 
-1. Una feature por rama y por plan. No se mezcla con recovery, upstream,
-   capacidad, Spoke o modernización general.
-2. Un estado documental no prueba runtime. Fuente, build, staging, live y
-   aceptación se registran por separado.
-3. No se repite un PASS si no cambian sus inputs ni su oráculo.
-4. Pruebas focales durante implementación; un solo `--full` para el candidato
-   final cuando realmente corresponda.
-5. El checkout histórico se preserva y no se limpia para “poner orden”. El
-   trabajo nuevo nace limpio en otro worktree.
-6. Un fallo se corrige por su causa exacta y repite solo el verificador más
-   cercano. Dos fallos equivalentes sin evidencia nueva producen STOP y
-   replanteamiento.
-7. Publicar, construir imágenes, desplegar, gastar o mutar datos exige una
-   frontera y autorización posteriores; no se infiere de este plan.
-8. El plan de transición termina al abrir el plan v2 de una feature. No absorbe
-   el backlog restante.
+1. La implementación existente se conserva; no se crea “Sitting v3”.
+2. Un PASS previo no se repite salvo que cambien sus inputs u oráculo.
+3. Los focos actuales prueban source; solo staging prueba la carrera real.
+4. No se usa producción como fixture ni se presenta sitting histórico como v2.
+5. La ausencia de un staging viable se resuelve con una decisión de coste y
+   aislamiento, no mezclando la feature con otra arquitectura.
+6. Hubs y Reticulum son las únicas imágenes de esta release.
+7. Un fallo local no autoriza push, build, deploy ni cambios de topología.
 
 ## Artefactos clave
 
-- Plan H5 archivado:
-  `OLD/docs/PLAN_ACTUAL-h5-cerrado-2026-08-28.md`.
+- Contrato humano: `features/sitting/README.md`.
+- Implementación: `features/sitting/IMPLEMENTATION.md`.
+- Aceptación: `features/sitting/TESTING.md`.
+- E2E: `tests/browser/sitting-occupancy.spec.mjs`.
+- Hubs: `hubs/src/utils/waypoint-reservation-coordinator.js` y sistemas/UI de
+  waypoint.
+- Reticulum: `hubs-cloud/community-edition/services/reticulum/lib/ret/waypoint_reservation.ex`
+  y `hub_channel.ex`.
+- Rollout: `deployment/README.md`.
 - Estado humano: `docs/estado-sencillo.md`.
 - Historial: `docs/session-changelog.md`.
-- Inventario de worktrees: `docs/worktree-inventory-2026-08-28.md`.
-- Flujo Git/submódulos: `docs/development-workflow.md`.
-- Sitting: `features/sitting/README.md`, `IMPLEMENTATION.md`, `TESTING.md`.
-- Avatares: `features/avaturn/README.md`,
-  `docs/avatar-provider-evaluation-2026-07.md`.
-- Bots: `features/bots/README.md`.
-- Operación y rollout: `deployment/README.md`.
 
 ## Punto de menor confianza
 
-La prioridad comercial entre Sitting v2 y GLB neutral no puede demostrarse con
-tests. Elegir mal no pierde código, pero puede dedicar la siguiente fase a una
-mejora menos valiosa para el primer cliente. La comprobación más barata es una
-decisión explícita del propietario después de ver este plan. Hasta entonces F1
-y F2 son seguras y útiles para cualquiera de las dos opciones.
+No existe todavía un target staging identificado y aceptado. Eso no invalida la
+fuente ni bloquea S2, pero sí impide afirmar que Sitting v2 funciona entre dos
+navegadores reales. La comprobación más barata, después de cerrar los focos
+locales, es inventariar read-only la capacidad actual y proponer un único target
+aislado con coste cero o coste explícito. Hasta entonces no se crea ningún
+recurso ni se toca producción.
