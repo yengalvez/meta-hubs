@@ -17230,6 +17230,24 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-process-local ]]; then
     RECOVERY_STREAM_POLL_SECONDS=0.01 \
     "$ROOT_DIR/deployment/create-checkpoint.sh" \
     "$TMP_DIR/process-local-focus-checkpoint-mixed-pgsql"
+  checkpoint_failure_timing_lines="$(
+    printf '%s\n' "$LAST_OUTPUT" |
+      grep '^YENHUBS_TIMING operation=checkpoint ' || :
+  )"
+  checkpoint_failure_last_timing="$(
+    printf '%s\n' "$checkpoint_failure_timing_lines" | tail -n 1
+  )"
+  checkpoint_failure_terminal_count="$(
+    printf '%s\n' "$checkpoint_failure_timing_lines" |
+      grep -Ec ' result=(success|failure|interrupted)$' || :
+  )"
+  if [[ "$checkpoint_failure_last_timing" == *' result=failure' &&
+        "$checkpoint_failure_terminal_count" == 1 ]]; then
+    pass 'focused failed checkpoint emits one unambiguous terminal timing result'
+  else
+    fail 'focused failed checkpoint terminal timing result' \
+      "$checkpoint_failure_timing_lines"
+  fi
   if any_deployment_replica_mutation; then
     fail 'focused mixed PostgreSQL identity performs zero writer replica mutations' \
       "$(cat "$KUBECTL_LOG")"

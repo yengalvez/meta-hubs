@@ -163,6 +163,7 @@ CHECKPOINT_TIMING_REPORTED=0
 checkpoint_timing_transition() {
   local next_stage="$1" now="$SECONDS"
   [[ -n "$next_stage" ]] || return 2
+  [[ "$CHECKPOINT_TIMING_REPORTED" == 0 ]] || return 0
   if [[ "$next_stage" != "$CHECKPOINT_TIMING_STAGE" ]]; then
     printf 'YENHUBS_TIMING operation=checkpoint stage=%s stage_seconds=%s total_seconds=%s result=complete\n' \
       "$CHECKPOINT_TIMING_STAGE" \

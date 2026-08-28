@@ -101,6 +101,27 @@ else
   fail_test 'private evidence directory is accepted'
 fi
 
+default_cache="$TEST_TMP_DIR/default-cache"
+expected_default="$default_cache/yenhubs/project-verification"
+if (
+  VERIFY_EVIDENCE_DIR=''
+  XDG_CACHE_HOME="$default_cache"
+  export XDG_CACHE_HOME
+  ensure_private_evidence_dir '' >/dev/null
+  [[ "$VERIFY_EVIDENCE_DIR" == "$expected_default" &&
+     "$(portable_file_mode "$VERIFY_EVIDENCE_DIR")" == 700 ]]
+) && (
+  VERIFY_EVIDENCE_DIR=''
+  XDG_CACHE_HOME="$default_cache"
+  export XDG_CACHE_HOME
+  ensure_private_evidence_dir '' >/dev/null
+  [[ "$VERIFY_EVIDENCE_DIR" == "$expected_default" ]]
+); then
+  pass_test 'implicit evidence uses one stable private cache across invocations'
+else
+  fail_test 'implicit evidence uses one stable private cache across invocations'
+fi
+
 public_dir="$TEST_TMP_DIR/public"
 mkdir -m 755 "$public_dir"
 if (ensure_private_evidence_dir "$public_dir" >/dev/null 2>&1); then
@@ -167,6 +188,37 @@ if [[ "$(verification_section_input_sha256 dialog)" == "$input_sha" ]]; then
   pass_test 'section input fingerprint is deterministic'
 else
   fail_test 'section input fingerprint is deterministic'
+fi
+
+if [[ "$(uname -s)" == Darwin ]]; then
+  expected_local_db_credentials="$(id -un)"
+else
+  expected_local_db_credentials=postgres
+fi
+detected_local_db_credentials="$(
+  # shellcheck disable=SC2016 # Variables expand in the isolated Bash process.
+  env -u YENHUBS_RETICULUM_TEST_DB_CREDENTIALS bash -c '
+    source "$1"
+    printf "%s\\n" "$VERIFY_RETICULUM_TEST_DB_CREDENTIALS"
+  ' _ "$ROOT_DIR/scripts/verify-project.sh"
+)"
+if [[ "$detected_local_db_credentials" == "$expected_local_db_credentials" ]]; then
+  pass_test 'Reticulum defaults to the platform local PostgreSQL role'
+else
+  fail_test 'Reticulum defaults to the platform local PostgreSQL role'
+fi
+
+explicit_db_credentials="$(
+  # shellcheck disable=SC2016 # Variables expand in the isolated Bash process.
+  YENHUBS_RETICULUM_TEST_DB_CREDENTIALS=fixture-db-role bash -c '
+    source "$1"
+    printf "%s\\n" "$VERIFY_RETICULUM_TEST_DB_CREDENTIALS"
+  ' _ "$ROOT_DIR/scripts/verify-project.sh"
+)"
+if [[ "$explicit_db_credentials" == fixture-db-role ]]; then
+  pass_test 'explicit Reticulum PostgreSQL credentials override the platform default'
+else
+  fail_test 'explicit Reticulum PostgreSQL credentials override the platform default'
 fi
 
 printf '%d verify-project section tests passed\n' "$test_count"

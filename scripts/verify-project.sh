@@ -6,7 +6,15 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERIFY_RECEIPT_SCHEMA="yenhubs-project-verification-v2"
 VERIFY_AUDIT_MAX_AGE_SECONDS="${VERIFY_AUDIT_MAX_AGE_SECONDS:-86400}"
 VERIFY_EVIDENCE_DIR="${YENHUBS_VERIFY_EVIDENCE_DIR:-}"
-VERIFY_RETICULUM_TEST_DB_CREDENTIALS="${YENHUBS_RETICULUM_TEST_DB_CREDENTIALS:-postgres}"
+if [[ -n "${YENHUBS_RETICULUM_TEST_DB_CREDENTIALS:-}" ]]; then
+  VERIFY_RETICULUM_TEST_DB_CREDENTIALS="$YENHUBS_RETICULUM_TEST_DB_CREDENTIALS"
+elif [[ "$(uname -s)" == Darwin ]]; then
+  # Homebrew PostgreSQL initializes its local development role from the macOS
+  # account name. Linux CI uses the explicit postgres role instead.
+  VERIFY_RETICULUM_TEST_DB_CREDENTIALS="$(id -un)"
+else
+  VERIFY_RETICULUM_TEST_DB_CREDENTIALS=postgres
+fi
 
 VERIFY_NORMAL_SECTIONS=(advisories static security recovery)
 VERIFY_FULL_SECTIONS=(
@@ -26,6 +34,8 @@ Usage:
 Normal and full modes preserve successful section receipts and continue after
 an independent section fails. A receipt is reusable only while its declared
 inputs, verification harness, toolchain, private log and cleanup result match.
+Without --evidence-dir, receipts live in one stable private per-user cache
+outside the checkout so a later invocation does not repeat unchanged sections.
 USAGE
 }
 
@@ -267,6 +277,7 @@ verification_common_harness_material() {
   printf 'section_harness_algorithm=declared-functions-v1\n'
   declare -f \
     ensure_private_evidence_dir \
+    default_verification_evidence_dir \
     known_verification_processes_are_absent \
     portable_file_mode \
     portable_file_owner \
@@ -322,28 +333,39 @@ verification_section_harness_sha256() {
   verification_section_harness_material "$1" | sha256_stream
 }
 
+default_verification_evidence_dir() {
+  local cache_root="${XDG_CACHE_HOME:-$HOME/.cache}"
+  case "$cache_root" in
+    /*) ;;
+    *) return 2 ;;
+  esac
+  printf '%s\n' "$cache_root/yenhubs/project-verification"
+}
+
 ensure_private_evidence_dir() {
   local requested="$1" mode owner
   if [[ -z "$requested" ]]; then
-    requested="$(mktemp -d "${TMPDIR:-/tmp}/yenhubs-project-verification.XXXXXX")"
-  else
-    case "$requested" in
-      /*) ;;
-      *)
-        printf 'The verification evidence directory must be absolute.\n' >&2
-        return 2
-        ;;
-    esac
-    case "$requested/" in
-      "$ROOT_DIR/"*)
-        printf 'The verification evidence directory must be outside the checkout.\n' >&2
-        return 2
-        ;;
-    esac
-    if [[ ! -e "$requested" ]]; then
-      mkdir -p "$requested"
-      chmod 700 "$requested"
-    fi
+    requested="$(default_verification_evidence_dir)" || {
+      printf 'The default verification evidence directory is unavailable.\n' >&2
+      return 2
+    }
+  fi
+  case "$requested" in
+    /*) ;;
+    *)
+      printf 'The verification evidence directory must be absolute.\n' >&2
+      return 2
+      ;;
+  esac
+  case "$requested/" in
+    "$ROOT_DIR/"*)
+      printf 'The verification evidence directory must be outside the checkout.\n' >&2
+      return 2
+      ;;
+  esac
+  if [[ ! -e "$requested" ]]; then
+    mkdir -p "$requested"
+    chmod 700 "$requested"
   fi
   [[ -d "$requested" && ! -L "$requested" ]] || {
     printf 'The verification evidence path must be a real directory.\n' >&2
