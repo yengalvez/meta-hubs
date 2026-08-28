@@ -15,6 +15,7 @@ desplegar, actualizar ni implementar features.
 | `OLD/docs/project-freeze-2026-03.md` | freeze incompleto sin `ret-pvc` | `deployment/client-instance-lifecycle.md` |
 | `OLD/docs/active-goal-plan-recovery-avanzado-2026-08-09.md` | objetivo de recovery avanzado detenido por sobrealcance y por no cerrar la reactivacion sobre un cluster nuevo | `docs/active-goal-plan-2026-07-18.md` |
 | `OLD/docs/estado-sencillo-recovery-avanzado-2026-08-09.md` | panel humano del objetivo de recovery avanzado ya congelado | `docs/estado-sencillo.md` |
+| `OLD/docs/PLAN_ACTUAL-h5-cerrado-2026-08-28.md` | plan completo que cerró H5 y el hardening operativo local posterior | `PLAN_ACTUAL.md` |
 | `OLD/features/avaturn-research/` | investigacion previa, iframe y ejemplos no usados | `features/avaturn/README.md` |
 | `OLD/features/rpm-avatar-research/` | FBX, guias y prototipos anteriores ya sustituidos por la implementacion Mixamo/GLB integrada | `features/rpm-avatars/README.md`, codigo y pruebas en `hubs/` |
 | `OLD/patches/third-person/` | diffs antiguos ya integrados | `features/third-person/doc-thirdperson.md` |

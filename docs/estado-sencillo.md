@@ -21,6 +21,10 @@ carga monolítica con un rol PostgreSQL local incorrecto. Los casos exactos de
 recuperación pasan por separado y el verificador ahora conserva recibos para no
 repetir secciones verdes. No se ha tocado producción para hacer esta corrección.
 
+El plan de H5 se ha guardado completo en `OLD/docs/` y ya no dirige trabajo.
+El nuevo `PLAN_ACTUAL.md` abre una transición corta: preparar un worktree limpio,
+corregir estados documentales obsoletos y elegir una sola feature.
+
 ## Lo que ya está demostrado
 
 - PostgreSQL conserva las tablas y conteos esperados.
@@ -60,9 +64,13 @@ avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Lo que toca ahora
 
-1. Volver a desarrollar features.
-2. Mantener este recovery como capacidad operativa, sin reabrir H5 salvo que
-   cambien sus requisitos o aparezca evidencia nueva.
+1. Crear un worktree local limpio para features, sin limpiar ni reutilizar el
+   checkout histórico.
+2. Corregir solo los estados obsoletos que podrían repetir merges o gates ya
+   cerrados.
+3. Elegir una única primera feature: **Sitting v2** —recomendada— o **GLB
+   neutral** como alternativa visible más pequeña.
+4. Abrir después un plan específico solo para la elegida.
 
 El hardening operativo nuevo está en una rama local. Publicarlo más adelante
 no es requisito para que el metaverso actual funcione ni para empezar features.
@@ -80,6 +88,10 @@ no es requisito para que el metaverso actual funcione ni para empezar features.
 
 **0 % de H5 pendiente.** Validación, recuperación, producción, aceptación
 humana, CI, gitlinks y merge están resueltos.
+
+La nueva fase de features todavía no tiene porcentaje: primero debe elegirse
+una única feature. La preparación del workspace y la reconciliación documental
+son dos bloques finitos y no reabren H5.
 
 ## Cuándo se para
 
