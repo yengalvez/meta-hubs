@@ -1,6 +1,6 @@
 # PLAN ACTUAL — Sitting v2 autoritativo
 
-Version: **v2.1 — FUENTE CONGELADA; STAGING EN ESPERA**
+Version: **v2.2 — FUENTE CONGELADA; TARGET STAGING EN ESPERA**
 Ultima revision: **28 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El plan de transición
 cerrado se conserva en
@@ -155,11 +155,31 @@ de imágenes, staging, Spoke, credenciales, DigitalOcean ni producción.
 
 ### S4. Construir y aceptar en staging
 
+- [x] Auditar localmente la ruta de build y la disponibilidad de staging sin
+  contactar servicios externos.
+  - Estado: **DONE**.
+  - Evidencia de build: los cortes contienen los workflows aprobados
+    `hubs/.github/workflows/custom-docker-build-push.yml` y
+    `hubs-cloud/.github/workflows/custom-docker-build-push.yml`. El primero
+    construye Hubs con `RetPageOriginDockerfile`; el segundo debe recibir
+    exactamente `Override_Repo_Name=reticulum`,
+    `Override_Code_Path=community-edition/services/reticulum` y
+    `Override_Dockerfile=community-edition/services/reticulum/Dockerfile`.
+  - Evidencia de procedencia: los remote-tracking refs locales
+    `origin/master` apuntan a `ce8390a` y `6d9ee9e`; se volverán a contrastar
+    con GitHub antes de cualquier dispatch, porque esta comprobación no contactó
+    el remoto.
+  - Evidencia de target: no existe un contexto, dominio, values file ni sala
+    staging trackeados. La plantilla permite cambiar `Namespace` y
+    `HUB_DOMAIN`, pero eso no prueba aislamiento, capacidad, DNS, TLS, storage
+    ni credenciales. El único target documentado es la instalación productiva
+    y no se reutiliza como fixture.
 - [ ] Autorizar el efecto externo y el target staging exacto, incluido cualquier
   coste o uso compartido del clúster.
   - Estado: **WAITING — autorización posterior**.
-  - Decisión mínima: staging aislado sin crear un clúster nuevo por defecto; si
-    no es viable, presentar coste/topología antes de crear recursos.
+  - Decisión mínima: inventario remoto read-only y propuesta de un target
+    aislado sin crear un clúster nuevo por defecto; si no es viable, presentar
+    coste/topología antes de crear recursos.
 - [ ] Construir Hubs y Reticulum por los workflows aprobados y resolver ambos
   artefactos a digests con procedencia del commit exacto.
   - Estado: **WAITING** de autorización y S3.
@@ -203,7 +223,8 @@ de imágenes, staging, Spoke, credenciales, DigitalOcean ni producción.
 - Completado: S0 ramas, S1 gap/release boundary, S2 evidencia local y S3
   congelación de las fuentes candidatas.
 - Activo: ninguno; el trabajo local autorizado está cerrado.
-- Ready: S4 en cuanto exista autorización externa y un target staging exacto.
+- Ready: inventario remoto read-only de S4 en cuanto exista autorización
+  externa; el build espera además un target staging exacto.
 - Waiting: S4/S5 por autorización, builds trazables y aceptación externa.
 - Bloqueos técnicos: ninguno.
 - Efectos externos realizados: ninguno.
@@ -235,9 +256,9 @@ de imágenes, staging, Spoke, credenciales, DigitalOcean ni producción.
 
 ## Punto de menor confianza
 
-No existe todavía un target staging identificado y aceptado. Eso no invalida la
-fuente ni sus pruebas focales, pero sí impide afirmar que Sitting v2 funciona
-entre dos navegadores reales. La comprobación más barata, después de cerrar los
-focos locales, es inventariar read-only la capacidad actual y proponer un único
-target aislado con coste cero o coste explícito. Hasta entonces no se crea
-ningún recurso ni se toca producción.
+La auditoría local confirma que no existe un target staging trackeado. Eso no
+invalida la fuente ni sus pruebas focales, pero sí impide afirmar que Sitting v2
+funciona entre dos navegadores reales. La comprobación más barata es
+inventariar read-only la capacidad externa actual y proponer un único target
+aislado con coste cero o coste explícito. Hasta entonces no se crea ningún
+recurso ni se toca producción.

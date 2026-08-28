@@ -43,6 +43,26 @@ Antes del E2E:
 7. Confirmar que ambas sesiones ven la misma identidad persistente para la
    silla.
 
+## Receta de build candidata
+
+Esta receta está auditada en fuente, pero no se ha ejecutado:
+
+- Hubs `ce8390a`: workflow `custom-docker-build-push`, Dockerfile
+  `RetPageOriginDockerfile` y un tag único que incluya `sitting-v2` más el SHA
+  corto; la identidad inmutable posterior es el digest, no el tag.
+- Cloud/Reticulum `6d9ee9e`: workflow `custom-docker-build-push` con
+  `Override_Repo_Name=reticulum`,
+  `Override_Code_Path=community-edition/services/reticulum` y
+  `Override_Dockerfile=community-edition/services/reticulum/Dockerfile`.
+- Ambos resultados deben resolverse a `repository@sha256:<digest>` y quedar
+  ligados al run y commit exactos antes de generar un manifiesto.
+
+Los remote-tracking refs del checkout apuntan actualmente a esos dos commits,
+pero no sustituyen una lectura de GitHub inmediatamente anterior al dispatch.
+No se activa Actions hasta tener un target staging aceptado: publicar imágenes
+sin un lugar seguro donde probarlas solo crea artefactos y coste operativo sin
+acercar la aceptación.
+
 ## Gates locales
 
 Durante una iteración con cambios de producto, el gate rápido desde la raíz es:

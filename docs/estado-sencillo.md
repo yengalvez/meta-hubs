@@ -83,6 +83,15 @@ externa/build y concretar un staging aislado. Después se construyen únicamente
 Hubs y Reticulum, se prueba la carrera con dos navegadores y, solo si pasa, se
 propone la ventana productiva.
 
+La preparación local de ese paso también está auditada. Los dos workflows de
+build existen en los commits congelados y el de Reticulum tiene ya identificados
+sus tres parámetros exactos. Sin embargo, el repositorio no contiene un
+staging real: no hay contexto Kubernetes, dominio, DNS, values ni sala staging
+trackeados. Cambiar solo el nombre del namespace no garantiza aislamiento y no
+se usará producción como laboratorio. La siguiente lectura externa debe decidir
+si cabe un staging aislado sin coste nuevo o si hace falta presentar antes una
+opción con coste.
+
 El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`, está en la rama
 local `codex/sitting-v2` y conserva los gitlinks exactos. Los worktrees
 antiguos no se han limpiado, reutilizado ni borrado.
