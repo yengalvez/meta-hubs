@@ -10,27 +10,26 @@ clave por URL ni estado cliente. Ghost publica avatares y rutas por Phoenix/NAF
 sin renderizar la sala, mientras Reticulum conserva la autoridad sobre
 identidad, spawn, actualizaciones y comandos.
 
-> Estado: `AUD-075` está integrado desde Cloud `5392495b0772` y `AUD-078` ya se
-> fusionó inicialmente mediante los PR Cloud `#13`/`#14` en
-> `development=0a2163468844` y `master=1cf95ca8719b`. Los PR `#15/#16`
-> corrigieron después los relevos causales y `#17/#18` promovieron el fence de
-> operación hasta el head actual `master=24d09706c2d9`, con CI post-merge verde.
-> Hubs está ahora en `ce8390a8905f` tras corregir la compatibilidad segura de
-> Draft.js con Immutable.js 4.3.9. El worktree raíz contiene la compatibilidad
-> Fase 3B y apunta al gitlink `24d0970`; recovery 861/861 y el gate normal final
-> pasan, pero full, revisión, PR/CI y merge siguen pendientes. Todavía no se construyeron las imágenes candidatas, no hubo
-> checkpoint, despliegue ni atestación staging/live. El rollout público sigue
-> bloqueado hasta completar esas puertas y el flujo de `deployment/README.md`.
-> La certificación física de capacidad es una campaña futura separada.
+> Estado de fuente verificado el 28 de agosto de 2026: `AUD-075`
+> (`5392495b0772`), `AUD-078` y el fence de operación (`24d09706c2d9`) son
+> ancestros de Cloud `master=6d9ee9e998f6`. Root `origin/main=481110178380`
+> fija Hubs `ce8390a8905f` y Cloud `6d9ee9e998f6`; la integración raíz, su CI
+> final y H5 están cerrados. No queda ningún merge ni gitlink de esos bloques
+> por repetir.
+>
+> Esta evidencia demuestra **fuente integrada**, no la promoción del runtime
+> durable de bots. Producción conserva el runtime histórico `process-local`
+> aceptado durante H5; la imagen moderna sigue aparcada y no existe aceptación
+> staging/live de la topología aislada por Pod ni certificación física de
+> capacidad. Cualquier rollout público posterior debe seguir
+> `deployment/README.md` sobre los commits exactos vigentes.
 
-El último corte raíz aceptado usa Hubs `674ece411691` y Hubs Cloud
-`5392495b077249edcedfb3092551201645f648f1`; sus conteos de gates permanecen
-como evidencia histórica de ese input. Cloud `1cf95ca8719` añade la outbox y la
-parada terminal de `AUD-078`; `24d09706c2d9` añade el relevo causal y el fence
-de operación. Los PR Cloud tienen CI verde. No se atribuyen esos verdes a la
-Fase 3B raíz: todavía debe completar sus
-pruebas y gates sobre los bytes definitivos. El dictamen continúa siendo sólo
-fuente candidata, nunca build, staging, despliegue ni aceptación live.
+Los conteos de gates de Hubs `674ece411691` y Cloud `5392495b0772` se conservan
+como evidencia histórica de aquellos inputs. Cloud `1cf95ca8719` añadió la
+outbox y la parada terminal de `AUD-078`; `24d09706c2d9` añadió sus relevos
+causales y el fence de operación. Todos forman parte del corte actual, pero sus
+verdes históricos no prueban por sí solos una imagen, staging, despliegue o
+aceptación live del runtime durable.
 
 Límites de seguridad por defecto:
 
@@ -284,12 +283,11 @@ activo requiere recuperación Cloud revisada.
   migración debe revisarse el inventario redactado y aprobar cada configuración
   válida antes de reactivar bots.
 - El baseline live aún trata `room_stop` como best-effort. El hito Cloud
-  `1cf95ca`
-  implementa outbox transaccional, `runtime_revision`, claims recuperables y un
-  ACK terminal que exige ausencia observada de nombre+UID y cero Pods de la
-  sala; `24d0970` añade sus relevos causales y el fence de operación. No es
-  comportamiento operativo hasta integrar raíz, construir y desplegar el
-  candidato.
+  `1cf95ca` implementa outbox transaccional, `runtime_revision`, claims
+  recuperables y un ACK terminal que exige ausencia observada de nombre+UID y
+  cero Pods de la sala; `24d0970` añade sus relevos causales y el fence de
+  operación. Ambos ya están integrados en raíz, pero no son comportamiento
+  operativo hasta construir, desplegar y aceptar el candidato durable.
 - No existe medición física de capacidad ni aceptación staging/live para este
   candidato.
 

@@ -30,8 +30,9 @@ indefinido.
 - H5 está cerrado. La hibernación y recuperación productivas, DB, medios,
   navegador, audio, bots históricos, integración y CI final están aceptados.
 - El hardening operativo posterior está cerrado localmente en
-  `codex/hibernation-ops-hardening`; el árbol está limpio y contiene cuatro
-  commits sobre `origin/main`. No se ha publicado y no bloquea features.
+  `codex/hibernation-ops-hardening`; su corte de transición `407353d` está
+  limpio y contiene cinco commits sobre `origin/main`. No se ha publicado y no
+  bloquea features.
 - El checkout `/Users/Shared/Gits/YenHubs` no se usa para trabajo nuevo: su
   rama `codex/recovery-closure` está 14 commits por delante y 63 por detrás de
   `origin/main`, con cambios versionados y material sin seguimiento que se
@@ -115,37 +116,51 @@ No se mezcla con la promoción del runtime durable.
 
 ### F1. Preparar un workspace limpio y privado
 
-- [ ] Crear `/Users/Shared/Gits/YenHubs-features` como worktree nuevo desde el
+- [x] Crear `/Users/Shared/Gits/YenHubs-features` como worktree nuevo desde el
   commit limpio que contiene este plan.
-  - Estado: **READY**.
+  - Estado: **DONE**.
   - Hecho cuando: `git status` está limpio y la rama no contiene ni absorbe el
     checkout histórico `codex/recovery-closure`.
-- [ ] Inicializar y verificar los gitlinks exactos Hubs `ce8390a` y Cloud
+  - Evidencia: rama local `codex/feature-transition` creada desde `407353d`;
+    checkout limpio antes de iniciar F2.
+- [x] Inicializar y verificar los gitlinks exactos Hubs `ce8390a` y Cloud
   `6d9ee9e`; antes de editar un submódulo, crear su propia rama
   `codex/<feature>` desde la base correcta.
-  - Estado: **READY** después de crear el worktree.
+  - Estado: **DONE**.
   - Hecho cuando: los dos objetos existen, coinciden con el root y ningún
     submódulo editable está en una rama equivocada.
-- [ ] Inventariar los worktrees existentes solo por ruta, rama, limpieza y
+  - Evidencia: ambos submódulos están inicializados, limpios y desacoplados en
+    `ce8390a8905fa38fa0acdb10d5f94290981477ec` y
+    `6d9ee9e998f636fcf61a4928cd2a275829768259`. No se editaron; su rama exacta
+    se abrirá solo después de F3.
+- [x] Inventariar los worktrees existentes solo por ruta, rama, limpieza y
   relación con `origin/main`.
-  - Estado: **READY**.
+  - Estado: **DONE**.
   - Hecho cuando: quedan clasificados como conservar, revisar después o base
     activa, sin borrar ni mover bytes.
+  - Evidencia: `docs/worktree-inventory-2026-08-28.md`; no se limpió, movió ni
+    eliminó ningún checkout histórico.
 
 ### F2. Reconciliar la documentación que puede causar loops
 
-- [ ] Actualizar únicamente los bloques de estado de
+- [x] Actualizar únicamente los bloques de estado de
   `features/bots/README.md`, `docs/customization-inventory.md` y
   `docs/spoke-legacy-audit-2026-07.md` que aún presentan merges o gitlinks ya
   cerrados como pendientes.
-  - Estado: **READY**.
+  - Estado: **DONE**.
   - Hecho cuando: cada documento distingue `implementado`, `integrado`,
     `construido`, `live`, `aceptado` y `pendiente`, sin reescribir el historial.
-- [ ] Comprobar que los documentos activos remiten únicamente a este plan y
+  - Evidencia: los tres documentos fijan root `origin/main=4811101`, Hubs
+    `ce8390a` y Cloud `6d9ee9e`; eliminan como pendientes los merges/gitlinks
+    cerrados y mantienen el runtime durable fuera de la aceptación live.
+- [x] Comprobar que los documentos activos remiten únicamente a este plan y
   que `OLD/` sigue siendo evidencia opcional, nunca una cola.
-  - Estado: **READY**.
+  - Estado: **DONE**.
   - Verificación: enlaces dirigidos, búsqueda de referencias ejecutables
     obsoletas y `git diff --check`; no requiere suites de producto.
+  - Evidencia: `docs/completion-plan-2026-07-18.md` ya remite a
+    `../PLAN_ACTUAL.md`; el antiguo plan H5 se declara histórico y no hay otra
+    autoridad ejecutable. `git diff --check` pasa.
 
 ### F3. Elegir una única feature
 
@@ -175,11 +190,14 @@ No se mezcla con la promoción del runtime durable.
 
 ## Estado de trabajo
 
-- Activo: documentación de transición creada y plan H5 archivado.
-- Ready: F1 workspace limpio y F2 reconciliación documental.
-- Waiting: F3 decisión entre Sitting v2 y GLB neutral.
-- Bloqueos técnicos: ninguno para F1/F2.
-- Efectos externos autorizados: ninguno.
+- Completado: F0 archivo H5, F1 workspace limpio y F2 reconciliación
+  documental.
+- Activo: ninguno; no queda trabajo independiente que no anticipe la elección.
+- Waiting: F3 decisión del propietario entre Sitting v2 y GLB neutral.
+- Bloqueos técnicos: ninguno.
+- Reanudación: elegir una de las dos opciones; entonces se abre su rama exacta
+  y este plan se sustituye por v2.
+- Efectos externos realizados: ninguno.
 
 ## Reglas anti-loop
 
@@ -206,6 +224,7 @@ No se mezcla con la promoción del runtime durable.
   `OLD/docs/PLAN_ACTUAL-h5-cerrado-2026-08-28.md`.
 - Estado humano: `docs/estado-sencillo.md`.
 - Historial: `docs/session-changelog.md`.
+- Inventario de worktrees: `docs/worktree-inventory-2026-08-28.md`.
 - Flujo Git/submódulos: `docs/development-workflow.md`.
 - Sitting: `features/sitting/README.md`, `IMPLEMENTATION.md`, `TESTING.md`.
 - Avatares: `features/avaturn/README.md`,

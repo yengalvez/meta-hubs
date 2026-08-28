@@ -22,8 +22,8 @@ recuperación pasan por separado y el verificador ahora conserva recibos para no
 repetir secciones verdes. No se ha tocado producción para hacer esta corrección.
 
 El plan de H5 se ha guardado completo en `OLD/docs/` y ya no dirige trabajo.
-El nuevo `PLAN_ACTUAL.md` abre una transición corta: preparar un worktree limpio,
-corregir estados documentales obsoletos y elegir una sola feature.
+La transición corta de `PLAN_ACTUAL.md` ya creó un worktree limpio y corrigió
+los estados documentales obsoletos. Solo falta elegir una primera feature.
 
 ## Lo que ya está demostrado
 
@@ -64,13 +64,13 @@ avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Lo que toca ahora
 
-1. Crear un worktree local limpio para features, sin limpiar ni reutilizar el
-   checkout histórico.
-2. Corregir solo los estados obsoletos que podrían repetir merges o gates ya
-   cerrados.
-3. Elegir una única primera feature: **Sitting v2** —recomendada— o **GLB
+1. Elegir una única primera feature: **Sitting v2** —recomendada— o **GLB
    neutral** como alternativa visible más pequeña.
-4. Abrir después un plan específico solo para la elegida.
+2. Abrir después una rama y un plan específico solo para la elegida.
+
+El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`, está en la rama
+local `codex/feature-transition` y conserva los gitlinks exactos. Los worktrees
+antiguos no se han limpiado, reutilizado ni borrado.
 
 El hardening operativo nuevo está en una rama local. Publicarlo más adelante
 no es requisito para que el metaverso actual funcione ni para empezar features.
@@ -89,9 +89,9 @@ no es requisito para que el metaverso actual funcione ni para empezar features.
 **0 % de H5 pendiente.** Validación, recuperación, producción, aceptación
 humana, CI, gitlinks y merge están resueltos.
 
-La nueva fase de features todavía no tiene porcentaje: primero debe elegirse
-una única feature. La preparación del workspace y la reconciliación documental
-son dos bloques finitos y no reabren H5.
+La preparación para features está **100 % terminada**. La implementación de la
+primera feature sigue en **0 %** porque todavía debe elegirse entre Sitting v2
+y GLB neutral; no se ha fingido avance de producto con trabajo organizativo.
 
 ## Cuándo se para
 
