@@ -255,7 +255,6 @@ desmontaje con readback. Producción continúa fuera de alcance hasta S5.
     intrínseca del clúster y se incluyen en el readback final.
 - [x] Crear el target exacto inicial, DNS/TLS y una sala staging desechable sin
   tocar la escena principal.
-  una silla y un waypoint de salida; no usar ni modificar la escena principal.
   - Estado: **DONE para la primera ejecución; su evidencia se conserva y sus
     recursos fueron desmontados con readback cero**.
   - Evidencia: el clúster inicial `17057b94-a707-46ab-8994-7ae31158b998`, nodo,
@@ -267,8 +266,8 @@ desmontaje con readback. Producción continúa fuera de alcance hasta S5.
     requiere checkpoint; S5 sí exige checkpoint real antes de producción.
 - [ ] Desplegar staging en dos generaciones: Reticulum/migración conservando
   Hubs anterior, verificar compatibilidad legacy, y después Hubs v2.
-  - Estado: **IN PROGRESS — generación legacy activa verde; falta DNS/TLS,
-    join nuevo y promoción de Hubs v2 dentro del mismo staging**.
+  - Estado: **IN PROGRESS — DNS/TLS y join legacy verdes; falta publicar el
+    contenido Sitting en Spoke, promover Hubs v2 y ejecutar el E2E**.
   - Evidencia: Reticulum v2 convivió con Hubs legacy y Hubs candidato quedó
     fijado por digest. La transición durable `bootstrap -> admission -> active`
     validó sus guardas, pero el Deployment `bot-orchestrator` entró en
@@ -291,12 +290,26 @@ desmontaje con readback. Producción continúa fuera de alcance hasta S5.
     `legacy-absent -> legacy-active` terminó con **12/12 Deployments Ready** y
     Lease libre usando Hubs legacy. Desmontaje antes de
     `2026-08-30 19:04:04 CEST`.
-  - Siguiente acción exacta: actualizar solo los cuatro A records staging al
-    nuevo LB, esperar DNS/TLS, crear una sala desechable y verificar join
-    legacy; después aplicar el manifiesto legacy-active candidato de Hubs v2.
+  - DNS/TLS/join: IONOS conserva TTL `300` y los cuatro A records staging
+    apuntan a `178.128.139.203`; resolución local, Cloudflare y Google coincide,
+    los cuatro certificados están `Ready` y HTTPS valida sin `-k`. La sala
+    desechable `n7MiJAf` cargó Hubs legacy contra Reticulum v2 con una persona.
+  - Correo de acceso: Mailtrap rechazó inicialmente
+    `noreply@staging.meta-hubs.org` porque el subdominio no estaba autorizado.
+    El generador admite ahora `SMTP_FROM_ADDRESS`, conserva por defecto
+    `noreply@HUB_DOMAIN` y staging usa el remitente ya verificado
+    `noreply@meta-hubs.org`. Generador **34/34**, manifiestos privados verificados
+    y apply legacy-active verde; Mailtrap confirma el nuevo mensaje como
+    **Delivered**. Producción no cambió.
+  - Siguiente acción exacta: completar el login del buzón real IONOS ya abierto,
+    usar el enlace sin exponer el token, importar en Spoke el proyecto v9
+    recuperado, marcar la silla `Clickable`, publicar una escena staging nueva
+    y crear la sala final. Después aplicar el manifiesto legacy-active candidato
+    de Hubs v2.
 - [ ] Ejecutar `tests/browser/sitting-occupancy.spec.mjs` con dos contextos y
   revisar manualmente `remote-seated-pose.png`.
-  - Estado: **WAITING** de DNS/TLS, sala nueva y Hubs v2.
+  - Estado: **WAITING** de contenido Spoke, sala final y Hubs v2; DNS/TLS ya
+    están verdes.
   - Aceptación: los once requisitos de producto pasan sin warnings ni errores.
 - [ ] Conservar la evidencia no secreta y desmontar todo el staging con readback.
   - Estado: **WAITING** de éxito o fallo terminal de S4.

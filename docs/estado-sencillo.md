@@ -112,9 +112,18 @@ Esto no significa que Sitting esté roto ni que haya que rehacer la feature. La
 ruta legacy activa ya está implementada y probada **59/59**. El staging limpio
 recreado tiene Reticulum v2 con Hubs antiguo y sus **12/12 Deployments Ready**,
 sin construir imágenes bot ni mezclar la modernización durable. El nuevo LB es
-`178.128.139.203`; falta apuntarle los cuatro DNS staging, renovar TLS, crear
-una sala desechable, probar el join legacy, subir Hubs v2 y ejecutar la carrera
-de dos navegadores.
+`178.128.139.203`; los cuatro DNS, TLS y el join legacy ya están verdes. La sala
+provisional `n7MiJAf` demuestra compatibilidad entre Hubs antiguo y Reticulum
+v2. Falta publicar en Spoke una escena staging con silla real, subir Hubs v2 y
+ejecutar la carrera de dos navegadores.
+
+El correo de acceso reveló un bloqueo acotado: el proveedor solo autoriza el
+dominio remitente `meta-hubs.org`, no `staging.meta-hubs.org`. El generador ya
+permite separar el remitente SMTP del dominio web, sus **34/34** pruebas pasan y
+staging envió el enlace como `noreply@meta-hubs.org`; Mailtrap lo marca
+**Delivered**. El buzón real de IONOS está abierto en la pantalla de contraseña.
+Cuando el propietario la introduzca, se usará el enlace sin mostrar su token y
+se continuará directamente en Spoke. Producción sigue intacta.
 
 El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`, está en la rama
 local `codex/sitting-v2` y conserva los gitlinks exactos. Los worktrees
@@ -150,10 +159,9 @@ están cerrados; la feature comercial aún necesita staging de dos navegadores y
 aceptación productiva. No se
 convierte source existente en un porcentaje live ficticio.
 
-S4 ya no tiene una investigación abierta: la causa está demostrada, el perfil
-legacy activo está verde y la ruta incompatible no se repetirá. Falta DNS/TLS,
-la sala nueva, Hubs v2 y el E2E. Si pasa, S5 seguirá necesitando una ventana
-productiva separada.
+S4 ya no tiene una investigación abierta: el perfil legacy, DNS, TLS, join y
+entrega de correo están verdes. Falta la escena/sala final, Hubs v2 y el E2E. Si
+pasa, S5 seguirá necesitando una ventana productiva separada.
 
 ## Cuándo se para
 
