@@ -1,6 +1,6 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **29 de agosto de 2026**
+Ultima actualización: **30 de agosto de 2026**
 
 ## Respuesta corta
 
@@ -65,65 +65,39 @@ avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Lo que toca ahora
 
-La parte local de Sitting v2 ya está cerrada. No ha hecho falta reprogramar la
-feature:
+Sitting v2 ya ha pasado el staging real. Se publicó una escena desechable en
+Spoke, se promovieron Reticulum y Hubs por sus digests fijados y el clúster
+terminó con **12/12 servicios listos**. La prueba final abrió dos navegadores
+aislados y terminó **1/1 verde en 47,1 segundos**.
 
-- browser: **11/11** unidades y un único E2E Sitting enumerado, sin abrir una
-  URL remota;
-- Hubs: TypeScript, lint dirigido y **48/48** pruebas Sitting;
-- Reticulum: dependencias locked, format, compilación estricta y **20/20**
-  pruebas contra PostgreSQL local;
-- composición: **2/2** gitlinks, diff-check y los tres árboles limpios.
+En lenguaje humano, la prueba confirmó todo el ciclo importante:
 
-Las fuentes candidatas quedan congeladas en Hubs `b2697e7` y Cloud/Reticulum
-`6d9ee9e`. Sitting no cambió: el único ajuste posterior fue copiar antes del
-`npm ci` el script que el postinstall del Dockerfile ya necesitaba. El hook de
-Hubs pasó **100/100** y no se repitió el `--full`.
+- dos personas intentan sentarse a la vez y solo una obtiene la silla;
+- nunca aparecen dos concesiones privadas ni dos intervalos sentados solapados;
+- ambos navegadores ven al ganador en la silla;
+- al levantarse se libera, la otra persona puede ocuparla y el cierre abrupto
+  también limpia la reserva;
+- no quedaron errores inesperados de navegador o red.
 
-El inventario externo de solo lectura también está terminado:
+La captura automática existe, pero la cámara no encuadró al avatar remoto. Los
+estados y posiciones sí demostraron la pose; la apariencia/intersecciones deben
+mirarse una vez en el navegador frío de producción antes de declarar la feature
+comercialmente cerrada.
 
-- el inventario encontró Hubs `ce8390a` y Cloud `6d9ee9e` en `master`, los
-  workflows activos y ningún build Sitting v2 previo; después S4 publicó la
-  corrección Hubs `b2697e7` solo en su rama y construyó las dos imágenes;
-- DigitalOcean solo tiene el clúster productivo: un nodo de 8 GiB, un LB y dos
-  volúmenes; agosto lleva USD `64.85` porque hubo dos medias topologías durante
-  la recreación y el coste estable actual ronda USD `65.03/mes`;
-- producción no contiene staging; S4 usa ahora un clúster temporal separado;
-- el nodo deja unos `2412 MiB` libres por requests, menos que los `3200 MiB` de
-  otra HCCE; además, el namespace global de runners colisionaría con producción.
+El staging ya se desmontó. La lectura final confirma ausencia del clúster, el
+nodo, el balanceador, los dos discos y los dos firewalls exactos. Por tanto, el
+**gasto adicional de staging está en cero** y DigitalOcean conserva únicamente
+la topología productiva original.
 
-La opción correcta es un clúster temporal separado, no compartir producción:
-DOKS `1.34.10-do.2` en `ams3`, sin HA, un nodo `s-4vcpu-8gb`, un `lb-small` y
-dos volúmenes de `10 GiB`. Cuesta aproximadamente USD `0.09677/h`: `0.77` por
-8 horas, `1.16` por 12 o `2.32` por 24. El límite propuesto es USD `2.35` y el
-desmontaje debe empezar antes de `23 h 30 min`.
+Quedan cuatro registros DNS de staging apuntando a la antigua IP
+`178.128.139.203`. No generan coste ni mantienen ningún servidor accesible. No
+se borraron porque IONOS cerró la sesión y Google Password Manager pidió una
+verificación física; no se forzó ni se cambió ninguna contraseña. Cuando IONOS
+esté autenticado, se borran esos cuatro records exactos y se lee su ausencia.
 
-La autorización S4 ya está recibida. El primer staging aislado llegó a DNS,
-TLS y join legacy real contra Reticulum v2 y después se desmontó con readback
-cero. Producción continúa intacta. Antes del E2E apareció un fallo que el plan
-antiguo no había contemplado: el
-manifiesto Cloud actual activa el protocolo durable de bots, pero las imágenes
-bot conservadas son legacy. El parent fue construido desde `5a82de5` y espera
-`BOT_ACCESS_KEY`; el manifiesto nuevo entrega `BOT_ORCHESTRATOR_ACCESS_KEY`, por
-lo que el pod se reinicia y el aplicador valla correctamente los cinco
-servicios.
-
-Esto no significa que Sitting esté roto ni que haya que rehacer la feature. La
-ruta legacy activa ya está implementada y probada **59/59**. El staging limpio
-recreado tiene Reticulum v2 con Hubs antiguo y sus **12/12 Deployments Ready**,
-sin construir imágenes bot ni mezclar la modernización durable. El nuevo LB es
-`178.128.139.203`; los cuatro DNS, TLS y el join legacy ya están verdes. La sala
-provisional `n7MiJAf` demuestra compatibilidad entre Hubs antiguo y Reticulum
-v2. Falta publicar en Spoke una escena staging con silla real, subir Hubs v2 y
-ejecutar la carrera de dos navegadores.
-
-El correo de acceso reveló un bloqueo acotado: el proveedor solo autoriza el
-dominio remitente `meta-hubs.org`, no `staging.meta-hubs.org`. El generador ya
-permite separar el remitente SMTP del dominio web, sus **34/34** pruebas pasan y
-staging envió el enlace como `noreply@meta-hubs.org`; Mailtrap lo marca
-**Delivered**. El buzón real de IONOS está abierto en la pantalla de contraseña.
-Cuando el propietario la introduzca, se usará el enlace sin mostrar su token y
-se continuará directamente en Spoke. Producción sigue intacta.
+El siguiente bloque real es S5: checkpoint DB+medios, revisión del diff,
+Reticulum primero, Hubs después, reinicio de Reticulum y aceptación fría. Es
+producción y necesita una autorización separada; no se ha iniciado ni tocado.
 
 El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`, está en la rama
 local `codex/sitting-v2` y conserva los gitlinks exactos. Los worktrees
@@ -138,9 +112,8 @@ no es requisito para que el metaverso actual funcione ni para empezar features.
 
 ## Qué no se va a hacer
 
-- No habrá otro restore, checkpoint ni recreación de producción. El único
-  clúster nuevo posible es el staging temporal separado descrito por S4 y solo
-  tras su cost/effect gate.
+- No habrá otro restore ni recreación de staging. S5 sí exige un checkpoint
+  nuevo DB+medios antes de modificar producción.
 - No se mezclará la imagen durable moderna con el restore histórico.
 - No se repetirán las 894 pruebas mientras sus bytes no cambien.
 - No se repetirá el `--full` posterior: sus fallos ya tienen diagnóstico y
@@ -153,15 +126,11 @@ no es requisito para que el metaverso actual funcione ni para empezar features.
 **0 % de H5 pendiente.** Validación, recuperación, producción, aceptación
 humana, CI, gitlinks y merge están resueltos.
 
-La preparación para features está **100 % terminada**. En Sitting v2, la fuente
-y su validación local están terminadas. Los builds trazables y el preflight ya
-están cerrados; la feature comercial aún necesita staging de dos navegadores y
-aceptación productiva. No se
-convierte source existente en un porcentaje live ficticio.
-
-S4 ya no tiene una investigación abierta: el perfil legacy, DNS, TLS, join y
-entrega de correo están verdes. Falta la escena/sala final, Hubs v2 y el E2E. Si
-pasa, S5 seguirá necesitando una ventana productiva separada.
+La preparación y aceptación de Sitting v2 fuera de producción están
+**terminadas**: fuente, pruebas locales, builds, staging real y E2E. Como
+estimación humana, la feature completa está alrededor del **80 %**: falta el
+rollout productivo S5, su navegador frío y la comprobación visual final. El
+cleanup de cuatro DNS sin coste es una tarea operativa menor, no otro proyecto.
 
 ## Cuándo se para
 

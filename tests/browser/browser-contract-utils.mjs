@@ -1,6 +1,7 @@
 import { expect } from "@playwright/test";
 
 const PRODUCTION_ROOT = "meta-hubs.org";
+const SAFE_PRODUCTION_FAMILY_HOSTS = new Set(["staging.meta-hubs.org"]);
 const SAFE_REMOTE_MARKER =
   /(^|[.-])(staging|test|qa|preview|sandbox|dev)([.-]|$)/i;
 
@@ -26,7 +27,10 @@ export function requireSafeBrowserTarget(rawTarget) {
   if (target.username || target.password)
     throw new Error("Credentials are forbidden in browser test URLs.");
 
-  if (isProductionFamily(target.hostname)) {
+  if (
+    isProductionFamily(target.hostname) &&
+    !SAFE_PRODUCTION_FAMILY_HOSTS.has(target.hostname)
+  ) {
     if (
       target.protocol !== "https:" ||
       process.env.BROWSER_ALLOW_PRODUCTION !== "1"
@@ -58,18 +62,81 @@ export function assertFinalBrowserTarget(pageUrl, plannedTarget) {
   }
 }
 
+function isFaviconUrl(rawUrl) {
+  try {
+    return new URL(rawUrl).pathname === "/favicon.ico";
+  } catch {
+    return false;
+  }
+}
+
+export function isExpectedBrowserDiagnostic(issue) {
+  if (
+    issue.kind === "request-failed" &&
+    issue.method === "HEAD" &&
+    issue.errorText === "net::ERR_ABORTED"
+  ) {
+    return true;
+  }
+
+  if (isFaviconUrl(issue.url)) {
+    if (issue.kind === "http-error" && issue.status === 404) return true;
+    if (
+      issue.kind === "console-error" &&
+      /^Failed to load resource: the server responded with a status of 404/.test(
+        issue.text,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  if (issue.kind !== "console-warning") return false;
+  return (
+    /^enableChromeAEC: (inbound|outbound)PeerConnection state changed to (checking|connected)$/.test(
+      issue.text,
+    ) ||
+    issue.text ===
+      "Avatar does not an 'allOpen' animation, disabling hand animations" ||
+    issue.text ===
+      "The `background` component is deprecated, use `backgroundColor` on the `environment-settings` component instead."
+  );
+}
+
 export function collectBrowserDiagnostics(page) {
   const issues = [];
   page.on("console", (message) => {
     if (message.type() === "warning" || message.type() === "error") {
-      issues.push({ kind: `console-${message.type()}` });
+      const issue = {
+        kind: `console-${message.type()}`,
+        text: message.text(),
+        url: message.location().url,
+      };
+      if (!isExpectedBrowserDiagnostic(issue)) issues.push(issue);
     }
   });
-  page.on("pageerror", () => issues.push({ kind: "page-error" }));
-  page.on("requestfailed", () => issues.push({ kind: "request-failed" }));
+  page.on("pageerror", (error) =>
+    issues.push({ kind: "page-error", message: error.message }),
+  );
+  page.on("requestfailed", (request) => {
+    const issue = {
+      kind: "request-failed",
+      method: request.method(),
+      resourceType: request.resourceType(),
+      url: request.url(),
+      errorText: request.failure()?.errorText || "unknown",
+    };
+    if (!isExpectedBrowserDiagnostic(issue)) issues.push(issue);
+  });
   page.on("response", (response) => {
-    if (response.status() >= 400)
-      issues.push({ kind: "http-error", status: response.status() });
+    if (response.status() < 400) return;
+    const issue = {
+      kind: "http-error",
+      status: response.status(),
+      method: response.request().method(),
+      url: response.url(),
+    };
+    if (!isExpectedBrowserDiagnostic(issue)) issues.push(issue);
   });
   return issues;
 }

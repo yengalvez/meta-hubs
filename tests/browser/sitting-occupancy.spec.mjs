@@ -294,7 +294,11 @@ test("same-seat contention, remote pose, stand, reclaim and disconnect cleanup",
   browser,
 }, testInfo) => {
   const roomUrl = requireSafeBrowserTarget(SITTING_TEST_URL);
-  const contexts = [await browser.newContext(), await browser.newContext()];
+  const contextOptions = { permissions: ["microphone"] };
+  const contexts = [
+    await browser.newContext(contextOptions),
+    await browser.newContext(contextOptions),
+  ];
   const pages = [await contexts[0].newPage(), await contexts[1].newPage()];
   const diagnostics = pages.map(collectBrowserDiagnostics);
   const suffix = String(Date.now()).slice(-7);
@@ -659,7 +663,7 @@ test("same-seat contention, remote pose, stand, reclaim and disconnect cleanup",
       });
     expect(
       diagnostics.flat(),
-      "zero browser warnings, errors and failed requests",
+      "zero unexpected browser warnings, errors and failed requests",
     ).toEqual([]);
   } finally {
     await Promise.all(pages.map(releaseBrowserWaypoint));

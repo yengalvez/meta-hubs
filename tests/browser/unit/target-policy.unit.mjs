@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   assertFinalBrowserTarget,
+  isExpectedBrowserDiagnostic,
   requireSafeBrowserTarget,
 } from "../browser-contract-utils.mjs";
 
@@ -22,6 +23,10 @@ test("allows loopback HTTP and marked remote HTTPS", () => {
   assert.equal(
     requireSafeBrowserTarget("https://qa.example.org/room").origin,
     "https://qa.example.org",
+  );
+  assert.equal(
+    requireSafeBrowserTarget("https://staging.meta-hubs.org/room").origin,
+    "https://staging.meta-hubs.org",
   );
 });
 
@@ -64,5 +69,51 @@ test("rejects cross-origin redirects", () => {
   assert.throws(
     () => assertFinalBrowserTarget("https://evil.example.org/room", planned),
     /different origin/,
+  );
+});
+
+test("classifies only bounded browser baseline diagnostics as expected", () => {
+  assert.equal(
+    isExpectedBrowserDiagnostic({
+      kind: "request-failed",
+      method: "HEAD",
+      errorText: "net::ERR_ABORTED",
+      url: "https://staging.meta-hubs.org/room",
+    }),
+    true,
+  );
+  assert.equal(
+    isExpectedBrowserDiagnostic({
+      kind: "console-warning",
+      text: "enableChromeAEC: inboundPeerConnection state changed to connected",
+      url: "https://assets.staging.meta-hubs.org/hubs/app.js",
+    }),
+    true,
+  );
+  assert.equal(
+    isExpectedBrowserDiagnostic({
+      kind: "console-error",
+      text: "Failed to load resource: the server responded with a status of 404 ()",
+      url: "https://staging.meta-hubs.org/favicon.ico",
+    }),
+    true,
+  );
+  assert.equal(
+    isExpectedBrowserDiagnostic({
+      kind: "request-failed",
+      method: "GET",
+      errorText: "net::ERR_CONNECTION_RESET",
+      url: "https://assets.staging.meta-hubs.org/hubs/app.js",
+    }),
+    false,
+  );
+  assert.equal(
+    isExpectedBrowserDiagnostic({
+      kind: "http-error",
+      status: 500,
+      method: "GET",
+      url: "https://staging.meta-hubs.org/api/v1/hubs",
+    }),
+    false,
   );
 });

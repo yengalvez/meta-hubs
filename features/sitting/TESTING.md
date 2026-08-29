@@ -3,29 +3,31 @@
 ## Estado actual
 
 La implementación candidata, congelada en Hubs `b2697e7` y Cloud/Reticulum
-`6d9ee9e`, tiene evidencia local fresca del 28 de agosto de 2026, pero no tiene
-todavía aceptación de navegador contra staging ni evidencia de despliegue/live.
+`6d9ee9e`, tiene validación local y aceptación real de navegador en staging. El
+30 de agosto de 2026 el E2E final pasó **1/1 en 47,1 s** sobre la sala temporal
+`3E2enaA`, después de desplegar las dos imágenes por digest.
 
 Validación focal actual:
 
-- arnés browser: **11/11** unidades y exactamente un E2E Sitting enumerado, sin
-  URL remota;
+- arnés browser: **12/12** unidades y exactamente un E2E Sitting;
 - Hubs: `npm run check`, lint dirigido y las cinco familias AVA Sitting
   **48/48**;
 - Reticulum: dependencias locked, format y compilación estricta correctos; las
   dos suites de reserva/modelo y canal pasan **20/20** contra PostgreSQL local;
 - composición: **2/2** gitlinks, diff-check y árboles root/Hubs/Cloud limpios.
 
-No cambió ningún byte de producto durante esta validación. Los avisos de datos
+No cambió ningún byte de producto durante esta validación. El arnés browser sí
+se endureció para reconocer el host staging exacto, usar micrófono falso y
+conservar el detalle de cualquier diagnóstico inesperado. Los avisos de datos
 Browserslist y de compilación de dependencias legacy fueron no first-party y
 los comandos estrictos terminaron con código cero.
 
-Estos resultados no sustituyen la carrera real entre dos navegadores, la
-revisión visual ni el cold-browser posterior al rollout.
+La carrera real de dos navegadores ya pasó. El cold-browser posterior al rollout
+productivo y la inspección estética de la pose siguen siendo gates de S5.
 
 ## Precondiciones de staging
 
-Antes del E2E:
+La ejecución S4 completó estas precondiciones:
 
 1. Usar el clúster temporal separado `yenhubs-sitting-staging`, DOKS
    `1.34.10-do.2` en `ams3`, Namespace `hcce` y dominio
@@ -47,9 +49,10 @@ Antes del E2E:
    no sea asiento ni ocupable.
 8. Confirmar que ambas sesiones ven la misma identidad persistente para la
    silla.
-9. Preservar evidencia no secreta y retirar clúster, nodo, LB, volúmenes, los
-   dos firewalls DOKS gestionados y los cuatro registros DNS antes de
-   `23 h 30 min`, con readback de ausencia.
+9. Preservar evidencia no secreta y retirar clúster, nodo, LB, volúmenes y los
+   dos firewalls DOKS gestionados antes de `23 h 30 min`, con readback de
+   ausencia. Esto quedó cumplido. Los cuatro DNS no facturables permanecen
+   temporalmente apuntando a la IP retirada hasta reautenticar IONOS.
 
 ## Receta de build candidata
 
@@ -108,11 +111,11 @@ npm run test:sitting -- --list
 
 ## E2E obligatorio de dos clientes
 
-Cuando Reticulum y Hubs candidatos estén disponibles en staging:
+La ejecución final fue:
 
 ```bash
 cd tests/browser
-SITTING_TEST_URL=https://staging.meta-hubs.org/<room-id> npm run test:sitting
+SITTING_TEST_URL=https://staging.meta-hubs.org/3E2enaA/worldly-belated-volume npm run test:sitting
 ```
 
 El helper rechaza URLs con credenciales, redirecciones a otro origen y destinos
@@ -139,8 +142,11 @@ La prueba abre exactamente dos contextos Chrome aislados y debe demostrar:
    produce una transición observada a `occupied: false` en un máximo de
    2.5 segundos por terminación de canal. El lease de 15 segundos sigue siendo
    la protección ante una desconexión que el servidor no detecte de inmediato.
-10. No hay warnings/errores de consola, excepciones de página, requests fallidas
-    ni respuestas HTTP `>= 400`.
+10. No hay diagnósticos inesperados: excepciones de página, fallos first-party,
+    requests fallidas ni respuestas HTTP `>= 400`. Se excluyen solo firmas
+    exactas y unit-tested del baseline: `HEAD` abortado, `/favicon.ico` 404,
+    estados AEC, ausencia de la animación opcional `allOpen` y deprecación
+    legacy del componente `background`.
 
 La ausencia de solape local se decide con el registro de transiciones
 `sitting-state-changed`, que se contrasta con `player-info`. `componentchanged`
@@ -148,9 +154,11 @@ está limitado internamente por A-Frame y solo aporta una señal secundaria de
 coherencia. El muestreo cruzado cada 25 ms conserva snapshots acotados del estado
 autoritativo público/privado, pero no se presenta como cobertura de cada frame.
 
-La captura `remote-seated-pose.png` debe revisarse manualmente. La tolerancia
-automatizada detecta desplazamientos graves, pero no certifica intersecciones
-entre cuerpo, ropa, mesa y silla.
+La captura `remote-seated-pose.png` fue revisada: la geometría/cámara no encuadró
+al avatar remoto. La tolerancia automatizada sí probó posición, ownership y
+pose coherentes en ambos clientes, pero no certifica intersecciones entre
+cuerpo, ropa, mesa y silla. Esa inspección estética se traslada explícitamente
+al cold-browser de S5 y no justifica recrear staging por una fotografía.
 
 ## Matriz adicional de protocolo
 

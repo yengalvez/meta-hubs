@@ -1,7 +1,7 @@
 # PLAN ACTUAL — Sitting v2 autoritativo
 
-Version: **v6 — STAGING LEGACY VERDE; DNS Y HUBS V2 EN CURSO**
-Ultima revision: **29 de agosto de 2026 (Europe/Madrid)**
+Version: **v7 — STAGING V2 ACEPTADO; COSTE CERRADO; PRODUCCIÓN EN ESPERA**
+Ultima revision: **30 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El plan de transición
 cerrado se conserva en
 `OLD/docs/PLAN_ACTUAL-feature-transition-2026-08-28.md`; la versión previa al
@@ -38,9 +38,10 @@ real. La feature tampoco obliga a promover el runtime durable de bots.
   `b2697e7e6f571d195346cc156f0f1631eedc841a`. Es el corte funcional
   `ce8390a` más la corrección mínima de orden del Dockerfile demostrada por el
   primer build remoto.
-- Cloud: rama local `codex/sitting-v2` en `acce87e`, que conserva la imagen
-  Reticulum de `6d9ee9e` y añade la autenticación kubelet y el perfil staging
-  legacy activo fail-closed. Las imágenes de producto aceptadas no cambiaron.
+- Cloud: rama local `codex/sitting-v2` en `4ead2a6`, que conserva la imagen
+  Reticulum de `6d9ee9e` y añade la autenticación kubelet, el perfil staging
+  legacy activo fail-closed y el remitente SMTP configurable demostrado en
+  staging. Las imágenes de producto aceptadas no cambiaron.
 - Los commits Hubs `9c2da562b` y `3f18bdf24`, Cloud `ce20e20` y el arnés raíz
   `875642e` son ancestros de esos cortes. La implementación, migraciones y E2E
   ya existen; no se reescriben sin un fallo causal nuevo.
@@ -77,8 +78,11 @@ real. La feature tampoco obliga a promover el runtime durable de bots.
    desconexión no observable.
 10. Hubs v2 ante servidor antiguo o capacidad inválida falla cerrado. Un cliente
     antiguo puede convivir con Reticulum v2, pero esa ventana no acepta sillas.
-11. No hay warnings/errores first-party, excepciones, requests fallidas ni HTTP
-    `>= 400` durante la aceptación.
+11. No hay diagnósticos inesperados: excepciones de página, fallos first-party,
+    requests fallidas ni HTTP `>= 400`. El arnés ignora únicamente firmas
+    exactas ya clasificadas y cubiertas por unidad: `HEAD` abortado por el
+    navegador, `/favicon.ico` 404, estados AEC, animación opcional `allOpen`
+    ausente y el warning legacy de `background` de la escena recuperada.
 
 ## Alcance, no objetivos y autoridad
 
@@ -264,58 +268,47 @@ desmontaje con readback. Producción continúa fuera de alcance hasta S5.
     con la DB desechable y deberá crearse otra sala staging.
   - Nota: al ser greenfield y desechable no contiene datos de cliente y no
     requiere checkpoint; S5 sí exige checkpoint real antes de producción.
-- [ ] Desplegar staging en dos generaciones: Reticulum/migración conservando
+- [x] Desplegar staging en dos generaciones: Reticulum/migración conservando
   Hubs anterior, verificar compatibilidad legacy, y después Hubs v2.
-  - Estado: **IN PROGRESS — DNS/TLS y join legacy verdes; falta publicar el
-    contenido Sitting en Spoke, promover Hubs v2 y ejecutar el E2E**.
-  - Evidencia: Reticulum v2 convivió con Hubs legacy y Hubs candidato quedó
-    fijado por digest. La transición durable `bootstrap -> admission -> active`
-    validó sus guardas, pero el Deployment `bot-orchestrator` entró en
-    `CrashLoopBackOff` y provocó `deployments_ready_timeout`; el apply valló los
-    cinco consumidores y liberó la Lease. La procedencia GHCR y Git demuestra
-    la causa: parent `325c5c...` fue construido desde `5a82de5` y exige
-    `BOT_ACCESS_KEY`, mientras el manifiesto `6d9ee9e` entrega el contrato
-    durable `BOT_ORCHESTRATOR_ACCESS_KEY`; runner `27324a...` es de marzo y
-    tampoco implementa el protocolo aislado. La sala staging no tiene bots
-    habilitados, por lo que no fue una creación de runner ni un fallo Sitting.
-  - Corrección aplicada: `cold-rebind-legacy-active-v1` conserva el contrato
-    process-local y omite RBAC/namespace/admisión durable. El driver fija antes
-    de activar el target normalizado, admite el TypeMeta legalmente omitido en
-    `DeploymentList` y vuelve a 0/5 ante cualquier fallo. Los focos pasan
-    **59/59**; no se construyeron imágenes bot.
-  - Evidencia live actual: el clúster recreado
-    `cbff6246-9be0-498d-9938-c73534cf4b79` está `running` en `ams3`, DOKS
-    `1.34.10-do.2`, un nodo `s-4vcpu-8gb`, HA desactivada, dos PVC `10 GiB`
-    `Bound` y LB `178.128.139.203`. La secuencia
-    `legacy-absent -> legacy-active` terminó con **12/12 Deployments Ready** y
-    Lease libre usando Hubs legacy. Desmontaje antes de
-    `2026-08-30 19:04:04 CEST`.
-  - DNS/TLS/join: IONOS conserva TTL `300` y los cuatro A records staging
-    apuntan a `178.128.139.203`; resolución local, Cloudflare y Google coincide,
-    los cuatro certificados están `Ready` y HTTPS valida sin `-k`. La sala
-    desechable `n7MiJAf` cargó Hubs legacy contra Reticulum v2 con una persona.
-  - Correo de acceso: Mailtrap rechazó inicialmente
-    `noreply@staging.meta-hubs.org` porque el subdominio no estaba autorizado.
-    El generador admite ahora `SMTP_FROM_ADDRESS`, conserva por defecto
-    `noreply@HUB_DOMAIN` y staging usa el remitente ya verificado
-    `noreply@meta-hubs.org`. Generador **34/34**, manifiestos privados verificados
-    y apply legacy-active verde; Mailtrap confirma el nuevo mensaje como
-    **Delivered**. Producción no cambió.
-  - Siguiente acción exacta: completar el login del buzón real IONOS ya abierto,
-    usar el enlace sin exponer el token, importar en Spoke el proyecto v9
-    recuperado, marcar la silla `Clickable`, publicar una escena staging nueva
-    y crear la sala final. Después aplicar el manifiesto legacy-active candidato
-    de Hubs v2.
-- [ ] Ejecutar `tests/browser/sitting-occupancy.spec.mjs` con dos contextos y
+  - Estado: **DONE**.
+  - Evidencia: Reticulum v2 convivió primero con Hubs legacy; después el apply
+    protegido promovió Hubs v2 por el digest candidato y el reinicio de
+    Reticulum terminó con **12/12 Deployments Ready**. No se construyó ni
+    modernizó ninguna imagen bot.
+  - Contenido: Spoke importó el proyecto recuperado como `FoRSj5D`, publicó la
+    escena `uW635n9` y la sala final desechable fue `3E2enaA`. Solo `Seat
+    recovery 1` quedó ocupable/clickable con identidad publicada; el segundo
+    waypoint se corrigió antes de la aceptación al demostrar que era otra silla
+    distinta, no una doble concesión.
+  - Correo y join: el remitente staging usó el dominio ya verificado
+    `noreply@meta-hubs.org`; Mailtrap confirmó **Delivered**, la cuenta real
+    abrió el enlace y el join legacy previo ya había demostrado compatibilidad.
+- [x] Ejecutar `tests/browser/sitting-occupancy.spec.mjs` con dos contextos y
   revisar manualmente `remote-seated-pose.png`.
-  - Estado: **WAITING** de contenido Spoke, sala final y Hubs v2; DNS/TLS ya
-    están verdes.
-  - Aceptación: los once requisitos de producto pasan sin warnings ni errores.
-- [ ] Conservar la evidencia no secreta y desmontar todo el staging con readback.
-  - Estado: **WAITING** de éxito o fallo terminal de S4.
-  - Hecho cuando: no quedan clúster, nodo, LB, volúmenes, firewalls DOKS
-    gestionados, registros DNS ni contenido staging facturable/reutilizable;
-    producción continúa idéntica.
+  - Estado: **DONE funcional; revisión estética de la captura inconclusa**.
+  - Evidencia: unidad browser **12/12** y E2E remoto final **1/1** en `47.1 s`.
+    Dos contextos aislados demostraron una concesión, cero solapes, una única
+    reserva privada, pose/posición remota coherente, Stand, relevo y limpieza al
+    cerrar. El diagnóstico final quedó vacío después de excluir únicamente las
+    firmas exactas cubiertas por unidad.
+  - Límite explícito: `remote-seated-pose.png` fue generada y revisada, pero la
+    geometría/cámara ocultó al avatar remoto. No contradice los estados y
+    posiciones medidos, pero tampoco certifica visualmente intersecciones; S5
+    debe inspeccionar la pose en su navegador frío antes del cierre comercial.
+- [x] Conservar la evidencia no secreta y desmontar todo el staging con readback.
+  - Estado: **DONE para todo recurso facturable; cleanup DNS sin coste pendiente**.
+  - Readback exacto: ya no existen clúster
+    `cbff6246-9be0-498d-9938-c73534cf4b79`, nodo `596177917`, LB
+    `5fa4fbf7-0892-4680-9c87-59ad3f423d43`, volúmenes
+    `2c7d2e05-a3d1-11f1-8219-5a97d562e708` y
+    `2ba5fda3-a3d1-11f1-8219-5a97d562e708`, ni sus dos firewalls gestionados.
+    Solo permanece el clúster productivo original con su LB y dos volúmenes.
+  - Residuo no facturable: IONOS aún publica los cuatro A staging hacia la IP ya
+    retirada `178.128.139.203`. El navegador interno perdió la sesión y Google
+    Password Manager exige verificación física; no se eludió. La próxima sesión
+    autenticada debe borrar solo los records `1493595267`, `1493595622`,
+    `1493595798` y `1493595951` y leer su ausencia. No bloquea el cierre del
+    gasto ni autoriza S5.
 
 ### S5. Promover los mismos digests a producción
 
@@ -323,10 +316,12 @@ desmontaje con readback. Producción continúa fuera de alcance hasta S5.
   - Estado: **WAITING — efecto productivo**.
 - [ ] Revisar el `kubectl diff` generado y aplicar Reticulum primero, Hubs
   después, sin cambios no relacionados.
-  - Estado: **WAITING** de staging verde y autorización.
+  - Estado: **WAITING** únicamente de autorización; staging funcional está
+    verde.
 - [ ] Reiniciar Reticulum tras Hubs, ejecutar navegador frío desktop/mobile y
   `./deployment/verify-live-reactivation.sh` con cero fallos y cero avisos.
-  - Estado: **WAITING** del rollout.
+  - Estado: **WAITING** del rollout; el navegador frío debe encuadrar y revisar
+    la pose para cerrar el límite visual de S4.
 - [ ] Cerrar la feature con evidencia, commits/digests, rollback y estado humano.
   - Estado: **WAITING** de aceptación live.
 
@@ -344,21 +339,19 @@ desmontaje con readback. Producción continúa fuera de alcance hasta S5.
 ## Estado de trabajo
 
 - Completado: S0-S3, inventario/target/cost gate, builds, preflight privado,
-  primer staging con join legacy, desmontaje/readback, perfil legacy activo,
-  recreación exacta y 12/12 Deployments Ready con Hubs legacy.
-- Activo: actualizar los cuatro A records al LB `178.128.139.203`, aceptar
-  DNS/TLS, crear la sala desechable y repetir el join legacy; después Hubs v2 y
-  E2E de dos navegadores.
-- Ready: manifiesto Hubs v2 privado/verificado y arnés E2E de 11 requisitos.
-- Waiting: aceptación de dos navegadores; S5 espera staging verde y una
-  autorización productiva posterior.
-- Bloqueos técnicos: ninguno; IONOS requiere reautenticación del propietario
-  antes de editar los cuatro registros.
+  join legacy, perfil legacy activo, escena/sala final, Hubs v2, E2E remoto y
+  desmontaje de todos los recursos facturables con readback vacío.
+- Activo: ninguno. No se vuelve a crear staging ni se repite el E2E.
+- Ready: S5 puede planificarse con los mismos digests; debe incluir checkpoint,
+  `kubectl diff`, aceptación fría y una comprobación visual de la pose.
+- Waiting: autorización productiva separada para S5.
+- Residuo: borrar cuatro A records staging sin coste cuando IONOS esté
+  autenticado y leer su ausencia; no requiere clúster ni impide que el gasto
+  temporal sea cero.
 - Efectos externos realizados: rama Hubs `codex/sitting-v2` publicada, tres
   runs totales —un fallo causal, Reticulum verde y Hubs corregido verde— y el
-  staging temporal exacto descrito arriba. El máximo planificado sigue siendo
-  aproximadamente USD `0.09677/h`; el desmontaje debe empezar antes de
-  `2026-08-30 19:04:04 CEST`. Producción continúa intacta.
+  staging temporal exacto descrito arriba. El entorno facturable ya no existe;
+  producción continúa intacta.
 
 ## Reglas anti-loop
 
@@ -394,10 +387,10 @@ desmontaje con readback. Producción continúa fuera de alcance hasta S5.
 
 ## Punto de menor confianza
 
-El punto de menor confianza ya no es fuente, credenciales ni manifiesto: es la
-integración real de DNS/TLS y Reticulum v2 en un clúster nuevo. La versión
-disponible es DOKS `1.34.10-do.2`, mientras producción conserva
-`1.34.10-do.1`; comparten Kubernetes `1.34.10`, pero no son un clon byte-exacto
-del proveedor. El control es crear solo el target autorizado, validar cada
-generación y desmontarlo ante un fallo terminal sin usar producción como
-alternativa. Decisión: **CONTINUE**.
+El punto de menor confianza ya no es el protocolo ni el despliegue: ambos
+pasaron en staging. Es la revisión estética de la pose, porque la captura no
+encuadró al avatar aunque los dos clientes midieron posición y estado sentados
+coherentes. El control es comprobarla explícitamente durante la aceptación fría
+de S5, sin recrear staging solo para obtener otra fotografía. El cleanup DNS
+pendiente es operativo y no facturable. Decisión: **STOP antes de producción
+hasta autorización S5**.

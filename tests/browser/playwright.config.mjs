@@ -19,7 +19,16 @@ export default defineConfig({
   projects: [
     {
       name: "desktop-chrome",
-      use: { channel: "chrome", viewport: { width: 1440, height: 900 } },
+      use: {
+        channel: "chrome",
+        launchOptions: {
+          args: [
+            "--use-fake-device-for-media-stream",
+            "--use-fake-ui-for-media-stream",
+          ],
+        },
+        viewport: { width: 1440, height: 900 },
+      },
     },
     {
       name: "mobile-chrome",
