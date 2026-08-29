@@ -12,6 +12,8 @@ import { parseLocalValuesSource } from "./parse-local-values.mjs";
 import { publishPrivateArtifact } from "./private-artifact-publication.mjs";
 
 const MAX_VALUES_BYTES = 1024 * 1024;
+const CUTOVER_KEY_BYTES = 64;
+const MAX_CUTOVER_KEY_BYTES = 4 * 1024;
 const SHARED_KEYS = Object.freeze([
   "ADM_EMAIL",
   "SMTP_SERVER",
@@ -66,6 +68,32 @@ function randomCredential() {
   return randomBytes(48).toString("base64url");
 }
 
+function ensureCutoverKey(outputPath) {
+  const resolved = path.resolve(outputPath);
+  if (fs.existsSync(resolved)) {
+    const stat = fs.lstatSync(resolved, { bigint: true });
+    const currentUid = typeof process.getuid === "function" ? BigInt(process.getuid()) : stat.uid;
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== currentUid ||
+        stat.nlink !== 1n || Number(stat.mode & 0o7777n) !== 0o600 ||
+        stat.size < 32n || stat.size > BigInt(MAX_CUTOVER_KEY_BYTES)) {
+      fail("existing cutover key is not an owner-private 0600 file");
+    }
+    process.stdout.write("staging_cutover_key_present\n");
+    return;
+  }
+  const key = randomBytes(CUTOVER_KEY_BYTES);
+  try {
+    publishPrivateArtifact({
+      outputPath: resolved,
+      bytes: key,
+      maximumBytes: MAX_CUTOVER_KEY_BYTES
+    });
+  } finally {
+    key.fill(0);
+  }
+  process.stdout.write("staging_cutover_key_prepared\n");
+}
+
 function quoted(value) {
   return JSON.stringify(String(value));
 }
@@ -89,6 +117,13 @@ function replaceTemplateScalars(source, replacements) {
 }
 
 function main() {
+  if (process.argv[2] === "--ensure-cutover-key") {
+    if (process.argv.length !== 4) {
+      fail("usage: prepare-staging-values.mjs --ensure-cutover-key OUTPUT");
+    }
+    ensureCutoverKey(process.argv[3]);
+    return;
+  }
   const [templatePath, sharedValuesPath, bootstrapOutputPath, finalOutputPath, domain, imagesJson] =
     process.argv.slice(2);
   if (!templatePath || !sharedValuesPath || !bootstrapOutputPath || !finalOutputPath ||
