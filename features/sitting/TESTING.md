@@ -2,7 +2,7 @@
 
 ## Estado actual
 
-La implementación candidata, congelada en Hubs `ce8390a` y Cloud/Reticulum
+La implementación candidata, congelada en Hubs `b2697e7` y Cloud/Reticulum
 `6d9ee9e`, tiene evidencia local fresca del 28 de agosto de 2026, pero no tiene
 todavía aceptación de navegador contra staging ni evidencia de despliegue/live.
 
@@ -47,20 +47,22 @@ Antes del E2E:
    no sea asiento ni ocupable.
 8. Confirmar que ambas sesiones ven la misma identidad persistente para la
    silla.
-9. Preservar evidencia no secreta y retirar clúster, LB, volúmenes y los cuatro
-   registros DNS antes de `23 h 30 min`, con readback de ausencia.
+9. Preservar evidencia no secreta y retirar clúster, nodo, LB, volúmenes, los
+   dos firewalls DOKS gestionados y los cuatro registros DNS antes de
+   `23 h 30 min`, con readback de ausencia.
 
 ## Receta de build candidata
 
-Esta receta está auditada en fuente y GitHub remoto, pero no se ha ejecutado:
+Esta receta quedó ejecutada y fijada por digest:
 
-- Hubs `ce8390a`: workflow `custom-docker-build-push`, Dockerfile
-  `RetPageOriginDockerfile` y un tag único que incluya `sitting-v2` más el SHA
-  corto; la identidad inmutable posterior es el digest, no el tag.
+- Hubs `b2697e7`: workflow `custom-docker-build-push`, run `33245207737` y
+  digest `ghcr.io/yengalvez/hubs@sha256:e8f9423ace1bf4108ae5a7ce59c1b45cf0b44b74ea944fdb82fee47e4d7be5b0`.
 - Cloud/Reticulum `6d9ee9e`: workflow `custom-docker-build-push` con
   `Override_Repo_Name=reticulum`,
   `Override_Code_Path=community-edition/services/reticulum` y
-  `Override_Dockerfile=community-edition/services/reticulum/Dockerfile`.
+  `Override_Dockerfile=community-edition/services/reticulum/Dockerfile`; run
+  `33244980400` y digest
+  `ghcr.io/yengalvez/reticulum@sha256:256c292d0d5a69e021322bdbd11b3f318f2d44bee580433252e0b04ade1d5e18`.
 - Ambos resultados deben resolverse a `repository@sha256:<digest>` y quedar
   ligados al run y commit exactos antes de generar un manifiesto.
 
@@ -69,6 +71,11 @@ workflows están activos. Los repos son públicos y usan `ubuntu-latest`
 estándar, por lo que sus minutos no son facturables. Antes del dispatch se
 revalida una vez esa identidad; no se lanza otro run sobre los mismos bytes sin
 una causa nueva.
+
+`deployment/prepare-staging-values.mjs` deriva desde la plantilla moderna dos
+values privados: Reticulum-first conserva el Hubs live anterior y Sitting v2
+cambia solo el digest Hubs. Copia únicamente admin/SMTP, genera todas las claves
+internas de staging y nunca imprime secretos.
 
 ## Gates locales
 

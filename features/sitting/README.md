@@ -10,12 +10,13 @@ verdad. La exclusión se resuelve en Reticulum mediante el protocolo Phoenix de
 reservas de waypoint v2 y leases persistidos en PostgreSQL. El estado NAF se
 mantiene solo como representación derivada para compatibilidad visual.
 
-> Estado: fuentes candidatas congeladas en Hubs `ce8390a` y Reticulum
+> Estado: fuentes candidatas congeladas en Hubs `b2697e7` y Reticulum
 > `6d9ee9e`. La validación focal actual pasa browser **11/11**, Hubs **48/48** y
 > Reticulum **20/20**, además de checks estrictos y composición limpia. Todavía
 > no se ha ejecutado la aceptación de dos navegadores en staging ni se ha
-> desplegado o aceptado en live. El target elegido es un DOKS temporal separado
-> y acotado a USD `2.35`; su creación aún no está autorizada.
+> desplegado o aceptado en live. Los builds remotos ya están fijados por digest
+> y el preflight privado valida dos manifiestos de **68 recursos**. El target es
+> un DOKS temporal separado, autorizado y acotado a USD `2.35`.
 
 ## Cómo authorizar una silla en Spoke
 

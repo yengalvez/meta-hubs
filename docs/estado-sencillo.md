@@ -75,14 +75,16 @@ feature:
   pruebas contra PostgreSQL local;
 - composición: **2/2** gitlinks, diff-check y los tres árboles limpios.
 
-Las fuentes candidatas quedan congeladas en Hubs `ce8390a` y Cloud/Reticulum
-`6d9ee9e`. No se cambió código de producto y no se repitió el `--full`.
+Las fuentes candidatas quedan congeladas en Hubs `b2697e7` y Cloud/Reticulum
+`6d9ee9e`. Sitting no cambió: el único ajuste posterior fue copiar antes del
+`npm ci` el script que el postinstall del Dockerfile ya necesitaba. El hook de
+Hubs pasó **100/100** y no se repitió el `--full`.
 
 El inventario externo de solo lectura también está terminado:
 
-- GitHub conserva exactamente Hubs `ce8390a` y Cloud `6d9ee9e`; los workflows
-  están activos, no se ha construido Sitting v2 y los dos repos públicos usan
-  runners estándar sin coste de minutos;
+- el inventario encontró Hubs `ce8390a` y Cloud `6d9ee9e` en `master`, los
+  workflows activos y ningún build Sitting v2 previo; después S4 publicó la
+  corrección Hubs `b2697e7` solo en su rama y construyó las dos imágenes;
 - DigitalOcean solo tiene el clúster productivo: un nodo de 8 GiB, un LB y dos
   volúmenes; agosto lleva USD `64.85` porque hubo dos medias topologías durante
   la recreación y el coste estable actual ronda USD `65.03/mes`;
@@ -96,10 +98,13 @@ dos volúmenes de `10 GiB`. Cuesta aproximadamente USD `0.09677/h`: `0.77` por
 8 horas, `1.16` por 12 o `2.32` por 24. El límite propuesto es USD `2.35` y el
 desmontaje debe empezar antes de `23 h 30 min`.
 
-Antes de facturar se construirían solo Hubs y Reticulum y se comprobarían DNS,
-SMTP/admin, claves staging independientes, values privados y pull GHCR. Si algo
-falla, no se crea el clúster. Para seguir hace falta una única autorización que
-cubra crear, usar y retirar exactamente este staging; producción queda intacta.
+La autorización ya está recibida. Antes de facturar se construyeron solo Hubs y
+Reticulum: los dos quedaron verdes por digest después de corregir un único
+fallo causal del Dockerfile. También están listos dos values `0600` con claves
+staging independientes, pull GHCR real y dos manifiestos privados verificados
+de **68 recursos**. DigitalOcean sigue sin recursos nuevos y producción está
+intacta; el siguiente paso es crear el clúster exacto y arrancar
+Reticulum-first.
 
 El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`, está en la rama
 local `codex/sitting-v2` y conserva los gitlinks exactos. Los worktrees
@@ -130,13 +135,14 @@ no es requisito para que el metaverso actual funcione ni para empezar features.
 humana, CI, gitlinks y merge están resueltos.
 
 La preparación para features está **100 % terminada**. En Sitting v2, la fuente
-y su validación local están terminadas. La feature comercial aún necesita los
-builds trazables, staging de dos navegadores y aceptación productiva. No se
+y su validación local están terminadas. Los builds trazables y el preflight ya
+están cerrados; la feature comercial aún necesita staging de dos navegadores y
+aceptación productiva. No se
 convierte source existente en un porcentaje live ficticio.
 
-S4 ya no tiene una investigación abierta: target, coste y limpieza están
-decididos. Queda ejecutar esa ventana autorizada y, si pasa, pedir por separado
-la ventana S5 de producción.
+S4 ya no tiene una investigación abierta: target, coste, imágenes, values y
+limpieza están decididos. Queda desplegar y aceptar la ventana ya autorizada y,
+si pasa, pedir por separado la ventana S5 de producción.
 
 ## Cuándo se para
 

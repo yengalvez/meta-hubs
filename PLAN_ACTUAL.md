@@ -34,8 +34,10 @@ real. La feature tampoco obliga a promover el runtime durable de bots.
 - El propietario eligió **Sitting v2** el 28 de agosto de 2026.
 - Workspace raíz: `/Users/Shared/Gits/YenHubs-features`, rama local
   `codex/sitting-v2`, sobre el commit de transición `8c0d547`.
-- Hubs: rama local `codex/sitting-v2` en
-  `ce8390a8905fa38fa0acdb10d5f94290981477ec`.
+- Hubs: rama `codex/sitting-v2` en
+  `b2697e7e6f571d195346cc156f0f1631eedc841a`. Es el corte funcional
+  `ce8390a` más la corrección mínima de orden del Dockerfile demostrada por el
+  primer build remoto.
 - Cloud: rama local `codex/sitting-v2` en
   `6d9ee9e998f636fcf61a4928cd2a275829768259`.
 - Los commits Hubs `9c2da562b` y `3f18bdf24`, Cloud `ce20e20` y el arnés raíz
@@ -105,7 +107,9 @@ producción.
 - [x] Abrir ramas `codex/sitting-v2` en root, Hubs y Cloud desde los cortes
   exactos aceptados.
   - Estado: **DONE**.
-  - Evidencia: los tres árboles están limpios; Hubs `ce8390a`, Cloud `6d9ee9e`.
+  - Evidencia: las ramas quedaron fijadas inicialmente en Hubs `ce8390a` y
+    Cloud `6d9ee9e`; S4 avanzó Hubs a `b2697e7` por un defecto exclusivo del
+    Dockerfile de release.
 
 ### S1. Confirmar el gap real
 
@@ -150,11 +154,12 @@ producción.
 ### S3. Resolver solo defectos demostrados
 
 - [x] Si todos los focos pasan, declarar que no hace falta implementación nueva
-  y congelar los dos commits fuente.
+  de producto y congelar los dos commits fuente.
   - Estado: **DONE**.
-  - Evidencia: Hubs `ce8390a8905fa38fa0acdb10d5f94290981477ec` y Cloud
+  - Evidencia final: Hubs `b2697e7e6f571d195346cc156f0f1631eedc841a` y Cloud
     `6d9ee9e998f636fcf61a4928cd2a275829768259` quedan congelados como fuentes
-    candidatas; no se modificó código de producto.
+    candidatas; no se modificó código de producto. El hook de Hubs pasó
+    **100/100** al corregir únicamente el orden de copia del script postinstall.
 - [ ] Si falla un foco, corregir únicamente su causa en el subrepo dueño,
   repetir el verificador más cercano y actualizar el gitlink raíz.
   - Estado: **SKIPPED — ningún foco demostró un defecto**.
@@ -215,24 +220,38 @@ producción.
     mismo, conserva colisiones globales y aumenta el radio de daño; compartir
     ingress ahorraría solo unos USD `0.54/24 h`. K3s/local no prueba el rollout
     DOKS/TLS. El control plane DOKS no-HA separado no añade coste.
-- [ ] Autorizar en una sola ventana la creación, uso y desmontaje exactos de S4.
-  - Estado: **WAITING — coste y efectos externos**.
+- [x] Autorizar en una sola ventana la creación, uso y desmontaje exactos de S4.
+  - Estado: **DONE — autorizado el 29 de agosto de 2026**.
   - Autoridad necesaria: dos Actions, acceso a credenciales staging, cuatro
     registros DNS staging, clúster/Namespace/LB/PVC, contenido Spoke
     desechable y eliminación con readback. Producción queda fuera de alcance.
-- [ ] Construir Hubs y Reticulum por los workflows aprobados y resolver ambos
+- [x] Construir Hubs y Reticulum por los workflows aprobados y resolver ambos
   artefactos a digests con procedencia del commit exacto.
-  - Estado: **WAITING** de autorización.
-  - Orden: lanzar una vez cada workflow antes de crear recursos DigitalOcean;
-    cualquier fallo conserva coste DO cero y no se relanza sin causa nueva.
-- [ ] Completar el preflight de staging antes del primer recurso facturable.
-  - Estado: **WAITING** de autorización y digests.
+  - Estado: **DONE**.
+  - Reticulum: run `33244980400`, intento 1, commit `6d9ee9e`, digest
+    `ghcr.io/yengalvez/reticulum@sha256:256c292d0d5a69e021322bdbd11b3f318f2d44bee580433252e0b04ade1d5e18`.
+  - Hubs: el run `33244979643` falló porque `npm ci` ejecutaba el postinstall
+    antes de copiar `scripts/patch-draft-js-immutable-4.js`. Se corrigió solo
+    ese orden en `b2697e7`; el run `33245207737`, intento 1 sobre esos bytes,
+    quedó verde y publicó
+    `ghcr.io/yengalvez/hubs@sha256:e8f9423ace1bf4108ae5a7ce59c1b45cf0b44b74ea944fdb82fee47e4d7be5b0`.
+  - Reticulum no se repitió y no se creó DigitalOcean durante los builds.
+- [x] Completar el preflight de staging antes del primer recurso facturable.
+  - Estado: **DONE**.
   - Debe probar sin mostrar secretos: autoridad IONOS para los cuatro hosts,
     administrador/SMTP, values `0600` con claves staging independientes,
     acceso pull GHCR y ambos digests. Si algo falta, STOP sin crear DOKS.
+  - Evidencia: DOKS `1.34.10-do.2` continúa disponible; NS/SOA confirman IONOS
+    y los cuatro hosts siguen libres bajo la autoridad ya concedida; se
+    heredaron solo admin/SMTP desde la fuente privada operativa y se generaron
+    claves internas staging independientes. Los dos values son `0600`, cambian
+    únicamente Hubs entre generaciones, el pull real de ambos digests GHCR
+    pasó y los dos manifiestos privados verifican **68 recursos**.
+  - DOKS creará además sus dos firewalls gestionados gratuitos; forman parte
+    intrínseca del clúster y se incluyen en el readback final.
 - [ ] Crear el target exacto y preparar una sala/escena staging desechable con
   una silla y un waypoint de salida; no usar ni modificar la escena principal.
-  - Estado: **WAITING** del preflight.
+  - Estado: **READY**.
   - Nota: al ser greenfield y desechable no contiene datos de cliente y no
     requiere checkpoint; S5 sí exige checkpoint real antes de producción.
 - [ ] Desplegar staging en dos generaciones: Reticulum/migración conservando
@@ -244,8 +263,9 @@ producción.
   - Aceptación: los once requisitos de producto pasan sin warnings ni errores.
 - [ ] Conservar la evidencia no secreta y desmontar todo el staging con readback.
   - Estado: **WAITING** de éxito o fallo terminal de S4.
-  - Hecho cuando: no quedan clúster, nodo, LB, volúmenes, registros DNS ni
-    contenido staging facturable/reutilizable; producción continúa idéntica.
+  - Hecho cuando: no quedan clúster, nodo, LB, volúmenes, firewalls DOKS
+    gestionados, registros DNS ni contenido staging facturable/reutilizable;
+    producción continúa idéntica.
 
 ### S5. Promover los mismos digests a producción
 
@@ -273,15 +293,17 @@ producción.
 
 ## Estado de trabajo
 
-- Completado: S0 ramas, S1 gap/release boundary, S2 evidencia local, S3
-  congelación de fuentes y el inventario/target/cost gate de S4.
-- Activo: ninguno; el trabajo local autorizado está cerrado.
-- Ready: S4 completo cuando el propietario autorice la ventana exacta de
-  creación, uso y desmontaje por un máximo de USD `2.35`.
-- Waiting: Actions, credenciales, DNS, DOKS y aceptación staging; S5 espera
-  staging verde y una autorización productiva posterior.
+- Completado: S0-S3, inventario/target/cost gate, builds y preflight privado de
+  S4.
+- Activo: crear el target temporal exacto y arrancar la generación
+  Reticulum-first.
+- Ready: clúster, bootstrap, DNS y contenido staging dentro del cap autorizado.
+- Waiting: aceptación de dos navegadores; S5 espera staging verde y una
+  autorización productiva posterior.
 - Bloqueos técnicos: ninguno.
-- Efectos externos realizados: ninguno.
+- Efectos externos realizados: rama Hubs `codex/sitting-v2` publicada y tres
+  runs totales —un fallo causal, Reticulum verde y Hubs corregido verde—.
+  DigitalOcean y producción siguen intactos; coste nuevo USD `0`.
 
 ## Reglas anti-loop
 
@@ -313,11 +335,10 @@ producción.
 
 ## Punto de menor confianza
 
-El target y su coste están resueltos, pero todavía no se han comprobado las
-credenciales/autoridades de staging ni el pull de los futuros digests. La
-versión nueva disponible es DOKS `1.34.10-do.2`, mientras producción conserva
+El punto de menor confianza ya no es fuente, credenciales ni manifiesto: es la
+integración real de DNS/TLS y Reticulum v2 en un clúster nuevo. La versión
+disponible es DOKS `1.34.10-do.2`, mientras producción conserva
 `1.34.10-do.1`; comparten Kubernetes `1.34.10`, pero no son un clon byte-exacto
-del proveedor. El control mínimo es ejecutar builds y preflight completo antes
-del primer recurso facturable, generar/verificar el manifiesto en el target
-separado y producir STOP ante cualquier diferencia material. Decisión:
-**ASK_USER** para el cost/effect gate; hasta entonces no se crea nada.
+del proveedor. El control es crear solo el target autorizado, validar cada
+generación y desmontarlo ante un fallo terminal sin usar producción como
+alternativa. Decisión: **CONTINUE**.
