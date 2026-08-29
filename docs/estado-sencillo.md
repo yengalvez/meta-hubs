@@ -1,6 +1,6 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **28 de agosto de 2026**
+Ultima actualización: **29 de agosto de 2026**
 
 ## Respuesta corta
 
@@ -78,19 +78,28 @@ feature:
 Las fuentes candidatas quedan congeladas en Hubs `ce8390a` y Cloud/Reticulum
 `6d9ee9e`. No se cambió código de producto y no se repitió el `--full`.
 
-Lo siguiente ya no es otra ronda local: hace falta autorizar la inspección
-externa/build y concretar un staging aislado. Después se construyen únicamente
-Hubs y Reticulum, se prueba la carrera con dos navegadores y, solo si pasa, se
-propone la ventana productiva.
+El inventario externo de solo lectura también está terminado:
 
-La preparación local de ese paso también está auditada. Los dos workflows de
-build existen en los commits congelados y el de Reticulum tiene ya identificados
-sus tres parámetros exactos. Sin embargo, el repositorio no contiene un
-staging real: no hay contexto Kubernetes, dominio, DNS, values ni sala staging
-trackeados. Cambiar solo el nombre del namespace no garantiza aislamiento y no
-se usará producción como laboratorio. La siguiente lectura externa debe decidir
-si cabe un staging aislado sin coste nuevo o si hace falta presentar antes una
-opción con coste.
+- GitHub conserva exactamente Hubs `ce8390a` y Cloud `6d9ee9e`; los workflows
+  están activos, no se ha construido Sitting v2 y los dos repos públicos usan
+  runners estándar sin coste de minutos;
+- DigitalOcean solo tiene el clúster productivo: un nodo de 8 GiB, un LB y dos
+  volúmenes; agosto lleva USD `64.85` porque hubo dos medias topologías durante
+  la recreación y el coste estable actual ronda USD `65.03/mes`;
+- no existe namespace, dominio, DNS, values ni sala staging;
+- el nodo deja unos `2412 MiB` libres por requests, menos que los `3200 MiB` de
+  otra HCCE; además, el namespace global de runners colisionaría con producción.
+
+La opción correcta es un clúster temporal separado, no compartir producción:
+DOKS `1.34.10-do.2` en `ams3`, sin HA, un nodo `s-4vcpu-8gb`, un `lb-small` y
+dos volúmenes de `10 GiB`. Cuesta aproximadamente USD `0.09677/h`: `0.77` por
+8 horas, `1.16` por 12 o `2.32` por 24. El límite propuesto es USD `2.35` y el
+desmontaje debe empezar antes de `23 h 30 min`.
+
+Antes de facturar se construirían solo Hubs y Reticulum y se comprobarían DNS,
+SMTP/admin, claves staging independientes, values privados y pull GHCR. Si algo
+falla, no se crea el clúster. Para seguir hace falta una única autorización que
+cubra crear, usar y retirar exactamente este staging; producción queda intacta.
 
 El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`, está en la rama
 local `codex/sitting-v2` y conserva los gitlinks exactos. Los worktrees
@@ -105,12 +114,15 @@ no es requisito para que el metaverso actual funcione ni para empezar features.
 
 ## Qué no se va a hacer
 
-- No habrá otro restore, checkpoint, clúster ni copia nueva.
+- No habrá otro restore, checkpoint ni recreación de producción. El único
+  clúster nuevo posible es el staging temporal separado descrito por S4 y solo
+  tras su cost/effect gate.
 - No se mezclará la imagen durable moderna con el restore histórico.
 - No se repetirán las 894 pruebas mientras sus bytes no cambien.
 - No se repetirá el `--full` posterior: sus fallos ya tienen diagnóstico y
   focales exactas verdes.
-- No se tocarán costes, topología o secretos para cerrar esta fase.
+- No se compartirán ingress, namespaces globales, datos ni credenciales con
+  producción para ahorrar unos céntimos.
 
 ## Cuánto queda
 
@@ -121,6 +133,10 @@ La preparación para features está **100 % terminada**. En Sitting v2, la fuent
 y su validación local están terminadas. La feature comercial aún necesita los
 builds trazables, staging de dos navegadores y aceptación productiva. No se
 convierte source existente en un porcentaje live ficticio.
+
+S4 ya no tiene una investigación abierta: target, coste y limpieza están
+decididos. Queda ejecutar esa ventana autorizada y, si pasa, pedir por separado
+la ventana S5 de producción.
 
 ## Cuándo se para
 

@@ -14,7 +14,8 @@ mantiene solo como representación derivada para compatibilidad visual.
 > `6d9ee9e`. La validación focal actual pasa browser **11/11**, Hubs **48/48** y
 > Reticulum **20/20**, además de checks estrictos y composición limpia. Todavía
 > no se ha ejecutado la aceptación de dos navegadores en staging ni se ha
-> desplegado o aceptado en live.
+> desplegado o aceptado en live. El target elegido es un DOKS temporal separado
+> y acotado a USD `2.35`; su creación aún no está autorizada.
 
 ## Cómo authorizar una silla en Spoke
 

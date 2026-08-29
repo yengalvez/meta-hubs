@@ -27,25 +27,32 @@ revisión visual ni el cold-browser posterior al rollout.
 
 Antes del E2E:
 
-1. Usar una sala staging desechable y vacía; no usar la sala principal.
-2. Haber completado gates, commit/push, builds de GitHub Actions y resolución a
+1. Usar el clúster temporal separado `yenhubs-sitting-staging`, DOKS
+   `1.34.10-do.2` en `ams3`, Namespace `hcce` y dominio
+   `staging.meta-hubs.org`; no compartir clúster/ingress con producción.
+2. Usar una sala staging desechable y vacía; no usar la sala principal.
+3. Haber completado gates, commit/push, builds de GitHub Actions y resolución a
    digests para Reticulum y Hubs; staging no admite builds locales/in-cluster.
-3. Crear el checkpoint exigido por `deployment/README.md` antes de cualquier
+4. Crear el checkpoint exigido por `deployment/README.md` antes de cualquier
    mutación de una instalación compartida.
-4. Desplegar en dos manifest generations: Reticulum v2/migración conservando el
+   El target greenfield y desechable no contiene datos de cliente y no necesita
+   checkpoint; producción sí lo exigirá en S5.
+5. Desplegar en dos manifest generations: Reticulum v2/migración conservando el
    Hubs anterior, y solo después Hubs v2.
-5. Confirmar que la respuesta de join anuncia `protocol: 2`,
+6. Confirmar que la respuesta de join anuncia `protocol: 2`,
    `supported: true`, `lease_ms: 15000` y `request_timeout_ms: 3000` para un
    cliente nuevo.
-6. Publicar desde Spoke al menos una silla con `Disable motion`,
+7. Publicar desde Spoke al menos una silla con `Disable motion`,
    `Can be occupied` y `Can be clicked`, y al menos un waypoint de salida que
    no sea asiento ni ocupable.
-7. Confirmar que ambas sesiones ven la misma identidad persistente para la
+8. Confirmar que ambas sesiones ven la misma identidad persistente para la
    silla.
+9. Preservar evidencia no secreta y retirar clúster, LB, volúmenes y los cuatro
+   registros DNS antes de `23 h 30 min`, con readback de ausencia.
 
 ## Receta de build candidata
 
-Esta receta está auditada en fuente, pero no se ha ejecutado:
+Esta receta está auditada en fuente y GitHub remoto, pero no se ha ejecutado:
 
 - Hubs `ce8390a`: workflow `custom-docker-build-push`, Dockerfile
   `RetPageOriginDockerfile` y un tag único que incluya `sitting-v2` más el SHA
@@ -57,11 +64,11 @@ Esta receta está auditada en fuente, pero no se ha ejecutado:
 - Ambos resultados deben resolverse a `repository@sha256:<digest>` y quedar
   ligados al run y commit exactos antes de generar un manifiesto.
 
-Los remote-tracking refs del checkout apuntan actualmente a esos dos commits,
-pero no sustituyen una lectura de GitHub inmediatamente anterior al dispatch.
-No se activa Actions hasta tener un target staging aceptado: publicar imágenes
-sin un lugar seguro donde probarlas solo crea artefactos y coste operativo sin
-acercar la aceptación.
+Los `master` remotos apuntan exactamente a esos dos commits verificados y los
+workflows están activos. Los repos son públicos y usan `ubuntu-latest`
+estándar, por lo que sus minutos no son facturables. Antes del dispatch se
+revalida una vez esa identidad; no se lanza otro run sobre los mismos bytes sin
+una causa nueva.
 
 ## Gates locales
 
@@ -98,7 +105,7 @@ Cuando Reticulum y Hubs candidatos estén disponibles en staging:
 
 ```bash
 cd tests/browser
-SITTING_TEST_URL=https://staging.example/<room-id> npm run test:sitting
+SITTING_TEST_URL=https://staging.meta-hubs.org/<room-id> npm run test:sitting
 ```
 
 El helper rechaza URLs con credenciales, redirecciones a otro origen y destinos

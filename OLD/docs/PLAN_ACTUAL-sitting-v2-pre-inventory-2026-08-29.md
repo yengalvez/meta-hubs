@@ -1,12 +1,16 @@
+# Archivo — PLAN ACTUAL Sitting v2 antes del inventario externo
+
+Archivado el **29 de agosto de 2026** desde el commit raíz `58db772`.
+Fue sustituido cuando el inventario read-only eligió un staging DOKS temporal
+separado y fijó su coste, precondiciones y limpieza. No es una cola ejecutable.
+
 # PLAN ACTUAL — Sitting v2 autoritativo
 
-Version: **v3 — TARGET STAGING ELEGIDO; EFECTOS EN ESPERA**
-Ultima revision: **29 de agosto de 2026 (Europe/Madrid)**
+Version: **v2.2 — FUENTE CONGELADA; TARGET STAGING EN ESPERA**
+Ultima revision: **28 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El plan de transición
 cerrado se conserva en
-`OLD/docs/PLAN_ACTUAL-feature-transition-2026-08-28.md`; la versión previa al
-inventario externo se conserva en
-`OLD/docs/PLAN_ACTUAL-sitting-v2-pre-inventory-2026-08-29.md`.
+`OLD/docs/PLAN_ACTUAL-feature-transition-2026-08-28.md`.
 
 ## Resultado buscado
 
@@ -47,10 +51,6 @@ real. La feature tampoco obliga a promover el runtime durable de bots.
 - Sitting v2 necesita únicamente una imagen Hubs y una imagen Reticulum del
   corte actual. No necesita construir parent/runner de bots, Spoke, Dialog,
   Photomnemonic ni Coturn.
-- El inventario externo read-only del 29 de agosto confirmó los mismos commits
-  en los `master` remotos, workflows activos, una sola instalación DOKS
-  productiva y ausencia total de staging. La ruta elegida es un clúster DOKS
-  temporal separado; no se comparte el clúster productivo.
 
 ## Requisitos de producto
 
@@ -89,11 +89,9 @@ Fuera de alcance:
 - editar la escena principal para crear fixtures de prueba;
 - revertir destructivamente la migración con leases activos.
 
-Autorizado y completado: trabajo local reversible e inventario externo
-read-only de GitHub, DigitalOcean, Kubernetes y DNS público. No están
-autorizados todavía push, Actions, publicación de imágenes, lectura o cambio de
-credenciales, creación de staging, Spoke, DNS, DigitalOcean mutante ni
-producción.
+Autorizado ahora: trabajo local reversible, ramas, documentación y pruebas
+locales proporcionales. No están autorizados todavía push, Actions, publicación
+de imágenes, staging, Spoke, credenciales, DigitalOcean ni producción.
 
 ## Plan de producción
 
@@ -182,70 +180,25 @@ producción.
     `HUB_DOMAIN`, pero eso no prueba aislamiento, capacidad, DNS, TLS, storage
     ni credenciales. El único target documentado es la instalación productiva
     y no se reutiliza como fixture.
-- [x] Inventariar GitHub, DigitalOcean, Kubernetes y DNS público en read-only y
-  elegir un único target.
-  - Estado: **DONE**.
-  - GitHub: `master` remoto sigue exactamente en Hubs `ce8390a` y Cloud
-    `6d9ee9e`, ambos commits verificados; los dos workflows están activos, no
-    existe build Sitting v2 y los repos públicos usan runners estándar sin
-    coste de minutos.
-  - DigitalOcean: una sola instalación productiva `hubs-ce` en `ams3`, DOKS
-    `1.34.10-do.1`, HA desactivada, un nodo `s-4vcpu-8gb`, un `lb-small` y dos
-    volúmenes de `10 GiB`. El preview de agosto es USD `64.85` por dos mitades
-    de topología tras la recreación; el coste estable actual equivale a unos
-    USD `65.03/mes`.
-  - Kubernetes: ningún namespace/host staging; `12/12` Deployments productivos.
-    El nodo tiene `3890m` CPU y unos `6414 MiB` asignables; los requests activos
-    consumen `1297m/4002 MiB`. Quedan unos `2412 MiB`, menos que los `3200 MiB`
-    de otra HCCE. Además, el manifiesto exige el namespace global fijo
-    `hcce-bot-runners`, que colisionaría dentro del mismo clúster.
-  - DNS: `staging.meta-hubs.org` y sus hosts `assets`, `stream` y `cors` no
-    resuelven; los cuatro hosts productivos sí.
-- [x] Seleccionar un staging aislado y acotar coste/TTL.
-  - Estado: **DONE — propuesta revisada independientemente**.
-  - Target: clúster temporal separado `yenhubs-sitting-staging`, región `ams3`,
-    DOKS `1.34.10-do.2` —único parche `1.34.10` hoy disponible para alta—, HA
-    desactivada, un nodo `s-4vcpu-8gb`, un `lb-small`, dos volúmenes de
-    `10 GiB`, Namespace `hcce` y dominio `staging.meta-hubs.org`.
-  - Coste observado: nodo USD `0.07143/h`, LB USD `0.02233/h` y volúmenes USD
-    `0.00300/h`; total USD `0.09677/h`, unos USD `0.77/8 h`, `1.16/12 h` o
-    `2.32/24 h`. Cost gate: máximo USD `2.35`, desmontaje iniciado antes de
-    `23 h 30 min` desde el primer recurso facturable.
-  - Decisión: añadir nodo/LB/PVC al clúster productivo cuesta prácticamente lo
-    mismo, conserva colisiones globales y aumenta el radio de daño; compartir
-    ingress ahorraría solo unos USD `0.54/24 h`. K3s/local no prueba el rollout
-    DOKS/TLS. El control plane DOKS no-HA separado no añade coste.
-- [ ] Autorizar en una sola ventana la creación, uso y desmontaje exactos de S4.
-  - Estado: **WAITING — coste y efectos externos**.
-  - Autoridad necesaria: dos Actions, acceso a credenciales staging, cuatro
-    registros DNS staging, clúster/Namespace/LB/PVC, contenido Spoke
-    desechable y eliminación con readback. Producción queda fuera de alcance.
+- [ ] Autorizar el efecto externo y el target staging exacto, incluido cualquier
+  coste o uso compartido del clúster.
+  - Estado: **WAITING — autorización posterior**.
+  - Decisión mínima: inventario remoto read-only y propuesta de un target
+    aislado sin crear un clúster nuevo por defecto; si no es viable, presentar
+    coste/topología antes de crear recursos.
 - [ ] Construir Hubs y Reticulum por los workflows aprobados y resolver ambos
   artefactos a digests con procedencia del commit exacto.
-  - Estado: **WAITING** de autorización.
-  - Orden: lanzar una vez cada workflow antes de crear recursos DigitalOcean;
-    cualquier fallo conserva coste DO cero y no se relanza sin causa nueva.
-- [ ] Completar el preflight de staging antes del primer recurso facturable.
-  - Estado: **WAITING** de autorización y digests.
-  - Debe probar sin mostrar secretos: autoridad IONOS para los cuatro hosts,
-    administrador/SMTP, values `0600` con claves staging independientes,
-    acceso pull GHCR y ambos digests. Si algo falta, STOP sin crear DOKS.
-- [ ] Crear el target exacto y preparar una sala/escena staging desechable con
-  una silla y un waypoint de salida; no usar ni modificar la escena principal.
-  - Estado: **WAITING** del preflight.
-  - Nota: al ser greenfield y desechable no contiene datos de cliente y no
-    requiere checkpoint; S5 sí exige checkpoint real antes de producción.
+  - Estado: **WAITING** de autorización y S3.
+- [ ] Preparar una sala/escena staging desechable con una silla y un waypoint de
+  salida; no usar ni modificar la escena principal como fixture.
+  - Estado: **WAITING** del target staging.
 - [ ] Desplegar staging en dos generaciones: Reticulum/migración conservando
   Hubs anterior, verificar compatibilidad legacy, y después Hubs v2.
-  - Estado: **WAITING** de target y contenido.
+  - Estado: **WAITING** de builds y staging.
 - [ ] Ejecutar `tests/browser/sitting-occupancy.spec.mjs` con dos contextos y
   revisar manualmente `remote-seated-pose.png`.
   - Estado: **WAITING** del rollout staging.
   - Aceptación: los once requisitos de producto pasan sin warnings ni errores.
-- [ ] Conservar la evidencia no secreta y desmontar todo el staging con readback.
-  - Estado: **WAITING** de éxito o fallo terminal de S4.
-  - Hecho cuando: no quedan clúster, nodo, LB, volúmenes, registros DNS ni
-    contenido staging facturable/reutilizable; producción continúa idéntica.
 
 ### S5. Promover los mismos digests a producción
 
@@ -273,13 +226,12 @@ producción.
 
 ## Estado de trabajo
 
-- Completado: S0 ramas, S1 gap/release boundary, S2 evidencia local, S3
-  congelación de fuentes y el inventario/target/cost gate de S4.
+- Completado: S0 ramas, S1 gap/release boundary, S2 evidencia local y S3
+  congelación de las fuentes candidatas.
 - Activo: ninguno; el trabajo local autorizado está cerrado.
-- Ready: S4 completo cuando el propietario autorice la ventana exacta de
-  creación, uso y desmontaje por un máximo de USD `2.35`.
-- Waiting: Actions, credenciales, DNS, DOKS y aceptación staging; S5 espera
-  staging verde y una autorización productiva posterior.
+- Ready: inventario remoto read-only de S4 en cuanto exista autorización
+  externa; el build espera además un target staging exacto.
+- Waiting: S4/S5 por autorización, builds trazables y aceptación externa.
 - Bloqueos técnicos: ninguno.
 - Efectos externos realizados: ninguno.
 
@@ -289,13 +241,10 @@ producción.
 2. Un PASS previo no se repite salvo que cambien sus inputs u oráculo.
 3. Los focos actuales prueban source; solo staging prueba la carrera real.
 4. No se usa producción como fixture ni se presenta sitting histórico como v2.
-5. El target staging ya está fijado; no se reabre la comparación salvo que
-   cambien precio, disponibilidad o topología.
+5. La ausencia de un staging viable se resuelve con una decisión de coste y
+   aislamiento, no mezclando la feature con otra arquitectura.
 6. Hubs y Reticulum son las únicas imágenes de esta release.
 7. Un fallo local no autoriza push, build, deploy ni cambios de topología.
-8. Si un build falla, no se crea DOKS. Si staging alcanza fallo terminal, se
-   conserva diagnóstico y se desmontan solo sus recursos exactos para cortar
-   coste; no se usa producción como alternativa.
 
 ## Artefactos clave
 
@@ -313,11 +262,9 @@ producción.
 
 ## Punto de menor confianza
 
-El target y su coste están resueltos, pero todavía no se han comprobado las
-credenciales/autoridades de staging ni el pull de los futuros digests. La
-versión nueva disponible es DOKS `1.34.10-do.2`, mientras producción conserva
-`1.34.10-do.1`; comparten Kubernetes `1.34.10`, pero no son un clon byte-exacto
-del proveedor. El control mínimo es ejecutar builds y preflight completo antes
-del primer recurso facturable, generar/verificar el manifiesto en el target
-separado y producir STOP ante cualquier diferencia material. Decisión:
-**ASK_USER** para el cost/effect gate; hasta entonces no se crea nada.
+La auditoría local confirma que no existe un target staging trackeado. Eso no
+invalida la fuente ni sus pruebas focales, pero sí impide afirmar que Sitting v2
+funciona entre dos navegadores reales. La comprobación más barata es
+inventariar read-only la capacidad externa actual y proponer un único target
+aislado con coste cero o coste explícito. Hasta entonces no se crea ningún
+recurso ni se toca producción.
