@@ -88,7 +88,7 @@ El inventario externo de solo lectura también está terminado:
 - DigitalOcean solo tiene el clúster productivo: un nodo de 8 GiB, un LB y dos
   volúmenes; agosto lleva USD `64.85` porque hubo dos medias topologías durante
   la recreación y el coste estable actual ronda USD `65.03/mes`;
-- no existe namespace, dominio, DNS, values ni sala staging;
+- producción no contiene staging; S4 usa ahora un clúster temporal separado;
 - el nodo deja unos `2412 MiB` libres por requests, menos que los `3200 MiB` de
   otra HCCE; además, el namespace global de runners colisionaría con producción.
 
@@ -98,13 +98,23 @@ dos volúmenes de `10 GiB`. Cuesta aproximadamente USD `0.09677/h`: `0.77` por
 8 horas, `1.16` por 12 o `2.32` por 24. El límite propuesto es USD `2.35` y el
 desmontaje debe empezar antes de `23 h 30 min`.
 
-La autorización ya está recibida. Antes de facturar se construyeron solo Hubs y
-Reticulum: los dos quedaron verdes por digest después de corregir un único
-fallo causal del Dockerfile. También están listos dos values `0600` con claves
-staging independientes, pull GHCR real y dos manifiestos privados verificados
-de **68 recursos**. DigitalOcean sigue sin recursos nuevos y producción está
-intacta; el siguiente paso es crear el clúster exacto y arrancar
-Reticulum-first.
+La autorización S4 ya está recibida. El primer staging aislado llegó a DNS,
+TLS y join legacy real contra Reticulum v2 y después se desmontó con readback
+cero. Producción continúa intacta. Antes del E2E apareció un fallo que el plan
+antiguo no había contemplado: el
+manifiesto Cloud actual activa el protocolo durable de bots, pero las imágenes
+bot conservadas son legacy. El parent fue construido desde `5a82de5` y espera
+`BOT_ACCESS_KEY`; el manifiesto nuevo entrega `BOT_ORCHESTRATOR_ACCESS_KEY`, por
+lo que el pod se reinicia y el aplicador valla correctamente los cinco
+servicios.
+
+Esto no significa que Sitting esté roto ni que haya que rehacer la feature. La
+ruta legacy activa ya está implementada y probada **59/59**. El staging limpio
+recreado tiene Reticulum v2 con Hubs antiguo y sus **12/12 Deployments Ready**,
+sin construir imágenes bot ni mezclar la modernización durable. El nuevo LB es
+`178.128.139.203`; falta apuntarle los cuatro DNS staging, renovar TLS, crear
+una sala desechable, probar el join legacy, subir Hubs v2 y ejecutar la carrera
+de dos navegadores.
 
 El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`, está en la rama
 local `codex/sitting-v2` y conserva los gitlinks exactos. Los worktrees
@@ -140,9 +150,10 @@ están cerrados; la feature comercial aún necesita staging de dos navegadores y
 aceptación productiva. No se
 convierte source existente en un porcentaje live ficticio.
 
-S4 ya no tiene una investigación abierta: target, coste, imágenes, values y
-limpieza están decididos. Queda desplegar y aceptar la ventana ya autorizada y,
-si pasa, pedir por separado la ventana S5 de producción.
+S4 ya no tiene una investigación abierta: la causa está demostrada, el perfil
+legacy activo está verde y la ruta incompatible no se repetirá. Falta DNS/TLS,
+la sala nueva, Hubs v2 y el E2E. Si pasa, S5 seguirá necesitando una ventana
+productiva separada.
 
 ## Cuándo se para
 

@@ -1,6 +1,6 @@
 # PLAN ACTUAL — Sitting v2 autoritativo
 
-Version: **v4 — STAGING ARRANCADO; DNS Y CONTENIDO EN CURSO**
+Version: **v6 — STAGING LEGACY VERDE; DNS Y HUBS V2 EN CURSO**
 Ultima revision: **29 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El plan de transición
 cerrado se conserva en
@@ -38,9 +38,9 @@ real. La feature tampoco obliga a promover el runtime durable de bots.
   `b2697e7e6f571d195346cc156f0f1631eedc841a`. Es el corte funcional
   `ce8390a` más la corrección mínima de orden del Dockerfile demostrada por el
   primer build remoto.
-- Cloud: rama local `codex/sitting-v2` en `b4cfe48`, que conserva Reticulum
-  `6d9ee9e` y añade únicamente la autenticación kubelet de todos los workloads
-  GHCR en clúster limpio. La imagen Reticulum aceptada no cambió.
+- Cloud: rama local `codex/sitting-v2` en `acce87e`, que conserva la imagen
+  Reticulum de `6d9ee9e` y añade la autenticación kubelet y el perfil staging
+  legacy activo fail-closed. Las imágenes de producto aceptadas no cambiaron.
 - Los commits Hubs `9c2da562b` y `3f18bdf24`, Cloud `ce20e20` y el arnés raíz
   `875642e` son ancestros de esos cortes. La implementación, migraciones y E2E
   ya existen; no se reescriben sin un fallo causal nuevo.
@@ -48,8 +48,13 @@ real. La feature tampoco obliga a promover el runtime durable de bots.
   `5a82de5`, ambos anteriores a Sitting v2. La aceptación H5 demostró sitting
   histórico, no el protocolo v2 ni su carrera multiusuario.
 - Sitting v2 necesita únicamente una imagen Hubs y una imagen Reticulum del
-  corte actual. No necesita construir parent/runner de bots, Spoke, Dialog,
-  Photomnemonic ni Coturn.
+  corte actual. El primer staging demostró que el manifiesto durable actual no
+  puede reutilizar directamente las imágenes bot legacy: el parent procede de
+  `5a82de5` y exige `BOT_ACCESS_KEY`, mientras el manifiesto durable entrega
+  `BOT_ORCHESTRATOR_ACCESS_KEY`; el runner fijado es todavía anterior. No se
+  convierten por ello parent/runner en artefactos de esta release. Se completa
+  la ruta trackeada de compatibilidad legacy para conservar bots sin mezclar
+  otra modernización con Sitting.
 - El inventario externo read-only del 29 de agosto confirmó los mismos commits
   en los `master` remotos, workflows activos, una sola instalación DOKS
   productiva y ausencia total de staging. La ruta elegida es un clúster DOKS
@@ -92,11 +97,9 @@ Fuera de alcance:
 - editar la escena principal para crear fixtures de prueba;
 - revertir destructivamente la migración con leases activos.
 
-Autorizado y completado: trabajo local reversible e inventario externo
-read-only de GitHub, DigitalOcean, Kubernetes y DNS público. No están
-autorizados todavía push, Actions, publicación de imágenes, lectura o cambio de
-credenciales, creación de staging, Spoke, DNS, DigitalOcean mutante ni
-producción.
+Autorizado y completado: trabajo local reversible, inventario externo, builds
+Hubs/Reticulum y la ventana S4 completa de staging, DNS, contenido desechable y
+desmontaje con readback. Producción continúa fuera de alcance hasta S5.
 
 ## Plan de producción
 
@@ -250,29 +253,50 @@ producción.
     pasó y los dos manifiestos privados verifican **68 recursos**.
   - DOKS creará además sus dos firewalls gestionados gratuitos; forman parte
     intrínseca del clúster y se incluyen en el readback final.
-- [ ] Crear el target exacto y preparar una sala/escena staging desechable con
+- [x] Crear el target exacto inicial, DNS/TLS y una sala staging desechable sin
+  tocar la escena principal.
   una silla y un waypoint de salida; no usar ni modificar la escena principal.
-  - Estado: **IN PROGRESS**.
-  - Evidencia: el clúster separado
-    `17057b94-a707-46ab-8994-7ae31158b998` está `running` en `ams3`, DOKS
-    `1.34.10-do.2`, un nodo `s-4vcpu-8gb`, HA desactivada, dos PVC `10 GiB`
-    `Bound` y LB `165.245.201.90`. Faltan los cuatro DNS IONOS y publicar la
-    sala/escena desechable; la escena productiva no se ha usado ni modificado.
+  - Estado: **DONE para la primera ejecución; su evidencia se conserva y sus
+    recursos fueron desmontados con readback cero**.
+  - Evidencia: el clúster inicial `17057b94-a707-46ab-8994-7ae31158b998`, nodo,
+    LB `165.245.201.90`, dos PVC/volúmenes y dos firewalls ya no existen. Sus
+    cuatro A records permanecen temporalmente para ser actualizados al nuevo
+    LB. La sala `hg3jQAx` probó el join legacy antes del desmontaje; desapareció
+    con la DB desechable y deberá crearse otra sala staging.
   - Nota: al ser greenfield y desechable no contiene datos de cliente y no
     requiere checkpoint; S5 sí exige checkpoint real antes de producción.
 - [ ] Desplegar staging en dos generaciones: Reticulum/migración conservando
   Hubs anterior, verificar compatibilidad legacy, y después Hubs v2.
-  - Estado: **IN PROGRESS — generación Reticulum-first arrancada**.
-  - Evidencia: los 68 recursos pasaron el apply guardado; Hubs legacy,
-    Reticulum/PostgREST, PostgreSQL/PgBouncer, Spoke, Coturn, Dialog,
-    Photomnemonic, Nearspark y HAProxy están `Ready` y los pods nuevos tienen
-    cero reinicios. El clúster limpio demostró dos defectos causales ya
-    corregidos: pulls privados GHCR anónimos (`401`) y URI PostgreSQL con
-    variables literales. Generador `32/32` y preparador staging `1/1` pasan.
-    Falta el join legacy con TLS/DNS válido antes de aplicar Hubs v2.
+  - Estado: **IN PROGRESS — generación legacy activa verde; falta DNS/TLS,
+    join nuevo y promoción de Hubs v2 dentro del mismo staging**.
+  - Evidencia: Reticulum v2 convivió con Hubs legacy y Hubs candidato quedó
+    fijado por digest. La transición durable `bootstrap -> admission -> active`
+    validó sus guardas, pero el Deployment `bot-orchestrator` entró en
+    `CrashLoopBackOff` y provocó `deployments_ready_timeout`; el apply valló los
+    cinco consumidores y liberó la Lease. La procedencia GHCR y Git demuestra
+    la causa: parent `325c5c...` fue construido desde `5a82de5` y exige
+    `BOT_ACCESS_KEY`, mientras el manifiesto `6d9ee9e` entrega el contrato
+    durable `BOT_ORCHESTRATOR_ACCESS_KEY`; runner `27324a...` es de marzo y
+    tampoco implementa el protocolo aislado. La sala staging no tiene bots
+    habilitados, por lo que no fue una creación de runner ni un fallo Sitting.
+  - Corrección aplicada: `cold-rebind-legacy-active-v1` conserva el contrato
+    process-local y omite RBAC/namespace/admisión durable. El driver fija antes
+    de activar el target normalizado, admite el TypeMeta legalmente omitido en
+    `DeploymentList` y vuelve a 0/5 ante cualquier fallo. Los focos pasan
+    **59/59**; no se construyeron imágenes bot.
+  - Evidencia live actual: el clúster recreado
+    `cbff6246-9be0-498d-9938-c73534cf4b79` está `running` en `ams3`, DOKS
+    `1.34.10-do.2`, un nodo `s-4vcpu-8gb`, HA desactivada, dos PVC `10 GiB`
+    `Bound` y LB `178.128.139.203`. La secuencia
+    `legacy-absent -> legacy-active` terminó con **12/12 Deployments Ready** y
+    Lease libre usando Hubs legacy. Desmontaje antes de
+    `2026-08-30 19:04:04 CEST`.
+  - Siguiente acción exacta: actualizar solo los cuatro A records staging al
+    nuevo LB, esperar DNS/TLS, crear una sala desechable y verificar join
+    legacy; después aplicar el manifiesto legacy-active candidato de Hubs v2.
 - [ ] Ejecutar `tests/browser/sitting-occupancy.spec.mjs` con dos contextos y
   revisar manualmente `remote-seated-pose.png`.
-  - Estado: **WAITING** del rollout staging.
+  - Estado: **WAITING** de DNS/TLS, sala nueva y Hubs v2.
   - Aceptación: los once requisitos de producto pasan sin warnings ni errores.
 - [ ] Conservar la evidencia no secreta y desmontar todo el staging con readback.
   - Estado: **WAITING** de éxito o fallo terminal de S4.
@@ -306,19 +330,22 @@ producción.
 
 ## Estado de trabajo
 
-- Completado: S0-S3, inventario/target/cost gate, builds, preflight privado de
-  S4, clúster/LB/PVC y arranque verde de la generación Reticulum-first.
-- Activo: crear los cuatro DNS IONOS y la sala/escena desechable; después join
-  legacy, Hubs v2 y E2E de dos navegadores.
-- Ready: DNS, contenido y aceptación dentro de la misma ventana autorizada.
+- Completado: S0-S3, inventario/target/cost gate, builds, preflight privado,
+  primer staging con join legacy, desmontaje/readback, perfil legacy activo,
+  recreación exacta y 12/12 Deployments Ready con Hubs legacy.
+- Activo: actualizar los cuatro A records al LB `178.128.139.203`, aceptar
+  DNS/TLS, crear la sala desechable y repetir el join legacy; después Hubs v2 y
+  E2E de dos navegadores.
+- Ready: manifiesto Hubs v2 privado/verificado y arnés E2E de 11 requisitos.
 - Waiting: aceptación de dos navegadores; S5 espera staging verde y una
   autorización productiva posterior.
-- Bloqueos técnicos: ninguno.
+- Bloqueos técnicos: ninguno; IONOS requiere reautenticación del propietario
+  antes de editar los cuatro registros.
 - Efectos externos realizados: rama Hubs `codex/sitting-v2` publicada, tres
   runs totales —un fallo causal, Reticulum verde y Hubs corregido verde— y el
   staging temporal exacto descrito arriba. El máximo planificado sigue siendo
   aproximadamente USD `0.09677/h`; el desmontaje debe empezar antes de
-  `2026-08-30 12:09:46 CEST`. Producción continúa intacta.
+  `2026-08-30 19:04:04 CEST`. Producción continúa intacta.
 
 ## Reglas anti-loop
 
@@ -328,11 +355,15 @@ producción.
 4. No se usa producción como fixture ni se presenta sitting histórico como v2.
 5. El target staging ya está fijado; no se reabre la comparación salvo que
    cambien precio, disponibilidad o topología.
-6. Hubs y Reticulum son las únicas imágenes de esta release.
+6. Hubs y Reticulum son las únicas imágenes de esta release. No se construyen
+   parent/runner para hacer pasar staging.
 7. Un fallo local no autoriza push, build, deploy ni cambios de topología.
 8. Si un build falla, no se crea DOKS. Si staging alcanza fallo terminal, se
    conserva diagnóstico y se desmontan solo sus recursos exactos para cortar
    coste; no se usa producción como alternativa.
+9. La ruta durable no vuelve a ejecutarse con imágenes bot legacy. El perfil
+   legacy activo ya pasó sus focos y su gate live; no se reabre esa transición
+   salvo evidencia nueva.
 
 ## Artefactos clave
 

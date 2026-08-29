@@ -19,6 +19,9 @@ test("staging values materialize one concrete percent-encoded database URI", () 
   const bootstrapPath = path.join(directory, "bootstrap.yaml");
   const finalPath = path.join(directory, "final.yaml");
   const repairedPath = path.join(directory, "repaired.yaml");
+  const admissionPath = path.join(directory, "admission.yaml");
+  const activePath = path.join(directory, "active.yaml");
+  const legacyCompatiblePath = path.join(directory, "legacy-compatible.yaml");
   fs.writeFileSync(sharedPath, [
     "ADM_EMAIL: owner@example.invalid",
     "SMTP_SERVER: smtp.example.invalid",
@@ -83,4 +86,57 @@ test("staging values materialize one concrete percent-encoded database URI", () 
   assert.equal(repaired.get("DB_PASS"), bootstrap.get("DB_PASS"));
   assert.equal(repaired.get("PGRST_DB_URI"), expected);
   assert.equal(repaired.get("PSQL"), expected);
+
+  const admission = spawnSync(process.execPath, [
+    preparer,
+    "--transition-activation-phase",
+    finalPath,
+    admissionPath,
+    "bootstrap",
+    "admission"
+  ], { cwd: root, encoding: "utf8" });
+  assert.equal(admission.status, 0, admission.stderr);
+  assert.equal(admission.stdout, "staging_activation_phase_admission_prepared\n");
+
+  const active = spawnSync(process.execPath, [
+    preparer,
+    "--transition-activation-phase",
+    admissionPath,
+    activePath,
+    "admission",
+    "active"
+  ], { cwd: root, encoding: "utf8" });
+  assert.equal(active.status, 0, active.stderr);
+  assert.equal(active.stdout, "staging_activation_phase_active_prepared\n");
+
+  const admissionValues = parseLocalValuesSource(fs.readFileSync(admissionPath, "utf8"));
+  const activeValues = parseLocalValuesSource(fs.readFileSync(activePath, "utf8"));
+  assert.equal(admissionValues.get("BOT_RUNNER_ACTIVATION_PHASE"), "admission");
+  assert.equal(activeValues.get("BOT_RUNNER_ACTIVATION_PHASE"), "active");
+  const withoutPhase = values => new Map(
+    [...values].filter(([key]) => key !== "BOT_RUNNER_ACTIVATION_PHASE")
+  );
+  assert.deepEqual(withoutPhase(admissionValues), withoutPhase(final));
+  assert.deepEqual(withoutPhase(activeValues), withoutPhase(final));
+
+  const legacyCompatible = spawnSync(process.execPath, [
+    preparer,
+    "--prepare-legacy-compatible",
+    activePath,
+    legacyCompatiblePath
+  ], { cwd: root, encoding: "utf8" });
+  assert.equal(legacyCompatible.status, 0, legacyCompatible.stderr);
+  assert.equal(
+    legacyCompatible.stdout,
+    "staging_legacy_compatible_values_prepared\n"
+  );
+  const legacyCompatibleValues = parseLocalValuesSource(
+    fs.readFileSync(legacyCompatiblePath, "utf8")
+  );
+  assert.equal(legacyCompatibleValues.get("OVERRIDE_BOT_RUNNER_IMAGE"), "No");
+  const withoutRunnerImage = values => new Map(
+    [...values].filter(([key]) => key !== "OVERRIDE_BOT_RUNNER_IMAGE")
+  );
+  assert.deepEqual(withoutRunnerImage(legacyCompatibleValues), withoutRunnerImage(activeValues));
+  assert.equal(fs.statSync(legacyCompatiblePath).mode & 0o777, 0o600);
 });

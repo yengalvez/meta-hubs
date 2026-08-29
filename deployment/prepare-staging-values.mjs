@@ -126,6 +126,59 @@ function replaceTemplateScalars(source, replacements) {
 }
 
 function main() {
+  if (process.argv[2] === "--prepare-legacy-compatible") {
+    if (process.argv.length !== 5) {
+      fail("usage: prepare-staging-values.mjs --prepare-legacy-compatible SOURCE OUTPUT");
+    }
+    const source = readSource(process.argv[3], { privateFile: true });
+    const runnerImage = source.values.get("OVERRIDE_BOT_RUNNER_IMAGE");
+    if (
+      typeof runnerImage !== "string" ||
+      !/^[a-z0-9][a-z0-9._/-]*(?::[0-9]+)?\/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$/u.test(runnerImage)
+    ) {
+      fail("legacy-compatible source must contain one digest-pinned runner image");
+    }
+    const bytes = replaceTemplateScalars(
+      source.source,
+      new Map([["OVERRIDE_BOT_RUNNER_IMAGE", "No"]])
+    );
+    publishPrivateArtifact({
+      outputPath: path.resolve(process.argv[4]),
+      bytes,
+      maximumBytes: MAX_VALUES_BYTES
+    });
+    bytes.fill(0);
+    process.stdout.write("staging_legacy_compatible_values_prepared\n");
+    return;
+  }
+  if (process.argv[2] === "--transition-activation-phase") {
+    if (process.argv.length !== 7) {
+      fail(
+        "usage: prepare-staging-values.mjs --transition-activation-phase SOURCE OUTPUT FROM TO"
+      );
+    }
+    const [, , , sourcePath, outputPath, fromPhase, toPhase] = process.argv;
+    const allowedTransition =
+      (fromPhase === "bootstrap" && toPhase === "admission") ||
+      (fromPhase === "admission" && toPhase === "active");
+    if (!allowedTransition) fail("staging activation phase transition is invalid");
+    const source = readSource(sourcePath, { privateFile: true });
+    if (source.values.get("BOT_RUNNER_ACTIVATION_PHASE") !== fromPhase) {
+      fail("staging activation phase source does not match the expected phase");
+    }
+    const bytes = replaceTemplateScalars(
+      source.source,
+      new Map([["BOT_RUNNER_ACTIVATION_PHASE", toPhase]])
+    );
+    publishPrivateArtifact({
+      outputPath: path.resolve(outputPath),
+      bytes,
+      maximumBytes: MAX_VALUES_BYTES
+    });
+    bytes.fill(0);
+    process.stdout.write(`staging_activation_phase_${toPhase}_prepared\n`);
+    return;
+  }
   if (process.argv[2] === "--ensure-cutover-key") {
     if (process.argv.length !== 4) {
       fail("usage: prepare-staging-values.mjs --ensure-cutover-key OUTPUT");
