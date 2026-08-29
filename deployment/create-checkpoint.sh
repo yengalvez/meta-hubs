@@ -2294,6 +2294,15 @@ fi
 
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
+if [[ "$checkpoint_runner_expected" == process-local &&
+      "$CHECKPOINT_FORMAT" == legacy ]]; then
+  CHECKPOINT_PROCESS_LOCAL_STRATEGY_SCOPE="$(
+    recovery_checkpoint_process_local_scope_candidate
+  )" || {
+    printf 'Could not classify the live process-local checkpoint profile.\n' >&2
+    exit 1
+  }
+fi
 # Classify the live boundary after all locally available inputs are immutable,
 # but still before the Lease or operation lock can mutate Kubernetes.
 CHECKPOINT_RUNNER_MODE="$(

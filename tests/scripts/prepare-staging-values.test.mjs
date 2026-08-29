@@ -140,3 +140,120 @@ test("staging values materialize one concrete percent-encoded database URI", () 
   assert.deepEqual(withoutRunnerImage(legacyCompatibleValues), withoutRunnerImage(activeValues));
   assert.equal(fs.statSync(legacyCompatiblePath).mode & 0o777, 0o600);
 });
+
+test("production generations preserve secrets and change only the approved legacy-active surface", () => {
+  const directory = fs.mkdtempSync("/private/tmp/yenhubs-production-values-");
+  const sourcePath = path.join(directory, "source.yaml");
+  const reticulumFirstPath = path.join(directory, "reticulum-first.yaml");
+  const finalPath = path.join(directory, "final.yaml");
+  const invalidFirstPath = path.join(directory, "invalid-first.yaml");
+  const invalidFinalPath = path.join(directory, "invalid-final.yaml");
+  const source = YAML.parse(fs.readFileSync(sourceTemplatePath, "utf8"));
+  source.HUB_DOMAIN = "meta-hubs.org";
+  source.OVERRIDE_RETICULUM_IMAGE =
+    `ghcr.io/yengalvez/reticulum@sha256:${"1".repeat(64)}`;
+  source.OVERRIDE_HUBS_IMAGE =
+    `ghcr.io/yengalvez/hubs@sha256:${"2".repeat(64)}`;
+  delete source.OVERRIDE_BOT_RUNNER_IMAGE;
+  delete source.BOT_RUNNER_ACTIVATION_PHASE;
+  delete source.BOT_RUNNER_RECOVERY_PHASE;
+  delete source.BOT_RUNNER_RECOVERY_EPOCH;
+  fs.writeFileSync(
+    sourcePath,
+    Object.entries(source)
+      .map(([key, value]) => `${key}: ${JSON.stringify(String(value))}`)
+      .join("\n") + "\n",
+    { mode: 0o600 }
+  );
+
+  const candidateReticulum =
+    `ghcr.io/yengalvez/reticulum@sha256:${"3".repeat(64)}`;
+  const candidateHubs =
+    `ghcr.io/yengalvez/hubs@sha256:${"4".repeat(64)}`;
+  const liveSecretInput = [
+    Buffer.from("legacy-production-bot-access-key-0123456789", "utf8").toString("base64"),
+    Buffer.from(JSON.stringify({ auths: { "ghcr.io": { auth: "placeholder" } } }), "utf8")
+      .toString("base64")
+  ].join("\n");
+  const result = spawnSync(process.execPath, [
+    preparer,
+    "--prepare-production-generations",
+    sourcePath,
+    reticulumFirstPath,
+    finalPath,
+    candidateReticulum,
+    candidateHubs
+  ], { cwd: root, encoding: "utf8", input: liveSecretInput });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "production_generations_prepared\n");
+
+  const sourceValues = parseLocalValuesSource(fs.readFileSync(sourcePath, "utf8"));
+  const reticulumFirst = parseLocalValuesSource(
+    fs.readFileSync(reticulumFirstPath, "utf8")
+  );
+  const final = parseLocalValuesSource(fs.readFileSync(finalPath, "utf8"));
+  assert.equal(reticulumFirst.get("OVERRIDE_RETICULUM_IMAGE"), candidateReticulum);
+  assert.equal(reticulumFirst.get("OVERRIDE_HUBS_IMAGE"), sourceValues.get("OVERRIDE_HUBS_IMAGE"));
+  assert.equal(final.get("OVERRIDE_RETICULUM_IMAGE"), candidateReticulum);
+  assert.equal(final.get("OVERRIDE_HUBS_IMAGE"), candidateHubs);
+  for (const values of [reticulumFirst, final]) {
+    assert.equal(values.get("OVERRIDE_BOT_RUNNER_IMAGE"), "No");
+    assert.equal(values.get("BOT_RUNNER_ACTIVATION_PHASE"), "active");
+    assert.equal(values.get("BOT_RUNNER_RECOVERY_PHASE"), "active");
+    assert.match(
+      values.get("BOT_RUNNER_RECOVERY_EPOCH"),
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+    );
+    assert.equal(
+      values.get("BOT_ACCESS_KEY"),
+      "legacy-production-bot-access-key-0123456789"
+    );
+    assert.equal(new Set([
+      values.get("BOT_ACCESS_KEY"),
+      values.get("BOT_RUNNER_ACCESS_KEY"),
+      values.get("BOT_ORCHESTRATOR_ACCESS_KEY"),
+      values.get("DASHBOARD_ACCESS_KEY")
+    ]).size, 4);
+    assert.equal(
+      values.get("BOT_IMAGE_PULL_CONFIG_JSON_BASE64"),
+      liveSecretInput.split("\n")[1]
+    );
+  }
+  assert.equal(
+    reticulumFirst.get("BOT_RUNNER_RECOVERY_EPOCH"),
+    final.get("BOT_RUNNER_RECOVERY_EPOCH")
+  );
+  const allowed = new Set([
+    "OVERRIDE_RETICULUM_IMAGE",
+    "OVERRIDE_HUBS_IMAGE",
+    "OVERRIDE_BOT_RUNNER_IMAGE",
+    "BOT_RUNNER_ACTIVATION_PHASE",
+    "BOT_RUNNER_RECOVERY_PHASE",
+    "BOT_RUNNER_RECOVERY_EPOCH",
+    "BOT_ACCESS_KEY",
+    "BOT_RUNNER_ACCESS_KEY",
+    "BOT_ORCHESTRATOR_ACCESS_KEY",
+    "DASHBOARD_ACCESS_KEY",
+    "BOT_IMAGE_PULL_CONFIG_JSON_BASE64"
+  ]);
+  const withoutAllowed = values => new Map(
+    [...values].filter(([key]) => !allowed.has(key))
+  );
+  assert.deepEqual(withoutAllowed(reticulumFirst), withoutAllowed(sourceValues));
+  assert.deepEqual(withoutAllowed(final), withoutAllowed(sourceValues));
+  assert.equal(fs.statSync(reticulumFirstPath).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(finalPath).mode & 0o777, 0o600);
+
+  const invalid = spawnSync(process.execPath, [
+    preparer,
+    "--prepare-production-generations",
+    sourcePath,
+    invalidFirstPath,
+    invalidFinalPath,
+    `ghcr.io/other/reticulum@sha256:${"5".repeat(64)}`,
+    candidateHubs
+  ], { cwd: root, encoding: "utf8", input: liveSecretInput });
+  assert.notEqual(invalid.status, 0);
+  assert.equal(fs.existsSync(invalidFirstPath), false);
+  assert.equal(fs.existsSync(invalidFinalPath), false);
+});

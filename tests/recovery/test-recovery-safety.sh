@@ -3098,7 +3098,13 @@ if [[ "$joined" == "get namespace hcce -o json" ]]; then
         ;;
     esac
   else
-    cat "$RUNNER_EVIDENCE_LIVE_DIR/namespace-hcce.json"
+    if [[ -n "${STUB_NAMESPACE_TARGET_PROFILE:-}" ]]; then
+      jq --arg profile "$STUB_NAMESPACE_TARGET_PROFILE" '
+        .metadata.annotations["yenhubs.org/target-profile"] = $profile
+      ' "$RUNNER_EVIDENCE_LIVE_DIR/namespace-hcce.json"
+    else
+      cat "$RUNNER_EVIDENCE_LIVE_DIR/namespace-hcce.json"
+    fi
   fi
   exit 0
 fi
@@ -17036,6 +17042,15 @@ fi
 if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-process-local ]]; then
   process_local_capture="$TMP_DIR/process-local-focus-capture"
   process_local_checkpoint="$TMP_DIR/process-local-focus-checkpoint"
+  cold_rebind_checkpoint="$TMP_DIR/process-local-focus-cold-rebind-checkpoint"
+  cold_rebind_deployments="$TMP_DIR/process-local-focus-cold-rebind.json"
+  cold_rebind_ret_config="$TMP_DIR/process-local-focus-cold-rebind-ret-config.json"
+  jq '(.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.imagePullSecrets) = [{name:"bot-images-pull"}]' \
+    "$LEGACY_DEPLOYMENTS_JSON" >"$cold_rebind_deployments"
+  jq '.data["config.toml.template"] +=
+    "\n[ret.\"Elixir.Ret.BotOrchestrator\"]\nendpoint = \"http://bot-orchestrator.<POD_NS>:5001\"\naccess_key = \"<BOT_ACCESS_KEY>\"\n"' \
+    "$LEGACY_RET_CONFIG_JSON" >"$cold_rebind_ret_config"
   reset_stub
   expect_success 'focused process-local inventory capture accepts the exact legacy boundary' \
     env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
@@ -17220,6 +17235,31 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-process-local ]]; then
   else
     fail 'focused process-local checkpoint timing evidence' "$LAST_OUTPUT"
   fi
+  reset_stub
+  expect_success 'focused cold-rebind process-local checkpoint accepts only its exact pull binding' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_NAMESPACE_TARGET_PROFILE=cold-rebind-legacy-absent-v1 \
+    STUB_DEPLOYMENTS_JSON="$cold_rebind_deployments" \
+    STUB_RET_CONFIG_JSON="$cold_rebind_ret_config" \
+    RECOVERY_STREAM_POLL_SECONDS=0.01 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" "$cold_rebind_checkpoint"
+  wrong_cold_rebind_deployments="$TMP_DIR/process-local-focus-cold-rebind-wrong-pull.json"
+  jq '(.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.imagePullSecrets) = [{name:"foreign-pull"}]' \
+    "$cold_rebind_deployments" >"$wrong_cold_rebind_deployments"
+  reset_stub
+  expect_failure 'focused cold-rebind process-local checkpoint rejects a foreign pull binding' \
+    'Checkpoint runner mode changed while writers were fenced' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_NAMESPACE_TARGET_PROFILE=cold-rebind-legacy-absent-v1 \
+    STUB_DEPLOYMENTS_JSON="$wrong_cold_rebind_deployments" \
+    STUB_RET_CONFIG_JSON="$cold_rebind_ret_config" \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" \
+    "$TMP_DIR/process-local-focus-cold-rebind-wrong-pull"
   reset_stub
   expect_failure 'focused mixed PostgreSQL identity blocks checkpoint before downtime' \
     'historical AUD-065 contract' \

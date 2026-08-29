@@ -107,9 +107,75 @@ function quoted(value) {
   return JSON.stringify(String(value));
 }
 
-function replaceTemplateScalars(source, replacements) {
+function requireRepositoryDigest(value, repository, label) {
+  const expected = `${repository}@sha256:`;
+  if (
+    typeof value !== "string" ||
+    !value.startsWith(expected) ||
+    !/^[0-9a-f]{64}$/u.test(value.slice(expected.length))
+  ) {
+    fail(`${label} must be the exact digest-pinned ${repository} image`);
+  }
+}
+
+function decodeCanonicalBase64(value, label) {
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) {
+    fail(`${label} input must be canonical base64`);
+  }
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.toString("base64") !== value) fail(`${label} input must be canonical base64`);
+  return decoded;
+}
+
+function readProductionSecretInputs() {
+  const bytes = fs.readFileSync(0);
+  try {
+    if (bytes.length < 3 || bytes.length > MAX_VALUES_BYTES) {
+      fail("live production secret input has an invalid size");
+    }
+    const encoded = bytes.toString("utf8");
+    if (!Buffer.from(encoded, "utf8").equals(bytes)) {
+      fail("live production secret input must be UTF-8");
+    }
+    const lines = encoded.split("\n");
+    if (lines.length !== 2 || lines.some(line => line.length === 0)) {
+      fail("live production secret input must contain exactly two base64 fields");
+    }
+    const botBytes = decodeCanonicalBase64(lines[0], "live BOT_ACCESS_KEY");
+    const pullBytes = decodeCanonicalBase64(lines[1], "live pull config");
+    try {
+      const botAccessKey = botBytes.toString("utf8");
+      if (
+        botBytes.length < 32 || botBytes.length > 4096 ||
+        !Buffer.from(botAccessKey, "utf8").equals(botBytes) ||
+        /[\u0000-\u001f\u007f]/u.test(botAccessKey)
+      ) {
+        fail("live BOT_ACCESS_KEY must be printable UTF-8 between 32 and 4096 bytes");
+      }
+      let pullConfig;
+      try {
+        pullConfig = JSON.parse(pullBytes.toString("utf8"));
+      } catch {
+        fail("live pull config must contain JSON");
+      }
+      if (!pullConfig || typeof pullConfig !== "object" || Array.isArray(pullConfig) ||
+          !pullConfig.auths || typeof pullConfig.auths !== "object" ||
+          Object.keys(pullConfig.auths).length === 0) {
+        fail("live pull config must contain at least one registry authorization");
+      }
+      return { botAccessKey, pullConfigBase64: lines[1] };
+    } finally {
+      botBytes.fill(0);
+      pullBytes.fill(0);
+    }
+  } finally {
+    bytes.fill(0);
+  }
+}
+
+function replaceTemplateScalars(source, replacements, { appendMissing = new Set() } = {}) {
   const seen = new Set();
-  const output = source.split(/(?<=\n)/u).map(line => {
+  let output = source.split(/(?<=\n)/u).map(line => {
     const ending = line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : "";
     const body = ending ? line.slice(0, -ending.length) : line;
     const match = body.match(/^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+.*)?$/u);
@@ -120,12 +186,129 @@ function replaceTemplateScalars(source, replacements) {
     return `${key}: ${quoted(replacements.get(key))}${ending}`;
   }).join("");
   const missing = [...replacements.keys()].filter(key => !seen.has(key));
-  if (missing.length > 0) fail(`template is missing required keys: ${missing.join(",")}`);
+  const forbiddenMissing = missing.filter(key => !appendMissing.has(key));
+  if (forbiddenMissing.length > 0) {
+    fail(`template is missing required keys: ${forbiddenMissing.join(",")}`);
+  }
+  if (missing.length > 0) {
+    if (output !== "" && !output.endsWith("\n")) output += "\n";
+    output += missing
+      .map(key => `${key}: ${quoted(replacements.get(key))}\n`)
+      .join("");
+  }
   parseLocalValuesSource(output);
   return Buffer.from(output, "utf8");
 }
 
 function main() {
+  if (process.argv[2] === "--prepare-production-generations") {
+    if (process.argv.length !== 8) {
+      fail(
+        "usage: prepare-staging-values.mjs --prepare-production-generations SOURCE RETICULUM_FIRST_OUTPUT FINAL_OUTPUT RETICULUM_IMAGE HUBS_IMAGE"
+      );
+    }
+    const [, , , sourcePath, reticulumFirstPath, finalPath, reticulumImage, hubsImage] =
+      process.argv;
+    const source = readSource(sourcePath, { privateFile: true });
+    if (
+      source.values.get("Namespace") !== "hcce" ||
+      source.values.get("HUB_DOMAIN") !== "meta-hubs.org"
+    ) {
+      fail("production source identity is not the exact YenHubs target");
+    }
+    requireRepositoryDigest(
+      source.values.get("OVERRIDE_RETICULUM_IMAGE"),
+      "ghcr.io/yengalvez/reticulum",
+      "source Reticulum image"
+    );
+    requireRepositoryDigest(
+      source.values.get("OVERRIDE_HUBS_IMAGE"),
+      "ghcr.io/yengalvez/hubs",
+      "source Hubs image"
+    );
+    requireRepositoryDigest(
+      reticulumImage,
+      "ghcr.io/yengalvez/reticulum",
+      "candidate Reticulum image"
+    );
+    requireRepositoryDigest(
+      hubsImage,
+      "ghcr.io/yengalvez/hubs",
+      "candidate Hubs image"
+    );
+    // Production still uses the legacy single-key bot contract and a live
+    // kubelet pull binding. Read both only from stdin so neither appears in
+    // argv or the environment.
+    // The generator requires the three separated candidate domains before
+    // the audited legacy profile removes them from the rendered manifest.
+    const { botAccessKey, pullConfigBase64 } = readProductionSecretInputs();
+    const separatedKeys = [];
+    while (separatedKeys.length < 3) {
+      const candidate = randomCredential();
+      if (candidate !== botAccessKey && !separatedKeys.includes(candidate)) {
+        separatedKeys.push(candidate);
+      }
+    }
+    const sharedReplacements = new Map([
+      ["OVERRIDE_RETICULUM_IMAGE", reticulumImage],
+      ["OVERRIDE_BOT_RUNNER_IMAGE", "No"],
+      ["BOT_RUNNER_ACTIVATION_PHASE", "active"],
+      ["BOT_RUNNER_RECOVERY_PHASE", "active"],
+      ["BOT_RUNNER_RECOVERY_EPOCH", randomUUID()],
+      ["BOT_ACCESS_KEY", botAccessKey],
+      ["BOT_RUNNER_ACCESS_KEY", separatedKeys[0]],
+      ["BOT_ORCHESTRATOR_ACCESS_KEY", separatedKeys[1]],
+      ["DASHBOARD_ACCESS_KEY", separatedKeys[2]],
+      ["BOT_IMAGE_PULL_CONFIG_JSON_BASE64", pullConfigBase64]
+    ]);
+    const reticulumFirstBytes = replaceTemplateScalars(
+      source.source,
+      sharedReplacements,
+      {
+        appendMissing: new Set([
+          "OVERRIDE_BOT_RUNNER_IMAGE",
+          "BOT_RUNNER_ACTIVATION_PHASE",
+          "BOT_RUNNER_RECOVERY_PHASE",
+          "BOT_RUNNER_RECOVERY_EPOCH",
+          ...INTERNAL_SECRET_KEYS.filter(key => key.startsWith("BOT_")),
+          "DASHBOARD_ACCESS_KEY",
+          "BOT_IMAGE_PULL_CONFIG_JSON_BASE64"
+        ])
+      }
+    );
+    const finalBytes = replaceTemplateScalars(
+      source.source,
+      new Map([...sharedReplacements, ["OVERRIDE_HUBS_IMAGE", hubsImage]]),
+      {
+        appendMissing: new Set([
+          "OVERRIDE_BOT_RUNNER_IMAGE",
+          "BOT_RUNNER_ACTIVATION_PHASE",
+          "BOT_RUNNER_RECOVERY_PHASE",
+          "BOT_RUNNER_RECOVERY_EPOCH",
+          ...INTERNAL_SECRET_KEYS.filter(key => key.startsWith("BOT_")),
+          "DASHBOARD_ACCESS_KEY",
+          "BOT_IMAGE_PULL_CONFIG_JSON_BASE64"
+        ])
+      }
+    );
+    try {
+      publishPrivateArtifact({
+        outputPath: path.resolve(finalPath),
+        bytes: finalBytes,
+        maximumBytes: MAX_VALUES_BYTES
+      });
+      publishPrivateArtifact({
+        outputPath: path.resolve(reticulumFirstPath),
+        bytes: reticulumFirstBytes,
+        maximumBytes: MAX_VALUES_BYTES
+      });
+    } finally {
+      reticulumFirstBytes.fill(0);
+      finalBytes.fill(0);
+    }
+    process.stdout.write("production_generations_prepared\n");
+    return;
+  }
   if (process.argv[2] === "--prepare-legacy-compatible") {
     if (process.argv.length !== 5) {
       fail("usage: prepare-staging-values.mjs --prepare-legacy-compatible SOURCE OUTPUT");

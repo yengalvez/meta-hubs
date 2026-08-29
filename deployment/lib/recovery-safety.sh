@@ -4462,6 +4462,11 @@ recovery_require_live_process_local_runner_exact() {
 # private bot-orchestrator image.  This scope is intentionally separate from
 # the historical in-place/restore gate above.
 recovery_require_live_process_local_cold_rebind_target_exact() {
+  [[ "$(recovery_checkpoint_process_local_scope_candidate)" == \
+    cold-rebind-target ]] || {
+    printf 'The live Namespace is not an exact legacy cold-rebind target.\n' >&2
+    return 1
+  }
   recovery_require_live_process_local_runner_contract_exact \
     "$1" cold-rebind-target
 }
@@ -4474,8 +4479,36 @@ recovery_require_live_process_local_freeze_checkpoint_exact() {
     "$values_path" freeze-checkpoint
 }
 
+recovery_checkpoint_process_local_scope_candidate() {
+  local namespace_json target_profile
+  namespace_json="$(
+    recovery_kubectl get namespace "$NAMESPACE" -o json
+  )" || return 1
+  target_profile="$(jq -er --arg namespace "$NAMESPACE" '
+    select(.apiVersion == "v1" and .kind == "Namespace" and
+      .metadata.name == $namespace and
+      (.metadata.uid | type == "string" and length > 0) and
+      (.metadata.resourceVersion | type == "string" and length > 0) and
+      .metadata.deletionTimestamp == null) |
+    ((.metadata.annotations // {})["yenhubs.org/target-profile"] // "") |
+    select(type == "string")
+  ' <<<"$namespace_json")" || return 1
+  case "$target_profile" in
+    cold-rebind-legacy-absent-v1 | cold-rebind-legacy-active-v1)
+      printf 'cold-rebind-target\n'
+      ;;
+    *)
+      printf 'strict-recreate\n'
+      ;;
+  esac
+}
+
 recovery_checkpoint_runner_mode_candidate() {
+  local strategy_scope="${1:-strict-recreate}"
   local parent_json reticulum_json residual_state
+  [[ "$strategy_scope" == strict-recreate ||
+     "$strategy_scope" == freeze-checkpoint ||
+     "$strategy_scope" == cold-rebind-target ]] || return 2
   parent_json="$(
     recovery_kubectl get deployment bot-orchestrator -n "$NAMESPACE" -o json
   )" || return 1
@@ -4483,7 +4516,8 @@ recovery_checkpoint_runner_mode_candidate() {
     recovery_kubectl get deployment reticulum -n "$NAMESPACE" -o json
   )" || return 1
   residual_state="$(recovery_runner_isolation_residual_state)" || return 1
-  jq -ern --arg namespace "$NAMESPACE" --argjson parent "$parent_json" \
+  jq -ern --arg namespace "$NAMESPACE" --arg strategy_scope "$strategy_scope" \
+    --argjson parent "$parent_json" \
     --argjson reticulum "$reticulum_json" \
     --arg residual_state "$residual_state" '
     def valid_deployment($value; $name):
@@ -4525,7 +4559,12 @@ recovery_checkpoint_runner_mode_candidate() {
       if $residual_state == "present" or
          (($parent.spec.template.spec.serviceAccountName // "default") != "default") or
          $parent.spec.template.spec.automountServiceAccountToken != false or
-         (($parent.spec.template.spec.imagePullSecrets // []) | length > 0) or
+         (if $strategy_scope == "cold-rebind-target" then
+            ($parent.spec.template.spec.imagePullSecrets // []) !=
+              [{name:"bot-images-pull"}]
+          else
+            (($parent.spec.template.spec.imagePullSecrets // []) | length > 0)
+          end) or
          $binding or $ret_binding or runner_annotations($parent) or
          runner_annotations($reticulum)
       then "kubernetes-pod" else "process-local" end
@@ -4541,7 +4580,9 @@ recovery_require_checkpoint_runner_mode_exact() {
   [[ "$process_local_scope" == strict-recreate ||
      "$process_local_scope" == freeze-checkpoint ||
      "$process_local_scope" == cold-rebind-target ]] || return 2
-  candidate_mode="$(recovery_checkpoint_runner_mode_candidate)" || {
+  candidate_mode="$(
+    recovery_checkpoint_runner_mode_candidate "$process_local_scope"
+  )" || {
     printf 'Could not classify the live checkpoint runner boundary.\n' >&2
     return 1
   }
