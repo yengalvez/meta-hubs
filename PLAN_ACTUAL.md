@@ -1,6 +1,6 @@
 # PLAN ACTUAL — Sitting v2 autoritativo
 
-Version: **v3 — TARGET STAGING ELEGIDO; EFECTOS EN ESPERA**
+Version: **v4 — STAGING ARRANCADO; DNS Y CONTENIDO EN CURSO**
 Ultima revision: **29 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El plan de transición
 cerrado se conserva en
@@ -38,8 +38,9 @@ real. La feature tampoco obliga a promover el runtime durable de bots.
   `b2697e7e6f571d195346cc156f0f1631eedc841a`. Es el corte funcional
   `ce8390a` más la corrección mínima de orden del Dockerfile demostrada por el
   primer build remoto.
-- Cloud: rama local `codex/sitting-v2` en
-  `6d9ee9e998f636fcf61a4928cd2a275829768259`.
+- Cloud: rama local `codex/sitting-v2` en `b4cfe48`, que conserva Reticulum
+  `6d9ee9e` y añade únicamente la autenticación kubelet de todos los workloads
+  GHCR en clúster limpio. La imagen Reticulum aceptada no cambió.
 - Los commits Hubs `9c2da562b` y `3f18bdf24`, Cloud `ce20e20` y el arnés raíz
   `875642e` son ancestros de esos cortes. La implementación, migraciones y E2E
   ya existen; no se reescriben sin un fallo causal nuevo.
@@ -251,12 +252,24 @@ producción.
     intrínseca del clúster y se incluyen en el readback final.
 - [ ] Crear el target exacto y preparar una sala/escena staging desechable con
   una silla y un waypoint de salida; no usar ni modificar la escena principal.
-  - Estado: **READY**.
+  - Estado: **IN PROGRESS**.
+  - Evidencia: el clúster separado
+    `17057b94-a707-46ab-8994-7ae31158b998` está `running` en `ams3`, DOKS
+    `1.34.10-do.2`, un nodo `s-4vcpu-8gb`, HA desactivada, dos PVC `10 GiB`
+    `Bound` y LB `165.245.201.90`. Faltan los cuatro DNS IONOS y publicar la
+    sala/escena desechable; la escena productiva no se ha usado ni modificado.
   - Nota: al ser greenfield y desechable no contiene datos de cliente y no
     requiere checkpoint; S5 sí exige checkpoint real antes de producción.
 - [ ] Desplegar staging en dos generaciones: Reticulum/migración conservando
   Hubs anterior, verificar compatibilidad legacy, y después Hubs v2.
-  - Estado: **WAITING** de target y contenido.
+  - Estado: **IN PROGRESS — generación Reticulum-first arrancada**.
+  - Evidencia: los 68 recursos pasaron el apply guardado; Hubs legacy,
+    Reticulum/PostgREST, PostgreSQL/PgBouncer, Spoke, Coturn, Dialog,
+    Photomnemonic, Nearspark y HAProxy están `Ready` y los pods nuevos tienen
+    cero reinicios. El clúster limpio demostró dos defectos causales ya
+    corregidos: pulls privados GHCR anónimos (`401`) y URI PostgreSQL con
+    variables literales. Generador `32/32` y preparador staging `1/1` pasan.
+    Falta el join legacy con TLS/DNS válido antes de aplicar Hubs v2.
 - [ ] Ejecutar `tests/browser/sitting-occupancy.spec.mjs` con dos contextos y
   revisar manualmente `remote-seated-pose.png`.
   - Estado: **WAITING** del rollout staging.
@@ -293,17 +306,19 @@ producción.
 
 ## Estado de trabajo
 
-- Completado: S0-S3, inventario/target/cost gate, builds y preflight privado de
-  S4.
-- Activo: crear el target temporal exacto y arrancar la generación
-  Reticulum-first.
-- Ready: clúster, bootstrap, DNS y contenido staging dentro del cap autorizado.
+- Completado: S0-S3, inventario/target/cost gate, builds, preflight privado de
+  S4, clúster/LB/PVC y arranque verde de la generación Reticulum-first.
+- Activo: crear los cuatro DNS IONOS y la sala/escena desechable; después join
+  legacy, Hubs v2 y E2E de dos navegadores.
+- Ready: DNS, contenido y aceptación dentro de la misma ventana autorizada.
 - Waiting: aceptación de dos navegadores; S5 espera staging verde y una
   autorización productiva posterior.
 - Bloqueos técnicos: ninguno.
-- Efectos externos realizados: rama Hubs `codex/sitting-v2` publicada y tres
-  runs totales —un fallo causal, Reticulum verde y Hubs corregido verde—.
-  DigitalOcean y producción siguen intactos; coste nuevo USD `0`.
+- Efectos externos realizados: rama Hubs `codex/sitting-v2` publicada, tres
+  runs totales —un fallo causal, Reticulum verde y Hubs corregido verde— y el
+  staging temporal exacto descrito arriba. El máximo planificado sigue siendo
+  aproximadamente USD `0.09677/h`; el desmontaje debe empezar antes de
+  `2026-08-30 12:09:46 CEST`. Producción continúa intacta.
 
 ## Reglas anti-loop
 

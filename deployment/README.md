@@ -497,10 +497,11 @@ unset GHCR_TOKEN GHCR_USERNAME
 
 The updater atomically changes only `BOT_IMAGE_PULL_CONFIG_JSON_BASE64`, forces
 the private input to mode `0600` and emits no credential. The generator rejects
-empty credentials or a docker config that does not cover both selected bot
-image registries. The resulting `bot-images-pull` Secret is referenced only by
-the parent and runner ServiceAccounts through `imagePullSecrets`; it is never
-mounted into either Node container.
+empty credentials or a docker config that does not cover the selected GHCR
+registries. The resulting `bot-images-pull` Secret is referenced only by
+kubelet through `imagePullSecrets`: every GHCR Deployment in the primary
+namespace receives the parent copy, and the two bot ServiceAccounts retain
+their explicit bindings. It is never mounted into a container.
 
 Do not modify either secret-bearing values file with an in-place Perl/Ruby command. A replacement containing
 `@sha256` can be interpolated and corrupt the file. Use this safe pattern instead:
@@ -1075,8 +1076,10 @@ invariants hold:
 - the inventory contains exactly the primary namespace and
   `hcce-bot-runners`; the latter enforces, audits and warns at Pod Security
   `restricted` v1.34;
-- there are exactly two equal `bot-images-pull` Secrets, one per namespace,
-  referenced by the two bot ServiceAccounts only as `imagePullSecrets`;
+- there are exactly two equal `bot-images-pull` Secrets, one per namespace;
+  the primary copy is referenced by every rendered GHCR Deployment and the
+  parent bot ServiceAccount, while the runner copy is referenced by the runner
+  ServiceAccount, always as kubelet-only `imagePullSecrets`;
 - `bot-runner-capacity` limits the runner namespace to 10 Pods, 250 mCPU/1280
   MiB of requests and 5 CPU/5 GiB of limits;
 - the cluster-scoped `ValidatingAdmissionPolicy/bot-runner-pods.yenhubs.org`
@@ -1689,8 +1692,11 @@ under its earlier procedure. Treat that state as inventory only: do not repeat
 manual `kubectl create secret` or ServiceAccount patches for the candidate.
 
 The candidate uses the generated dedicated `bot-images-pull` contract. The
-68-resource generator creates that Secret and binds it explicitly to
-`bot-orchestrator` and `bot-runner` ServiceAccounts. For the current AUD-065
+68-resource generator creates one copy per namespace, binds the primary copy
+to every Deployment whose rendered workload uses GHCR and keeps explicit
+bindings on the `bot-orchestrator` and `bot-runner` ServiceAccounts. This makes
+a clean cluster independent of node image caches without mounting credentials
+inside a container. For the current AUD-065
 campaign, populate its private source only through the tracked Keychain-backed
 candidate preparer; the NEW token is never accepted through argv/environment.
 The generic `set-bot-image-pull-config` helper above remains for separately

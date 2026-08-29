@@ -68,6 +68,15 @@ function randomCredential() {
   return randomBytes(48).toString("base64url");
 }
 
+function buildDatabaseUri(values) {
+  const dbUser = values.get("DB_USER");
+  const dbPass = values.get("DB_PASS");
+  const dbName = values.get("DB_NAME");
+  if (!dbUser || !dbPass || !dbName) fail("database identity inputs are incomplete");
+  return `postgres://${encodeURIComponent(dbUser)}:${encodeURIComponent(dbPass)}` +
+    `@pgbouncer/${encodeURIComponent(dbName)}`;
+}
+
 function ensureCutoverKey(outputPath) {
   const resolved = path.resolve(outputPath);
   if (fs.existsSync(resolved)) {
@@ -124,6 +133,25 @@ function main() {
     ensureCutoverKey(process.argv[3]);
     return;
   }
+  if (process.argv[2] === "--materialize-database-uri") {
+    if (process.argv.length !== 5) {
+      fail("usage: prepare-staging-values.mjs --materialize-database-uri SOURCE OUTPUT");
+    }
+    const source = readSource(process.argv[3], { privateFile: true });
+    const uri = buildDatabaseUri(source.values);
+    const bytes = replaceTemplateScalars(source.source, new Map([
+      ["PGRST_DB_URI", uri],
+      ["PSQL", uri]
+    ]));
+    publishPrivateArtifact({
+      outputPath: path.resolve(process.argv[4]),
+      bytes,
+      maximumBytes: MAX_VALUES_BYTES
+    });
+    bytes.fill(0);
+    process.stdout.write("staging_database_uri_materialized\n");
+    return;
+  }
   const [templatePath, sharedValuesPath, bootstrapOutputPath, finalOutputPath, domain, imagesJson] =
     process.argv.slice(2);
   if (!templatePath || !sharedValuesPath || !bootstrapOutputPath || !finalOutputPath ||
@@ -164,8 +192,13 @@ function main() {
   replacements.set("Namespace", "hcce");
   for (const [name, key] of Object.entries(IMAGE_KEYS)) replacements.set(key, images[name]);
   for (const key of INTERNAL_SECRET_KEYS) replacements.set(key, randomCredential());
-  replacements.set("PGRST_DB_URI", "postgres://$DB_USER:$DB_PASS@pgbouncer/$DB_NAME");
-  replacements.set("PSQL", "postgres://$DB_USER:$DB_PASS@pgbouncer/$DB_NAME");
+  const databaseUri = buildDatabaseUri(new Map([
+    ["DB_USER", template.values.get("DB_USER")],
+    ["DB_PASS", replacements.get("DB_PASS")],
+    ["DB_NAME", template.values.get("DB_NAME")]
+  ]));
+  replacements.set("PGRST_DB_URI", databaseUri);
+  replacements.set("PSQL", databaseUri);
   replacements.set("SKETCHFAB_API_KEY", "");
   replacements.set("TENOR_API_KEY", "");
   replacements.set("OPENAI_API_KEY", `staging-disabled-${randomCredential()}`);
