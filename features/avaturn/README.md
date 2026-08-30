@@ -2,11 +2,15 @@
 
 ## Estado
 
-La carga privada está implementada en el cliente Hubs actualmente desplegado.
-El renombrado neutral descrito aquí está en fuente candidata y todavía no debe
-considerarse live. Un usuario autenticado puede
-subir un `.glb` compatible desde el selector de avatares y conservarlo como
-avatar de su cuenta sin publicarlo en los listados. El flujo es neutral: puede
+La carga privada y su interfaz neutral están incluidas en la fuente Hubs
+`b2697e7` del build `33245207737`, cuya imagen se desplegó durante Sitting v2
+(evidencia en `docs/session-changelog.md`). No hace falta otro despliegue solo
+para publicar el renombrado. La aceptación específica de subida, persistencia
+y aislamiento entre cuentas sigue pendiente en `PLAN_ACTUAL.md`.
+
+El flujo permite a un usuario autenticado subir un `.glb` compatible desde el
+selector y conservarlo como avatar de su cuenta sin publicarlo en los listados.
+Es neutral respecto del proveedor: puede
 recibir una exportación de MPFB/MakeHuman, Avaturn, MetaPerson, un antiguo RPM u
 otra herramienta, siempre que el archivo pase las validaciones.
 
@@ -18,7 +22,8 @@ proveedor y sus puertas de licencia/privacidad están en
 
 - Formato: GLB 2.0.
 - El cliente valida que exista un skeleton upper-body compatible.
-- Se genera preview/thumbnail antes de habilitar Guardar.
+- Preview y skeleton válidos antes de habilitar Guardar. La miniatura se genera
+  durante el guardado y debe verse al recargar el avatar guardado.
 - `allow_promotion=false`.
 - `allow_remixing=false`.
 - El flujo no crea un `avatar_listing`.
@@ -49,12 +54,15 @@ Archivos principales:
 - `hubs/src/react-components/room/PrivateGlbHelpModal.js`;
 - `hubs/src/utils/avatar-glb-utils.js`;
 - `hubs/src/utils/avatar-skeleton-utils.js`;
-- validacion server-side en Reticulum.
+- controles server-side de propiedad, credenciales de ficheros y tamaños en
+  Reticulum; no equivalen a una validación completa del rig en servidor.
 
 ## Pruebas de regresion
 
 - GLB válido con skeleton compatible, de al menos dos pipelines distintos.
 - GLB corrupto, demasiado grande o sin skeleton.
+- Seleccionar un GLB válido y después uno rechazado no debe permitir guardar
+  por confusión el anterior: bloquear o identificar claramente el conservado.
 - Preview antes de Guardar.
 - Aparicion en `Mis avatares`.
 - Ausencia en Featured y listings publicos.

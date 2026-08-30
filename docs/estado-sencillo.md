@@ -4,6 +4,19 @@ Ultima actualización: **30 de agosto de 2026**
 
 ## Respuesta corta
 
+**H5 y Sitting v2 están terminados. El nuevo trabajo es comprobar la carga
+privada de avatares GLB que ya existe, no reconstruirla.** El plan activo está en
+[`PLAN_ACTUAL.md`](../PLAN_ACTUAL.md); el de Sitting se ha guardado íntegro en
+`OLD/docs/PLAN_ACTUAL-sitting-v2-completed-2026-08-30.md`.
+
+Ya se contrastaron código, build e historial del despliegue: la interfaz neutral
+estaba incluida. Falta probar con archivos reales que se previsualizan, se
+guardan solo en Mis avatares del propietario y funcionan en la sala. No se ha
+subido ni guardado nada en esta revisión. No hay un `--full`, build ni otra
+espera de GitHub en marcha por este plan.
+
+## Lo que quedó cerrado: recuperación
+
 La recuperación ya ha terminado bien. YenHubs está activo otra vez con su base
 de datos y sus medios originales. El verificador de producción terminó con
 **0 fallos y 0 avisos**, y la batería local final pasó **894 de 894 pruebas**.
@@ -22,9 +35,8 @@ recuperación pasan por separado y el verificador ahora conserva recibos para no
 repetir secciones verdes. No se ha tocado producción para hacer esta corrección.
 
 El plan de H5 se ha guardado completo en `OLD/docs/` y ya no dirige trabajo.
-La transición corta ya creó un worktree limpio y corrigió los estados
-documentales obsoletos. Se eligió **Sitting v2** y el nuevo `PLAN_ACTUAL.md`
-dirige exclusivamente esa feature.
+La transición corta creó un worktree limpio y Sitting v2 se terminó después.
+Los planes de ambas etapas están archivados; ninguno dirige trabajo nuevo.
 
 ## Lo que ya está demostrado
 
@@ -63,7 +75,7 @@ evidencia nuevos.
 Las tres acciones que no debe fingir una prueba automática ya han pasado:
 avatar real, chat privado y audio bidireccional con dos participantes.
 
-## Lo que toca ahora
+## Lo que quedó cerrado: Sitting v2
 
 **Sitting v2 ya está terminado y funcionando en producción.** Se desplegaron
 exactamente las mismas imágenes que pasaron staging, primero Reticulum y después
@@ -91,15 +103,16 @@ nodo, el balanceador, los dos discos y los dos firewalls exactos. Por tanto, el
 **gasto adicional de staging está en cero** y DigitalOcean conserva únicamente
 la topología productiva original.
 
-Quedan cuatro registros DNS de staging apuntando a la antigua IP
-`178.128.139.203`. No generan coste ni mantienen ningún servidor accesible. No
+En el cierre quedaron cuatro registros DNS de staging apuntando a la antigua IP
+`178.128.139.203`. No generan coste de infraestructura, pero conviene retirarlos
+porque una IP liberada puede reasignarse; no se garantiza su destino futuro. No
 se borraron porque IONOS cerró la sesión y Google Password Manager pidió una
 verificación física; no se forzó ni se cambió ninguna contraseña. Cuando IONOS
 esté autenticado, se borran esos cuatro records exactos y se lee su ausencia.
 
-El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`. La implementación
-se integró desde `codex/sitting-v2` y el cierre documental se prepara desde
-`origin/main` en `codex/sitting-v2-closeout`, conservando los gitlinks exactos.
+El workspace es `/Users/Shared/Gits/YenHubs-features`. La implementación
+se integró desde `codex/sitting-v2` y el cierre documental quedó fusionado en
+la PR #21, `main` `34faabcc`, conservando los gitlinks exactos.
 Los worktrees antiguos no se han limpiado, reutilizado ni borrado.
 
 Hubs ya está integrado en `master` como `0781a6309` y Cloud como `db083d53`;
@@ -109,9 +122,30 @@ la PR #20 se fusionó en `main` como `032136ce`, con exactamente Hubs
 `db083d53e3d57c9380bbfefc6bd411e4d4bf4270`. Esta actualización documental es
 el cierre terminal y no requiere repetir ninguna suite larga.
 
-El siguiente trabajo ya puede ser otra feature. El único residuo operativo es
-borrar cuatro DNS de staging que apuntan a una IP retirada; no sirven tráfico,
-no cuestan dinero y no bloquean el producto.
+El residuo DNS es mantenimiento separado; no exige reabrir Sitting ni levantar
+servidores. No se ha accedido a IONOS para este nuevo trabajo.
+
+## Lo que toca ahora: avatares GLB
+
+La rama local es `codex/private-glb-acceptance`. Hay tres pasos prácticos:
+
+1. Comprobar localmente que rechazar un archivo no permite guardar por confusión
+   el anterior; es una posibilidad vista en código, no un fallo real reproducido.
+   Reunir **dos avatares compatibles de dos herramientas/pipelines distintos**,
+   con permiso de uso: uno upper-body y otro full-body/Mixamo. Los dos ejemplos
+   legacy encontrados no tienen los huesos de brazos exigidos por el importador;
+   no valen como positivos. Eso no significa que los avatares ya guardados fallen.
+2. Hacer una sesión acotada: rechazo de tres archivos inválidos, preview válido
+   antes de Guardar y miniatura después, guardar como máximo dos avatares,
+   comprobarlos con dos cuentas y
+   ver movimiento/pose en escritorio y móvil. Antes de guardar en producción,
+   concretar los archivos/cuentas y hacer checkpoint de DB y medios.
+3. Si pasa, cerrar. Si aparece un fallo, corregir solo su causa y repetir solo
+   lo afectado. Otro build/despliegue solo tendría sentido si cambia el producto.
+
+**“Privado” quiere decir no listado en el catálogo**, no archivo secreto ni
+cifrado. Otras personas deben poder verlo cuando lo llevas puesto en la sala.
+No vamos a integrar un proveedor de pago, crear staging ni añadir coste fijo.
 
 ## Qué no se va a hacer
 
@@ -132,6 +166,12 @@ humana, CI, gitlinks y merge están resueltos.
 E2E multiusuario, checkpoint, rollout productivo y aceptación visual están
 terminados. El cleanup de cuatro DNS sin coste es mantenimiento menor, no parte
 de la feature ni otro proyecto.
+
+**GLB: preparación y aceptación pendientes, no desarrollo desde cero.** El
+plan detalla siete criterios agrupados en una sesión; no son siete suites largas.
+No doy un porcentaje o fecha de cierre sin tener todavía los dos archivos y
+las cuentas de prueba. El siguiente trabajo es la focal local de selección;
+para la sesión real harán falta esos dos GLB válidos.
 
 ## Cuándo se para
 
