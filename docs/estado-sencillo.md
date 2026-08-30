@@ -97,12 +97,17 @@ se borraron porque IONOS cerró la sesión y Google Password Manager pidió una
 verificación física; no se forzó ni se cambió ninguna contraseña. Cuando IONOS
 esté autenticado, se borran esos cuatro records exactos y se lee su ausencia.
 
-El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`, está en la rama
-local `codex/sitting-v2` y conserva los gitlinks exactos. Los worktrees
-antiguos no se han limpiado, reutilizado ni borrado.
+El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`. La implementación
+se integró desde `codex/sitting-v2` y el cierre documental se prepara desde
+`origin/main` en `codex/sitting-v2-closeout`, conservando los gitlinks exactos.
+Los worktrees antiguos no se han limpiado, reutilizado ni borrado.
 
 Hubs ya está integrado en `master` como `0781a6309` y Cloud como `db083d53`;
-la raíz fija esos dos punteros junto con esta documentación de cierre.
+la raíz fija esos dos punteros. El CI raíz final `33286531422` terminó verde y
+la PR #20 se fusionó en `main` como `032136ce`, con exactamente Hubs
+`0781a63091ac3160a1b473504dc655ac0b002735` y Cloud
+`db083d53e3d57c9380bbfefc6bd411e4d4bf4270`. Esta actualización documental es
+el cierre terminal y no requiere repetir ninguna suite larga.
 
 El siguiente trabajo ya puede ser otra feature. El único residuo operativo es
 borrar cuatro DNS de staging que apuntan a una IP retirada; no sirven tráfico,
