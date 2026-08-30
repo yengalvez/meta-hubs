@@ -331,11 +331,13 @@ const TRUSTED_IMAGE_REPOSITORIES = Object.freeze({
   ]),
   "pgbouncer/pgbouncer": Object.freeze([
     "ghcr.io/yengalvez/pgbouncer",
+    "docker.io/mozillareality/pgbouncer",
     "docker.io/edoburu/pgbouncer",
     "edoburu/pgbouncer"
   ]),
   "pgbouncer-t/pgbouncer-t": Object.freeze([
     "ghcr.io/yengalvez/pgbouncer",
+    "docker.io/mozillareality/pgbouncer",
     "docker.io/edoburu/pgbouncer",
     "edoburu/pgbouncer"
   ]),
@@ -344,16 +346,19 @@ const TRUSTED_IMAGE_REPOSITORIES = Object.freeze({
   ]),
   "pgsql/pgsql": Object.freeze([
     "ghcr.io/yengalvez/postgres",
+    "docker.io/mozillareality/postgres",
     "docker.io/library/postgres",
     "postgres"
   ]),
   "pgsql/postgresql": Object.freeze([
     "ghcr.io/yengalvez/postgres",
+    "docker.io/mozillareality/postgres",
     "docker.io/library/postgres",
     "postgres"
   ]),
   "reticulum/postgrest": Object.freeze([
     "ghcr.io/yengalvez/postgrest",
+    "docker.io/mozillareality/postgrest",
     "docker.io/postgrest/postgrest",
     "postgrest/postgrest"
   ]),
