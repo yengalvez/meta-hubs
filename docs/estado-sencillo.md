@@ -65,24 +65,26 @@ avatar real, chat privado y audio bidireccional con dos participantes.
 
 ## Lo que toca ahora
 
-Sitting v2 ya ha pasado el staging real. Se publicó una escena desechable en
-Spoke, se promovieron Reticulum y Hubs por sus digests fijados y el clúster
-terminó con **12/12 servicios listos**. La prueba final abrió dos navegadores
-aislados y terminó **1/1 verde en 47,1 segundos**.
+**Sitting v2 ya está terminado y funcionando en producción.** Se desplegaron
+exactamente las mismas imágenes que pasaron staging, primero Reticulum y después
+Hubs. El clúster terminó con **12/12 servicios listos** y el verificador live
+con **0 fallos y 0 avisos**.
 
-En lenguaje humano, la prueba confirmó todo el ciclo importante:
+En lenguaje humano, ya está demostrado todo el ciclo importante:
 
 - dos personas intentan sentarse a la vez y solo una obtiene la silla;
 - nunca aparecen dos concesiones privadas ni dos intervalos sentados solapados;
 - ambos navegadores ven al ganador en la silla;
 - al levantarse se libera, la otra persona puede ocuparla y el cierre abrupto
   también limpia la reserva;
-- no quedaron errores inesperados de navegador o red.
+- producción conserva la sala, la base de datos y los medios originales;
+- el navegador frío carga en escritorio y móvil;
+- en la sala real la silla quedó reservada, el avatar pasó a estado sentado,
+  apareció el botón **Levantarse** y la pose se comprobó en tercera persona.
 
-La captura automática existe, pero la cámara no encuadró al avatar remoto. Los
-estados y posiciones sí demostraron la pose; la apariencia/intersecciones deben
-mirarse una vez en el navegador frío de producción antes de declarar la feature
-comercialmente cerrada.
+Antes de tocar producción se creó un checkpoint completo de base de datos y
+medios, con checksums correctos. Sigue guardado en el área privada local como
+rollback. No se cambió la topología de DigitalOcean ni se añadió coste mensual.
 
 El staging ya se desmontó. La lectura final confirma ausencia del clúster, el
 nodo, el balanceador, los dos discos y los dos firewalls exactos. Por tanto, el
@@ -95,25 +97,20 @@ se borraron porque IONOS cerró la sesión y Google Password Manager pidió una
 verificación física; no se forzó ni se cambió ninguna contraseña. Cuando IONOS
 esté autenticado, se borran esos cuatro records exactos y se lee su ausencia.
 
-El siguiente bloque real es S5: checkpoint DB+medios, revisión del diff,
-Reticulum primero, Hubs después, reinicio de Reticulum y aceptación fría. Es
-producción y necesita una autorización separada; no se ha iniciado ni tocado.
-
 El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`, está en la rama
 local `codex/sitting-v2` y conserva los gitlinks exactos. Los worktrees
 antiguos no se han limpiado, reutilizado ni borrado.
 
-El código autoritativo ya existe en Hubs y Reticulum. Producción conserva los
-commits anteriores y solo demuestra sitting histórico; la carrera v2 todavía
-necesita build, staging y aceptación antes de cualquier promoción.
+Hubs ya está integrado en `master` como `0781a6309` y Cloud como `db083d53`;
+la raíz fija esos dos punteros junto con esta documentación de cierre.
 
-El hardening operativo nuevo está en una rama local. Publicarlo más adelante
-no es requisito para que el metaverso actual funcione ni para empezar features.
+El siguiente trabajo ya puede ser otra feature. El único residuo operativo es
+borrar cuatro DNS de staging que apuntan a una IP retirada; no sirven tráfico,
+no cuestan dinero y no bloquean el producto.
 
 ## Qué no se va a hacer
 
-- No habrá otro restore ni recreación de staging. S5 sí exige un checkpoint
-  nuevo DB+medios antes de modificar producción.
+- No habrá otro restore, recreación de staging ni repetición del rollout S5.
 - No se mezclará la imagen durable moderna con el restore histórico.
 - No se repetirán las 894 pruebas mientras sus bytes no cambien.
 - No se repetirá el `--full` posterior: sus fallos ya tienen diagnóstico y
@@ -126,11 +123,10 @@ no es requisito para que el metaverso actual funcione ni para empezar features.
 **0 % de H5 pendiente.** Validación, recuperación, producción, aceptación
 humana, CI, gitlinks y merge están resueltos.
 
-La preparación y aceptación de Sitting v2 fuera de producción están
-**terminadas**: fuente, pruebas locales, builds, staging real y E2E. Como
-estimación humana, la feature completa está alrededor del **80 %**: falta el
-rollout productivo S5, su navegador frío y la comprobación visual final. El
-cleanup de cuatro DNS sin coste es una tarea operativa menor, no otro proyecto.
+**0 % de Sitting v2 pendiente.** Fuente, pruebas locales, builds, staging real,
+E2E multiusuario, checkpoint, rollout productivo y aceptación visual están
+terminados. El cleanup de cuatro DNS sin coste es mantenimiento menor, no parte
+de la feature ni otro proyecto.
 
 ## Cuándo se para
 

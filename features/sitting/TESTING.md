@@ -2,10 +2,11 @@
 
 ## Estado actual
 
-La implementación candidata, congelada en Hubs `b2697e7` y Cloud/Reticulum
-`6d9ee9e`, tiene validación local y aceptación real de navegador en staging. El
-30 de agosto de 2026 el E2E final pasó **1/1 en 47,1 s** sobre la sala temporal
-`3E2enaA`, después de desplegar las dos imágenes por digest.
+La implementación, congelada en Hubs `b2697e7` y Cloud/Reticulum `6d9ee9e`,
+tiene validación local, aceptación real de navegador en staging y aceptación
+final en producción. El 30 de agosto de 2026 el E2E final pasó **1/1 en 47,1 s**
+sobre la sala temporal `3E2enaA`; después se promovieron esos mismos dos digests
+a producción.
 
 Validación focal actual:
 
@@ -22,8 +23,11 @@ conservar el detalle de cualquier diagnóstico inesperado. Los avisos de datos
 Browserslist y de compilación de dependencias legacy fueron no first-party y
 los comandos estrictos terminaron con código cero.
 
-La carrera real de dos navegadores ya pasó. El cold-browser posterior al rollout
-productivo y la inspección estética de la pose siguen siendo gates de S5.
+La carrera real de dos navegadores, el rollout productivo, el verificador live
+**0 fallos / 0 avisos** y el cold-browser desktop/móvil ya pasaron. En la sala
+productiva, la sesión reservó `Seat_recovery_2_-_REPOSITION`, observó
+`occupied:true`, `player-info.isSitting:true`, la UI **Levantarse** y la pose en
+tercera persona.
 
 ## Precondiciones de staging
 
@@ -154,11 +158,10 @@ está limitado internamente por A-Frame y solo aporta una señal secundaria de
 coherencia. El muestreo cruzado cada 25 ms conserva snapshots acotados del estado
 autoritativo público/privado, pero no se presenta como cobertura de cada frame.
 
-La captura `remote-seated-pose.png` fue revisada: la geometría/cámara no encuadró
-al avatar remoto. La tolerancia automatizada sí probó posición, ownership y
-pose coherentes en ambos clientes, pero no certifica intersecciones entre
-cuerpo, ropa, mesa y silla. Esa inspección estética se traslada explícitamente
-al cold-browser de S5 y no justifica recrear staging por una fotografía.
+La captura staging `remote-seated-pose.png` no encuadró al avatar remoto, pero
+la tolerancia automatizada probó posición, ownership y pose coherentes en ambos
+clientes. El cold-browser productivo cerró ese límite visual al mostrar el
+avatar sentado en tercera persona y la UI **Levantarse**; no se recreó staging.
 
 ## Matriz adicional de protocolo
 
@@ -222,11 +225,11 @@ al cold-browser de S5 y no justifica recrear staging por una fotografía.
 
 ## Promoción posterior a staging
 
-Las imágenes ya se construyeron por Actions y se fijaron por digest antes de
-staging. Solo después de que staging sea completamente correcto se pueden
-promover esos mismos digests a producción: checkpoint+rotación, generación y
-`kubectl diff`, apply Reticulum-first/Hubs-second, restart de Reticulum tras
-Hubs y verificación live. La aceptación requiere también cold desktop/mobile y
-`./deployment/verify-live-reactivation.sh` con cero fallos y cero warnings.
+La promoción quedó ejecutada con los mismos digests aceptados en staging. Se
+creó el checkpoint DB+medios, se verificaron los dos manifiestos generados y su
+diff redacted, se aplicó Reticulum primero y Hubs después, se reinició
+Reticulum, y los **12/12 Deployments** terminaron Ready.
 
-Esta sección define el gate futuro; no afirma que se haya ejecutado.
+`./deployment/verify-live-reactivation.sh` terminó con **0 fallos y 0 avisos**;
+el navegador frío desktop/móvil y la inspección de reserva/pose también
+pasaron. No debe repetirse esta promoción sin una causa nueva.

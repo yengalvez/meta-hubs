@@ -1,6 +1,6 @@
 # PLAN ACTUAL — Sitting v2 autoritativo
 
-Version: **v7 — STAGING V2 ACEPTADO; COSTE CERRADO; PRODUCCIÓN EN ESPERA**
+Version: **v8 — SITTING V2 ACEPTADO EN PRODUCCIÓN**
 Ultima revision: **30 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El plan de transición
 cerrado se conserva en
@@ -34,20 +34,24 @@ real. La feature tampoco obliga a promover el runtime durable de bots.
 - El propietario eligió **Sitting v2** el 28 de agosto de 2026.
 - Workspace raíz: `/Users/Shared/Gits/YenHubs-features`, rama local
   `codex/sitting-v2`, sobre el commit de transición `8c0d547`.
-- Hubs: rama `codex/sitting-v2` en
-  `b2697e7e6f571d195346cc156f0f1631eedc841a`. Es el corte funcional
-  `ce8390a` más la corrección mínima de orden del Dockerfile demostrada por el
-  primer build remoto.
-- Cloud: rama local `codex/sitting-v2` en `4ead2a6`, que conserva la imagen
-  Reticulum de `6d9ee9e` y añade la autenticación kubelet, el perfil staging
-  legacy activo fail-closed y el remitente SMTP configurable demostrado en
-  staging. Las imágenes de producto aceptadas no cambiaron.
+- Hubs: PR #6 integró `b2697e7e6f571d195346cc156f0f1631eedc841a`
+  en `master` mediante `0781a63091ac3160a1b473504dc655ac0b002735`.
+  Es el corte funcional `ce8390a` más la corrección mínima de orden del
+  Dockerfile demostrada por el primer build remoto.
+- Cloud: PR #28 validó `4ead2a6` e integró su árbol en `development`; PR #29
+  promovió ese mismo árbol a `master` mediante
+  `db083d53e3d57c9380bbfefc6bd411e4d4bf4270`. Conserva la imagen Reticulum de
+  `6d9ee9e` y añade la autenticación kubelet, el perfil legacy activo
+  fail-closed y el remitente SMTP configurable demostrado en staging. Las
+  imágenes de producto aceptadas no cambiaron.
 - Los commits Hubs `9c2da562b` y `3f18bdf24`, Cloud `ce20e20` y el arnés raíz
   `875642e` son ancestros de esos cortes. La implementación, migraciones y E2E
   ya existen; no se reescriben sin un fallo causal nuevo.
-- El runtime productivo recuperado conserva Hubs `a7214eb88` y Reticulum/Cloud
-  `5a82de5`, ambos anteriores a Sitting v2. La aceptación H5 demostró sitting
-  histórico, no el protocolo v2 ni su carrera multiusuario.
+- Producción usa ya los mismos digests aceptados en staging: Hubs
+  `sha256:e8f9423ace1bf4108ae5a7ce59c1b45cf0b44b74ea944fdb82fee47e4d7be5b0`
+  y Reticulum
+  `sha256:256c292d0d5a69e021322bdbd11b3f318f2d44bee580433252e0b04ade1d5e18`.
+  El rollout conservó el resto de imágenes y la topología recuperada.
 - Sitting v2 necesita únicamente una imagen Hubs y una imagen Reticulum del
   corte actual. El primer staging demostró que el manifiesto durable actual no
   puede reutilizar directamente las imágenes bot legacy: el parent procede de
@@ -102,8 +106,9 @@ Fuera de alcance:
 - revertir destructivamente la migración con leases activos.
 
 Autorizado y completado: trabajo local reversible, inventario externo, builds
-Hubs/Reticulum y la ventana S4 completa de staging, DNS, contenido desechable y
-desmontaje con readback. Producción continúa fuera de alcance hasta S5.
+Hubs/Reticulum, la ventana S4 completa de staging y la ventana productiva S5
+con checkpoint, rollout escalonado y aceptación live. No se recrea staging ni
+se vuelve a desplegar Sitting v2 sin evidencia causal nueva.
 
 ## Plan de producción
 
@@ -312,18 +317,33 @@ desmontaje con readback. Producción continúa fuera de alcance hasta S5.
 
 ### S5. Promover los mismos digests a producción
 
-- [ ] Autorizar la ventana productiva exacta y crear checkpoint DB+medios.
-  - Estado: **WAITING — efecto productivo**.
-- [ ] Revisar el `kubectl diff` generado y aplicar Reticulum primero, Hubs
+- [x] Autorizar la ventana productiva exacta y crear checkpoint DB+medios.
+  - Estado: **DONE**.
+  - Evidencia: checkpoint atómico
+    `/Users/yengalvez/.yenhubs-private/sitting-v2-production-20260830/checkpoint-pre-sitting-v2-20260830`;
+    `SHA256SUMS` verifica DB, medios y evidencias. Conserva 356 relaciones, 94
+    migraciones, 18 hubs y 33 ficheros activos con sus 33 pares de storage.
+- [x] Revisar el `kubectl diff` generado y aplicar Reticulum primero, Hubs
   después, sin cambios no relacionados.
-  - Estado: **WAITING** únicamente de autorización; staging funcional está
-    verde.
-- [ ] Reiniciar Reticulum tras Hubs, ejecutar navegador frío desktop/mobile y
+  - Estado: **DONE**.
+  - Evidencia: ambos manifiestos privados pasaron el verificador generado con
+    44 recursos; el diff redacted limitó la primera generación a Reticulum y
+    configuración compatible, y la segunda añadió solo Hubs. El driver
+    guardado terminó con **12/12 Deployments Ready** en ambas fases.
+- [x] Reiniciar Reticulum tras Hubs, ejecutar navegador frío desktop/mobile y
   `./deployment/verify-live-reactivation.sh` con cero fallos y cero avisos.
-  - Estado: **WAITING** del rollout; el navegador frío debe encuadrar y revisar
-    la pose para cerrar el límite visual de S4.
-- [ ] Cerrar la feature con evidencia, commits/digests, rollback y estado humano.
-  - Estado: **WAITING** de aceptación live.
+  - Estado: **DONE**.
+  - Evidencia: Reticulum se reinició tras Hubs; el verificador live terminó
+    **0 fallos / 0 avisos**. En navegador interno frío, desktop y viewport
+    móvil cargaron la sala. En desktop, el asiento publicado quedó
+    `occupied:true`, `player-info.isSitting:true`, la UI cambió a
+    **Levantarse** y la tercera persona mostró el avatar sentado. No hubo
+    errores de Sitting; se conserva el warning legacy `background` ya
+    clasificado y un error de un medio roto de la escena que solo apareció al
+    apuntar deliberadamente a ese objeto y no pertenece a esta feature.
+- [x] Cerrar la feature con evidencia, commits/digests, rollback y estado humano.
+  - Estado: **DONE**. La documentación y los punteros se integran en el cierre
+    final sin repetir `--full`, recuperación ni E2E.
 
 ## Rollback
 
@@ -338,20 +358,21 @@ desmontaje con readback. Producción continúa fuera de alcance hasta S5.
 
 ## Estado de trabajo
 
-- Completado: S0-S3, inventario/target/cost gate, builds, preflight privado,
-  join legacy, perfil legacy activo, escena/sala final, Hubs v2, E2E remoto y
-  desmontaje de todos los recursos facturables con readback vacío.
-- Activo: ninguno. No se vuelve a crear staging ni se repite el E2E.
-- Ready: S5 puede planificarse con los mismos digests; debe incluir checkpoint,
-  `kubectl diff`, aceptación fría y una comprobación visual de la pose.
-- Waiting: autorización productiva separada para S5.
+- Completado: S0-S5, incluidos builds, staging, carrera real, desmontaje,
+  checkpoint productivo, diff, rollout Reticulum/Hubs, restart, verificador
+  live y aceptación fría desktop/móvil con comprobación de reserva y pose.
+- Activo: integrar en la raíz estos dos commits `master` y la documentación de
+  cierre. No se repite ninguna prueba verde ni se vuelve a desplegar.
+- Ready: Hubs y Cloud ya están integrados; Sitting v2 está funcional en
+  producción y la raíz queda lista para fijar los punteros exactos.
+- Waiting: nada de producto ni producción.
 - Residuo: borrar cuatro A records staging sin coste cuando IONOS esté
   autenticado y leer su ausencia; no requiere clúster ni impide que el gasto
   temporal sea cero.
 - Efectos externos realizados: rama Hubs `codex/sitting-v2` publicada, tres
-  runs totales —un fallo causal, Reticulum verde y Hubs corregido verde— y el
-  staging temporal exacto descrito arriba. El entorno facturable ya no existe;
-  producción continúa intacta.
+  runs totales —un fallo causal, Reticulum verde y Hubs corregido verde—,
+  staging temporal ya eliminado y rollout productivo de los mismos dos digests.
+  No cambió la topología productiva ni se creó gasto recurrente adicional.
 
 ## Reglas anti-loop
 
@@ -387,10 +408,9 @@ desmontaje con readback. Producción continúa fuera de alcance hasta S5.
 
 ## Punto de menor confianza
 
-El punto de menor confianza ya no es el protocolo ni el despliegue: ambos
-pasaron en staging. Es la revisión estética de la pose, porque la captura no
-encuadró al avatar aunque los dos clientes midieron posición y estado sentados
-coherentes. El control es comprobarla explícitamente durante la aceptación fría
-de S5, sin recrear staging solo para obtener otra fotografía. El cleanup DNS
-pendiente es operativo y no facturable. Decisión: **STOP antes de producción
-hasta autorización S5**.
+No queda una duda material sobre Sitting v2: la exclusión multiusuario pasó en
+staging, los mismos digests están en producción, el verificador live quedó en
+cero y la sesión fría confirmó reserva, estado sentado, UI y pose visible. El
+único residuo es borrar cuatro A records de staging hacia una IP ya retirada;
+no sirve tráfico, no cuesta dinero y no afecta a producción. Decisión:
+**cerrar Sitting v2 y pasar a la siguiente feature**.
