@@ -2879,9 +2879,9 @@ function durableControlPlaneIsExact(controlPlane, evidence) {
     }) && exactIdentityList(controlPlane.cluster_resources, clusterResources);
 }
 
-function trustedDeploymentInventoryIsExact(deployments, mode, expectedParentUid) {
+function trustedDeploymentInventoryFailure(deployments, mode, expectedParentUid) {
   if (!Array.isArray(deployments) || deployments.length !== EXPECTED_DEPLOYMENTS.length) {
-    return false;
+    return "deployment_count";
   }
   const byName = new Map();
   const pairs = [];
@@ -2898,7 +2898,7 @@ function trustedDeploymentInventoryIsExact(deployments, mode, expectedParentUid)
         !Array.isArray(deployment.init_containers) || deployment.init_containers.length !== 0 ||
         !Array.isArray(deployment.containers) || deployment.containers.length === 0 ||
         byName.has(deployment.name)) {
-      return false;
+      return "deployment_shape";
     }
     byName.set(deployment.name, deployment);
     const containerNames = new Set();
@@ -2906,25 +2906,27 @@ function trustedDeploymentInventoryIsExact(deployments, mode, expectedParentUid)
       if (!exactKeys(container, ["image", "name"]) ||
           typeof container.name !== "string" || container.name.length === 0 ||
           typeof container.image !== "string" || containerNames.has(container.name)) {
-        return false;
+        return "container_shape";
       }
       const imageMatch = /^(.*)@sha256:[a-fA-F0-9]{64}$/.exec(container.image);
       const pair = `${deployment.name}/${container.name}`;
       if (!imageMatch || !TRUSTED_IMAGE_REPOSITORIES[pair]?.includes(imageMatch[1])) {
-        return false;
+        return "container_image";
       }
       containerNames.add(container.name);
       pairs.push(pair);
     }
   }
   if (!isDeepStrictEqual([...byName.keys()].sort(), [...EXPECTED_DEPLOYMENTS].sort())) {
-    return false;
+    return "deployment_names";
   }
   const postgresPair = mode === "process-local" ? "pgsql/postgresql" : "pgsql/pgsql";
   const expectedPairs = [...EXPECTED_CONTAINER_PAIRS, postgresPair].sort();
   const parent = byName.get("bot-orchestrator");
-  return isDeepStrictEqual(pairs.sort(), expectedPairs) &&
-    parent.uid === expectedParentUid && parent.replicas === 1;
+  if (!isDeepStrictEqual(pairs.sort(), expectedPairs)) return "container_pairs";
+  if (parent.uid !== expectedParentUid) return "parent_uid";
+  if (parent.replicas !== 1) return "parent_replicas";
+  return null;
 }
 
 export function validateDeploymentInventory(inventory, evidence) {
@@ -2944,8 +2946,11 @@ export function validateDeploymentInventory(inventory, evidence) {
         "image",
         "mode",
         "recovery_epoch"
-      ]) || inventory.bot_runner_runtime.generation !== evidence.runtime_generation) {
-    fail("deployment_inventory_evidence_mismatch");
+      ])) {
+    fail("deployment_inventory_evidence_mismatch:envelope");
+  }
+  if (inventory.bot_runner_runtime.generation !== evidence.runtime_generation) {
+    fail("deployment_inventory_evidence_mismatch:runtime_generation");
   }
   const runtime = inventory.bot_runner_runtime;
   const legacy = runtime.generation === "legacy-absent" &&
@@ -2960,12 +2965,16 @@ export function validateDeploymentInventory(inventory, evidence) {
     runtime.recovery_epoch.state === "bound" &&
     UUID_V4.test(runtime.recovery_epoch.value || "") &&
     durableControlPlaneIsExact(runtime.control_plane, evidence);
-  if ((!legacy && !durable) || !trustedDeploymentInventoryIsExact(
+  if (!legacy && !durable) {
+    fail("deployment_inventory_evidence_mismatch:runtime_contract");
+  }
+  const deploymentFailure = trustedDeploymentInventoryFailure(
     inventory.deployments,
     runtime.mode,
     evidence.parent_deployment.uid
-  )) {
-    fail("deployment_inventory_evidence_mismatch");
+  );
+  if (deploymentFailure !== null) {
+    fail(`deployment_inventory_evidence_mismatch:${deploymentFailure}`);
   }
   return inventory;
 }

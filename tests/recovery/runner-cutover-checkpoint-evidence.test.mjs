@@ -1268,6 +1268,20 @@ test("schema-4 inventory validation requires the complete mode-specific deployme
     );
   }
 
+  const wrongParentUid = structuredClone(legacy);
+  wrongParentUid.deployments.find(item => item.name === "bot-orchestrator").uid =
+    "replacement-parent";
+  assert.throws(
+    () => validateDeploymentInventory(wrongParentUid, legacyEvidence),
+    /deployment_inventory_evidence_mismatch:parent_uid/
+  );
+  const wrongParentReplicas = structuredClone(legacy);
+  wrongParentReplicas.deployments.find(item => item.name === "bot-orchestrator").replicas = 0;
+  assert.throws(
+    () => validateDeploymentInventory(wrongParentReplicas, legacyEvidence),
+    /deployment_inventory_evidence_mismatch:parent_replicas/
+  );
+
   for (const mutate of [
     value => { value.bot_runner_runtime.recovery_epoch.value = "not-a-uuid"; },
     value => { value.bot_runner_runtime.control_plane.namespaces.pop(); },
