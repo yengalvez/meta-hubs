@@ -1,6 +1,6 @@
 # PLAN ACTUAL — Sitting v2 autoritativo
 
-Version: **v8 — SITTING V2 ACEPTADO EN PRODUCCIÓN**
+Version: **v9 — SITTING V2 COMPLETADO E INTEGRADO**
 Ultima revision: **30 de agosto de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**. El plan de transición
 cerrado se conserva en
@@ -32,8 +32,9 @@ real. La feature tampoco obliga a promover el runtime durable de bots.
 ## Decisión y estado confirmado
 
 - El propietario eligió **Sitting v2** el 28 de agosto de 2026.
-- Workspace raíz: `/Users/Shared/Gits/YenHubs-features`, rama local
-  `codex/sitting-v2`, sobre el commit de transición `8c0d547`.
+- Workspace raíz de cierre: `/Users/Shared/Gits/YenHubs-features`. La PR raíz
+  #20 integró la rama `codex/sitting-v2` en `main` mediante
+  `032136ce49beb88ca66989db7a7bf56a3d6523f6`.
 - Hubs: PR #6 integró `b2697e7e6f571d195346cc156f0f1631eedc841a`
   en `master` mediante `0781a63091ac3160a1b473504dc655ac0b002735`.
   Es el corte funcional `ce8390a` más la corrección mínima de orden del
@@ -64,6 +65,12 @@ real. La feature tampoco obliga a promover el runtime durable de bots.
   en los `master` remotos, workflows activos, una sola instalación DOKS
   productiva y ausencia total de staging. La ruta elegida es un clúster DOKS
   temporal separado; no se comparte el clúster productivo.
+- El CI raíz final `33286531422` sobre
+  `371b3814b5ae07b256d0ece5113d33bb1bdf6760` terminó verde: PostgreSQL
+  12.19/14.23, gitlinks, Gitleaks, Actionlint, ShellCheck y regresiones de
+  seguridad. `origin/main` fija Hubs
+  `0781a63091ac3160a1b473504dc655ac0b002735` y Cloud
+  `db083d53e3d57c9380bbfefc6bd411e4d4bf4270`.
 
 ## Requisitos de producto
 
@@ -173,7 +180,7 @@ se vuelve a desplegar Sitting v2 sin evidencia causal nueva.
     `6d9ee9e998f636fcf61a4928cd2a275829768259` quedan congelados como fuentes
     candidatas; no se modificó código de producto. El hook de Hubs pasó
     **100/100** al corregir únicamente el orden de copia del script postinstall.
-- [ ] Si falla un foco, corregir únicamente su causa en el subrepo dueño,
+- [x] Si falla un foco, corregir únicamente su causa en el subrepo dueño,
   repetir el verificador más cercano y actualizar el gitlink raíz.
   - Estado: **SKIPPED — ningún foco demostró un defecto**.
   - Regla: dos fallos equivalentes sin nueva evidencia producen STOP y
@@ -360,11 +367,11 @@ se vuelve a desplegar Sitting v2 sin evidencia causal nueva.
 
 - Completado: S0-S5, incluidos builds, staging, carrera real, desmontaje,
   checkpoint productivo, diff, rollout Reticulum/Hubs, restart, verificador
-  live y aceptación fría desktop/móvil con comprobación de reserva y pose.
-- Activo: integrar en la raíz estos dos commits `master` y la documentación de
-  cierre. No se repite ninguna prueba verde ni se vuelve a desplegar.
-- Ready: Hubs y Cloud ya están integrados; Sitting v2 está funcional en
-  producción y la raíz queda lista para fijar los punteros exactos.
+  live, aceptación fría desktop/móvil con comprobación de reserva y pose, CI
+  raíz final verde y merge de la PR #20.
+- Activo: nada de Sitting v2.
+- Ready: Hubs, Cloud y raíz están integrados; Sitting v2 está funcional en
+  producción y `origin/main` fija los punteros exactos.
 - Waiting: nada de producto ni producción.
 - Residuo: borrar cuatro A records staging sin coste cuando IONOS esté
   autenticado y leer su ausencia; no requiere clúster ni impide que el gasto
