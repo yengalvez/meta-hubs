@@ -2,52 +2,107 @@
 
 ## Estado actual
 
-La implementación candidata tiene evidencia local, pero no tiene todavía
-aceptación de navegador contra staging ni evidencia de despliegue/live.
+La implementación, congelada en Hubs `b2697e7` y Cloud/Reticulum `6d9ee9e`,
+tiene validación local, aceptación real de navegador en staging y aceptación
+final en producción. El 30 de agosto de 2026 el E2E final pasó **1/1 en 47,1 s**
+sobre la sala temporal `3E2enaA`; después se promovieron esos mismos dos digests
+a producción.
 
-Validación local registrada antes de la integración final:
+Validación focal actual:
 
-- suites AVA del coordinador e identidad de waypoint correctas;
-- Hubs: `npm run check` y lint dirigido correctos;
-- pruebas dirigidas de Reticulum correctas;
-- suite completa local de Reticulum correcta, incluidas sus propiedades y solo
-  las exclusiones esperadas;
-- Reticulum: compilación con warnings tratados como errores correcta.
+- arnés browser: **12/12** unidades y exactamente un E2E Sitting;
+- Hubs: `npm run check`, lint dirigido y las cinco familias AVA Sitting
+  **48/48**;
+- Reticulum: dependencias locked, format y compilación estricta correctos; las
+  dos suites de reserva/modelo y canal pasan **20/20** contra PostgreSQL local;
+- composición: **2/2** gitlinks, diff-check y árboles root/Hubs/Cloud limpios.
 
-Estos resultados no sustituyen la carrera real entre dos navegadores, la
-revisión visual ni el cold-browser posterior al rollout.
+No cambió ningún byte de producto durante esta validación. El arnés browser sí
+se endureció para reconocer el host staging exacto, usar micrófono falso y
+conservar el detalle de cualquier diagnóstico inesperado. Los avisos de datos
+Browserslist y de compilación de dependencias legacy fueron no first-party y
+los comandos estrictos terminaron con código cero.
+
+La carrera real de dos navegadores, el rollout productivo, el verificador live
+**0 fallos / 0 avisos** y el cold-browser desktop/móvil ya pasaron. En la sala
+productiva, la sesión reservó `Seat_recovery_2_-_REPOSITION`, observó
+`occupied:true`, `player-info.isSitting:true`, la UI **Levantarse** y la pose en
+tercera persona.
 
 ## Precondiciones de staging
 
-Antes del E2E:
+La ejecución S4 completó estas precondiciones:
 
-1. Usar una sala staging desechable y vacía; no usar la sala principal.
-2. Haber completado gates, commit/push, builds de GitHub Actions y resolución a
+1. Usar el clúster temporal separado `yenhubs-sitting-staging`, DOKS
+   `1.34.10-do.2` en `ams3`, Namespace `hcce` y dominio
+   `staging.meta-hubs.org`; no compartir clúster/ingress con producción.
+2. Usar una sala staging desechable y vacía; no usar la sala principal.
+3. Haber completado gates, commit/push, builds de GitHub Actions y resolución a
    digests para Reticulum y Hubs; staging no admite builds locales/in-cluster.
-3. Crear el checkpoint exigido por `deployment/README.md` antes de cualquier
+4. Crear el checkpoint exigido por `deployment/README.md` antes de cualquier
    mutación de una instalación compartida.
-4. Desplegar en dos manifest generations: Reticulum v2/migración conservando el
+   El target greenfield y desechable no contiene datos de cliente y no necesita
+   checkpoint; producción sí lo exigirá en S5.
+5. Desplegar en dos manifest generations: Reticulum v2/migración conservando el
    Hubs anterior, y solo después Hubs v2.
-5. Confirmar que la respuesta de join anuncia `protocol: 2`,
+6. Confirmar que la respuesta de join anuncia `protocol: 2`,
    `supported: true`, `lease_ms: 15000` y `request_timeout_ms: 3000` para un
    cliente nuevo.
-6. Publicar desde Spoke al menos una silla con `Disable motion`,
+7. Publicar desde Spoke al menos una silla con `Disable motion`,
    `Can be occupied` y `Can be clicked`, y al menos un waypoint de salida que
    no sea asiento ni ocupable.
-7. Confirmar que ambas sesiones ven la misma identidad persistente para la
+8. Confirmar que ambas sesiones ven la misma identidad persistente para la
    silla.
+9. Preservar evidencia no secreta y retirar clúster, nodo, LB, volúmenes y los
+   dos firewalls DOKS gestionados antes de `23 h 30 min`, con readback de
+   ausencia. Esto quedó cumplido. Los cuatro DNS no facturables permanecen
+   temporalmente apuntando a la IP retirada hasta reautenticar IONOS.
+
+## Receta de build candidata
+
+Esta receta quedó ejecutada y fijada por digest:
+
+- Hubs `b2697e7`: workflow `custom-docker-build-push`, run `33245207737` y
+  digest `ghcr.io/yengalvez/hubs@sha256:e8f9423ace1bf4108ae5a7ce59c1b45cf0b44b74ea944fdb82fee47e4d7be5b0`.
+- Cloud/Reticulum `6d9ee9e`: workflow `custom-docker-build-push` con
+  `Override_Repo_Name=reticulum`,
+  `Override_Code_Path=community-edition/services/reticulum` y
+  `Override_Dockerfile=community-edition/services/reticulum/Dockerfile`; run
+  `33244980400` y digest
+  `ghcr.io/yengalvez/reticulum@sha256:256c292d0d5a69e021322bdbd11b3f318f2d44bee580433252e0b04ade1d5e18`.
+- Ambos resultados deben resolverse a `repository@sha256:<digest>` y quedar
+  ligados al run y commit exactos antes de generar un manifiesto.
+
+Los `master` remotos apuntan exactamente a esos dos commits verificados y los
+workflows están activos. Los repos son públicos y usan `ubuntu-latest`
+estándar, por lo que sus minutos no son facturables. Antes del dispatch se
+revalida una vez esa identidad; no se lanza otro run sobre los mismos bytes sin
+una causa nueva.
+
+`deployment/prepare-staging-values.mjs` deriva desde la plantilla moderna dos
+values privados: Reticulum-first conserva el Hubs live anterior y Sitting v2
+cambia solo el digest Hubs. Copia únicamente admin/SMTP, genera todas las claves
+internas de staging y nunca imprime secretos.
 
 ## Gates locales
 
-Desde la raíz:
+Durante una iteración con cambios de producto, el gate rápido desde la raíz es:
 
 ```bash
 ./scripts/verify-project.sh
+```
+
+Un candidato final cuyos bytes de producto hayan cambiado ejecuta una sola vez:
+
+```bash
 ./scripts/verify-project.sh --full
 ```
 
-El gate completo enumera las pruebas Playwright pero no ejecuta el E2E remoto:
-no existe una URL staging por defecto y no debe inventarse una.
+`--full` ya incluye el bloque normal: no deben ejecutarse ambos consecutivamente
+sobre los mismos bytes. En el corte actual no se repitió `--full` porque no hubo
+cambio de producto y su evidencia final seguía aplicando. El gate completo
+enumera Playwright pero no ejecuta el E2E remoto: no existe una URL staging por
+defecto y no debe inventarse una.
 
 Para validar el arnés sin acceder a una sala:
 
@@ -60,11 +115,11 @@ npm run test:sitting -- --list
 
 ## E2E obligatorio de dos clientes
 
-Cuando Reticulum y Hubs candidatos estén disponibles en staging:
+La ejecución final fue:
 
 ```bash
 cd tests/browser
-SITTING_TEST_URL=https://staging.example/<room-id> npm run test:sitting
+SITTING_TEST_URL=https://staging.meta-hubs.org/3E2enaA/worldly-belated-volume npm run test:sitting
 ```
 
 El helper rechaza URLs con credenciales, redirecciones a otro origen y destinos
@@ -91,8 +146,11 @@ La prueba abre exactamente dos contextos Chrome aislados y debe demostrar:
    produce una transición observada a `occupied: false` en un máximo de
    2.5 segundos por terminación de canal. El lease de 15 segundos sigue siendo
    la protección ante una desconexión que el servidor no detecte de inmediato.
-10. No hay warnings/errores de consola, excepciones de página, requests fallidas
-    ni respuestas HTTP `>= 400`.
+10. No hay diagnósticos inesperados: excepciones de página, fallos first-party,
+    requests fallidas ni respuestas HTTP `>= 400`. Se excluyen solo firmas
+    exactas y unit-tested del baseline: `HEAD` abortado, `/favicon.ico` 404,
+    estados AEC, ausencia de la animación opcional `allOpen` y deprecación
+    legacy del componente `background`.
 
 La ausencia de solape local se decide con el registro de transiciones
 `sitting-state-changed`, que se contrasta con `player-info`. `componentchanged`
@@ -100,9 +158,10 @@ está limitado internamente por A-Frame y solo aporta una señal secundaria de
 coherencia. El muestreo cruzado cada 25 ms conserva snapshots acotados del estado
 autoritativo público/privado, pero no se presenta como cobertura de cada frame.
 
-La captura `remote-seated-pose.png` debe revisarse manualmente. La tolerancia
-automatizada detecta desplazamientos graves, pero no certifica intersecciones
-entre cuerpo, ropa, mesa y silla.
+La captura staging `remote-seated-pose.png` no encuadró al avatar remoto, pero
+la tolerancia automatizada probó posición, ownership y pose coherentes en ambos
+clientes. El cold-browser productivo cerró ese límite visual al mostrar el
+avatar sentado en tercera persona y la UI **Levantarse**; no se recreó staging.
 
 ## Matriz adicional de protocolo
 
@@ -166,11 +225,11 @@ entre cuerpo, ropa, mesa y silla.
 
 ## Promoción posterior a staging
 
-Las imágenes ya se construyeron por Actions y se fijaron por digest antes de
-staging. Solo después de que staging sea completamente correcto se pueden
-promover esos mismos digests a producción: checkpoint+rotación, generación y
-`kubectl diff`, apply Reticulum-first/Hubs-second, restart de Reticulum tras
-Hubs y verificación live. La aceptación requiere también cold desktop/mobile y
-`./deployment/verify-live-reactivation.sh` con cero fallos y cero warnings.
+La promoción quedó ejecutada con los mismos digests aceptados en staging. Se
+creó el checkpoint DB+medios, se verificaron los dos manifiestos generados y su
+diff redacted, se aplicó Reticulum primero y Hubs después, se reinició
+Reticulum, y los **12/12 Deployments** terminaron Ready.
 
-Esta sección define el gate futuro; no afirma que se haya ejecutado.
+`./deployment/verify-live-reactivation.sh` terminó con **0 fallos y 0 avisos**;
+el navegador frío desktop/móvil y la inspección de reserva/pose también
+pasaron. No debe repetirse esta promoción sin una causa nueva.

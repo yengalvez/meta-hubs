@@ -181,6 +181,12 @@ corto, no para una pausa de semanas.
 
 ## Congelacion de una instancia
 
+Antes de fijar el estado, activar la barrera de mantenimiento aprobada, impedir
+entradas de clientes y administradores y registrar la hora de corte. La barrera
+permanece hasta verificar las dos copias cifradas y confirmar que el inventario
+facturable que se desea retirar esta a cero. Si se acepta una escritura durable
+despues del corte, ese bundle no puede cerrar al cliente: hay que generar otro.
+
 Fijar primero la identidad exacta. No usar un contexto implicito ni reutilizar
 el UID despues de recrear el namespace:
 
@@ -202,7 +208,8 @@ test -n "$EXPECTED_RET_PVC_UID"
 
 Los scripts de backup y restore vuelven a comparar ambos valores antes de usar
 el cluster. Un namespace recreado con el mismo nombre tiene otro UID y queda
-bloqueado.
+bloqueado. La raiz, `hubs` y `hubs-cloud` deben ser checkouts directos y limpios;
+captura y preflight rechazan cambios tracked, staged o untracked.
 
 ### 1. Crear checkpoint completo
 
@@ -239,6 +246,12 @@ los cinco consumidores, captura DB y medios del mismo instante, valida pares y
 contratos y publica el bundle antes de intentar reanudar. Ante una respuesta
 ambigua no se debe improvisar otra reentrada: conservar el diagnostico, el lock
 y los consumidores a cero hasta revisar el estado exacto.
+
+Tras publicar, el script reanuda internamente los writers. En un checkpoint de
+mantenimiento normal se puede retirar despues la barrera. En una hibernacion no
+se retira: esos writers no autorizan trafico nuevo y el instante recuperable
+sigue siendo la hora del bundle. Conservar las lineas `YENHUBS_TIMING` como
+evidencia del tiempo de checkpoint.
 
 ### 2. Validar recuperabilidad
 
@@ -289,13 +302,30 @@ Para una pausa larga:
 ```bash
 doctl kubernetes cluster delete hubs-ce --force
 doctl kubernetes cluster list
+doctl compute droplet list
 doctl compute load-balancer list
 doctl compute volume list
+doctl compute snapshot list
+doctl compute reserved-ip list
 ```
 
 Verificar tambien snapshots, backups administrados, reserved IPs y recursos
 independientes del cluster. El objetivo es cero recursos no deseados, no asumir
 que borrar el cluster elimina cualquier recurso de la cuenta.
+
+Si el readback conserva un recurso que coincide exactamente con el inventario
+pre-delete aprobado, eliminar solo ese identificador y repetir todo el
+inventario. Nunca usar busqueda por nombre como autorizacion de borrado:
+
+```bash
+doctl compute droplet delete '<droplet-id-exacto>' --force
+doctl compute load-balancer delete '<load-balancer-uuid-exacto>' --force
+doctl compute volume delete '<volume-uuid-exacto>' --force
+```
+
+La hibernacion termina solo cuando cluster, Droplet, LB y volumenes previstos
+estan ausentes y snapshots, backups e IP reservadas coinciden con la retencion
+acordada. Hasta entonces el ahorro no esta demostrado.
 
 ## Restauracion
 
@@ -364,6 +394,11 @@ el mismo `RUN_ID` ni se borra evidencia para repetir un verde.
    por separado ni combinar DB y storage de fechas distintas.
 8. Completar carga fria, login, sala, audio, camaras, avatar, Admin y Spoke. Los
    bots solo se aceptan si forman parte del baseline comercial de esa instancia.
+
+Conservar las lineas `YENHUBS_TIMING` del driver y registrar tambien la envolvente
+externa: desde antes de crear DOKS hasta terminar la aceptacion fria. El primer
+tiempo es tecnico; el segundo es el RTO comercial observado e incluye proveedor,
+pulls, DNS, certificados y comprobacion humana.
 
 Si falla despues de empezar a escribir, el driver intenta dejar los cinco
 consumidores a cero y conserva el lock exacto. No borrar el lock, escalar a mano

@@ -1,300 +1,416 @@
-# PLAN ACTUAL — cerrar H5 y volver a features
+# PLAN ACTUAL — Sitting v2 autoritativo
 
-Version: **v11.14 — CERRADO**
-Ultima revision: **27 de agosto de 2026 (Europe/Madrid)**
-Autoridad: **este fichero es la única cola ejecutable**. El historial de
-intentos vive en `docs/session-changelog.md`; no se reanuda trabajo desde él.
+Version: **v8 — SITTING V2 ACEPTADO EN PRODUCCIÓN**
+Ultima revision: **30 de agosto de 2026 (Europe/Madrid)**
+Autoridad: **este fichero es la única cola ejecutable**. El plan de transición
+cerrado se conserva en
+`OLD/docs/PLAN_ACTUAL-feature-transition-2026-08-28.md`; la versión previa al
+inventario externo se conserva en
+`OLD/docs/PLAN_ACTUAL-sitting-v2-pre-inventory-2026-08-29.md`.
 
-## Resultado final
+## Resultado buscado
 
-Demostrar una sola vez que una instancia comercial de YenHubs puede hibernarse,
-recrearse y volver a funcionar con su PostgreSQL y sus medios intactos. Cuando
-la recuperación, la aceptación live y la integración pasen, H5 termina y el
-proyecto vuelve a features.
+Entregar Sitting v2 para que dos personas que pulsan **Sit** sobre la misma
+silla nunca puedan quedar sentadas simultáneamente: Reticulum concede un único
+lease autoritativo, el ganador se mueve y replica su pose, el perdedor permanece
+de pie, y Stand, handoff y desconexión liberan la silla de forma observable.
 
-## Estado actual confirmado
+La feature termina únicamente cuando:
 
-- M1, M2 y M3 están cerrados. No se repite el `--full` ni ninguna sección verde
-  cuyas entradas no hayan cambiado.
-- El bundle conjunto `output/checkpoints/h5-b16-20260813-022800`, sus dos copias
-  cifradas, recibo privado, hashes, 13 imágenes e inventarios están validados.
-- La infraestructura autorizada está recreada: contexto `do-ams3-hubs-ce`,
-  cluster `hubs-ce`, región `ams3`, Kubernetes `1.34.10-do.1`, HA desactivada,
-  un nodo `s-4vcpu-8gb`, LB regional y dos volúmenes de 10 GiB.
-- Recaptura live final del 26 de agosto: Namespace UID
-  `6020aa74-b369-4484-90f6-a767b1ca566f`, `ret-pvc` UID
-  `80f66189-311e-4cc5-a2d1-6eed38d33715` y Bound; writers
-  `reticulum/pgbouncer/pgbouncer-t/bot-orchestrator/coturn` a `5/5`, `pgsql`
-  `1/1`, un único consumidor legítimo de `ret-pvc` (Reticulum), cero helpers y
-  cero policies storage.
-- El lock `yenhubs-recovery-operation-lock` está ausente y la Lease UID
-  `bc32cd00-c0ba-4252-babd-e8e43dc908c9` está libre. No quedan procesos locales
-  de recovery.
-- La operación final `1dc5d5c9db33165a08a473dc3cf7afae` validó DB y medios,
-  retiró exactamente el orphan `8aa…`, reactivó los cinco writers y completó
-  el verificador con **0 fallos y 0 avisos**. Confirmó perfil, 13 imágenes,
-  DNS, TLS, DB `356/94/18/33`, medios `33/33`, Reticulum histórico, HTTPS y
-  ghost runner activo.
+1. la fuente exacta de Hubs y Reticulum pasa las pruebas locales aplicables;
+2. las imágenes de esos mismos commits se construyen por GitHub Actions y se
+   fijan por digest;
+3. staging demuestra la carrera con dos navegadores, pose remota, Stand,
+   relevo y cierre abrupto sin errores;
+4. producción recibe los mismos digests en orden Reticulum primero y Hubs
+   después, con checkpoint, rollback preparado, navegador frío y verificador
+   live con cero fallos y cero avisos.
 
-## Decisión de la auditoría
+Un test unitario, un build o la existencia del código no sustituyen la carrera
+real. La feature tampoco obliga a promover el runtime durable de bots.
 
-La imagen congelada
-`ghcr.io/yengalvez/bot-orchestrator@sha256:325c5c10e4ee039518693771c0974a0e5c876dcf54c443295e84490f4fa8ec53`
-es la imagen correcta para este restore histórico y debe seguir coincidiendo con
-el bundle, los values privados y el Deployment live.
+## Decisión y estado confirmado
 
-La imagen moderna publicada por Actions `32827354958` con digest
-`sha256:334759ad3611aa68187daf885654abb607d2d11c4ec82b51cda4d20a406625db`
-queda aparcada para una migración durable posterior. No puede introducirse sola
-en H5: exige ServiceAccount/RBAC, namespace runner, epoch y variables que el
-perfil `cold-rebind-legacy-absent-v1` elimina deliberadamente.
+- El propietario eligió **Sitting v2** el 28 de agosto de 2026.
+- Workspace raíz: `/Users/Shared/Gits/YenHubs-features`, rama local
+  `codex/sitting-v2`, sobre el commit de transición `8c0d547`.
+- Hubs: PR #6 integró `b2697e7e6f571d195346cc156f0f1631eedc841a`
+  en `master` mediante `0781a63091ac3160a1b473504dc655ac0b002735`.
+  Es el corte funcional `ce8390a` más la corrección mínima de orden del
+  Dockerfile demostrada por el primer build remoto.
+- Cloud: PR #28 validó `4ead2a6` e integró su árbol en `development`; PR #29
+  promovió ese mismo árbol a `master` mediante
+  `db083d53e3d57c9380bbfefc6bd411e4d4bf4270`. Conserva la imagen Reticulum de
+  `6d9ee9e` y añade la autenticación kubelet, el perfil legacy activo
+  fail-closed y el remitente SMTP configurable demostrado en staging. Las
+  imágenes de producto aceptadas no cambiaron.
+- Los commits Hubs `9c2da562b` y `3f18bdf24`, Cloud `ce20e20` y el arnés raíz
+  `875642e` son ancestros de esos cortes. La implementación, migraciones y E2E
+  ya existen; no se reescriben sin un fallo causal nuevo.
+- Producción usa ya los mismos digests aceptados en staging: Hubs
+  `sha256:e8f9423ace1bf4108ae5a7ce59c1b45cf0b44b74ea944fdb82fee47e4d7be5b0`
+  y Reticulum
+  `sha256:256c292d0d5a69e021322bdbd11b3f318f2d44bee580433252e0b04ade1d5e18`.
+  El rollout conservó el resto de imágenes y la topología recuperada.
+- Sitting v2 necesita únicamente una imagen Hubs y una imagen Reticulum del
+  corte actual. El primer staging demostró que el manifiesto durable actual no
+  puede reutilizar directamente las imágenes bot legacy: el parent procede de
+  `5a82de5` y exige `BOT_ACCESS_KEY`, mientras el manifiesto durable entrega
+  `BOT_ORCHESTRATOR_ACCESS_KEY`; el runner fijado es todavía anterior. No se
+  convierten por ello parent/runner en artefactos de esta release. Se completa
+  la ruta trackeada de compatibilidad legacy para conservar bots sin mezclar
+  otra modernización con Sitting.
+- El inventario externo read-only del 29 de agosto confirmó los mismos commits
+  en los `master` remotos, workflows activos, una sola instalación DOKS
+  productiva y ausencia total de staging. La ruta elegida es un clúster DOKS
+  temporal separado; no se comparte el clúster productivo.
 
-La reparación mínima es únicamente de composición: el perfil legacy transforma
-readiness a `/health` y conserva liveness `/health`; el perfil durable mantiene
-readiness `/transport-ready`. Generador, verificador standalone y contrato
-estructural rechazan una mezcla. Las focales afectadas pasan **49/49** y
-`git diff --check` pasa.
+## Requisitos de producto
 
-La auditoría del 26 de agosto corrige además tres supuestos del verificador:
+1. Una silla válida tiene identidad Spoke estable y los flags `Disable motion`,
+   `Can be occupied` y `Can be clicked`.
+2. Reticulum/PostgreSQL es la única autoridad de exclusión; NAF es una
+   proyección visual y nunca concede ocupación.
+3. Dos reservas simultáneas producen exactamente un ganador y un perdedor.
+4. El cliente solo se mueve después del `ok` autoritativo correlacionado.
+5. El estado público no expone identidad, UUID de lease ni datos privados.
+6. `player-info.isSitting` y la posición del avatar muestran al ganador sentado
+   de forma coherente en ambos clientes.
+7. Stand libera, apaga la pose y elige un waypoint no ocupable.
+8. Tras liberar, el perdedor puede reclamar la misma silla.
+9. Cierre limpio libera inmediatamente; el lease de 15 segundos protege la
+   desconexión no observable.
+10. Hubs v2 ante servidor antiguo o capacidad inválida falla cerrado. Un cliente
+    antiguo puede convivir con Reticulum v2, pero esa ventana no acepta sillas.
+11. No hay diagnósticos inesperados: excepciones de página, fallos first-party,
+    requests fallidas ni HTTP `>= 400`. El arnés ignora únicamente firmas
+    exactas ya clasificadas y cubiertas por unidad: `HEAD` abortado por el
+    navegador, `/favicon.ico` 404, estados AEC, animación opcional `allOpen`
+    ausente y el warning legacy de `background` de la escena recuperada.
 
-- el API raw entrega un `DeploymentList` tipado cuyos elementos omiten
-  `apiVersion/kind`; la autoridad singleton debe validar la lista completa;
-- el digest Reticulum histórico fue construido en Cloud `5a82de5`, anterior a
-  `/health/capabilities`; durante el restore legacy se valida su `/health/`
-  exacto, y protocol 2 queda para el runtime moderno posterior;
-- el bot histórico reintenta sincronización cada 30 s; el verificador espera
-  hasta 60 s al contrato legacy completo en lugar de aceptar la primera
-  respuesta JSON prematura. La DB contiene dos salas configuradas con bots,
-  incluida `VJopCY3`.
+## Alcance, no objetivos y autoridad
 
-Las correcciones son solo de aceptación y pasan `security-gates` **58/58**,
-Bash, ShellCheck, `git diff --check` y una prueba contra el `DeploymentList`
-raw real. No cambian imágenes, datos, topología ni seguridad del restore.
+Incluido:
 
-La evidencia de `8aa…` aisló además una incompatibilidad de composición real:
-el manifiesto live entrega al bot histórico
-`RET_INTERNAL_ACCESS_HEADER=x-ret-bot-orchestrator-access-key`, pero el código
-congelado `5a82de5` autentica `/api-internal` mediante
-`x-ret-dashboard-access-key`. Por eso la sincronización recibe `401`, no activa
-ninguna sala y el runner nunca puede cumplir readiness. El perfil legacy, sus
-dos verificadores, su regresión de generador y el gate live exigen ya el
-encabezado histórico; `test:generator` pasa **32/32** y `security-gates`
-**58/58**, más Bash, ShellCheck y `git diff --check`. No se cambia la credencial,
-la imagen ni el protocolo: únicamente el nombre de header compatible con esos
-bytes históricos.
+- contrato y tests Sitting existentes en Hubs, Reticulum y browser;
+- corrección local de un defecto solo si un verificador aplicable lo demuestra;
+- build trazable de Hubs y Reticulum, staging y promoción productiva posterior;
+- documentación, rollback y aceptación cold desktop/mobile.
 
-## Cola ejecutable
+Fuera de alcance:
 
-### M4. Una recuperación productiva final
+- GLB neutral, personalidad de bots, runtime durable de bots o capacidad CCU;
+- actualización upstream, modernización de Spoke o cambio de topología general;
+- rediseñar recovery, repetir H5 o limpiar worktrees históricos;
+- editar la escena principal para crear fixtures de prueba;
+- revertir destructivamente la migración con leases activos.
 
-- [x] Auditar source, bundle, plan, worktrees, estado live y reglas anti-loop.
-- [x] Corregir solo el contrato de probe del perfil legacy y validar las tres
-  focales afectadas; no ejecutar otro `--full`.
-- [x] Confirmar en read-only el Lease de serialización, la imagen/probe del
-  Deployment live y que las identidades y el estado fail-closed siguen siendo
-  exactamente los anteriores. Resultado: Lease libre; digest histórico exacto;
-  readiness live todavía `/transport-ready` y liveness `/health`; identidades,
-  writers, PVC y consumidores coinciden.
-- [x] Limpiar únicamente el lock stale exacto mediante la confirmación completa
-  del supervisor. El cleanup es condicional a la recaptura; no se leen
-  anotaciones ni valores privados. Resultado: helper/policy propios y lock
-  exacto retirados; ningún workload se reanudó.
-- [x] Regenerar desde `output/private-h5-b4/input-values.freeze-20260812.yaml`
-  con `HCCE_TARGET_PROFILE=cold-rebind-legacy-absent-v1`. Verificar el
-  manifiesto sin abrirlo ni imprimir Secrets; comprobar por inventario redactado
-  que conserva el digest histórico y usa readiness/liveness `/health` solo para
-  `bot-orchestrator` legacy. Resultado: 44 recursos verificados, fichero `0600`,
-  digest histórico exacto, writers cero y probes `/health`/`/health`.
-- [x] Revisar el `kubectl diff` redactado y aplicar únicamente por el wrapper
-  protegido `npm run apply`. Los cinco writers deben permanecer a cero y no se
-  cambia topología, coste, DNS, certificados, PVC ni imágenes del checkpoint.
-  El diff fue solo `/transport-ready` a `/health`. El wrapper aplicó ese cambio
-  y después agotó su espera por un reset TCP del API al normalizar el último
-  Deployment; no se repitió. Una comprobación read-only posterior confirmó los
-  doce Deployments exactos, Lease libre, bot `/health` y writers todavía cero.
-- [x] Repetir una sola vez el preflight cold-rebind DB+medios sobre el mismo
-  bundle, recibo, Namespace y PVC. Resultado: PASS read-only; bundle y recibo
-  rehasheados, target exacto y vacío, writers cero y bytes invariantes.
-- [x] Ejecutar la operación causal `3b905ea22b1235e90df885469e1e3d18`.
-  Se detuvo antes del stream DB con
-  `database_restore_stream_stage:launch` / `lease-window:0:2838`. El rollback
-  dejó writers cero, `pgsql=1`, cero consumidores/helpers/policies y retuvo
-  lock y Lease. No se repitió producción.
-- [x] Preparar un candidato para esa causa: si todas las guardas avanzaron pero
-  no coinciden en una ventana suficiente para Lease y cancelación, la guarda
-  con menor margen obtiene otro barrido dentro del plazo inicial de 30 s. La
-  frescura productiva continúa en 10 s y ningún hijo destructivo existe durante
-  la realineación. La regresión exacta y el foco pasan **50/50**, además de
-  Bash, ShellCheck y `git diff --check`. **No queda aceptado live:** la operación
-  posterior cruzó el stream DB pero falló en `post-audit`; el refuerzo de esa
-  frontera pasó la focal, pero otro intento volvió a fallar la misma clase de
-  alineación en otra guarda.
-- [x] Limpiar de forma supervisada el lock y la Lease retenidos, recapturar y
-  repetir el preflight sin reabrir bloques verdes. Resultado anterior al último
-  intento: Lease libre, lock ausente y preflight PASS.
-- [x] Ejecutar `a31b9c5671049404da5f4d33a61c2b1a`: cruzó el stream DB y
-  se detuvo en `database-stream/post-audit`, sin subdetalle. Rollback seguro.
-- [x] Añadir post-audit explícito, puerta aislada previa a la alineación y
-  diagnóstico de Lease; focal **50/50**, Bash, ShellCheck y diff PASS.
-- [x] Ejecutar `d719176b220c65711c37869184a5c80d`: volvió a fallar antes
-  del stream en `refresh/lease-window:1:3536`. Es la misma clase de fallo en
-  otra guarda; rollback seguro con Lease libre, lock retenido, writers cero y
-  sin consumidor/helper/policy.
-- [x] **STOP anti-loop resuelto localmente:** la capacidad firmada del monitor
-  de escritores ya valida en cada ronda la Lease, el lock y las identidades de
-  esta operación. El supervisor deja de repetir un segundo GET síncrono de
-  Lease cuando esa capacidad exacta está presente; deriva el margen de inicio
-  solo de las capacidades que aún deben ejecutarse y conserva intactos los
-  diez segundos de frescura y los dos segundos de cancelación. La focal pasa
-  **92/92**, incluida una regresión que hace fallar cualquier Lease directo;
-  Bash, ShellCheck y `git diff --check` pasan. No es todavía evidencia live.
-- [x] Recapturar, limpiar el lock exacto y pasar preflight. La operación
-  `51f5f9bb49f0cd473ba60d06caca4ce4` restauró y validó DB, retiró el orphan
-  exacto de `33` pares de `7311bb41b28765341d8993a91375c8f2` y restauró y
-  validó los medios. El coordinador superó por tanto la frontera de guardas.
-  Falló después, en aceptación, porque el verificador hijo perdió
-  `RECOVERY_CHECKPOINT_RUNNER_GENERATION=legacy-absent` al volver a cargar la
-  librería de seguridad. Rollback seguro: writers cero, `pgsql=1`, Lease libre,
-  lock retenido y cero consumidores/helpers/policies.
-- [x] Corregir esa frontera: el verificador conserva el input inmutable antes
-  de cargar la librería y lo restaura después; no conserva capacidades de
-  cleanup o señalización. La regresión estructural y `security-gates` pasan
-  **58/58**, junto con Bash, ShellCheck y `git diff --check`.
-- [x] Recapturar metadata y estado, limpiar el lock exacto y repetir el
-  preflight. La operación nueva fue `22ec832b72ba151b6cbef155ec1e2e94`.
-- [x] Ejecutar esa única recuperación coordinada con el orphan exacto de
-  `51f5f9bb49f0cd473ba60d06caca4ce4`: DB y medios pasaron, los cinco writers
-  reanudaron en orden y Reticulum llegó a `Ready`; la aceptación externa falló
-  después y activó rollback seguro.
-- [x] Diagnosticar sin repetir: la sonda de sitting hacía port-forward al puerto
-  TLS `4000` y lo consultaba como HTTP, mientras Reticulum, el Service y la
-  arquitectura documentada usan HTTP interno `4001`. Corregir verificador y su
-  gate estructural únicamente; Bash, ShellCheck, gate dirigido y diff deben
-  pasar antes de otra acción live.
-- [x] Recapturar el rollback exacto, limpiar solo el lock y pasar el preflight.
-  Resultado: target exacto, vacío y byte-invariante; operación nueva
-  `dbd20994714ea8eb532f12803729269b`.
-- [x] Ejecutar esa recuperación con orphan source `22ec…`: datos y reanudación
-  pasaron; aceptación falló por los tres supuestos legacy descritos arriba y el
-  rollback quedó seguro.
-- [x] Corregir solo esas tres causas y validar el foco: `58/58`, Bash,
-  ShellCheck, diff y `DeploymentList` raw real pasan. No se ejecuta `--full`.
-- [x] Recapturar el rollback, limpiar solo el lock exacto y pasar el mismo
-  preflight una vez; no cambiar bytes de producto, imágenes, datos o topología.
-- [x] Ejecutar `8aa49fb2d35e2d0189dd3931d59b5a5d` con orphan source `dbd…`.
-  DB, medios, reanudación, perfil, imágenes, DNS, TLS, recursos, PostgreSQL,
-  `ret-pvc`, Reticulum histórico y HTTPS pasaron. El runner ghost no activó
-  salas; rollback seguro con escritores cero, Lease libre, mismo Namespace/PVC,
-  cero consumidores/helpers/policies y lock nuevo retenido.
-- [x] Diagnosticar esa única firma: el bot histórico enviaba el header moderno
-  que Reticulum histórico no reconoce y sincronizaba con `401`. Corregir solo
-  la composición legacy y sus contratos; generador **32/32**, security-gates
-  **58/58**, Bash, ShellCheck y diff pasan.
-- [x] Limpiar condicionalmente solo el lock exacto `bca29da4…`, regenerar desde
-  los mismos values con el mismo perfil y revisar/aplicar por el wrapper
-  protegido únicamente el cambio de header. Resultado: 44 recursos y 12
-  Deployments exactos, header histórico live, writers cero durante el cambio;
-  no cambiaron imágenes, credenciales, datos, topología ni coste. El wrapper
-  agotó su bucle de observación, pero el readback server-normalized posterior
-  probó los 12 Deployments exactos; no se repitió el apply.
-- [x] Recapturar el estado posterior y pasar el mismo preflight una vez.
-  Resultado: PASS read-only y bundle byte-invariante.
-- [x] Ejecutar la última recuperación con operación
-  `1dc5d5c9db33165a08a473dc3cf7afae` y orphan source `8aa…`. Resultado: DB,
-  medios, reanudación y verificador live completos con 0 fallos/avisos; lock
-  ausente, Lease libre, writers `5/5`, `pgsql=1`, cero helpers/policies/procesos.
-- [x] La rama de fallo final no se activó: la operación terminó en verde. Se
-  conserva como regla que no existe reintento automático ni segunda hipótesis
-  sin evidencia causal nueva.
+Autorizado y completado: trabajo local reversible, inventario externo, builds
+Hubs/Reticulum, la ventana S4 completa de staging y la ventana productiva S5
+con checkpoint, rollout escalonado y aceptación live. No se recrea staging ni
+se vuelve a desplegar Sitting v2 sin evidencia causal nueva.
 
-**M4: DONE.** DB y medios se validaron conjuntamente, los writers se reactivaron
-en el orden protegido, el lock se liberó y no quedan helper, policy, Lease
-ocupada ni procesos residuales.
+## Plan de producción
 
-### M5. Aceptación comercial e integración
+### S0. Cerrar la transición y fijar ramas
 
-- [x] Ejecutar `./deployment/verify-live-reactivation.sh`: resultado final con
-  cero fallos y cero avisos, conjunto activo coherente y `33/33` pares físicos.
-- [x] En navegador interno con sesión fría comprobar carga sin excepciones
-  first-party, español, login, sala `VJopCY3`, escena y medios. `APP`, `AFRAME`,
-  escena y cinco bots inicializaron correctamente.
-- [x] Probar escritorio y móvil, primera y tercera persona y sitting histórico;
-  comprobar además el catálogo de nueve avatares y sus thumbnails.
-- [x] Completar solo la aceptación humana que no puede inferirse del mismo
-  perfil autenticado. La selección real del avatar neutral `base` pasó y la UI
-  confirmó `Tu avatar ha sido cambiado`. Después la sala mostró `Personas (2)`,
-  el micrófono local pasó por `Hablando`, el propietario confirmó audio en ambos
-  sentidos y se volvió a dejar `Silenciado`. La exclusividad protocol 2
-  pertenece al runtime moderno pendiente y no se falsifica en la imagen
-  restaurada `5a82de5`.
-- [x] Probar Admin y propiedad/edición en Spoke del proyecto `qa3U3Ke` y escena
-  `f6VKtim`.
-- [x] Para el perfil histórico, comprobar `/health`, runner ghost activo, cinco
-  bots presentes y navegación con el navmesh publicado.
-- [x] Enviar un único mensaje inocuo en el chat privado del bot y comprobar su
-  respuesta. `bot-2` respondió `¡Hola! ¿En qué puedo ayudarte hoy?`; la UI
-  mostró que la conversación es privada y temporal y el aviso de procesamiento
-  por OpenAI. No se exige `/transport-ready`, propio del runtime durable.
-- [x] Ejecutar únicamente las secciones invalidadas por los bytes finales, sin
-  `--full`: `recovery` **894/894**, `h5` **174/174**, `hcce`, `composition`,
-  `advisories`, `static`, `security` y `reticulum` tienen PASS. Tras integrar
-  Cloud y renovar solo `static`/`security`, `--finalize` confirmó los dos
-  gitlinks y todos los recibos exactos. El falso positivo `SC2317` del runner
-  sobre el callback de `trap EXIT` se acotó solo en el workflow y solo para esa
-  biblioteca, sin invalidar recovery ni H5.
-- [x] Integrar primero el commit de `hubs-cloud`, después el gitlink y los
-  cambios raíz, siguiendo `docs/development-workflow.md`. Cloud ya está en
-  `master` como `6d9ee9e998f636fcf61a4928cd2a275829768259`; el PR raíz #18
-  permaneció abierto durante la estabilización. El run `33021997403` sobre `63c4509` terminó con
-  PostgreSQL verde y solo los positivos DB `553/554` rojos. La causa local
-  quedó aislada: el supervisor repetía auditorías completas ya acreditadas por
-  tres monitores y el caso positivo durable duplicaba además la espera
-  ``en vuelo`` que ya cubren los casos legacy/negativos. El candidato local
-  conserva una validación completa antes de abrir, observa durante el stream
-  proceso/fallo/autoridad/progreso/caducidad, reserva continuidad y cancelación,
-  y separa la integración durable positiva de la prueba específica en vuelo.
-  El foco positivo exacto pasa **47/47**; la regresión de coordinación pasa
-  **50/50** y la matriz de aborto del monitor PostgreSQL pasa **63/63**.
-  ShellCheck sobre los tres scripts modificados, gitlinks, diff-check y
-  Gitleaks también están verdes. El CI `33048676041` sobre `0b38b0d` conservó
-  esos gates y PostgreSQL verdes, pero reveló siete regresiones del supervisor:
-  una reserva local de 1 s hacía imposible una ventana estricta de 3 s y los
-  diagnósticos ligeros habían cambiado de nombre. La corrección no amplía
-  plazos: la observación local queda dentro de la reserva de cancelación ya
-  existente y reutiliza los diagnósticos públicos anteriores. Los dos focos
-  exactos pasan **92/92** y **53/53**. El commit correctivo `370d078` pasó el
-  único CI final `33073636287`: PostgreSQL 12.19/14.23, gitlinks, Gitleaks,
-  Actionlint, ShellCheck y recovery **894/894**. La PR raíz #18 se fusionó en
-  `main` como `feee36b9f3e226463192737d40848b56ec707d92`; sus gitlinks fijan
-  Hubs `ce8390a8905fa38fa0acdb10d5f94290981477ec` y Cloud
-  `6d9ee9e998f636fcf61a4928cd2a275829768259`. Estado: **DONE**.
-- [x] Actualizar `docs/estado-sencillo.md` y `docs/session-changelog.md` después
-  del merge real y declarar H5 cerrado. Estado: **DONE**; el siguiente trabajo
-  es features.
+- [x] Elegir Sitting v2 y descartar GLB neutral de esta cola.
+  - Estado: **DONE**.
+  - Evidencia: elección `1` del propietario.
+- [x] Abrir ramas `codex/sitting-v2` en root, Hubs y Cloud desde los cortes
+  exactos aceptados.
+  - Estado: **DONE**.
+  - Evidencia: las ramas quedaron fijadas inicialmente en Hubs `ce8390a` y
+    Cloud `6d9ee9e`; S4 avanzó Hubs a `b2697e7` por un defecto exclusivo del
+    Dockerfile de release.
 
-## Reglas anti-loop y parada
+### S1. Confirmar el gap real
 
-1. Un PASS se reutiliza mientras sus bytes, toolchain y dependencias no cambien.
-2. Un FAIL solo puede repetirse después de identificar una causa nueva y cambiar
-   exactamente la superficie responsable.
-3. No se crea otro checkpoint, otra copia cifrada, otra topología ni otra
-   arquitectura de recovery para cerrar H5.
-4. No se despliega la imagen durable nueva dentro del restore histórico.
-5. No se abren ni imprimen values, manifiestos generados, Secret bodies,
-   anotaciones o tokens del lock.
-6. Solo se para ante divergencia del target, estado/Lease/lock ambiguo,
-   exposición de secreto, pérdida del estado fail-closed, coste/topología no
-   previsto o un fallo grave que requiera investigación superior.
-7. El cierre lo demuestran el restore, el verificador live, el navegador y la
-   integración; no la cantidad de tests ejecutados.
+- [x] Contrastar source, historial y runtime aceptado.
+  - Estado: **DONE**.
+  - Evidencia: el código y los tests v2 son ancestros del source actual; las
+    imágenes live proceden de commits anteriores.
+- [x] Limitar la release a Hubs + Reticulum.
+  - Estado: **DONE**.
+  - Consecuencia: no se construyen ni despliegan imágenes no relacionadas.
 
-## Confianza operativa
+### S2. Refrescar evidencia local sobre los bytes exactos
 
-**Alta y cerrada para H5.** La operación final demostró DB,
-medios, reanudación, infraestructura, HTTPS y ghost runner con cero
-fallos/avisos y cierre limpio; la batería final pasó 894/894. Ya no queda otro
-restore. La aceptación humana completa está demostrada: avatar neutral, chat
-privado y dos participantes con audio bidireccional. Cloud y los dos gitlinks
-están integrados; el CI final y el merge raíz son verdes y verificables. **H5
-está funcional y técnicamente cerrado; la siguiente cola corresponde a
-features.**
+- [x] Ejecutar la unidad contractual y enumeración Playwright de Sitting sin
+  contactar una URL remota.
+  - Estado: **DONE**.
+  - Verificación: `npm ci`, `npm run test:unit` y
+    `npm run test:sitting -- --list` en `tests/browser`.
+  - Evidencia: unidad browser **11/11** y exactamente un E2E Sitting enumerado;
+    no se abrió ni contactó una URL remota.
+- [x] Ejecutar Hubs focal: TypeScript, lint de la superficie afectada y las
+  pruebas AVA de reserva, identidad, intentos y diagnóstico de waypoints.
+  - Estado: **DONE**.
+  - Evidencia: TypeScript y lint dirigido correctos; AVA Sitting **48/48**
+    sobre `ce8390a`. El aviso de datos Browserslist antiguos no es first-party
+    ni alteró el resultado. No se atribuye un build todavía.
+- [x] Ejecutar Reticulum focal: dependencias locked, format/compile estricto y
+  las dos suites de reserva/modelo y canal contra PostgreSQL local.
+  - Estado: **DONE**.
+  - Evidencia: dependencias locked, format y compilación estricta correctos;
+    las dos suites pasan **20/20** contra PostgreSQL local sobre `6d9ee9e`.
+    Los warnings emitidos al compilar dependencias legacy no pertenecen al
+    código first-party y la compilación estricta terminó con código cero.
+- [x] Ejecutar composición/diff-check y registrar la evidencia exacta.
+  - Estado: **DONE**.
+  - Evidencia: **2/2** gitlinks verificados, `git diff --check` correcto en
+    root/Hubs/Cloud, los tres árboles limpios y ningún proceso de prueba
+    residual.
+  - Nota: no se repite `--full`; no cambiaron bytes de producto y el gate final
+    sectioned solo será necesario si una corrección invalida su cierre.
+
+### S3. Resolver solo defectos demostrados
+
+- [x] Si todos los focos pasan, declarar que no hace falta implementación nueva
+  de producto y congelar los dos commits fuente.
+  - Estado: **DONE**.
+  - Evidencia final: Hubs `b2697e7e6f571d195346cc156f0f1631eedc841a` y Cloud
+    `6d9ee9e998f636fcf61a4928cd2a275829768259` quedan congelados como fuentes
+    candidatas; no se modificó código de producto. El hook de Hubs pasó
+    **100/100** al corregir únicamente el orden de copia del script postinstall.
+- [ ] Si falla un foco, corregir únicamente su causa en el subrepo dueño,
+  repetir el verificador más cercano y actualizar el gitlink raíz.
+  - Estado: **SKIPPED — ningún foco demostró un defecto**.
+  - Regla: dos fallos equivalentes sin nueva evidencia producen STOP y
+    replanteamiento, no otro intento ciego.
+
+### S4. Construir y aceptar en staging
+
+- [x] Auditar localmente la ruta de build y la disponibilidad de staging sin
+  contactar servicios externos.
+  - Estado: **DONE**.
+  - Evidencia de build: los cortes contienen los workflows aprobados
+    `hubs/.github/workflows/custom-docker-build-push.yml` y
+    `hubs-cloud/.github/workflows/custom-docker-build-push.yml`. El primero
+    construye Hubs con `RetPageOriginDockerfile`; el segundo debe recibir
+    exactamente `Override_Repo_Name=reticulum`,
+    `Override_Code_Path=community-edition/services/reticulum` y
+    `Override_Dockerfile=community-edition/services/reticulum/Dockerfile`.
+  - Evidencia de procedencia: los remote-tracking refs locales
+    `origin/master` apuntan a `ce8390a` y `6d9ee9e`; se volverán a contrastar
+    con GitHub antes de cualquier dispatch, porque esta comprobación no contactó
+    el remoto.
+  - Evidencia de target: no existe un contexto, dominio, values file ni sala
+    staging trackeados. La plantilla permite cambiar `Namespace` y
+    `HUB_DOMAIN`, pero eso no prueba aislamiento, capacidad, DNS, TLS, storage
+    ni credenciales. El único target documentado es la instalación productiva
+    y no se reutiliza como fixture.
+- [x] Inventariar GitHub, DigitalOcean, Kubernetes y DNS público en read-only y
+  elegir un único target.
+  - Estado: **DONE**.
+  - GitHub: `master` remoto sigue exactamente en Hubs `ce8390a` y Cloud
+    `6d9ee9e`, ambos commits verificados; los dos workflows están activos, no
+    existe build Sitting v2 y los repos públicos usan runners estándar sin
+    coste de minutos.
+  - DigitalOcean: una sola instalación productiva `hubs-ce` en `ams3`, DOKS
+    `1.34.10-do.1`, HA desactivada, un nodo `s-4vcpu-8gb`, un `lb-small` y dos
+    volúmenes de `10 GiB`. El preview de agosto es USD `64.85` por dos mitades
+    de topología tras la recreación; el coste estable actual equivale a unos
+    USD `65.03/mes`.
+  - Kubernetes: ningún namespace/host staging; `12/12` Deployments productivos.
+    El nodo tiene `3890m` CPU y unos `6414 MiB` asignables; los requests activos
+    consumen `1297m/4002 MiB`. Quedan unos `2412 MiB`, menos que los `3200 MiB`
+    de otra HCCE. Además, el manifiesto exige el namespace global fijo
+    `hcce-bot-runners`, que colisionaría dentro del mismo clúster.
+  - DNS: `staging.meta-hubs.org` y sus hosts `assets`, `stream` y `cors` no
+    resuelven; los cuatro hosts productivos sí.
+- [x] Seleccionar un staging aislado y acotar coste/TTL.
+  - Estado: **DONE — propuesta revisada independientemente**.
+  - Target: clúster temporal separado `yenhubs-sitting-staging`, región `ams3`,
+    DOKS `1.34.10-do.2` —único parche `1.34.10` hoy disponible para alta—, HA
+    desactivada, un nodo `s-4vcpu-8gb`, un `lb-small`, dos volúmenes de
+    `10 GiB`, Namespace `hcce` y dominio `staging.meta-hubs.org`.
+  - Coste observado: nodo USD `0.07143/h`, LB USD `0.02233/h` y volúmenes USD
+    `0.00300/h`; total USD `0.09677/h`, unos USD `0.77/8 h`, `1.16/12 h` o
+    `2.32/24 h`. Cost gate: máximo USD `2.35`, desmontaje iniciado antes de
+    `23 h 30 min` desde el primer recurso facturable.
+  - Decisión: añadir nodo/LB/PVC al clúster productivo cuesta prácticamente lo
+    mismo, conserva colisiones globales y aumenta el radio de daño; compartir
+    ingress ahorraría solo unos USD `0.54/24 h`. K3s/local no prueba el rollout
+    DOKS/TLS. El control plane DOKS no-HA separado no añade coste.
+- [x] Autorizar en una sola ventana la creación, uso y desmontaje exactos de S4.
+  - Estado: **DONE — autorizado el 29 de agosto de 2026**.
+  - Autoridad necesaria: dos Actions, acceso a credenciales staging, cuatro
+    registros DNS staging, clúster/Namespace/LB/PVC, contenido Spoke
+    desechable y eliminación con readback. Producción queda fuera de alcance.
+- [x] Construir Hubs y Reticulum por los workflows aprobados y resolver ambos
+  artefactos a digests con procedencia del commit exacto.
+  - Estado: **DONE**.
+  - Reticulum: run `33244980400`, intento 1, commit `6d9ee9e`, digest
+    `ghcr.io/yengalvez/reticulum@sha256:256c292d0d5a69e021322bdbd11b3f318f2d44bee580433252e0b04ade1d5e18`.
+  - Hubs: el run `33244979643` falló porque `npm ci` ejecutaba el postinstall
+    antes de copiar `scripts/patch-draft-js-immutable-4.js`. Se corrigió solo
+    ese orden en `b2697e7`; el run `33245207737`, intento 1 sobre esos bytes,
+    quedó verde y publicó
+    `ghcr.io/yengalvez/hubs@sha256:e8f9423ace1bf4108ae5a7ce59c1b45cf0b44b74ea944fdb82fee47e4d7be5b0`.
+  - Reticulum no se repitió y no se creó DigitalOcean durante los builds.
+- [x] Completar el preflight de staging antes del primer recurso facturable.
+  - Estado: **DONE**.
+  - Debe probar sin mostrar secretos: autoridad IONOS para los cuatro hosts,
+    administrador/SMTP, values `0600` con claves staging independientes,
+    acceso pull GHCR y ambos digests. Si algo falta, STOP sin crear DOKS.
+  - Evidencia: DOKS `1.34.10-do.2` continúa disponible; NS/SOA confirman IONOS
+    y los cuatro hosts siguen libres bajo la autoridad ya concedida; se
+    heredaron solo admin/SMTP desde la fuente privada operativa y se generaron
+    claves internas staging independientes. Los dos values son `0600`, cambian
+    únicamente Hubs entre generaciones, el pull real de ambos digests GHCR
+    pasó y los dos manifiestos privados verifican **68 recursos**.
+  - DOKS creará además sus dos firewalls gestionados gratuitos; forman parte
+    intrínseca del clúster y se incluyen en el readback final.
+- [x] Crear el target exacto inicial, DNS/TLS y una sala staging desechable sin
+  tocar la escena principal.
+  - Estado: **DONE para la primera ejecución; su evidencia se conserva y sus
+    recursos fueron desmontados con readback cero**.
+  - Evidencia: el clúster inicial `17057b94-a707-46ab-8994-7ae31158b998`, nodo,
+    LB `165.245.201.90`, dos PVC/volúmenes y dos firewalls ya no existen. Sus
+    cuatro A records permanecen temporalmente para ser actualizados al nuevo
+    LB. La sala `hg3jQAx` probó el join legacy antes del desmontaje; desapareció
+    con la DB desechable y deberá crearse otra sala staging.
+  - Nota: al ser greenfield y desechable no contiene datos de cliente y no
+    requiere checkpoint; S5 sí exige checkpoint real antes de producción.
+- [x] Desplegar staging en dos generaciones: Reticulum/migración conservando
+  Hubs anterior, verificar compatibilidad legacy, y después Hubs v2.
+  - Estado: **DONE**.
+  - Evidencia: Reticulum v2 convivió primero con Hubs legacy; después el apply
+    protegido promovió Hubs v2 por el digest candidato y el reinicio de
+    Reticulum terminó con **12/12 Deployments Ready**. No se construyó ni
+    modernizó ninguna imagen bot.
+  - Contenido: Spoke importó el proyecto recuperado como `FoRSj5D`, publicó la
+    escena `uW635n9` y la sala final desechable fue `3E2enaA`. Solo `Seat
+    recovery 1` quedó ocupable/clickable con identidad publicada; el segundo
+    waypoint se corrigió antes de la aceptación al demostrar que era otra silla
+    distinta, no una doble concesión.
+  - Correo y join: el remitente staging usó el dominio ya verificado
+    `noreply@meta-hubs.org`; Mailtrap confirmó **Delivered**, la cuenta real
+    abrió el enlace y el join legacy previo ya había demostrado compatibilidad.
+- [x] Ejecutar `tests/browser/sitting-occupancy.spec.mjs` con dos contextos y
+  revisar manualmente `remote-seated-pose.png`.
+  - Estado: **DONE funcional; revisión estética de la captura inconclusa**.
+  - Evidencia: unidad browser **12/12** y E2E remoto final **1/1** en `47.1 s`.
+    Dos contextos aislados demostraron una concesión, cero solapes, una única
+    reserva privada, pose/posición remota coherente, Stand, relevo y limpieza al
+    cerrar. El diagnóstico final quedó vacío después de excluir únicamente las
+    firmas exactas cubiertas por unidad.
+  - Límite explícito: `remote-seated-pose.png` fue generada y revisada, pero la
+    geometría/cámara ocultó al avatar remoto. No contradice los estados y
+    posiciones medidos, pero tampoco certifica visualmente intersecciones; S5
+    debe inspeccionar la pose en su navegador frío antes del cierre comercial.
+- [x] Conservar la evidencia no secreta y desmontar todo el staging con readback.
+  - Estado: **DONE para todo recurso facturable; cleanup DNS sin coste pendiente**.
+  - Readback exacto: ya no existen clúster
+    `cbff6246-9be0-498d-9938-c73534cf4b79`, nodo `596177917`, LB
+    `5fa4fbf7-0892-4680-9c87-59ad3f423d43`, volúmenes
+    `2c7d2e05-a3d1-11f1-8219-5a97d562e708` y
+    `2ba5fda3-a3d1-11f1-8219-5a97d562e708`, ni sus dos firewalls gestionados.
+    Solo permanece el clúster productivo original con su LB y dos volúmenes.
+  - Residuo no facturable: IONOS aún publica los cuatro A staging hacia la IP ya
+    retirada `178.128.139.203`. El navegador interno perdió la sesión y Google
+    Password Manager exige verificación física; no se eludió. La próxima sesión
+    autenticada debe borrar solo los records `1493595267`, `1493595622`,
+    `1493595798` y `1493595951` y leer su ausencia. No bloquea el cierre del
+    gasto ni autoriza S5.
+
+### S5. Promover los mismos digests a producción
+
+- [x] Autorizar la ventana productiva exacta y crear checkpoint DB+medios.
+  - Estado: **DONE**.
+  - Evidencia: checkpoint atómico
+    `/Users/yengalvez/.yenhubs-private/sitting-v2-production-20260830/checkpoint-pre-sitting-v2-20260830`;
+    `SHA256SUMS` verifica DB, medios y evidencias. Conserva 356 relaciones, 94
+    migraciones, 18 hubs y 33 ficheros activos con sus 33 pares de storage.
+- [x] Revisar el `kubectl diff` generado y aplicar Reticulum primero, Hubs
+  después, sin cambios no relacionados.
+  - Estado: **DONE**.
+  - Evidencia: ambos manifiestos privados pasaron el verificador generado con
+    44 recursos; el diff redacted limitó la primera generación a Reticulum y
+    configuración compatible, y la segunda añadió solo Hubs. El driver
+    guardado terminó con **12/12 Deployments Ready** en ambas fases.
+- [x] Reiniciar Reticulum tras Hubs, ejecutar navegador frío desktop/mobile y
+  `./deployment/verify-live-reactivation.sh` con cero fallos y cero avisos.
+  - Estado: **DONE**.
+  - Evidencia: Reticulum se reinició tras Hubs; el verificador live terminó
+    **0 fallos / 0 avisos**. En navegador interno frío, desktop y viewport
+    móvil cargaron la sala. En desktop, el asiento publicado quedó
+    `occupied:true`, `player-info.isSitting:true`, la UI cambió a
+    **Levantarse** y la tercera persona mostró el avatar sentado. No hubo
+    errores de Sitting; se conserva el warning legacy `background` ya
+    clasificado y un error de un medio roto de la escena que solo apareció al
+    apuntar deliberadamente a ese objeto y no pertenece a esta feature.
+- [x] Cerrar la feature con evidencia, commits/digests, rollback y estado humano.
+  - Estado: **DONE**. La documentación y los punteros se integran en el cierre
+    final sin repetir `--full`, recuperación ni E2E.
+
+## Rollback
+
+1. Ante un fallo cliente/UX, volver primero Hubs al digest anterior.
+2. Mantener Reticulum v2 y su tabla: acepta clientes legacy y evita una
+   migración destructiva.
+3. Si el fallo es exclusivamente Reticulum y Hubs v2 aún no se desplegó,
+   conservar Hubs anterior y volver al digest Reticulum previo solo tras probar
+   que no existen leases activos.
+4. No borrar la tabla ni sus datos como rollback normal.
+5. Conservar checkpoint y digests anteriores hasta cerrar aceptación.
+
+## Estado de trabajo
+
+- Completado: S0-S5, incluidos builds, staging, carrera real, desmontaje,
+  checkpoint productivo, diff, rollout Reticulum/Hubs, restart, verificador
+  live y aceptación fría desktop/móvil con comprobación de reserva y pose.
+- Activo: integrar en la raíz estos dos commits `master` y la documentación de
+  cierre. No se repite ninguna prueba verde ni se vuelve a desplegar.
+- Ready: Hubs y Cloud ya están integrados; Sitting v2 está funcional en
+  producción y la raíz queda lista para fijar los punteros exactos.
+- Waiting: nada de producto ni producción.
+- Residuo: borrar cuatro A records staging sin coste cuando IONOS esté
+  autenticado y leer su ausencia; no requiere clúster ni impide que el gasto
+  temporal sea cero.
+- Efectos externos realizados: rama Hubs `codex/sitting-v2` publicada, tres
+  runs totales —un fallo causal, Reticulum verde y Hubs corregido verde—,
+  staging temporal ya eliminado y rollout productivo de los mismos dos digests.
+  No cambió la topología productiva ni se creó gasto recurrente adicional.
+
+## Reglas anti-loop
+
+1. La implementación existente se conserva; no se crea “Sitting v3”.
+2. Un PASS previo no se repite salvo que cambien sus inputs u oráculo.
+3. Los focos actuales prueban source; solo staging prueba la carrera real.
+4. No se usa producción como fixture ni se presenta sitting histórico como v2.
+5. El target staging ya está fijado; no se reabre la comparación salvo que
+   cambien precio, disponibilidad o topología.
+6. Hubs y Reticulum son las únicas imágenes de esta release. No se construyen
+   parent/runner para hacer pasar staging.
+7. Un fallo local no autoriza push, build, deploy ni cambios de topología.
+8. Si un build falla, no se crea DOKS. Si staging alcanza fallo terminal, se
+   conserva diagnóstico y se desmontan solo sus recursos exactos para cortar
+   coste; no se usa producción como alternativa.
+9. La ruta durable no vuelve a ejecutarse con imágenes bot legacy. El perfil
+   legacy activo ya pasó sus focos y su gate live; no se reabre esa transición
+   salvo evidencia nueva.
+
+## Artefactos clave
+
+- Contrato humano: `features/sitting/README.md`.
+- Implementación: `features/sitting/IMPLEMENTATION.md`.
+- Aceptación: `features/sitting/TESTING.md`.
+- E2E: `tests/browser/sitting-occupancy.spec.mjs`.
+- Hubs: `hubs/src/utils/waypoint-reservation-coordinator.js` y sistemas/UI de
+  waypoint.
+- Reticulum: `hubs-cloud/community-edition/services/reticulum/lib/ret/waypoint_reservation.ex`
+  y `hub_channel.ex`.
+- Rollout: `deployment/README.md`.
+- Estado humano: `docs/estado-sencillo.md`.
+- Historial: `docs/session-changelog.md`.
+
+## Punto de menor confianza
+
+No queda una duda material sobre Sitting v2: la exclusión multiusuario pasó en
+staging, los mismos digests están en producción, el verificador live quedó en
+cero y la sesión fría confirmó reserva, estado sentado, UI y pose visible. El
+único residuo es borrar cuatro A records de staging hacia una IP ya retirada;
+no sirve tráfico, no cuesta dinero y no afecta a producción. Decisión:
+**cerrar Sitting v2 y pasar a la siguiente feature**.

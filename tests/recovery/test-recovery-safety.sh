@@ -990,9 +990,10 @@ YAML
     env VALUES_FILE="$GREENFIELD_VALUES" \
     "$ROOT_DIR/deployment/preflight-greenfield.sh" \
     "$GREENFIELD_BUNDLE" "$GREENFIELD_RECEIPT"
-  if [[ "$LAST_OUTPUT" == *'PASS offline'* &&
+  if [[ "$LAST_OUTPUT" == *'PASS  Root y submodulos son checkouts limpios'* &&
+        "$LAST_OUTPUT" == *'PASS offline'* &&
         "$LAST_OUTPUT" == *'no autoriza crear recursos'* ]]; then
-    pass 'greenfield preflight remains offline and preserves the cost gate'
+    pass 'greenfield preflight requires clean provenance and preserves the offline cost gate'
   else
     fail 'greenfield preflight result is explicit' "$LAST_OUTPUT"
   fi
@@ -1014,6 +1015,49 @@ YAML
     "$ROOT_DIR/deployment/preflight-greenfield.sh" \
     "$GREENFIELD_BUNDLE" "$GREENFIELD_RECEIPT"
   recovery_finish_focus 'Focused greenfield preflight'
+fi
+
+if recovery_focus_selected git-provenance; then
+  PROVENANCE_ROOT="$TMP_DIR/provenance-root"
+  mkdir -p "$PROVENANCE_ROOT/hubs" "$PROVENANCE_ROOT/hubs-cloud"
+  for repository in "$PROVENANCE_ROOT" "$PROVENANCE_ROOT/hubs" \
+    "$PROVENANCE_ROOT/hubs-cloud"; do
+    git -C "$repository" init -q
+    git -C "$repository" config user.email fixture@example.invalid
+    git -C "$repository" config user.name 'YenHubs Fixture'
+  done
+  printf 'hubs/\nhubs-cloud/\n' >"$PROVENANCE_ROOT/.gitignore"
+  git -C "$PROVENANCE_ROOT" add .gitignore
+  git -C "$PROVENANCE_ROOT" commit -qm root
+  for repository in "$PROVENANCE_ROOT/hubs" "$PROVENANCE_ROOT/hubs-cloud"; do
+    printf 'clean\n' >"$repository/fixture.txt"
+    git -C "$repository" add fixture.txt
+    git -C "$repository" commit -qm fixture
+  done
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_success 'git provenance accepts clean root and subrepositories' bash -c '
+    set -euo pipefail
+    source "$1"
+    yenhubs_require_clean_source_tree "$2"
+  ' _ "$ROOT_DIR/deployment/lib/git-provenance.sh" "$PROVENANCE_ROOT"
+  printf 'dirty\n' >>"$PROVENANCE_ROOT/hubs/fixture.txt"
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_failure 'git provenance rejects modified tracked submodule bytes' \
+    'not a clean direct checkout: hubs' bash -c '
+      set -euo pipefail
+      source "$1"
+      yenhubs_require_clean_source_tree "$2"
+    ' _ "$ROOT_DIR/deployment/lib/git-provenance.sh" "$PROVENANCE_ROOT"
+  git -C "$PROVENANCE_ROOT/hubs" restore fixture.txt
+  printf 'untracked\n' >"$PROVENANCE_ROOT/hubs-cloud/local-only.txt"
+  # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
+  expect_failure 'git provenance rejects untracked submodule bytes' \
+    'not a clean direct checkout: hubs-cloud' bash -c '
+      set -euo pipefail
+      source "$1"
+      yenhubs_require_clean_source_tree "$2"
+    ' _ "$ROOT_DIR/deployment/lib/git-provenance.sh" "$PROVENANCE_ROOT"
+  recovery_finish_focus 'Focused git provenance'
 fi
 
 SIZE_FIXTURE="$TMP_DIR/file-size-fixture"
@@ -3054,7 +3098,13 @@ if [[ "$joined" == "get namespace hcce -o json" ]]; then
         ;;
     esac
   else
-    cat "$RUNNER_EVIDENCE_LIVE_DIR/namespace-hcce.json"
+    if [[ -n "${STUB_NAMESPACE_TARGET_PROFILE:-}" ]]; then
+      jq --arg profile "$STUB_NAMESPACE_TARGET_PROFILE" '
+        .metadata.annotations["yenhubs.org/target-profile"] = $profile
+      ' "$RUNNER_EVIDENCE_LIVE_DIR/namespace-hcce.json"
+    else
+      cat "$RUNNER_EVIDENCE_LIVE_DIR/namespace-hcce.json"
+    fi
   fi
   exit 0
 fi
@@ -16073,6 +16123,12 @@ if recovery_focus_selected cold-rebind-execute; then
       STUB_LIVE_REACTIVATION_MANIFEST_FILE="$RUNNER_CONTROL_PLANE_MANIFEST_FIXTURE" \
       RECOVERY_STREAM_POLL_SECONDS=0.01 \
       "$ROOT_DIR/deployment/restore-checkpoint.sh" "$FREEZE_BUNDLE"
+  if [[ "$LAST_OUTPUT" == *'YENHUBS_TIMING operation=restore'* &&
+        "$LAST_OUTPUT" == *'result=success'* ]]; then
+    pass 'cold rebind emits terminal restore timing evidence'
+  else
+    fail 'cold rebind restore timing evidence' "$LAST_OUTPUT"
+  fi
   if checkpoint_all_writers_at 1 && checkpoint_all_writer_rollouts_observed &&
      checkpoint_resume_receipts_absent &&
      [[ ! -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
@@ -16986,6 +17042,15 @@ fi
 if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-process-local ]]; then
   process_local_capture="$TMP_DIR/process-local-focus-capture"
   process_local_checkpoint="$TMP_DIR/process-local-focus-checkpoint"
+  cold_rebind_checkpoint="$TMP_DIR/process-local-focus-cold-rebind-checkpoint"
+  cold_rebind_deployments="$TMP_DIR/process-local-focus-cold-rebind.json"
+  cold_rebind_ret_config="$TMP_DIR/process-local-focus-cold-rebind-ret-config.json"
+  jq '(.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.imagePullSecrets) = [{name:"bot-images-pull"}]' \
+    "$LEGACY_DEPLOYMENTS_JSON" >"$cold_rebind_deployments"
+  jq '.data["config.toml.template"] +=
+    "\n[ret.\"Elixir.Ret.BotOrchestrator\"]\nendpoint = \"http://bot-orchestrator.<POD_NS>:5001\"\naccess_key = \"<BOT_ACCESS_KEY>\"\n"' \
+    "$LEGACY_RET_CONFIG_JSON" >"$cold_rebind_ret_config"
   reset_stub
   expect_success 'focused process-local inventory capture accepts the exact legacy boundary' \
     env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
@@ -17164,6 +17229,37 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-process-local ]]; then
     STUB_DEPLOYMENTS_JSON="$LEGACY_DEPLOYMENTS_JSON" \
     RECOVERY_STREAM_POLL_SECONDS=0.01 \
     "$ROOT_DIR/deployment/create-checkpoint.sh" "$process_local_checkpoint"
+  if [[ "$LAST_OUTPUT" == *'YENHUBS_TIMING operation=checkpoint'* &&
+        "$LAST_OUTPUT" == *'result=success'* ]]; then
+    pass 'focused process-local checkpoint emits terminal timing evidence'
+  else
+    fail 'focused process-local checkpoint timing evidence' "$LAST_OUTPUT"
+  fi
+  reset_stub
+  expect_success 'focused cold-rebind process-local checkpoint accepts only its exact pull binding' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_NAMESPACE_TARGET_PROFILE=cold-rebind-legacy-absent-v1 \
+    STUB_DEPLOYMENTS_JSON="$cold_rebind_deployments" \
+    STUB_RET_CONFIG_JSON="$cold_rebind_ret_config" \
+    RECOVERY_STREAM_POLL_SECONDS=0.01 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" "$cold_rebind_checkpoint"
+  wrong_cold_rebind_deployments="$TMP_DIR/process-local-focus-cold-rebind-wrong-pull.json"
+  jq '(.items[] | select(.metadata.name == "bot-orchestrator") |
+    .spec.template.spec.imagePullSecrets) = [{name:"foreign-pull"}]' \
+    "$cold_rebind_deployments" >"$wrong_cold_rebind_deployments"
+  reset_stub
+  expect_failure 'focused cold-rebind process-local checkpoint rejects a foreign pull binding' \
+    'Checkpoint runner mode changed while writers were fenced' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
+    STUB_NAMESPACE_TARGET_PROFILE=cold-rebind-legacy-absent-v1 \
+    STUB_DEPLOYMENTS_JSON="$wrong_cold_rebind_deployments" \
+    STUB_RET_CONFIG_JSON="$cold_rebind_ret_config" \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" \
+    "$TMP_DIR/process-local-focus-cold-rebind-wrong-pull"
   reset_stub
   expect_failure 'focused mixed PostgreSQL identity blocks checkpoint before downtime' \
     'historical AUD-065 contract' \
@@ -17174,6 +17270,24 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-process-local ]]; then
     RECOVERY_STREAM_POLL_SECONDS=0.01 \
     "$ROOT_DIR/deployment/create-checkpoint.sh" \
     "$TMP_DIR/process-local-focus-checkpoint-mixed-pgsql"
+  checkpoint_failure_timing_lines="$(
+    printf '%s\n' "$LAST_OUTPUT" |
+      grep '^YENHUBS_TIMING operation=checkpoint ' || :
+  )"
+  checkpoint_failure_last_timing="$(
+    printf '%s\n' "$checkpoint_failure_timing_lines" | tail -n 1
+  )"
+  checkpoint_failure_terminal_count="$(
+    printf '%s\n' "$checkpoint_failure_timing_lines" |
+      grep -Ec ' result=(success|failure|interrupted)$' || :
+  )"
+  if [[ "$checkpoint_failure_last_timing" == *' result=failure' &&
+        "$checkpoint_failure_terminal_count" == 1 ]]; then
+    pass 'focused failed checkpoint emits one unambiguous terminal timing result'
+  else
+    fail 'focused failed checkpoint terminal timing result' \
+      "$checkpoint_failure_timing_lines"
+  fi
   if any_deployment_replica_mutation; then
     fail 'focused mixed PostgreSQL identity performs zero writer replica mutations' \
       "$(cat "$KUBECTL_LOG")"

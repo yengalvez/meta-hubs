@@ -146,18 +146,22 @@ target de cluster/Namespace/PVC y un operation ID nuevo.
 
 ### Freeze
 
-1. Verificar el baseline y adquirir una exclusion minima de operacion.
+1. Verificar un checkout limpio, activar la barrera de mantenimiento y registrar
+   el corte de cliente.
 2. Detener los cinco consumidores en orden seguro y confirmar quiescencia.
 3. Capturar DB y `ret-pvc` del mismo instante logico.
 4. Generar inventarios redactados y validar contenido, hashes y pares fisicos.
-5. Publicar atomicamente el bundle completo.
+5. Publicar atomicamente el bundle completo. El driver puede reanudar sus writers,
+   pero la barrera externa sigue cerrada y no cambia el instante recuperable.
 6. Crear dos copias cifradas independientes y comparar el recibo externo.
-7. Solo entonces reanudar o, en una hibernacion aprobada, pasar al inventario de
-   recursos que se propone retirar.
+7. En mantenimiento normal, retirar la barrera. En una hibernacion aprobada,
+   mantenerla y pasar al inventario y retirada exacta de recursos facturables.
 
 Un fallo posterior a publicar no puede invalidar ni descartar una copia ya
 coherente. Una respuesta ambigua detiene la automatizacion con un diagnostico
 corto; no activa reentradas, receipts o un coordinador distribuido nuevo.
+Una escritura de cliente o administrador aceptada despues del corte invalida el
+bundle como cierre definitivo y obliga a capturar otro antes de destruir.
 
 ### Reactivacion
 

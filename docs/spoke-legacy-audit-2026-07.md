@@ -8,13 +8,12 @@ no es una actualización masiva: es recuperar un gate de pruebas fiable, reducir
 riesgos en incrementos pequeños y preservar sin regresiones los contratos de
 autoría y publicación que usa YenHubs.
 
-> **Addendum activo — 18 de julio de 2026:** la corrección del gate ya forma
-> parte de Cloud `master` final
-> `5392495b077249edcedfb3092551201645f648f1`, después de las promociones Cloud
-> completadas. El worktree raíz candidato fija ese commit, pero su PR/CI hacia
-> root `main` sigue pendiente. Esta integración de fuente y sus 68/68 pruebas,
-> lint y build no atribuyen una nueva imagen de Spoke, despliegue ni aceptación
-> funcional del candidato en staging/live.
+> **Addendum de estado — 28 de agosto de 2026:** la corrección del gate
+> `b7b752f` es ancestro de Cloud `master=6d9ee9e998f6`, y root
+> `origin/main=481110178380` fija ese Cloud junto a Hubs `ce8390a8905f`. Su
+> integración Git está cerrada; no queda PR, merge ni gitlink de este gate por
+> repetir. Las 68/68 pruebas, lint y build de fuente no atribuyen una nueva
+> imagen de Spoke, despliegue ni aceptación funcional en staging/live.
 
 A fecha de esta auditoría:
 
@@ -22,8 +21,8 @@ A fecha de esta auditoría:
   el handoff (`sha256:f5120264938e189e702f835182ed4a28a5ce20b140d7262bc2a3074e6d0b6657`);
 - el cambio original `0edd75b` (`Fix Spoke unit test discovery`) se integró como
   `b7b752f` dentro de la línea que culmina en Cloud `master`
-  `5392495b077249edcedfb3092551201645f648f1`; los PR de promoción de Cloud ya
-  están fusionados, mientras el puntero raíz final sigue pendiente de PR;
+  `6d9ee9e998f636fcf61a4928cd2a275829768259`; las promociones Cloud y el
+  puntero raíz ya están fusionados;
 - el cambio modifica una sola línea de `package.json`: entrega el glob entre
   comillas a AVA para que AVA, y no el shell local, descubra la suite;
 - con Node `16.13.2` y Yarn `1.22.22`, el comando corregido ejecutó localmente
@@ -56,8 +55,8 @@ La revisión cubrió, sin mutar producción:
 - la documentación de despliegue, handoff y auditoría vigente.
 
 La reproducción 68/68 ya cuenta con evidencia local integrada y CI durable en
-las ramas base Cloud. No sustituye el PR del gitlink raíz, una imagen candidata
-ni la aceptación funcional de Spoke en staging/live.
+las ramas base Cloud, y el gitlink raíz está cerrado. No sustituye una imagen
+candidata ni la aceptación funcional de Spoke en staging/live.
 
 No se ejecutó una actualización de dependencias, construcción de imagen,
 rollout ni operación de escritura sobre un proyecto Spoke real.
@@ -217,9 +216,8 @@ sin referencias de salas. Un proyecto o escena de producción no es un fixture.
    modernizacion de dependencias.
 2. `Completado en candidato y CI`: ejecutar lint, 68 pruebas unitarias y build
    con Node `16.13.2`/Yarn `1.22.22`.
-3. `Pendiente`: fusionar Cloud `#1` en `development`, abrir y fusionar
-   `development -> master` y solo despues integrar definitivamente el puntero
-   del repositorio raiz.
+3. `Completado en fuente`: las promociones Cloud y el puntero del repositorio
+   raíz contienen `b7b752f`; no repetir esta integración.
 
 Este cambio no necesita una imagen nueva por sí mismo: no altera el bundle. Si
 se decide construirla, sigue aplicando el workflow estándar y todos los gates.

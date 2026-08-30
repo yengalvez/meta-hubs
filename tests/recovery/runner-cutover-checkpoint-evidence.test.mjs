@@ -1218,6 +1218,39 @@ test("schema-4 inventory validation requires the complete mode-specific deployme
   const legacy = legacyInventory();
   assert.equal(validateDeploymentInventory(legacy, legacyEvidence), legacy);
 
+  const historicalRepositories = structuredClone(legacy);
+  historicalRepositories.deployments.find(item => item.name === "pgsql")
+    .containers[0].image =
+      `docker.io/mozillareality/postgres@sha256:${"a".repeat(64)}`;
+  historicalRepositories.deployments.find(item => item.name === "reticulum")
+    .containers.find(item => item.name === "postgrest").image =
+      `docker.io/mozillareality/postgrest@sha256:${"b".repeat(64)}`;
+  historicalRepositories.deployments.find(item => item.name === "pgbouncer")
+    .containers[0].image =
+      `docker.io/mozillareality/pgbouncer@sha256:${"d".repeat(64)}`;
+  historicalRepositories.deployments.find(item => item.name === "pgbouncer-t")
+    .containers[0].image =
+      `docker.io/mozillareality/pgbouncer@sha256:${"e".repeat(64)}`;
+  assert.equal(
+    validateDeploymentInventory(historicalRepositories, legacyEvidence),
+    historicalRepositories
+  );
+  for (const [deploymentName, containerName, repository] of [
+    ["pgbouncer", "pgbouncer", "docker.io/mozillareality/pgbouncer-lookalike"],
+    ["pgbouncer-t", "pgbouncer-t", "docker.io/mozillareality/pgbouncer-lookalike"],
+    ["pgsql", "postgresql", "docker.io/mozillareality/postgres-lookalike"],
+    ["reticulum", "postgrest", "docker.io/mozillareality/postgrest-lookalike"]
+  ]) {
+    const lookalike = structuredClone(historicalRepositories);
+    lookalike.deployments.find(item => item.name === deploymentName)
+      .containers.find(item => item.name === containerName).image =
+        `${repository}@sha256:${"c".repeat(64)}`;
+    assert.throws(
+      () => validateDeploymentInventory(lookalike, legacyEvidence),
+      /deployment_inventory_evidence_mismatch:container_image/
+    );
+  }
+
   const durableLiveState = durableLive({ fences: [exactGuard("fence")] });
   const durableEvidence = envelope(buildCheckpointEvidenceCore(
     durableLiveState,
@@ -1267,6 +1300,20 @@ test("schema-4 inventory validation requires the complete mode-specific deployme
       /deployment_inventory_evidence_mismatch/
     );
   }
+
+  const wrongParentUid = structuredClone(legacy);
+  wrongParentUid.deployments.find(item => item.name === "bot-orchestrator").uid =
+    "replacement-parent";
+  assert.throws(
+    () => validateDeploymentInventory(wrongParentUid, legacyEvidence),
+    /deployment_inventory_evidence_mismatch:parent_uid/
+  );
+  const wrongParentReplicas = structuredClone(legacy);
+  wrongParentReplicas.deployments.find(item => item.name === "bot-orchestrator").replicas = 0;
+  assert.throws(
+    () => validateDeploymentInventory(wrongParentReplicas, legacyEvidence),
+    /deployment_inventory_evidence_mismatch:parent_replicas/
+  );
 
   for (const mutate of [
     value => { value.bot_runner_runtime.recovery_epoch.value = "not-a-uuid"; },

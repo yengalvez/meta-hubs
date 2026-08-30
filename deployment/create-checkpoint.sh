@@ -155,6 +155,34 @@ CHECKPOINT_PENDING_SIGNAL_STATUS=0
 CHECKPOINT_INTERRUPT_IN_PROGRESS=0
 CHECKPOINT_FAILURE_STAGE=pre-publication
 CHECKPOINT_FAILURE_CODE=unclassified
+CHECKPOINT_TIMING_TOTAL_STARTED_SECONDS=$SECONDS
+CHECKPOINT_TIMING_STAGE_STARTED_SECONDS=$SECONDS
+CHECKPOINT_TIMING_STAGE=pre-publication
+CHECKPOINT_TIMING_REPORTED=0
+
+checkpoint_timing_transition() {
+  local next_stage="$1" now="$SECONDS"
+  [[ -n "$next_stage" ]] || return 2
+  [[ "$CHECKPOINT_TIMING_REPORTED" == 0 ]] || return 0
+  if [[ "$next_stage" != "$CHECKPOINT_TIMING_STAGE" ]]; then
+    printf 'YENHUBS_TIMING operation=checkpoint stage=%s stage_seconds=%s total_seconds=%s result=complete\n' \
+      "$CHECKPOINT_TIMING_STAGE" \
+      "$((now - CHECKPOINT_TIMING_STAGE_STARTED_SECONDS))" \
+      "$((now - CHECKPOINT_TIMING_TOTAL_STARTED_SECONDS))" >&2
+    CHECKPOINT_TIMING_STAGE="$next_stage"
+    CHECKPOINT_TIMING_STAGE_STARTED_SECONDS="$now"
+  fi
+}
+
+checkpoint_report_timing() {
+  local result="$1" now="$SECONDS"
+  [[ "$CHECKPOINT_TIMING_REPORTED" == 0 ]] || return 0
+  printf 'YENHUBS_TIMING operation=checkpoint stage=%s stage_seconds=%s total_seconds=%s result=%s\n' \
+    "$CHECKPOINT_TIMING_STAGE" \
+    "$((now - CHECKPOINT_TIMING_STAGE_STARTED_SECONDS))" \
+    "$((now - CHECKPOINT_TIMING_TOTAL_STARTED_SECONDS))" "$result" >&2
+  CHECKPOINT_TIMING_REPORTED=1
+}
 
 checkpoint_failure_context_is_safe() {
   local stage="$1" code="$2"
@@ -276,6 +304,7 @@ remove_checkpoint_freeze_fence_before_resume() {
 checkpoint_set_failure_context() {
   local stage="$1" code="$2"
   checkpoint_failure_context_is_safe "$stage" "$code" || return 2
+  checkpoint_timing_transition "$stage"
   CHECKPOINT_FAILURE_STAGE="$stage"
   CHECKPOINT_FAILURE_CODE="$code"
 }
@@ -2159,6 +2188,7 @@ checkpoint_error() {
     return "$status"
   fi
   trap - ERR
+  checkpoint_report_timing failure
   if ! checkpoint_failure_context_is_safe "$failure_stage" "$failure_code"; then
     failure_stage=pre-publication
     failure_code=unclassified
@@ -2195,6 +2225,7 @@ checkpoint_error() {
 checkpoint_interrupted() {
   local status="$1" fence_status=0
   CHECKPOINT_INTERRUPT_IN_PROGRESS=1
+  checkpoint_report_timing interrupted
   trap - EXIT ERR
   trap '' INT TERM
   if [[ "$WRITERS_MUTATED" == 1 ]]; then
@@ -2263,6 +2294,15 @@ fi
 
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
+if [[ "$checkpoint_runner_expected" == process-local &&
+      "$CHECKPOINT_FORMAT" == legacy ]]; then
+  CHECKPOINT_PROCESS_LOCAL_STRATEGY_SCOPE="$(
+    recovery_checkpoint_process_local_scope_candidate
+  )" || {
+    printf 'Could not classify the live process-local checkpoint profile.\n' >&2
+    exit 1
+  }
+fi
 # Classify the live boundary after all locally available inputs are immutable,
 # but still before the Lease or operation lock can mutate Kubernetes.
 CHECKPOINT_RUNNER_MODE="$(
@@ -2377,6 +2417,7 @@ fi
 env VALUES_FILE="$VALUES_SOURCE_FILE" CAPTURE_STATE_FORMAT="$CHECKPOINT_FORMAT" \
   CHECKPOINT_FORMAT="$CHECKPOINT_FORMAT" \
   RECOVERY_CHECKPOINT_CAPTURE_RUNNER_MODE="$CHECKPOINT_RUNNER_MODE" \
+  RECOVERY_CHECKPOINT_CAPTURE_PROCESS_LOCAL_SCOPE="$CHECKPOINT_PROCESS_LOCAL_STRATEGY_SCOPE" \
   "$SCRIPT_DIR/capture-instance-state.sh" "$OUTPUT_DIR"
 captured_runner_mode="$(jq -er '.bot_runner_runtime.mode' \
   "$OUTPUT_DIR/deployment-images.json")"
@@ -2701,6 +2742,7 @@ checkpoint_set_failure_context serialization-release lease
 release_serialization_if_owned
 checkpoint_set_failure_context local-cleanup artifacts
 cleanup_local_artifacts
+checkpoint_report_timing success
 trap - EXIT ERR INT TERM
 
 printf 'Complete quiescent YenHubs checkpoint published: %s (writers resumed)\n' \

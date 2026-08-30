@@ -1,18 +1,16 @@
 # Plan maestro de finalización de YenHubs
 
-> **Plan histórico detallado.** La meta activa, acotada después de distinguir
-> cierre obligatorio y campañas futuras, está en
-> `docs/active-goal-plan-2026-07-18.md`. En caso de diferencia de alcance u
-> orden, prevalece la meta activa. Este documento se conserva como snapshot de
-> estado y evidencia anterior.
+> **Plan histórico detallado.** Este documento y
+> `docs/active-goal-plan-2026-07-18.md` conservan el razonamiento y la evidencia
+> de H5, ya cerrado. No son colas ejecutables. El único orden vigente está en
+> [`../PLAN_ACTUAL.md`](../PLAN_ACTUAL.md).
 
 Última actualización: 18 de julio de 2026
 Estado: **SNAPSHOT HISTÓRICO; NO REANUDAR DESDE ESTE FICHERO**
-Siguiente acción: abrir `docs/active-goal-plan-2026-07-18.md` y seguir allí la
-primera casilla pendiente.
+Siguiente acción: ninguna desde este snapshot; consultar `../PLAN_ACTUAL.md`.
 
 Este fichero conserva el snapshot detallado que originó la meta acotada. La
-fuente de verdad operativa vigente es `docs/active-goal-plan-2026-07-18.md`.
+fuente de verdad operativa vigente es `../PLAN_ACTUAL.md`.
 No sustituye las especificaciones técnicas ni la matriz de evidencia.
 
 ## Resumen ejecutivo
@@ -170,7 +168,7 @@ Registros locales de esta ejecución, no versionados:
 > Las casillas y fases de esta sección están congeladas como evidencia del
 > análisis anterior. No deben marcarse ni utilizarse para decidir el siguiente
 > paso. El orden obligatorio vigente está únicamente en
-> `docs/active-goal-plan-2026-07-18.md`.
+> `../PLAN_ACTUAL.md`.
 
 ```mermaid
 flowchart LR
@@ -326,6 +324,6 @@ está en el plan activo y prevalece incluso si una casilla inferior discrepa.
 ## Protocolo vigente de reanudación
 
 Al continuar, no seleccionar ni marcar ninguna casilla de este snapshot. Leer
-`docs/active-goal-plan-2026-07-18.md`, confirmar el estado conservado y reanudar
-desde su primera casilla pendiente. Ese fichero es el único plan operativo y la
-memoria persistente de la meta actual.
+`../PLAN_ACTUAL.md`; ese fichero es el único plan operativo. El plan H5
+histórico se consulta solo como evidencia cuando una afirmación concreta lo
+requiere.

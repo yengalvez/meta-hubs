@@ -20,8 +20,11 @@ DOCTL_CONTEXT="${DOCTL_CONTEXT:-yenhubs}"
 CAPTURE_STATE_FORMAT="${CAPTURE_STATE_FORMAT:-legacy}"
 VALUES_SOURCE_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 VALUES_FILE=""
+CAPTURE_PROCESS_LOCAL_SCOPE="${RECOVERY_CHECKPOINT_CAPTURE_PROCESS_LOCAL_SCOPE:-strict-recreate}"
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
+# shellcheck source=deployment/lib/git-provenance.sh
+source "$SCRIPT_DIR/lib/git-provenance.sh"
 # shellcheck source=deployment/lib/reactivation-gate-functions.sh
 source "$SCRIPT_DIR/lib/reactivation-gate-functions.sh"
 reactivation_install_cleanup_traps ""
@@ -33,6 +36,13 @@ case "$CAPTURE_STATE_FORMAT" in
     exit 2
     ;;
 esac
+case "$CAPTURE_PROCESS_LOCAL_SCOPE" in
+  strict-recreate | freeze-checkpoint | cold-rebind-target) ;;
+  *)
+    printf 'RECOVERY_CHECKPOINT_CAPTURE_PROCESS_LOCAL_SCOPE is invalid.\n' >&2
+    exit 2
+    ;;
+esac
 
 for command_name in git kubectl doctl jq node; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -40,6 +50,11 @@ for command_name in git kubectl doctl jq node; do
     exit 1
   fi
 done
+
+yenhubs_require_clean_source_tree "$ROOT_DIR" || {
+  printf 'Freeze capture requires clean root, hubs and hubs-cloud worktrees.\n' >&2
+  exit 1
+}
 
 recovery_require_cluster_identity
 
@@ -100,7 +115,9 @@ fi
 deployments_json="$(
   recovery_kubectl_get_namespaced_list deployments "$NAMESPACE"
 )"
-checkpoint_runner_mode="$(recovery_checkpoint_runner_mode_candidate)" || {
+checkpoint_runner_mode="$(
+  recovery_checkpoint_runner_mode_candidate "$CAPTURE_PROCESS_LOCAL_SCOPE"
+)" || {
   printf 'Could not classify the live checkpoint runner boundary.\n' >&2
   exit 1
 }
@@ -280,6 +297,12 @@ if [[ "$runtime_bot_runner_count" == "0" ]]; then
     if ! recovery_require_live_process_local_freeze_checkpoint_exact \
         "$VALUES_SOURCE_FILE" "$CAPTURE_STATE_FORMAT" process-local; then
       printf 'Process-local inventory capture requires the exact freeze runtime boundary.\n' >&2
+      exit 1
+    fi
+  elif [[ "$CAPTURE_PROCESS_LOCAL_SCOPE" == cold-rebind-target ]]; then
+    if ! recovery_require_live_process_local_cold_rebind_target_exact \
+        "$VALUES_SOURCE_FILE"; then
+      printf 'Process-local inventory capture requires the exact legacy cold-rebind boundary.\n' >&2
       exit 1
     fi
   else

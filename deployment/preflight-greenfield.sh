@@ -21,6 +21,8 @@ VALUES_SOURCE_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 VALUES_FILE=""
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
+# shellcheck source=deployment/lib/git-provenance.sh
+source "$SCRIPT_DIR/lib/git-provenance.sh"
 
 failures=0
 pass() { printf 'PASS  %s\n' "$1"; }
@@ -35,6 +37,11 @@ for command_name in git node jq; do
     fail "Falta el comando local requerido: $command_name"
   fi
 done
+if yenhubs_require_clean_source_tree "$ROOT_DIR"; then
+  pass 'Root y submodulos son checkouts limpios'
+else
+  fail 'Root y submodulos deben estar limpios, sin bytes locales ni untracked'
+fi
 if ! command -v shasum >/dev/null 2>&1 &&
    ! command -v sha256sum >/dev/null 2>&1; then
   fail 'Falta un verificador SHA-256 local'

@@ -35,6 +35,9 @@ SMTP_SERVER: "your-smtp-server.com"
 SMTP_PORT: "2525"
 SMTP_USER: "your-smtp-user"
 SMTP_PASS: "your-smtp-password"
+# Optional. Defaults to noreply@HUB_DOMAIN. Set this when a staging web
+# subdomain must send through a provider-verified parent domain.
+SMTP_FROM_ADDRESS: "noreply@your-domain.com"
 
 # --- Security keys ---
 # Generate random strings of 32+ characters each. Example:

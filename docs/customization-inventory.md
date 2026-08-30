@@ -11,31 +11,22 @@ Comparado con las releases estables aceptadas:
 - Hubs: 172 archivos, 14.681 inserciones y 2.611 eliminaciones.
 - Hubs CE: 155 archivos, 28.154 inserciones y 12.876 eliminaciones.
 
-Las cifras anteriores corresponden al corte base medido. El corte fuente de
-`AUD-075` queda identificado por Hubs `674ece411691` y Hubs Cloud
-`5392495b077249edcedfb3092551201645f648f1`. `AUD-075` llegó a `development`
-por el PR `#11` (`ebe960794735d378149966b78090e22acc60cc26`) y a `master` por el
-PR `#12` (`5392495b077249edcedfb3092551201645f648f1`), con CI Cloud verde. Pasan
-128/128 del orquestador, 30/30 del generador con 58 recursos y Reticulum 430
-pruebas + 5 properties. En la raíz, los gates normal y `--full` pasan con
-seguridad 43/43, recuperación 239/239, Pods 45/45, pull 19/19 y Deployment
-18/18, además de Hubs 97/97 y build, navegador 11/11, capacidad 115/115
-fail-closed, Dialog 2/2, Photomnemonic 7/7 y Spoke 68/68 y build. No hay build
-de imágenes, digests, checkpoint, staging, despliegue, aceptación live ni
-capacidad física atribuibles a esta integración Git/fuente.
+Las cifras anteriores corresponden al corte base medido y se conservan como
+evidencia histórica. `AUD-075` quedó identificado por Hubs `674ece411691` y
+Cloud `5392495b0772`; sus gates y promociones ya no son trabajo pendiente.
 
-Ambos commits pertenecen ya a las ramas base de sus subrepositorios y root
-`main` los fijó mediante el PR raíz `#5`. No llamar «final» a ese commit Cloud
-para el rollout vigente: el commit final será el que integre después `AUD-078`,
-el productor de procedencia/recibos y su gitlink/consumidor raíz, antes del build
-conjunto.
+El corte fuente integrado y vigente el 28 de agosto de 2026 usa Hubs
+`ce8390a8905f` y Cloud `6d9ee9e998f6`. El primero contiene el pin Immutable.js
+4.3.9 y la compatibilidad Draft.js fail-closed. El segundo contiene como
+ancestros `AUD-075`, `AUD-078`, sus relevos causales, el fence de operación y
+el perfil H5. Root `origin/main=481110178380` fija ambos gitlinks; la integración
+raíz y el CI final están cerrados. No se debe repetir ningún merge, gitlink,
+gate H5 ni `--full` histórico para volver a features.
 
-El candidato activo de cierre usa Hubs `ce8390a8905f` y Cloud `24d09706c2d9`.
-El primero añade el pin Immutable.js 4.3.9 y su compatibilidad Draft.js
-fail-closed; el segundo contiene `AUD-078`, sus relevos causales y el fence de
-operación. Recovery 861/861 y el gate raíz normal final pasan sobre ambos; queda
-`--full`, revisión y PR/CI raíz. La auditoría upstream confirma 0 releases
-estables pendientes y divergencias de 91 commits Hubs y 114 Cloud.
+La integración Git no demuestra por sí sola una imagen ni un rollout del
+runtime durable. H5 aceptó en producción el baseline histórico `process-local`
+y su recuperación; la promoción separada del runtime aislado por Pod sigue sin
+staging/live ni certificación física de capacidad.
 
 ## Cliente Hubs
 
@@ -145,28 +136,22 @@ Cambiar estos contratos exige compatibilidad hacia atras o migracion:
 - Los secretos reales solo viven en el values local ignorado, GitHub Secrets y
   Kubernetes Secrets.
 
-## Bloqueos antes de producción
+## Frontera pendiente antes de promover el runtime durable
 
-- `AUD-065`: las credenciales externas NEW existen, pero OLD/NEW, checkpoints y
-  rotación siguen pendientes; ninguna mutación live está autorizada todavía.
-- El aislamiento por Pod, el fencing DB y su gitlink raíz están integrados.
-  Antes del rollout faltan, en orden: fusionar el tooling de secuencia;
-  implementar/fusionar `AUD-078`; integrar el productor Cloud de
-  procedencia/recibos y su consumidor raíz; construir Reticulum, parent y runner
-  en un único run atestado; verificar recibo+cuatro bundles; crear checkpoint1;
-  completar OLD/NEW y rotar; crear checkpoint2; y ejecutar
-  `bootstrap -> admission -> active`, aceptación live/cold y promoción.
-- `process-local` sigue siendo el último baseline live aceptado y puede servir
-  de rollback. Tras volver a él, mantener bots públicos deshabilitados y no
-  reabrirlo ni declararlo aceptado de nuevo hasta pasar preflight, verificador
-  live y carga fría actuales con las credenciales rotadas.
-- La aprobación/cuarentena está integrada pero no desplegada: la primera
+- No queda trabajo de integración Git para `AUD-075`, `AUD-078`, sus relevos o
+  sus gitlinks. Repetirlo sería un loop.
+- `process-local` sigue siendo el baseline live aceptado y el runtime recuperado
+  en H5. No se sustituye por la topología durable solo porque el código moderno
+  esté integrado.
+- Una promoción durable futura debe partir de los commits exactos vigentes,
+  construir y atestar Reticulum, parent y runner, verificar sus recibos y
+  bundles, preparar checkpoint/rollback y ejecutar staging
+  `bootstrap -> admission -> active` antes de cualquier aceptación live.
+- La aprobación/cuarentena está integrada pero no desplegada. Su primera
   migración debe producir un inventario redactado y cada configuración válida
-  requiere una decisión individual antes de reactivarse. El diseño separado
-  `AUD-078` sigue pendiente y `room_stop` continúa siendo best-effort.
-- Capacidad física, builds de imágenes por Actions, staging y aceptación live
-  siguen pendientes; los gates de fuentes no miden CCU ni autorizan rollout
-  público.
+  requiere una decisión individual antes de reactivar bots públicos.
+- Capacidad física, staging y aceptación live del runtime durable siguen
+  pendientes; los gates de fuente no miden CCU ni autorizan ese rollout.
 
 ## Prueba obligatoria tras upgrade
 
