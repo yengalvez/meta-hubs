@@ -20,8 +20,8 @@ nuevo permitía guardar el anterior por error. Se reprodujo y la corrección pas
 11 casos locales. El encuadre pasa otros ocho casos; la validación oficial
 completa de Hubs terminó verde con 119 pruebas, cliente y Admin compilados.
 La PR Hubs #7 pasó también seguridad y su build completo y quedó fusionada en
-`master=668413a20`. Falta integrar el puntero raíz; no se ha cambiado el
-metaverso live.
+`master=668413a20`. El puntero raíz quedó integrado por la PR #22 en
+`main=4f3d91a17`; no se ha cambiado el metaverso live.
 
 **Ya tenemos los dos ejemplos: Avaturn y Mixamo.** Los he descargado yo de
 ejemplos públicos, sin usar fotos tuyas ni crear cuentas. Ambos se ven en una
@@ -157,16 +157,18 @@ La rama local es `codex/private-glb-acceptance`. Hay tres pasos prácticos:
    guardar como máximo dos avatares con permiso de uso, comprobarlos con dos cuentas y
    ver movimiento/pose en escritorio y móvil. Antes de guardar en producción,
    concretar los archivos/cuentas y hacer checkpoint de DB y medios.
-3. **En curso y autorizado:** integrar el gitlink Hubs `668413a20`,
-   construir la imagen oficial, crear un checkpoint DB + medios y desplegarla
+3. **En curso y autorizado:** construir la imagen oficial desde Hubs
+   `668413a20`, crear un checkpoint DB + medios y desplegarla
    en la instancia existente. No se crean recursos ni se suben las muestras.
    Si aparece otro fallo,
    corregir solo su causa y repetir solo lo afectado; después cerrar.
 
 Los cambios se fusionaron desde `codex/private-glb-selection`: candidata
-`e83adaf38`, merge Hubs `668413a20`. La sección oficial y el CI Hubs están
-verdes; quedan el gitlink raíz, imagen, checkpoint y rollout con aceptación
-fría. No se ha desplegado y no queda un proceso local consumiendo CPU.
+`e83adaf38`, merge Hubs `668413a20`, raíz `4f3d91a17`. La sección oficial y el
+CI Hubs están verdes. En la PR raíz pasaron gitlinks, secretos, workflows,
+scripts y PostgreSQL; se canceló cuando empezó a repetir recovery histórico,
+que este plan prohíbe. Quedan imagen, checkpoint y rollout con aceptación fría.
+No se ha desplegado y no queda un proceso local consumiendo CPU.
 
 **“Privado” quiere decir no listado en el catálogo**, no archivo secreto ni
 cifrado. Otras personas deben poder verlo cuando lo llevas puesto en la sala.
