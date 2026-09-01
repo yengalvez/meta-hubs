@@ -40,8 +40,9 @@ cuentas.
   posterior de selección se publicó como Hubs PR #7 y está integrado en
   `master=668413a209fc0b7725c254047e104d5545d833c1` (candidata original
   `e83adaf38715f837a30d390273f488ffc2bcf42b`): selector y preview, una
-  utilidad de encuadre y dos focales. El gitlink raíz ya apunta localmente al
-  merge, pero aún no se ha publicado/integrado ni desplegado.
+  utilidad de encuadre y dos focales. El gitlink raíz quedó integrado mediante
+  la PR #22 en `main=4f3d91a176e8b0b7514bfe018328dcefacf6282e`. Aún no se ha
+  construido la imagen nueva ni desplegado.
 - El build Hubs [33245207737](https://github.com/yengalvez/hubs/actions/runs/33245207737)
   pasó sobre `b2697e7e6f571d195346cc156f0f1631eedc841a`.
   Al abrir G0, editor, selector, ayuda, validadores y español coincidían con ese
@@ -79,6 +80,12 @@ cuentas.
 - La PR Hubs #7 pasó sus dos controles `static-security` y el workflow completo
   `test-and-deploy-storybook`; se fusionó con `[skip ci]` en `668413a20`. No se
   abrió un run post-merge duplicado.
+- La PR raíz #22 dejó verdes los gitlinks, Gitleaks de worktree/rango,
+  Actionlint, ShellCheck y PostgreSQL 12.19/14.23. Su último subpaso intentó
+  repetir la batería histórica de recovery sin cambios: se canceló
+  deliberadamente tras 22 minutos para respetar este plan. La PR se fusionó
+  por administración con `[skip ci]` en `4f3d91a17`; no se presenta ese job
+  cancelado como verde ni como evidencia GLB.
 - Por indicación del propietario, el agente obtuvo muestras públicas Avaturn
   y Mixamo Xbot: ambas cargan y se ven localmente, con sus hashes y límites de
   uso en [la evidencia de muestras](features/avaturn/sample-check-2026-08-31.md).
@@ -224,8 +231,11 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
   vez con 119 unidades, builds Hubs/Admin y recibo exacto. No se repite.
 - [x] Publicar e integrar Hubs PR #7 tras sus checks oficiales verdes:
   `master=668413a20`.
-- [ ] **ACTIVE:** integrar el gitlink raíz exacto y los documentos de evidencia;
-  exigir los checks oficiales antes del merge.
+- [x] Integrar el gitlink raíz exacto y los documentos mediante PR #22:
+  `main=4f3d91a17`. Los checks proporcionales pasaron; se detuvo únicamente la
+  repetición de recovery fuera de alcance.
+- [ ] **ACTIVE:** construir desde Hubs `master=668413a20` por el workflow
+  oficial y resolver el digest inmutable antes de tocar producción.
   No ejecutar ahora el hook global de commit de Hubs como sustituto de esos
   archivos: relanzaría toda la unidad aunque el bloque actual solo es focal.
 - [ ] Si G2 revela otro fallo: conservar diagnóstico exacto y corregir solo
@@ -247,8 +257,8 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
 
 ## Próximo paso y parada
 
-**Siguiente:** publicar e integrar el gitlink raíz exacto `668413a20`; después
-construir la imagen Hubs fusionada y desplegarla con
+**Siguiente:** construir la imagen Hubs fusionada `668413a20`, resolver su
+digest y desplegarla con
 checkpoint previo en `meta-hubs.org`. No hace falta que el propietario busque archivos ni supervise
 las comprobaciones rutinarias. Los permisos de muestras y las escrituras con
 dos cuentas siguen pendientes y no bloquean publicar la corrección de código.

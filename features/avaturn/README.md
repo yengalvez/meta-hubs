@@ -13,7 +13,9 @@ de archivo: rechazar el nuevo permitía procesar el válido anterior. La nueva
 focal del editor pasa 11/11. El 1 de septiembre la candidata quedó congelada en
 Hubs `e83adaf38` y pasó una vez la sección oficial: 119 unidades, lint y builds
 de Hubs/Admin. La PR Hubs #7 pasó seguridad y su build completo y quedó
-fusionada en `master=668413a20`. Aún no está integrada en la raíz ni desplegada.
+fusionada en `master=668413a20`. El gitlink raíz se integró después en
+`main=4f3d91a17`; sigue pendiente el build de imagen y el rollout productivo
+autorizado.
 
 Ya se obtuvieron por encargo del propietario un ejemplo oficial Avaturn y
 Mixamo Xbot: [procedencia, hashes y comprobación local](sample-check-2026-08-31.md).
