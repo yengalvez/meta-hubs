@@ -1,6 +1,6 @@
 # PLAN ACTUAL — Aceptación de avatares GLB privados
 
-Versión: **GLB v1 — publicación y rollout autorizados; aceptación persistente pendiente**
+Versión: **GLB v1 — publicación y rollout cerrados; aceptación persistente pendiente**
 Última revisión: **1 de septiembre de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**.
 El plan completo de Sitting v2 está cerrado y archivado en
@@ -58,12 +58,16 @@ cuentas.
   `sha256:256c292d0d5a69e021322bdbd11b3f318f2d44bee580433252e0b04ade1d5e18`.
   Su evidencia está en `docs/session-changelog.md`, bloque del 30 de agosto.
   No es una recaptura de Kubernetes ni una aceptación de subidas GLB.
-- El navegador interno cargó en frío el vestíbulo de
+- El navegador interno cargó en frío
   `https://meta-hubs.org/VJopCY3/inicio` en escritorio y 390×844 con el bundle
   nuevo `hub-5733d7ae4df22f27da2e.js`, WebGL, cero errores y sin overflow. El
-  único warning es `background`, heredado y ya clasificado. El modo Mirar
-  confirmó el vestíbulo privado, pero no se pulsó Entrar, no se abrió el
-  selector y no se subió/guardó nada: persistencia y dos cuentas siguen pendientes.
+  único warning es `background`, heredado y ya clasificado. La aceptación final
+  entró de forma visible con el micrófono silenciado y sin vídeo: en el contexto
+  principal `APP` y `AFRAME` son objetos, la escena quedó cargada y `entered`,
+  con renderer, 22 sistemas, canvas y avatar activos, `Personas (1)` y cero
+  errores de consola. El estado esperado de bots es exactamente cero según el
+  readback DB/health ya aceptado. No se abrió el selector ni se subió/guardó
+  ningún GLB: persistencia y dos cuentas siguen pendientes.
 - La fuente fuerza `allow_promotion=false` y `allow_remixing=false`.
   Reticulum comprueba propiedad, credenciales de ficheros y tamaños;
   eso no demuestra por sí solo validación completa del rig en servidor.
@@ -267,7 +271,9 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
   carga fría sin subir ni guardar los GLB de muestra. El diff posterior fue
   cero y el verificador final terminó con **0 fallos / 0 avisos**, DB
   361/100/18/33 y medios 33/33. Escritorio y móvil cargan el bundle nuevo sin
-  errores; el vestíbulo privado no demuestra todavía entrada visible en sala.
+  errores. La entrada visible final dejó `APP`, `AFRAME`, escena cargada y
+  `entered`, renderer, 22 sistemas, canvas y avatar activos, sin errores de
+  consola; micrófono silenciado, vídeo ausente y la pestaña cerrada al terminar.
 - [x] Corregir los dos huecos operativos revelados por el rollout: Cloud PR
   #30 validó el marcador `restartedAt` y PR #31 lo promovió a
   `master=43210079d`; el verificador legacy acepta cero salas bot solo si todo
@@ -294,9 +300,9 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
 
 **Siguiente:** devolver el control antes de G2. El rollout de código está
 operativo, verificado e integrado; no hay suite, build, apply ni monitor en
-marcha. Entrar de forma visible en la sala y guardar hasta dos GLB con dos
-cuentas son efectos separados que siguen pendientes. No se convierte este
-rollout en un cierre ficticio de G2.
+marcha. La entrada visible general ya está demostrada. Guardar hasta dos GLB
+con dos cuentas sigue siendo una sesión separada y pendiente; no se convierte
+este rollout en un cierre ficticio de G2.
 
 Se continúa sin preguntas entre comprobaciones locales reversibles.
 Se pide solo lo que falte para una acción concreta: permisos de uso donde sean

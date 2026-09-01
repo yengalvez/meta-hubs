@@ -129,11 +129,12 @@ Hashes SHA-256 de las funciones probadas:
 - `GLTFLoader.js`: `3372303b5e1baa9bed30eaec0d23444bb54ebd3da5355e3c04d69bae1834211f`.
 
 La evidencia combinada demuestra carga, componente React de editor/preview y
-miniatura locales, además del rollout y vestíbulo productivos en escritorio y
-móvil; no la integración completa del loader tras guardar, normalización en
+miniatura locales, además del rollout y la entrada productiva real en escritorio
+y móvil; no la integración completa del loader tras guardar, normalización en
 sala, privacidad entre cuentas o animaciones con los dos GLB.
 Los 11 casos del selector y los ocho de encuadre están incluidos en la sección
 oficial verde sobre `e83adaf38`. La PR Hubs #7 pasó también seguridad y el
 workflow completo de build y se fusionó en `master=668413a20`. La publicación
-posterior no subió ningún GLB de muestra; el acceso productivo se limitó a
-rollout, verificación read-only y vestíbulo privado.
+posterior no subió ningún GLB de muestra. La aceptación productiva entró con un
+avatar preexistente, micrófono silenciado y sin vídeo, y cerró la pestaña al
+terminar; no prueba todavía el guardado o uso en sala de las dos muestras.
