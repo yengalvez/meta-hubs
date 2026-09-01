@@ -45,8 +45,8 @@ cuentas.
   `e83adaf38715f837a30d390273f488ffc2bcf42b`): selector y preview, una
   utilidad de encuadre y dos focales. El gitlink raíz quedó integrado mediante
   la PR #22 en `main=4f3d91a176e8b0b7514bfe018328dcefacf6282e`. La imagen nueva
-  ya fue construida, desplegada y verificada; la raíz quedó después sincronizada
-  documentalmente en `main=911bcb5c2281830208a8177a0073b256b8c572d4`.
+  ya fue construida, desplegada y verificada; la PR raíz #24 integró el cierre
+  y ambos gitlinks en `main=7fcda31b0d4e2fe89c462c5e07ab9471d3b0cbcf`.
 - El build Hubs [33245207737](https://github.com/yengalvez/hubs/actions/runs/33245207737)
   pasó sobre `b2697e7e6f571d195346cc156f0f1631eedc841a`.
   Al abrir G0, editor, selector, ayuda, validadores y español coincidían con ese
@@ -284,18 +284,19 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
 
 - [x] Publicar evidencia no sensible de los criterios cerrados y residuos reales
   en estos documentos; la feature no se marca completa por fuente/unitarios.
-- [ ] **ACTIVE:** integrar el puntero Cloud, verificador, estado humano y
-  changelog tras inspeccionar diff, enlaces y secretos. Para este cierre usar
-  validación proporcional; ningún `--full` nuevo.
-- [ ] Terminar: no crear otro Goal, heartbeat, auditoría o tarea automáticamente.
+- [x] Integrar el puntero Cloud, verificador, estado humano y changelog tras
+  inspeccionar diff, enlaces y secretos. La PR raíz #24 dejó `main=7fcda31b`
+  con Hubs `668413a20` y Cloud `43210079d`; no se ejecutó otro `--full`.
+- [x] Terminar este bloque: no crear otro Goal, heartbeat, auditoría o tarea
+  automáticamente. G2 permanece pendiente y requiere una decisión humana nueva.
 
 ## Próximo paso y parada
 
-**Siguiente:** integrar el puntero Cloud y estos documentos en la raíz. El
-rollout de código está operativo y verificado; no hay suite, build, apply ni
-monitor en marcha. Después se devuelve el control antes de G2: Entrar de forma
-visible en la sala y guardar hasta dos GLB con dos cuentas son efectos separados
-que siguen pendientes. No se convierte este rollout en un cierre ficticio de G2.
+**Siguiente:** devolver el control antes de G2. El rollout de código está
+operativo, verificado e integrado; no hay suite, build, apply ni monitor en
+marcha. Entrar de forma visible en la sala y guardar hasta dos GLB con dos
+cuentas son efectos separados que siguen pendientes. No se convierte este
+rollout en un cierre ficticio de G2.
 
 Se continúa sin preguntas entre comprobaciones locales reversibles.
 Se pide solo lo que falte para una acción concreta: permisos de uso donde sean
