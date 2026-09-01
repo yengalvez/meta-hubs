@@ -17,8 +17,10 @@ fusionada en `master=668413a20`. El gitlink raíz se integró después en
 `main=4f3d91a17`. Actions `33504152150` publicó la imagen por digest y el
 rollout productivo autorizado terminó con 12/12 servicios listos, diff posterior
 cero y `verify-live-reactivation.sh` en **0 fallos / 0 avisos**. El navegador
-interno cargó el bundle nuevo en escritorio y móvil sin errores. Esto publica
-la corrección, pero no sustituye el guardado persistente con dos cuentas.
+interno cargó el bundle nuevo en escritorio y móvil sin errores y la aceptación
+final entró en la escena: `APP`, `AFRAME`, renderer, 22 sistemas, canvas y avatar
+activos, con micrófono silenciado y sin vídeo. Esto publica y valida la carga
+general de la sala, pero no sustituye el guardado persistente con dos cuentas.
 
 Ya se obtuvieron por encargo del propietario un ejemplo oficial Avaturn y
 Mixamo Xbot: [procedencia, hashes y comprobación local](sample-check-2026-08-31.md).

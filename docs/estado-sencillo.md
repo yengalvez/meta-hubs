@@ -176,9 +176,12 @@ reintento terminó verde. La corrección permanente está en Cloud
 
 El navegador interno cargó el bundle nuevo en escritorio y móvil 390×844,
 sin errores ni desbordamiento; solo aparece el warning `background` ya conocido.
-El modo Mirar se mantuvo en el vestíbulo privado. Aún no se ha pulsado Entrar
-ni se ha guardado un GLB: eso forma parte de la aceptación persistente posterior,
-no del rollout ya cerrado. No queda un proceso local consumiendo CPU.
+La comprobación final entró de verdad en la sala con el micrófono silenciado y
+sin vídeo: `APP`, `AFRAME`, la escena, el renderizador, sus 22 sistemas, el
+canvas y el avatar quedaron activos; la UI mostró `Personas (1)` y no hubo
+errores. La pestaña se cerró al terminar. No se abrió el selector ni se guardó
+un GLB: eso sigue siendo la aceptación persistente posterior, no parte del
+rollout ya cerrado. No queda un proceso local consumiendo CPU.
 
 **“Privado” quiere decir no listado en el catálogo**, no archivo secreto ni
 cifrado. Otras personas deben poder verlo cuando lo llevas puesto en la sala.
