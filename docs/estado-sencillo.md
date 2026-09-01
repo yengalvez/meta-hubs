@@ -1,6 +1,6 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **30 de agosto de 2026**
+Ultima actualización: **1 de septiembre de 2026**
 
 ## Respuesta corta
 
@@ -14,6 +14,25 @@ estaba incluida. Falta probar con archivos reales que se previsualizan, se
 guardan solo en Mis avatares del propietario y funcionan en la sala. No se ha
 subido ni guardado nada en esta revisión. No hay un `--full`, build ni otra
 espera de GitHub en marcha por este plan.
+
+**El fallo del selector ya está corregido e integrado en Hubs:** rechazar un archivo
+nuevo permitía guardar el anterior por error. Se reprodujo y la corrección pasa
+11 casos locales. El encuadre pasa otros ocho casos; la validación oficial
+completa de Hubs terminó verde con 119 pruebas, cliente y Admin compilados.
+La PR Hubs #7 pasó también seguridad y su build completo y quedó fusionada en
+`master=668413a20`. Falta integrar el puntero raíz; no se ha cambiado el
+metaverso live.
+
+**Ya tenemos los dos ejemplos: Avaturn y Mixamo.** Los he descargado yo de
+ejemplos públicos, sin usar fotos tuyas ni crear cuentas. Ambos se ven en una
+prueba local y tienen el esqueleto necesario. No necesitas adjuntar archivos.
+Son muestras de prueba, no una contratación ni una integración de Avaturn.
+
+**El bloque autónomo local también está terminado.** Se probó el editor real
+con los dos modelos y se corrigió la cámara que mostraba solo un fragmento de
+Mixamo. Ahora se ven los avatares completos y generan miniaturas. Los archivos
+corruptos, demasiado grandes o sin esqueleto se rechazan. El guardado se simuló
+solo en memoria: esto no demuestra todavía persistencia ni privacidad real.
 
 ## Lo que quedó cerrado: recuperación
 
@@ -129,23 +148,32 @@ servidores. No se ha accedido a IONOS para este nuevo trabajo.
 
 La rama local es `codex/private-glb-acceptance`. Hay tres pasos prácticos:
 
-1. Comprobar localmente que rechazar un archivo no permite guardar por confusión
-   el anterior; es una posibilidad vista en código, no un fallo real reproducido.
-   Reunir **dos avatares compatibles de dos herramientas/pipelines distintos**,
-   con permiso de uso: uno upper-body y otro full-body/Mixamo. Los dos ejemplos
-   legacy encontrados no tienen los huesos de brazos exigidos por el importador;
-   no valen como positivos. Eso no significa que los avatares ya guardados fallen.
-2. Hacer una sesión acotada: rechazo de tres archivos inválidos, preview válido
-   antes de Guardar y miniatura después, guardar como máximo dos avatares,
-   comprobarlos con dos cuentas y
+1. **Preparación local cerrada:** selector 11/11 conservado; ocho pruebas
+   nuevas de encuadre pasan. Avaturn y Mixamo se ven en el editor y producen
+   miniaturas reales. Los tres archivos inválidos se rechazan. No equivale a
+   guardado persistente, animación en sala ni prueba de un avatar de solo torso.
+   Los resultados están [documentados](../features/avaturn/sample-check-2026-08-31.md).
+2. Preparar una sesión acotada con autorización de destino y escrituras:
+   guardar como máximo dos avatares con permiso de uso, comprobarlos con dos cuentas y
    ver movimiento/pose en escritorio y móvil. Antes de guardar en producción,
    concretar los archivos/cuentas y hacer checkpoint de DB y medios.
-3. Si pasa, cerrar. Si aparece un fallo, corregir solo su causa y repetir solo
-   lo afectado. Otro build/despliegue solo tendría sentido si cambia el producto.
+3. **En curso y autorizado:** integrar el gitlink Hubs `668413a20`,
+   construir la imagen oficial, crear un checkpoint DB + medios y desplegarla
+   en la instancia existente. No se crean recursos ni se suben las muestras.
+   Si aparece otro fallo,
+   corregir solo su causa y repetir solo lo afectado; después cerrar.
+
+Los cambios se fusionaron desde `codex/private-glb-selection`: candidata
+`e83adaf38`, merge Hubs `668413a20`. La sección oficial y el CI Hubs están
+verdes; quedan el gitlink raíz, imagen, checkpoint y rollout con aceptación
+fría. No se ha desplegado y no queda un proceso local consumiendo CPU.
 
 **“Privado” quiere decir no listado en el catálogo**, no archivo secreto ni
 cifrado. Otras personas deben poder verlo cuando lo llevas puesto en la sala.
 No vamos a integrar un proveedor de pago, crear staging ni añadir coste fijo.
+Los ejemplos se quedan locales: que sean públicos no permite automáticamente
+repartirlos a clientes. Las condiciones comerciales de Avaturn siguen siendo
+una decisión separada; no bloquean conseguir ni inspeccionar las muestras.
 
 ## Qué no se va a hacer
 
@@ -167,15 +195,16 @@ E2E multiusuario, checkpoint, rollout productivo y aceptación visual están
 terminados. El cleanup de cuatro DNS sin coste es mantenimiento menor, no parte
 de la feature ni otro proyecto.
 
-**GLB: preparación y aceptación pendientes, no desarrollo desde cero.** El
-plan detalla siete criterios agrupados en una sesión; no son siete suites largas.
-No doy un porcentaje o fecha de cierre sin tener todavía los dos archivos y
-las cuentas de prueba. El siguiente trabajo es la focal local de selección;
-para la sesión real harán falta esos dos GLB válidos.
+**GLB: preparación local terminada; aceptación integrada pendiente.** Los
+archivos ya están conseguidos. Faltan validar/publicar el candidato bajo el
+alcance autorizado y comprobar el guardado real, las dos cuentas y el uso en
+sala. No son otras siete suites largas ni se repite lo que ya pasó. No doy un
+porcentaje que mezcle preparación local con un resultado todavía no observado.
 
 ## Cuándo se para
 
-Solo ante una identidad distinta, lock/Lease ambiguos, pérdida del estado
-seguro, exposición de un secreto, un cambio de coste/topología no previsto o un
-fallo grave que necesite investigación superior. Un fallo normal no abre otro
-proyecto: se corrige únicamente su causa demostrada.
+No se pide supervisión entre comprobaciones locales. Se devuelve el control al
+cerrar el objetivo acotado o cuando haga falta una decisión real: autorización
+de publicación/producción, cuenta/licencia, identidad distinta, secreto expuesto
+o efecto no previsto. Un fallo normal se corrige por su causa sin abrir otro
+proyecto. Crear un Goal no autoriza automáticamente todas las fases posteriores.
