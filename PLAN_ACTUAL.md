@@ -34,15 +34,19 @@ cuentas.
 - Workspace: `/Users/Shared/Gits/YenHubs-features`.
 - Rama local: `codex/private-glb-acceptance`, desde `origin/main`
   `34faabccb328df1faad75590401d7dfbb859311b` (cierre Sitting, PR #21).
-- Gitlinks sin cambios: Hubs `0781a63091ac3160a1b473504dc655ac0b002735`;
-  Cloud `db083d53e3d57c9380bbfefc6bd411e4d4bf4270`.
+- Gitlinks del candidato de cierre: Hubs
+  `668413a209fc0b7725c254047e104d5545d833c1`; Cloud
+  `43210079d3ddcd8ec7a5d9588cf3546a8efce9b0`. Hubs ya está integrado en la
+  raíz; el puntero Cloud corresponde al hardening causal posterior al rollout
+  y se integra en el cierre documental.
 - La preparación está guardada en el commit raíz local `e454251`. El candidato
   posterior de selección se publicó como Hubs PR #7 y está integrado en
   `master=668413a209fc0b7725c254047e104d5545d833c1` (candidata original
   `e83adaf38715f837a30d390273f488ffc2bcf42b`): selector y preview, una
   utilidad de encuadre y dos focales. El gitlink raíz quedó integrado mediante
-  la PR #22 en `main=4f3d91a176e8b0b7514bfe018328dcefacf6282e`. Aún no se ha
-  construido la imagen nueva ni desplegado.
+  la PR #22 en `main=4f3d91a176e8b0b7514bfe018328dcefacf6282e`. La imagen nueva
+  ya fue construida, desplegada y verificada; la raíz quedó después sincronizada
+  documentalmente en `main=911bcb5c2281830208a8177a0073b256b8c572d4`.
 - El build Hubs [33245207737](https://github.com/yengalvez/hubs/actions/runs/33245207737)
   pasó sobre `b2697e7e6f571d195346cc156f0f1631eedc841a`.
   Al abrir G0, editor, selector, ayuda, validadores y español coincidían con ese
@@ -54,9 +58,12 @@ cuentas.
   `sha256:256c292d0d5a69e021322bdbd11b3f318f2d44bee580433252e0b04ade1d5e18`.
   Su evidencia está en `docs/session-changelog.md`, bloque del 30 de agosto.
   No es una recaptura de Kubernetes ni una aceptación de subidas GLB.
-- La lectura actual del navegador interno mostró el vestíbulo de
-  `https://meta-hubs.org/VJopCY3/inicio`. No se entró, no se abrió el selector
-  y no se subió/guardó nada: la UI específica y la persistencia siguen pendientes.
+- El navegador interno cargó en frío el vestíbulo de
+  `https://meta-hubs.org/VJopCY3/inicio` en escritorio y 390×844 con el bundle
+  nuevo `hub-5733d7ae4df22f27da2e.js`, WebGL, cero errores y sin overflow. El
+  único warning es `background`, heredado y ya clasificado. El modo Mirar
+  confirmó el vestíbulo privado, pero no se pulsó Entrar, no se abrió el
+  selector y no se subió/guardó nada: persistencia y dos cuentas siguen pendientes.
 - La fuente fuerza `allow_promotion=false` y `allow_remixing=false`.
   Reticulum comprueba propiedad, credenciales de ficheros y tamaños;
   eso no demuestra por sí solo validación completa del rig en servidor.
@@ -234,10 +241,37 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
 - [x] Integrar el gitlink raíz exacto y los documentos mediante PR #22:
   `main=4f3d91a17`. Los checks proporcionales pasaron; se detuvo únicamente la
   repetición de recovery fuera de alcance.
-- [ ] **ACTIVE:** construir desde Hubs `master=668413a20` por el workflow
-  oficial y resolver el digest inmutable antes de tocar producción.
+- [x] Construir desde Hubs `master=668413a20` por el workflow oficial.
+  Actions `33504152150` terminó verde y publicó
+  `ghcr.io/yengalvez/hubs@sha256:04544546d59a43703c536a63ea09a32c3f51f90f8c2e97109d788499f65f672f`.
   No ejecutar ahora el hook global de commit de Hubs como sustituto de esos
   archivos: relanzaría toda la unidad aunque el bloque actual solo es focal.
+- [x] Crear y validar antes del rollout el checkpoint conjunto DB + medios en
+  `/Users/yengalvez/.yenhubs-private/glb-rollout-20260901/checkpoints/checkpoint-pre-668413a20`.
+  Conserva 361 tablas, 100 migraciones, 18 hubs y los 33 pares de medios; los
+  cinco escritores se reanudaron y la Lease quedó libre.
+- [x] Aplicar por el driver protegido la generación de 44 recursos
+  `cold-rebind-legacy-active-v1`. El diff previo excluyendo Secrets cambia solo
+  la imagen Hubs y la huella de imágenes del Namespace; los dos Secrets
+  generados coinciden en claves y valores con producción.
+  El primer apply publicó Hubs y después se cerró fail-closed: la marca
+  operativa heredada `kubectl.kubernetes.io/restartedAt` de Reticulum era el
+  único campo distinto en los doce snapshots. El clúster quedó con Hubs nuevo
+  listo, PostgreSQL listo, cinco escritores a cero, Lease libre y sin lock de
+  recuperación. Reparación causal: retirar solo esa marca que el manifiesto no
+  contiene, repetir una vez el mismo apply y añadir una regresión permanente al
+  comparador; no se regeneró, recapturó ni cambió otra entrada. Tras retirar
+  con UID/resourceVersion la única marca, el reintento causal terminó verde y
+  dejó 12/12 Deployments listos y la Lease libre.
+- [x] Reiniciar Reticulum tras Hubs, ejecutar el verificador live y comprobar
+  carga fría sin subir ni guardar los GLB de muestra. El diff posterior fue
+  cero y el verificador final terminó con **0 fallos / 0 avisos**, DB
+  361/100/18/33 y medios 33/33. Escritorio y móvil cargan el bundle nuevo sin
+  errores; el vestíbulo privado no demuestra todavía entrada visible en sala.
+- [x] Corregir los dos huecos operativos revelados por el rollout: Cloud PR
+  #30 validó el marcador `restartedAt` y PR #31 lo promovió a
+  `master=43210079d`; el verificador legacy acepta cero salas bot solo si todo
+  el payload vacío sigue siendo exacto y coherente.
 - [ ] Si G2 revela otro fallo: conservar diagnóstico exacto y corregir solo
   la causa. Si no, no añadir otra corrección. Un cambio de contrato requiere
   revisar la decisión, no adaptar el test para que pase.
@@ -248,23 +282,20 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
 
 ### G4 — Cerrar sin otra ronda general
 
-- [ ] Publicar evidencia no sensible de los siete criterios y residuos reales
-  en estos documentos; no marcar completa la feature por fuente/unitarios.
-- [ ] Actualizar estado humano y changelog; inspeccionar diff, enlaces y
-  secretos. Integrar repos/punteros solo si hubo cambios y publicación
-  autorizada. Para docs, validación proporcional; ningún `--full` nuevo.
+- [x] Publicar evidencia no sensible de los criterios cerrados y residuos reales
+  en estos documentos; la feature no se marca completa por fuente/unitarios.
+- [ ] **ACTIVE:** integrar el puntero Cloud, verificador, estado humano y
+  changelog tras inspeccionar diff, enlaces y secretos. Para este cierre usar
+  validación proporcional; ningún `--full` nuevo.
 - [ ] Terminar: no crear otro Goal, heartbeat, auditoría o tarea automáticamente.
 
 ## Próximo paso y parada
 
-**Siguiente:** construir la imagen Hubs fusionada `668413a20`, resolver su
-digest y desplegarla con
-checkpoint previo en `meta-hubs.org`. No hace falta que el propietario busque archivos ni supervise
-las comprobaciones rutinarias. Los permisos de muestras y las escrituras con
-dos cuentas siguen pendientes y no bloquean publicar la corrección de código.
-No hay suite, build, visor local ni monitor en marcha al abrir este bloque. La
-aceptación persistente completa sigue pendiente, sin convertir este rollout en
-un cierre ficticio de G2.
+**Siguiente:** integrar el puntero Cloud y estos documentos en la raíz. El
+rollout de código está operativo y verificado; no hay suite, build, apply ni
+monitor en marcha. Después se devuelve el control antes de G2: Entrar de forma
+visible en la sala y guardar hasta dos GLB con dos cuentas son efectos separados
+que siguen pendientes. No se convierte este rollout en un cierre ficticio de G2.
 
 Se continúa sin preguntas entre comprobaciones locales reversibles.
 Se pide solo lo que falte para una acción concreta: permisos de uso donde sean

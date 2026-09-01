@@ -111,9 +111,12 @@ else
 fi
 
 legacy_bot_health_good='{"ok":true,"rooms":1,"active_rooms":1,"queued_rooms":0,"max_active_rooms":5,"max_chromium_rooms":1,"max_bots_per_room":10,"llm_enabled":true,"model":"gpt-5-nano","runner_backend_default":"ghost","runner_backend_canary_hubs":[],"ghost_navigation_mode":"navmesh_preferred","runner_backends":{"VJopCY3":"ghost"},"active_hubs":["VJopCY3"],"queued_hubs":[]}'
+legacy_bot_health_empty='{"ok":true,"rooms":0,"active_rooms":0,"queued_rooms":0,"max_active_rooms":5,"max_chromium_rooms":1,"max_bots_per_room":10,"llm_enabled":true,"model":"gpt-5-nano","runner_backend_default":"ghost","runner_backend_canary_hubs":[],"ghost_navigation_mode":"navmesh_preferred","runner_backends":{},"active_hubs":[],"queued_hubs":[]}'
 if reactivation_bot_health_matches_profile "$bot_health_good" durable-active &&
    reactivation_bot_health_matches_profile \
      "$legacy_bot_health_good" cold-rebind-legacy-absent-v1 &&
+   reactivation_bot_health_matches_profile \
+     "$legacy_bot_health_empty" cold-rebind-legacy-absent-v1 &&
    ! reactivation_bot_health_matches_profile \
      "$legacy_bot_health_good" durable-active &&
    ! reactivation_bot_health_matches_profile \
@@ -122,7 +125,7 @@ if reactivation_bot_health_matches_profile "$bot_health_good" durable-active &&
    ! reactivation_bot_health_matches_profile \
      "${legacy_bot_health_good/\"active_rooms\":1/\"active_rooms\":0}" \
      cold-rebind-legacy-absent-v1; then
-  pass_test "legacy process-local health requires active ghost rooms and the exact historical schema"
+  pass_test "legacy process-local health accepts coherent empty or active ghost rooms with the exact historical schema"
 else
   fail_test "profile-specific bot health contract"
 fi

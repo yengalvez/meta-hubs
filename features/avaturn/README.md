@@ -14,8 +14,11 @@ focal del editor pasa 11/11. El 1 de septiembre la candidata quedó congelada en
 Hubs `e83adaf38` y pasó una vez la sección oficial: 119 unidades, lint y builds
 de Hubs/Admin. La PR Hubs #7 pasó seguridad y su build completo y quedó
 fusionada en `master=668413a20`. El gitlink raíz se integró después en
-`main=4f3d91a17`; sigue pendiente el build de imagen y el rollout productivo
-autorizado.
+`main=4f3d91a17`. Actions `33504152150` publicó la imagen por digest y el
+rollout productivo autorizado terminó con 12/12 servicios listos, diff posterior
+cero y `verify-live-reactivation.sh` en **0 fallos / 0 avisos**. El navegador
+interno cargó el bundle nuevo en escritorio y móvil sin errores. Esto publica
+la corrección, pero no sustituye el guardado persistente con dos cuentas.
 
 Ya se obtuvieron por encargo del propietario un ejemplo oficial Avaturn y
 Mixamo Xbot: [procedencia, hashes y comprobación local](sample-check-2026-08-31.md).
