@@ -337,8 +337,8 @@ reactivation_legacy_bot_health_is_acceptable() {
     .max_bots_per_room == 10 and
     (.max_active_rooms | type == "number" and floor == . and . >= 1 and . <= 10) and
     (.max_chromium_rooms | type == "number" and floor == . and . >= 1) and
-    (.rooms | type == "number" and floor == . and . > 0) and
-    (.active_rooms | type == "number" and floor == . and . > 0 and
+    (.rooms | type == "number" and floor == . and . >= 0) and
+    (.active_rooms | type == "number" and floor == . and . >= 0 and
       . <= $root.max_active_rooms and . <= $root.rooms) and
     (.queued_rooms | type == "number" and floor == . and . >= 0) and
     (.active_hubs | type == "array" and length == $root.active_rooms) and

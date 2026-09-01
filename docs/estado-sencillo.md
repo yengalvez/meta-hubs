@@ -157,18 +157,28 @@ La rama local es `codex/private-glb-acceptance`. Hay tres pasos prácticos:
    guardar como máximo dos avatares con permiso de uso, comprobarlos con dos cuentas y
    ver movimiento/pose en escritorio y móvil. Antes de guardar en producción,
    concretar los archivos/cuentas y hacer checkpoint de DB y medios.
-3. **En curso y autorizado:** construir la imagen oficial desde Hubs
-   `668413a20`, crear un checkpoint DB + medios y desplegarla
-   en la instancia existente. No se crean recursos ni se suben las muestras.
-   Si aparece otro fallo,
-   corregir solo su causa y repetir solo lo afectado; después cerrar.
+3. **Rollout terminado:** la imagen oficial de Hubs `668413a20` está
+   desplegada por digest en la instancia existente. Se creó antes un checkpoint
+   completo DB + medios; después quedaron 12/12 servicios listos, diff cero y
+   el verificador live dio **0 fallos / 0 avisos**. No se crearon recursos ni se
+   subieron las muestras.
 
 Los cambios se fusionaron desde `codex/private-glb-selection`: candidata
 `e83adaf38`, merge Hubs `668413a20`, raíz `4f3d91a17`. La sección oficial y el
 CI Hubs están verdes. En la PR raíz pasaron gitlinks, secretos, workflows,
 scripts y PostgreSQL; se canceló cuando empezó a repetir recovery histórico,
-que este plan prohíbe. Quedan imagen, checkpoint y rollout con aceptación fría.
-No se ha desplegado y no queda un proceso local consumiendo CPU.
+que este plan prohíbe. El build `33504152150` produjo el digest
+`sha256:04544546…f672f`; el checkpoint conservó 361 tablas, 100 migraciones,
+18 salas y 33/33 pares de medios. El primer apply detectó una marca temporal
+heredada de Reticulum y se cerró con seguridad; se corrigió solo esa causa y el
+reintento terminó verde. La corrección permanente está en Cloud
+`master=43210079d`.
+
+El navegador interno cargó el bundle nuevo en escritorio y móvil 390×844,
+sin errores ni desbordamiento; solo aparece el warning `background` ya conocido.
+El modo Mirar se mantuvo en el vestíbulo privado. Aún no se ha pulsado Entrar
+ni se ha guardado un GLB: eso forma parte de la aceptación persistente posterior,
+no del rollout ya cerrado. No queda un proceso local consumiendo CPU.
 
 **“Privado” quiere decir no listado en el catálogo**, no archivo secreto ni
 cifrado. Otras personas deben poder verlo cuando lo llevas puesto en la sala.
@@ -197,11 +207,12 @@ E2E multiusuario, checkpoint, rollout productivo y aceptación visual están
 terminados. El cleanup de cuatro DNS sin coste es mantenimiento menor, no parte
 de la feature ni otro proyecto.
 
-**GLB: preparación local terminada; aceptación integrada pendiente.** Los
-archivos ya están conseguidos. Faltan validar/publicar el candidato bajo el
-alcance autorizado y comprobar el guardado real, las dos cuentas y el uso en
-sala. No son otras siete suites largas ni se repite lo que ya pasó. No doy un
-porcentaje que mezcle preparación local con un resultado todavía no observado.
+**GLB: código y rollout terminados; aceptación persistente pendiente.** Los
+archivos ya están conseguidos y el candidato está operativo. Falta una sesión
+separada para guardar como máximo dos avatares con permiso, comprobar dos
+cuentas y su uso visible en sala. No son otras siete suites largas ni se repite
+lo que ya pasó. No doy un porcentaje que mezcle rollout cerrado con escrituras
+que todavía no se han autorizado de forma concreta.
 
 ## Cuándo se para
 
