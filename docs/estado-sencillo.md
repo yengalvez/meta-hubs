@@ -1,8 +1,40 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **30 de agosto de 2026**
+Ultima actualización: **1 de septiembre de 2026**
 
 ## Respuesta corta
+
+**H5 y Sitting v2 están terminados. El nuevo trabajo es comprobar la carga
+privada de avatares GLB que ya existe, no reconstruirla.** El plan activo está en
+[`PLAN_ACTUAL.md`](../PLAN_ACTUAL.md); el de Sitting se ha guardado íntegro en
+`OLD/docs/PLAN_ACTUAL-sitting-v2-completed-2026-08-30.md`.
+
+Ya se contrastaron código, build e historial del despliegue: la interfaz neutral
+estaba incluida. Falta probar con archivos reales que se previsualizan, se
+guardan solo en Mis avatares del propietario y funcionan en la sala. No se ha
+subido ni guardado nada en esta revisión. No hay un `--full`, build ni otra
+espera de GitHub en marcha por este plan.
+
+**El fallo del selector ya está corregido e integrado en Hubs:** rechazar un archivo
+nuevo permitía guardar el anterior por error. Se reprodujo y la corrección pasa
+11 casos locales. El encuadre pasa otros ocho casos; la validación oficial
+completa de Hubs terminó verde con 119 pruebas, cliente y Admin compilados.
+La PR Hubs #7 pasó también seguridad y su build completo y quedó fusionada en
+`master=668413a20`. Falta integrar el puntero raíz; no se ha cambiado el
+metaverso live.
+
+**Ya tenemos los dos ejemplos: Avaturn y Mixamo.** Los he descargado yo de
+ejemplos públicos, sin usar fotos tuyas ni crear cuentas. Ambos se ven en una
+prueba local y tienen el esqueleto necesario. No necesitas adjuntar archivos.
+Son muestras de prueba, no una contratación ni una integración de Avaturn.
+
+**El bloque autónomo local también está terminado.** Se probó el editor real
+con los dos modelos y se corrigió la cámara que mostraba solo un fragmento de
+Mixamo. Ahora se ven los avatares completos y generan miniaturas. Los archivos
+corruptos, demasiado grandes o sin esqueleto se rechazan. El guardado se simuló
+solo en memoria: esto no demuestra todavía persistencia ni privacidad real.
+
+## Lo que quedó cerrado: recuperación
 
 La recuperación ya ha terminado bien. YenHubs está activo otra vez con su base
 de datos y sus medios originales. El verificador de producción terminó con
@@ -22,9 +54,8 @@ recuperación pasan por separado y el verificador ahora conserva recibos para no
 repetir secciones verdes. No se ha tocado producción para hacer esta corrección.
 
 El plan de H5 se ha guardado completo en `OLD/docs/` y ya no dirige trabajo.
-La transición corta ya creó un worktree limpio y corrigió los estados
-documentales obsoletos. Se eligió **Sitting v2** y el nuevo `PLAN_ACTUAL.md`
-dirige exclusivamente esa feature.
+La transición corta creó un worktree limpio y Sitting v2 se terminó después.
+Los planes de ambas etapas están archivados; ninguno dirige trabajo nuevo.
 
 ## Lo que ya está demostrado
 
@@ -63,7 +94,7 @@ evidencia nuevos.
 Las tres acciones que no debe fingir una prueba automática ya han pasado:
 avatar real, chat privado y audio bidireccional con dos participantes.
 
-## Lo que toca ahora
+## Lo que quedó cerrado: Sitting v2
 
 **Sitting v2 ya está terminado y funcionando en producción.** Se desplegaron
 exactamente las mismas imágenes que pasaron staging, primero Reticulum y después
@@ -91,15 +122,16 @@ nodo, el balanceador, los dos discos y los dos firewalls exactos. Por tanto, el
 **gasto adicional de staging está en cero** y DigitalOcean conserva únicamente
 la topología productiva original.
 
-Quedan cuatro registros DNS de staging apuntando a la antigua IP
-`178.128.139.203`. No generan coste ni mantienen ningún servidor accesible. No
+En el cierre quedaron cuatro registros DNS de staging apuntando a la antigua IP
+`178.128.139.203`. No generan coste de infraestructura, pero conviene retirarlos
+porque una IP liberada puede reasignarse; no se garantiza su destino futuro. No
 se borraron porque IONOS cerró la sesión y Google Password Manager pidió una
 verificación física; no se forzó ni se cambió ninguna contraseña. Cuando IONOS
 esté autenticado, se borran esos cuatro records exactos y se lee su ausencia.
 
-El workspace nuevo es `/Users/Shared/Gits/YenHubs-features`. La implementación
-se integró desde `codex/sitting-v2` y el cierre documental se prepara desde
-`origin/main` en `codex/sitting-v2-closeout`, conservando los gitlinks exactos.
+El workspace es `/Users/Shared/Gits/YenHubs-features`. La implementación
+se integró desde `codex/sitting-v2` y el cierre documental quedó fusionado en
+la PR #21, `main` `34faabcc`, conservando los gitlinks exactos.
 Los worktrees antiguos no se han limpiado, reutilizado ni borrado.
 
 Hubs ya está integrado en `master` como `0781a6309` y Cloud como `db083d53`;
@@ -109,9 +141,39 @@ la PR #20 se fusionó en `main` como `032136ce`, con exactamente Hubs
 `db083d53e3d57c9380bbfefc6bd411e4d4bf4270`. Esta actualización documental es
 el cierre terminal y no requiere repetir ninguna suite larga.
 
-El siguiente trabajo ya puede ser otra feature. El único residuo operativo es
-borrar cuatro DNS de staging que apuntan a una IP retirada; no sirven tráfico,
-no cuestan dinero y no bloquean el producto.
+El residuo DNS es mantenimiento separado; no exige reabrir Sitting ni levantar
+servidores. No se ha accedido a IONOS para este nuevo trabajo.
+
+## Lo que toca ahora: avatares GLB
+
+La rama local es `codex/private-glb-acceptance`. Hay tres pasos prácticos:
+
+1. **Preparación local cerrada:** selector 11/11 conservado; ocho pruebas
+   nuevas de encuadre pasan. Avaturn y Mixamo se ven en el editor y producen
+   miniaturas reales. Los tres archivos inválidos se rechazan. No equivale a
+   guardado persistente, animación en sala ni prueba de un avatar de solo torso.
+   Los resultados están [documentados](../features/avaturn/sample-check-2026-08-31.md).
+2. Preparar una sesión acotada con autorización de destino y escrituras:
+   guardar como máximo dos avatares con permiso de uso, comprobarlos con dos cuentas y
+   ver movimiento/pose en escritorio y móvil. Antes de guardar en producción,
+   concretar los archivos/cuentas y hacer checkpoint de DB y medios.
+3. **En curso y autorizado:** integrar el gitlink Hubs `668413a20`,
+   construir la imagen oficial, crear un checkpoint DB + medios y desplegarla
+   en la instancia existente. No se crean recursos ni se suben las muestras.
+   Si aparece otro fallo,
+   corregir solo su causa y repetir solo lo afectado; después cerrar.
+
+Los cambios se fusionaron desde `codex/private-glb-selection`: candidata
+`e83adaf38`, merge Hubs `668413a20`. La sección oficial y el CI Hubs están
+verdes; quedan el gitlink raíz, imagen, checkpoint y rollout con aceptación
+fría. No se ha desplegado y no queda un proceso local consumiendo CPU.
+
+**“Privado” quiere decir no listado en el catálogo**, no archivo secreto ni
+cifrado. Otras personas deben poder verlo cuando lo llevas puesto en la sala.
+No vamos a integrar un proveedor de pago, crear staging ni añadir coste fijo.
+Los ejemplos se quedan locales: que sean públicos no permite automáticamente
+repartirlos a clientes. Las condiciones comerciales de Avaturn siguen siendo
+una decisión separada; no bloquean conseguir ni inspeccionar las muestras.
 
 ## Qué no se va a hacer
 
@@ -133,9 +195,16 @@ E2E multiusuario, checkpoint, rollout productivo y aceptación visual están
 terminados. El cleanup de cuatro DNS sin coste es mantenimiento menor, no parte
 de la feature ni otro proyecto.
 
+**GLB: preparación local terminada; aceptación integrada pendiente.** Los
+archivos ya están conseguidos. Faltan validar/publicar el candidato bajo el
+alcance autorizado y comprobar el guardado real, las dos cuentas y el uso en
+sala. No son otras siete suites largas ni se repite lo que ya pasó. No doy un
+porcentaje que mezcle preparación local con un resultado todavía no observado.
+
 ## Cuándo se para
 
-Solo ante una identidad distinta, lock/Lease ambiguos, pérdida del estado
-seguro, exposición de un secreto, un cambio de coste/topología no previsto o un
-fallo grave que necesite investigación superior. Un fallo normal no abre otro
-proyecto: se corrige únicamente su causa demostrada.
+No se pide supervisión entre comprobaciones locales. Se devuelve el control al
+cerrar el objetivo acotado o cuando haga falta una decisión real: autorización
+de publicación/producción, cuenta/licencia, identidad distinta, secreto expuesto
+o efecto no previsto. Un fallo normal se corrige por su causa sin abrir otro
+proyecto. Crear un Goal no autoriza automáticamente todas las fases posteriores.

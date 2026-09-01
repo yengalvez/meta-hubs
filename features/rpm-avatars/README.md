@@ -8,10 +8,11 @@ creación de cuentas.
 Los GLB exportados con anterioridad siguen siendo ficheros del usuario y se
 pueden cargar mediante el flujo neutral **Subir GLB (privado)**.
 
-La compatibilidad ya presente en el cliente Hubs se conserva, pero los cambios
-de interfaz neutral están todavía en fuente candidata: no deben describirse
-como desplegados hasta completar Actions, digest, rollout y aceptación cold
-browser.
+La compatibilidad ya presente en el cliente Hubs se conserva. La interfaz
+neutral está incluida en la fuente `b2697e7` del build `33245207737`, desplegado
+con Sitting v2; no está pendiente otro rollout de ese renombrado. Esto no
+sustituye la aceptación específica con GLB reales upper-body/full-body,
+persistencia y dos cuentas, que dirige `PLAN_ACTUAL.md`.
 
 Fuentes y decisión vigente:
 

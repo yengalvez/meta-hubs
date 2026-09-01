@@ -18,6 +18,7 @@ desplegar, actualizar ni implementar features.
 | `OLD/docs/PLAN_ACTUAL-h5-cerrado-2026-08-28.md` | plan completo que cerró H5 y el hardening operativo local posterior | `PLAN_ACTUAL.md` |
 | `OLD/docs/PLAN_ACTUAL-feature-transition-2026-08-28.md` | transición completada desde H5 hasta la elección y ramas de Sitting v2 | `PLAN_ACTUAL.md` |
 | `OLD/docs/PLAN_ACTUAL-sitting-v2-pre-inventory-2026-08-29.md` | plan Sitting v2 anterior al inventario que todavía no tenía target ni coste staging | `PLAN_ACTUAL.md` v3 |
+| `OLD/docs/PLAN_ACTUAL-sitting-v2-completed-2026-08-30.md` | copia exacta del plan Sitting v2 v9 cerrado, con producción e integración aceptadas | `PLAN_ACTUAL.md` (aceptación GLB, sin reabrir Sitting) |
 | `OLD/features/avaturn-research/` | investigacion previa, iframe y ejemplos no usados | `features/avaturn/README.md` |
 | `OLD/features/rpm-avatar-research/` | FBX, guias y prototipos anteriores ya sustituidos por la implementacion Mixamo/GLB integrada | `features/rpm-avatars/README.md`, codigo y pruebas en `hubs/` |
 | `OLD/patches/third-person/` | diffs antiguos ya integrados | `features/third-person/doc-thirdperson.md` |
