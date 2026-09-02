@@ -153,10 +153,14 @@ La rama local es `codex/private-glb-acceptance`. Hay tres pasos prácticos:
    miniaturas reales. Los tres archivos inválidos se rechazan. No equivale a
    guardado persistente, animación en sala ni prueba de un avatar de solo torso.
    Los resultados están [documentados](../features/avaturn/sample-check-2026-08-31.md).
-2. Preparar una sesión acotada con autorización de destino y escrituras:
-   guardar como máximo dos avatares con permiso de uso, comprobarlos con dos cuentas y
-   ver movimiento/pose en escritorio y móvil. Antes de guardar en producción,
-   concretar los archivos/cuentas y hacer checkpoint de DB y medios.
+2. **La sesión G2 está concretada y autorizada, pero aún no ha escrito:** producción
+   `meta-hubs.org`, las dos cuentas existentes y dos archivos recuperados del
+   propio proyecto —uno Ready Player Me y otro Avaturn/Blender—. No se usarán
+   las muestras públicas descargadas. Antes de guardar se hará un único
+   checkpoint DB + medios; después se crearán como máximo dos avatares privados,
+   se comprobarán con ambas cuentas y se verán en movimiento/pose. La
+   confirmación inmediata para el checkpoint, los magic links estrictamente
+   necesarios y los dos uploads exactos ya está recibida.
 3. **Rollout terminado:** la imagen oficial de Hubs `668413a20` está
    desplegada por digest en la instancia existente. Se creó antes un checkpoint
    completo DB + medios; después quedaron 12/12 servicios listos, diff cero y

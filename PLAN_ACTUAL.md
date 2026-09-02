@@ -1,7 +1,7 @@
 # PLAN ACTUAL — Aceptación de avatares GLB privados
 
-Versión: **GLB v1 — publicación y rollout cerrados; aceptación persistente pendiente**
-Última revisión: **1 de septiembre de 2026 (Europe/Madrid)**
+Versión: **GLB v2 — rollout cerrado; G2 preparado con activos propios**
+Última revisión: **3 de septiembre de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**.
 El plan completo de Sitting v2 está cerrado y archivado en
 `OLD/docs/PLAN_ACTUAL-sitting-v2-completed-2026-08-30.md`.
@@ -27,7 +27,10 @@ candidato de código actual y desplegarlo sobre la instancia productiva existent
 de `meta-hubs.org`, con checkpoint conjunto DB + medios previo y verificación
 fría posterior. No autoriza recursos nuevos, cambios de topología o coste,
 publicar/subir las muestras Avaturn/Mixamo ni escrituras de aceptación con dos
-cuentas.
+cuentas fuera de G2. El 3 de septiembre el propietario autorizó expresamente el
+checkpoint, los magic links estrictamente necesarios y los dos uploads exactos
+descritos en este plan. No autorizó borrados, catálogo, infraestructura,
+topología ni coste.
 
 ## Fuente y evidencia que se conservan
 
@@ -102,6 +105,20 @@ cuentas.
   uso en [la evidencia de muestras](features/avaturn/sample-check-2026-08-31.md).
   No hace falta que el propietario busque archivos. No es aceptación del
   editor ni autorización de uso comercial; tampoco se han subido al servidor.
+- Para G2 no se usarán esas muestras públicas. El bundle recuperado del propio
+  proyecto aporta dos exports ya utilizados por el propietario en esta misma
+  instancia: `CamisaNegra.glb` (generator `Ready Player Me`, 1.045.168 bytes,
+  SHA-256 `13beeca3d3f8d9d0857cf7bde180fd736663864becfd84dbb4cddeba6e8fb676`,
+  67 joints) y `modelT.glb` (generator `Avaturn.me | Blender`, 14.273.828 bytes,
+  SHA-256 `c48f963a058832d1802cc6b268945e9c764b1eec738f0104488229e73f9a1c2f`,
+  54 joints). Ambos cubren upper-body y full-body con los nombres exactos del
+  validador. Se crearán como máximo dos registros privados nuevos; no se
+  redistribuirán los ejemplos descargados de terceros.
+- El readback productivo del 3 de septiembre confirmó 12/12 Deployments listos,
+  dos cuentas habilitadas con dos logins y ningún proceso de prueba activo. El
+  navegador interno conserva una sesión con permisos de administración. La
+  segunda identidad prevista es `info@meta-hubs.org`; si el magic link no
+  resuelve a una cuenta distinta ya existente, G2 se detiene sin crear otra.
 - El bloque autónomo posterior montó **AvatarEditor y AvatarPreview reales**
   localmente, con Three/WebGL, estilos, split GLB y PNG reales; aisló en memoria
   cuenta/upload y usó GLTFLoader directo en lugar del wrapper/proxy Hubs.
@@ -204,15 +221,13 @@ terceros.
   serializado sin skin. Mensaje correcto, Guardar bloqueado y cero nuevos envíos.
   Los criterios 1–3 tienen evidencia local con las limitaciones registradas;
   4–7 y los controles server-side no se dan por probados por el simulador.
-- [ ] **WAITING — checkpoint de aceptación persistente:** fijar target,
-  dos cuentas de prueba aisladas, archivos exactos, máximo
-  **dos avatares nuevos**, conservación/retirada posterior y autorización de
-  las escrituras. No reutilizar autorizaciones H5/Sitting como permiso GLB.
-  Revisar antes los permisos de las muestras para ese destino: una descarga
-  pública no equivale a permiso comercial o de redistribución.
-  Si se usa producción: checkpoint conjunto DB + medios válido antes de
-  subir/guardar, según `deployment/create-checkpoint.sh`, sin restore de ensayo.
-  No crear staging para salvar este paso sin una decisión separada de coste.
+- [ ] **READY — checkpoint de aceptación persistente:** target fijado en la
+  instancia productiva existente `meta-hubs.org`; dos cuentas existentes,
+  dos exports propios exactos y máximo **dos avatares nuevos**. Se conservarán
+  al terminar para evitar un borrado no autorizado; una limpieza posterior será
+  independiente. Crear un único checkpoint conjunto DB + medios inmediatamente
+  antes de subir/guardar, según `deployment/create-checkpoint.sh`, sin restore
+  de ensayo. No crear staging ni usar las muestras públicas Avaturn/Mixamo.
 
 **Hallazgo del inventario:** `hubs/src/assets/models/DefaultAvatar.glb`
 (829504 bytes, SHA-256
@@ -226,10 +241,28 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
 
 ### G2 — Ejecutar la aceptación
 
-- [ ] Con G1 cerrado, completar los siete criterios; anotar por caso archivo,
-  fuente/digest, navegador/cuenta, resultado y evidencia no sensible.
-- [ ] Readback final de los dos avatares y sus listados, y cierre de sesiones.
-  Registrar si los avatares de prueba se conservan; no borrar automáticamente.
+- [x] **Confirmación inmediata única recibida:** checkpoint productivo, magic
+  links solo si hacen falta para las dos direcciones exactas, subida de los dos
+  exports propios y creación de máximo dos avatares privados. No incluye borrar
+  registros, cambiar topología ni publicar catálogo.
+- [ ] Crear y validar una sola vez el checkpoint conjunto DB + `ret-pvc`; dejar
+  escritores reanudados y Lease libre antes de abrir el flujo de subida.
+- [ ] Con la cuenta A ya autenticada, abrir `Subir GLB (privado)`, comprobar
+  preview/rig/miniatura y guardar `CamisaNegra.glb` y `modelT.glb`. Recargar,
+  seleccionarlos desde Mis avatares y registrar los identificadores devueltos.
+- [ ] Readback API/DB exacto de ambos: propietario A, `allow_promotion=false`,
+  `allow_remixing=false`, cero `avatar_listing`, ficheros físicos presentes y
+  ausencia de Featured/búsqueda pública. No imprimir tokens ni datos de login.
+- [ ] Con un observador aislado, comprobar primera/tercera persona,
+  idle/walk/run, sentarse/levantarse, manos, escala, suelo y representación
+  remota. Después autenticar secuencialmente la cuenta B existente y demostrar
+  que ninguno aparece en sus Mis avatares ni ofrece edición.
+- [ ] Carga fría final en escritorio y móvil, conservación de avatares previos,
+  cierre de sesiones y de procesos. Los dos nuevos se conservan; no borrar
+  automáticamente.
+- [ ] Completar los siete criterios con evidencia no sensible y actualizar
+  plan, estado humano, contrato y changelog. Si no cambia producto, no repetir
+  test, build, checkpoint, deploy o `--full`.
 
 ### G3 — Corregir únicamente si hay fallo
 
@@ -298,11 +331,10 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
 
 ## Próximo paso y parada
 
-**Siguiente:** devolver el control antes de G2. El rollout de código está
-operativo, verificado e integrado; no hay suite, build, apply ni monitor en
-marcha. La entrada visible general ya está demostrada. Guardar hasta dos GLB
-con dos cuentas sigue siendo una sesión separada y pendiente; no se convierte
-este rollout en un cierre ficticio de G2.
+**Siguiente:** ejecutar un solo checkpoint seguido de la sesión persistente
+descrita arriba. La autorización inmediata ya está recibida. El rollout de
+código está operativo, verificado e integrado; no hay suite, build, apply ni
+monitor en marcha. La entrada visible general ya está demostrada y no se repite.
 
 Se continúa sin preguntas entre comprobaciones locales reversibles.
 Se pide solo lo que falte para una acción concreta: permisos de uso donde sean
