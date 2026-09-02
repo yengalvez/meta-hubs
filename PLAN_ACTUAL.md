@@ -1,6 +1,6 @@
 # PLAN ACTUAL — Aceptación de avatares GLB privados
 
-Versión: **GLB v2 — rollout cerrado; G2 preparado con activos propios**
+Versión: **GLB v3 — G2 en ejecución; fallo de persistencia aislado**
 Última revisión: **3 de septiembre de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**.
 El plan completo de Sitting v2 está cerrado y archivado en
@@ -119,6 +119,15 @@ topología ni coste.
   navegador interno conserva una sesión con permisos de administración. La
   segunda identidad prevista es `info@meta-hubs.org`; si el magic link no
   resuelve a una cuenta distinta ya existente, G2 se detiene sin crear otra.
+- El checkpoint productivo previo a G2 quedó publicado y validado en
+  `/Users/yengalvez/.yenhubs-private/glb-acceptance-20260903/checkpoints/checkpoint-pre-g2-20260903`:
+  361 tablas, 100 migraciones, 18 hubs y 33/33 pares de medios; los cinco
+  escritores se reanudaron y la Lease quedó libre. La primera subida real
+  renderizó correctamente `CamisaNegra.glb`, pero el guardado no creó avatar:
+  las tres cargas temporales devolvieron 200 y la promoción a `/storage/owned`
+  falló con `:storage_error`. El volumen conserva subdirectorios `2755`
+  propiedad de UID/GID 1000 mientras Reticulum ejecuta sin capacidades y sin
+  grupo suplementario 1000. No se reintentó ni se subió `modelT.glb`.
 - El bloque autónomo posterior montó **AvatarEditor y AvatarPreview reales**
   localmente, con Three/WebGL, estilos, split GLB y PNG reales; aisló en memoria
   cuenta/upload y usó GLTFLoader directo en lugar del wrapper/proxy Hubs.
@@ -221,7 +230,7 @@ terceros.
   serializado sin skin. Mensaje correcto, Guardar bloqueado y cero nuevos envíos.
   Los criterios 1–3 tienen evidencia local con las limitaciones registradas;
   4–7 y los controles server-side no se dan por probados por el simulador.
-- [ ] **READY — checkpoint de aceptación persistente:** target fijado en la
+- [x] **Checkpoint de aceptación persistente validado:** target fijado en la
   instancia productiva existente `meta-hubs.org`; dos cuentas existentes,
   dos exports propios exactos y máximo **dos avatares nuevos**. Se conservarán
   al terminar para evitar un borrado no autorizado; una limpieza posterior será
@@ -245,11 +254,14 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
   links solo si hacen falta para las dos direcciones exactas, subida de los dos
   exports propios y creación de máximo dos avatares privados. No incluye borrar
   registros, cambiar topología ni publicar catálogo.
-- [ ] Crear y validar una sola vez el checkpoint conjunto DB + `ret-pvc`; dejar
+- [x] Crear y validar una sola vez el checkpoint conjunto DB + `ret-pvc`; dejar
   escritores reanudados y Lease libre antes de abrir el flujo de subida.
 - [ ] Con la cuenta A ya autenticada, abrir `Subir GLB (privado)`, comprobar
   preview/rig/miniatura y guardar `CamisaNegra.glb` y `modelT.glb`. Recargar,
   seleccionarlos desde Mis avatares y registrar los identificadores devueltos.
+  El primer intento de `CamisaNegra.glb` llegó hasta preview y miniatura, pero
+  no creó avatar por el fallo de permisos de promoción descrito arriba; solo se
+  repetirá tras desplegar la causa corregida.
 - [ ] Readback API/DB exacto de ambos: propietario A, `allow_promotion=false`,
   `allow_remixing=false`, cero `avatar_listing`, ficheros físicos presentes y
   ausencia de Featured/búsqueda pública. No imprimir tokens ni datos de login.
@@ -311,13 +323,25 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
   #30 validó el marcador `restartedAt` y PR #31 lo promovió a
   `master=43210079d`; el verificador legacy acepta cero salas bot solo si todo
   el payload vacío sigue siendo exacto y coherente.
-- [ ] Si G2 revela otro fallo: conservar diagnóstico exacto y corregir solo
-  la causa. Si no, no añadir otra corrección. Un cambio de contrato requiere
-  revisar la decisión, no adaptar el test para que pase.
-- [ ] Solo si cambian bytes de producto: usar las secciones afectadas del
+- [x] G2 reveló un fallo reproducible: la escritura temporal funciona, pero la
+  promoción duradera no puede crear rutas en `ret-pvc`. Se conserva el
+  diagnóstico y se corrige solo el contrato de grupo del Pod, sin schema,
+  topología, imagen ni datos.
+- [x] Preparar la corrección duradera en Cloud: Reticulum usa exactamente
+  `fsGroup=1000` y `fsGroupChangePolicy=Always`; generador y verificador la
+  fijan y rechazan deriva. Las pruebas focales pasan 30/30 y la suite completa
+  del generador pasa 35/35.
+- [x] Publicar e integrar los mismos bytes mediante Cloud PR #32 a
+  `development` y PR #33 a `master=cc52a184e104302cc63b34e0438720a2f85a61ad`.
+  Los cinco controles de la PR técnica pasaron; las cuatro copias automáticas
+  redundantes del evento push se cancelaron. La promoción usó `[skip ci]` y no
+  repitió la suite sobre bytes idénticos.
+- [ ] Como han cambiado bytes de despliegue: terminar las secciones afectadas del
   verificador y el procedimiento de build/digest/rollout de
   `deployment/README.md`, bajo el alcance de publicación/producción autorizado.
-  No tocar nube por una corrección meramente documental.
+  No hace falta build de imagen: integrar el gitlink raíz, regenerar, revisar
+  el diff y aplicar por el driver protegido; después
+  verificar permisos/servicios y reanudar G2 sin otro checkpoint.
 
 ### G4 — Cerrar sin otra ronda general
 
@@ -331,10 +355,12 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
 
 ## Próximo paso y parada
 
-**Siguiente:** ejecutar un solo checkpoint seguido de la sesión persistente
-descrita arriba. La autorización inmediata ya está recibida. El rollout de
-código está operativo, verificado e integrado; no hay suite, build, apply ni
-monitor en marcha. La entrada visible general ya está demostrada y no se repite.
+**Siguiente:** congelar la corrección Cloud con el único `--full` final,
+publicarla e integrarla; regenerar y aplicar por la ruta protegida, comprobar
+que `ret-pvc` es escribible por el grupo 1000 y que los 12 Deployments vuelven
+a estar listos. Después repetir una sola vez `CamisaNegra.glb` y continuar con
+`modelT.glb`. El checkpoint ya existe y no se repite; no hace falta construir
+otra imagen ni crear recursos.
 
 Se continúa sin preguntas entre comprobaciones locales reversibles.
 Se pide solo lo que falte para una acción concreta: permisos de uso donde sean

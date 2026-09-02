@@ -1,19 +1,22 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **1 de septiembre de 2026**
+Ultima actualización: **3 de septiembre de 2026**
 
 ## Respuesta corta
 
-**H5 y Sitting v2 están terminados. El nuevo trabajo es comprobar la carga
-privada de avatares GLB que ya existe, no reconstruirla.** El plan activo está en
+**H5 y Sitting v2 están terminados. G2 ya está en marcha y ha descubierto un
+único fallo real al guardar el primer GLB.** El plan activo está en
 [`PLAN_ACTUAL.md`](../PLAN_ACTUAL.md); el de Sitting se ha guardado íntegro en
 `OLD/docs/PLAN_ACTUAL-sitting-v2-completed-2026-08-30.md`.
 
-Ya se contrastaron código, build e historial del despliegue: la interfaz neutral
-estaba incluida. Falta probar con archivos reales que se previsualizan, se
-guardan solo en Mis avatares del propietario y funcionan en la sala. No se ha
-subido ni guardado nada en esta revisión. No hay un `--full`, build ni otra
-espera de GitHub en marcha por este plan.
+El checkpoint completo previo ya está validado. `CamisaNegra.glb` se cargó y se
+vio completo en el editor, pero el servidor no pudo mover sus ficheros del área
+temporal al almacenamiento definitivo; por tanto no se creó un avatar parcial.
+No se reintentó ni se subió `modelT.glb`. La causa converge en permisos heredados
+de `ret-pvc`, no en el GLB ni en otra feature. La corrección mínima está preparada
+en Cloud, su suite de generador pasa 35/35 y ya está integrada en
+`master=cc52a184`. Falta fijar ese puntero en la raíz, desplegarlo por la ruta
+protegida y retomar los dos guardados.
 
 **El fallo del selector ya está corregido e integrado en Hubs:** rechazar un archivo
 nuevo permitía guardar el anterior por error. Se reprodujo y la corrección pasa
