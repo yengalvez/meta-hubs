@@ -1,6 +1,6 @@
 # PLAN ACTUAL — Aceptación de avatares GLB privados
 
-Versión: **GLB v7 — G2 aceptado y listo para cierre Git**
+Versión: **GLB v8 — G2 cerrado e integrado**
 Última revisión: **3 de septiembre de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**.
 El plan completo de Sitting v2 está cerrado y archivado en
@@ -38,8 +38,9 @@ los datos, el destino, el riesgo ni el coste.
 ## Fuente y evidencia que se conservan
 
 - Workspace: `/Users/Shared/Gits/YenHubs-features`.
-- Rama local: `codex/private-glb-acceptance`; `origin/main`
-  `0857229afc3169620f4919383ce792772388b2a6` ya integra la corrección de
+- Rama local: `codex/private-glb-acceptance`; la PR raíz #28 integró el cierre
+  documental en `28dddf7e64f701e3a9d8268cc976cd2cc3d5543d`. Ese `main` conserva
+  la corrección de
   permisos y fija los gitlinks Hubs `668413a209fc0b7725c254047e104d5545d833c1`
   y Cloud `cc52a184e104302cc63b34e0438720a2f85a61ad`.
 - Gitlinks del cierre anterior al hardening de permisos: Hubs
@@ -419,17 +420,17 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
 - **CONTRATO COMPLETO:** la API de **Mis avatares** filtra por el ID autenticado
   y rechaza consultar el ID ajeno; `update` y `delete` rechazan al no propietario
   con 401. La UI no ofrece fichas ni edición ajena.
-- **LISTO al final:** integrar este cierre documental por Git con `[skip ci]` y
-  verificar `origin/main`/gitlinks, sin abrir otro CI largo.
+- **CIERRE GIT COMPLETO:** PR raíz #28 fusionada con `[skip ci]` como
+  `28dddf7e64f701e3a9d8268cc976cd2cc3d5543d`; `origin/main` y los dos gitlinks
+  exactos quedaron verificados sin abrir otro CI largo.
 - **CERRADO y no repetible:** checkpoint, uploads, corrección de `ret-pvc`,
   rollout, restore, verificador live, E2E, pruebas focales y suites largas.
 
 ## Próximo paso y parada
 
-**Siguiente:** solo cierre Git documental: diff-check, comprobación de enlaces y
-secretos sobre estos cinco documentos, commit/PR con `[skip ci]`, merge y
-verificación de `origin/main` y gitlinks. No queda otro rollout, checkpoint,
-suite larga, restore, infraestructura ni borrado.
+**Siguiente:** ninguno dentro de este plan. G2 está aceptado e integrado; una
+feature posterior debe abrir un plan nuevo sin reactivar H5, Sitting, restore,
+checkpoint, rollout ni estas pruebas GLB.
 
 Se continúa sin preguntas dentro de esta aceptación ya autorizada, incluida la
 transmisión estrictamente necesaria del correo a la dirección exacta. No pedir
