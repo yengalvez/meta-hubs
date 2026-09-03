@@ -4,7 +4,8 @@ Ultima actualización: **3 de septiembre de 2026**
 
 ## Respuesta corta
 
-**H5, Sitting v2 y la aceptación G2 de avatares privados están terminados.** El plan activo está en
+**H5, Sitting v2 y la aceptación G2 de avatares privados están terminados e
+integrados.** El registro de cierre está en
 [`PLAN_ACTUAL.md`](../PLAN_ACTUAL.md); el de Sitting se ha guardado íntegro en
 `OLD/docs/PLAN_ACTUAL-sitting-v2-completed-2026-08-30.md`.
 
@@ -229,11 +230,11 @@ E2E multiusuario, checkpoint, rollout productivo y aceptación visual están
 terminados. El cleanup de cuatro DNS sin coste es mantenimiento menor, no parte
 de la feature ni otro proyecto.
 
-**GLB: 100 % funcional y aceptado.** Código, checkpoint, corrección, rollout,
+**GLB: 100 % funcional, aceptado e integrado.** Código, checkpoint, corrección, rollout,
 los dos guardados privados, readback, catálogo, uso en sala, observador remoto,
-carga fría, verificador live y aislamiento con B están terminados. Solo se está
-integrando esta evidencia documental en Git; no hay otra batería larga ni otra
-intervención en DigitalOcean.
+carga fría, verificador live y aislamiento con B están terminados. La PR raíz
+#28 integró el cierre documental en `main=28dddf7`; no hay otra batería larga ni
+otra intervención en DigitalOcean.
 
 ## Cuándo se para
 
