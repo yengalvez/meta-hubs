@@ -1,19 +1,22 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **1 de septiembre de 2026**
+Ultima actualización: **3 de septiembre de 2026**
 
 ## Respuesta corta
 
-**H5 y Sitting v2 están terminados. El nuevo trabajo es comprobar la carga
-privada de avatares GLB que ya existe, no reconstruirla.** El plan activo está en
+**H5 y Sitting v2 están terminados. G2 ya está en marcha y ha descubierto un
+único fallo real al guardar el primer GLB.** El plan activo está en
 [`PLAN_ACTUAL.md`](../PLAN_ACTUAL.md); el de Sitting se ha guardado íntegro en
 `OLD/docs/PLAN_ACTUAL-sitting-v2-completed-2026-08-30.md`.
 
-Ya se contrastaron código, build e historial del despliegue: la interfaz neutral
-estaba incluida. Falta probar con archivos reales que se previsualizan, se
-guardan solo en Mis avatares del propietario y funcionan en la sala. No se ha
-subido ni guardado nada en esta revisión. No hay un `--full`, build ni otra
-espera de GitHub en marcha por este plan.
+El checkpoint completo previo ya está validado. `CamisaNegra.glb` se cargó y se
+vio completo en el editor, pero el servidor no pudo mover sus ficheros del área
+temporal al almacenamiento definitivo; por tanto no se creó un avatar parcial.
+No se reintentó ni se subió `modelT.glb`. La causa converge en permisos heredados
+de `ret-pvc`, no en el GLB ni en otra feature. La corrección mínima está preparada
+en Cloud, su suite de generador pasa 35/35 y ya está integrada en
+`master=cc52a184`. Falta fijar ese puntero en la raíz, desplegarlo por la ruta
+protegida y retomar los dos guardados.
 
 **El fallo del selector ya está corregido e integrado en Hubs:** rechazar un archivo
 nuevo permitía guardar el anterior por error. Se reprodujo y la corrección pasa
@@ -153,10 +156,14 @@ La rama local es `codex/private-glb-acceptance`. Hay tres pasos prácticos:
    miniaturas reales. Los tres archivos inválidos se rechazan. No equivale a
    guardado persistente, animación en sala ni prueba de un avatar de solo torso.
    Los resultados están [documentados](../features/avaturn/sample-check-2026-08-31.md).
-2. Preparar una sesión acotada con autorización de destino y escrituras:
-   guardar como máximo dos avatares con permiso de uso, comprobarlos con dos cuentas y
-   ver movimiento/pose en escritorio y móvil. Antes de guardar en producción,
-   concretar los archivos/cuentas y hacer checkpoint de DB y medios.
+2. **La sesión G2 está concretada y autorizada, pero aún no ha escrito:** producción
+   `meta-hubs.org`, las dos cuentas existentes y dos archivos recuperados del
+   propio proyecto —uno Ready Player Me y otro Avaturn/Blender—. No se usarán
+   las muestras públicas descargadas. Antes de guardar se hará un único
+   checkpoint DB + medios; después se crearán como máximo dos avatares privados,
+   se comprobarán con ambas cuentas y se verán en movimiento/pose. La
+   confirmación inmediata para el checkpoint, los magic links estrictamente
+   necesarios y los dos uploads exactos ya está recibida.
 3. **Rollout terminado:** la imagen oficial de Hubs `668413a20` está
    desplegada por digest en la instancia existente. Se creó antes un checkpoint
    completo DB + medios; después quedaron 12/12 servicios listos, diff cero y

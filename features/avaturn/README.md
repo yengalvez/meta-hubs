@@ -58,7 +58,11 @@ proveedor y sus puertas de licencia/privacidad están en
 - El avatar aparece en `Mis avatares` de su propietario.
 
 La privacidad aqui significa **no listado**. El archivo sigue almacenado en la
-instancia Hubs y sujeto a sus permisos y backups.
+instancia Hubs y sujeto a sus permisos y backups. El Pod de Reticulum debe
+mantener `fsGroup: 1000` y `fsGroupChangePolicy: Always`: el proceso conserva
+sus capacidades Linux desactivadas, mientras kubelet garantiza escritura de
+grupo en todo `ret-pvc`, incluida la promoción desde `expiring` a `owned` tras
+una restauración.
 
 ## Uso
 

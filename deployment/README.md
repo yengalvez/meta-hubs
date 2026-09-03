@@ -1053,6 +1053,11 @@ invariants hold:
 - Reticulum has exactly one desired replica, no `rollingUpdate` fields and no
   HPA targeting its Deployment;
 - Reticulum is non-privileged, drops every capability and has no propagated host mount;
+- the Reticulum Pod uses exactly `fsGroup: 1000` with
+  `fsGroupChangePolicy: Always`, so kubelet reapplies group-writable permissions
+  throughout `ret-pvc` after restores before capability-free Reticulum promotes
+  temporary media into `/storage/owned`; do not replace this with a manual
+  `chown` or a pod hotpatch;
 - bot-orchestrator runs as UID/GID 1000, drops every capability, uses
   RuntimeDefault seccomp and receives only its namespaced Pod-control
   ServiceAccount;

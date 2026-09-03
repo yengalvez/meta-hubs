@@ -6056,7 +6056,10 @@ if [[ "$joined" == exec\ * ]]; then
       # reset's own supervised stage, not the later database stream.
       exit 1
     fi
-    cat >/dev/null
+    # This kubectl exec deliberately omits -i, so the real client does not
+    # forward stdin. The fixture must not consume an interactive verifier's
+    # stdin either, or it waits until the supervisor's stream timeout.
+    :
   elif [[ "$joined" == *"psql -v ON_ERROR_STOP=1 -q"* ]]; then
     if [[ "${STUB_MODE:-}" == restore-db-monitor-exit ||
           "${STUB_MODE:-}" == restore-db-monitor-stall ||
@@ -15978,6 +15981,7 @@ if recovery_focus_selected cold-rebind-preflight; then
   # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
   expect_success 'cold rebind binds source content and distinct target identities read-only' \
     env RESTORE_TARGET_MODE=cold-rebind EXPECTED_KUBE_CONTEXT=fixture-context \
+      STUB_NAMESPACE_TARGET_PROFILE=cold-rebind-legacy-active-v1 \
       EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
       STUB_DEPLOYMENTS_JSON="$COLD_DEPLOYMENTS" \
       STUB_RET_CONFIG_JSON="$COLD_REBIND_RET_CONFIG_JSON" \
@@ -16001,6 +16005,7 @@ if recovery_focus_selected cold-rebind-preflight; then
   : >"$KUBECTL_LOG"
   expect_success 'target reactivation preflight accepts the exact cold bootstrap without mutation' \
     env RESTORE_TARGET_MODE=cold-rebind BACKUP_DIR="$FREEZE_BUNDLE" \
+      STUB_NAMESPACE_TARGET_PROFILE=cold-rebind-legacy-active-v1 \
       FREEZE_RECEIPT_PATH="$FREEZE_RECEIPT" VALUES_FILE="$VALUES_PROCESS_LOCAL_FIXTURE" \
       EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
       EXPECTED_RET_PVC_UID=fixture-pvc-uid STUB_DEPLOYMENTS_JSON="$COLD_DEPLOYMENTS" \
@@ -16035,6 +16040,7 @@ if recovery_focus_selected cold-rebind-preflight; then
   expect_failure 'cold rebind rejects a noncanonical bot image pull secret' \
     'exact checkpoint contract' \
     env RESTORE_TARGET_MODE=cold-rebind EXPECTED_KUBE_CONTEXT=fixture-context \
+      STUB_NAMESPACE_TARGET_PROFILE=cold-rebind-legacy-active-v1 \
       EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
       STUB_DEPLOYMENTS_JSON="$COLD_WRONG_PULL_SECRET" \
       STUB_RET_CONFIG_JSON="$COLD_REBIND_RET_CONFIG_JSON" \
@@ -16053,6 +16059,7 @@ if recovery_focus_selected cold-rebind-preflight; then
   expect_failure 'cold rebind requires the exact process-local Reticulum block' \
     'Reticulum config' \
     env RESTORE_TARGET_MODE=cold-rebind EXPECTED_KUBE_CONTEXT=fixture-context \
+      STUB_NAMESPACE_TARGET_PROFILE=cold-rebind-legacy-active-v1 \
       EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
       STUB_DEPLOYMENTS_JSON="$COLD_DEPLOYMENTS" \
       STUB_RET_CONFIG_JSON="$LEGACY_RET_CONFIG_JSON" \
@@ -16070,6 +16077,7 @@ if recovery_focus_selected cold-rebind-preflight; then
   # shellcheck disable=SC2016 # Positional parameters expand inside bash -c.
   expect_failure 'cold rebind rejects reuse of the source PVC UID' \
     'new Namespace/PVC UIDs' env RESTORE_TARGET_MODE=cold-rebind \
+      STUB_NAMESPACE_TARGET_PROFILE=cold-rebind-legacy-active-v1 \
       EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
       EXPECTED_RET_PVC_UID=source-pvc-uid STUB_PVC_UID=source-pvc-uid \
       STUB_DEPLOYMENTS_JSON="$COLD_DEPLOYMENTS" \
@@ -16108,6 +16116,7 @@ if recovery_focus_selected cold-rebind-execute; then
   done
   expect_success 'cold rebind restores DB and media together then resumes the exact target' \
     env RESTORE_TARGET_MODE=cold-rebind RESTORE_CHECKPOINT_COLD_REBIND=1 \
+      STUB_NAMESPACE_TARGET_PROFILE=cold-rebind-legacy-active-v1 \
       COLD_REBIND_OPERATION_ID="$COLD_OPERATION_ID" \
       CONFIRM_COLD_REBIND_RESTORE="$COLD_CONFIRMATION" \
       FREEZE_RECEIPT_PATH="$FREEZE_RECEIPT" \
@@ -16145,6 +16154,7 @@ if recovery_focus_selected cold-rebind-execute; then
   expect_failure 'cold rebind live-verifier failure returns to five zero writers' \
     'Cold rebind external live verification failed.' \
     env RESTORE_TARGET_MODE=cold-rebind RESTORE_CHECKPOINT_COLD_REBIND=1 \
+      STUB_NAMESPACE_TARGET_PROFILE=cold-rebind-legacy-active-v1 \
       COLD_REBIND_OPERATION_ID="$COLD_OPERATION_ID" \
       CONFIRM_COLD_REBIND_RESTORE="$COLD_CONFIRMATION" \
       FREEZE_RECEIPT_PATH="$FREEZE_RECEIPT" \
