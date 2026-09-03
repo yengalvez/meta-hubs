@@ -5,8 +5,8 @@
 La carga privada y su interfaz neutral están incluidas en la fuente Hubs
 `b2697e7` del build `33245207737`, cuya imagen se desplegó durante Sitting v2
 (evidencia en `docs/session-changelog.md`). No hace falta otro despliegue solo
-para publicar el renombrado. La aceptación específica de subida, persistencia
-y aislamiento entre cuentas sigue pendiente en `PLAN_ACTUAL.md`.
+para publicar el renombrado. La aceptación específica de subida, persistencia,
+uso e aislamiento entre cuentas está terminada en `PLAN_ACTUAL.md`.
 
 El 31 de agosto se reprodujo y corrigió localmente un fallo al cambiar
 de archivo: rechazar el nuevo permitía procesar el válido anterior. La nueva
@@ -19,8 +19,21 @@ rollout productivo autorizado terminó con 12/12 servicios listos, diff posterio
 cero y `verify-live-reactivation.sh` en **0 fallos / 0 avisos**. El navegador
 interno cargó el bundle nuevo en escritorio y móvil sin errores y la aceptación
 final entró en la escena: `APP`, `AFRAME`, renderer, 22 sistemas, canvas y avatar
-activos, con micrófono silenciado y sin vídeo. Esto publica y valida la carga
-general de la sala, pero no sustituye el guardado persistente con dos cuentas.
+activos, con micrófono silenciado y sin vídeo.
+
+El 3 de septiembre se creó y validó el checkpoint conjunto y se corrigió el
+único fallo de persistencia encontrado: Reticulum no recibía el GID de escritura
+de `ret-pvc`. Cloud `cc52a184` y raíz `0857229` fijan `fsGroup=1000` y
+`fsGroupChangePolicy=Always`; el rollout protegido mantuvo topología e imágenes.
+`CamisaNegra.glb` quedó como `CRimmfo` y `modelT.glb` como `h2tMVFb`, ambos de
+la cuenta A, no promocionables, no remezclables y sin listings. API, DB, seis
+pares físicos, búsqueda pública, Featured, sala, locomoción, sentado/de pie,
+observador aislado, carga fría y verificador live están comprobados. La cuenta
+B `info@meta-hubs.org` se creó por el flujo normal como usuario habilitado y no
+administrador: su **Mis avatares** está vacío y no ofrece fichas ni edición para
+los dos IDs. El readback DB confirma cero avatares objetivo para B, propietario
+A intacto y cero listings; backend y UI restringen **Mis avatares** y edición
+al propietario.
 
 Ya se obtuvieron por encargo del propietario un ejemplo oficial Avaturn y
 Mixamo Xbot: [procedencia, hashes y comprobación local](sample-check-2026-08-31.md).
