@@ -1,6 +1,6 @@
 # PLAN ACTUAL — Aceptación de avatares GLB privados
 
-Versión: **GLB v3 — G2 en ejecución; fallo de persistencia aislado**
+Versión: **GLB v7 — G2 aceptado y listo para cierre Git**
 Última revisión: **3 de septiembre de 2026 (Europe/Madrid)**
 Autoridad: **este fichero es la única cola ejecutable**.
 El plan completo de Sitting v2 está cerrado y archivado en
@@ -30,14 +30,19 @@ publicar/subir las muestras Avaturn/Mixamo ni escrituras de aceptación con dos
 cuentas fuera de G2. El 3 de septiembre el propietario autorizó expresamente el
 checkpoint, los magic links estrictamente necesarios y los dos uploads exactos
 descritos en este plan. No autorizó borrados, catálogo, infraestructura,
-topología ni coste.
+topología ni coste. Esa autorización sigue cubriendo los enlaces frescos
+estrictamente necesarios para autenticar las dos direcciones exactas durante
+esta misma aceptación; no hace falta volver a confirmarla mientras no cambien
+los datos, el destino, el riesgo ni el coste.
 
 ## Fuente y evidencia que se conservan
 
 - Workspace: `/Users/Shared/Gits/YenHubs-features`.
-- Rama local: `codex/private-glb-acceptance`, desde `origin/main`
-  `34faabccb328df1faad75590401d7dfbb859311b` (cierre Sitting, PR #21).
-- Gitlinks del candidato de cierre: Hubs
+- Rama local: `codex/private-glb-acceptance`; `origin/main`
+  `0857229afc3169620f4919383ce792772388b2a6` ya integra la corrección de
+  permisos y fija los gitlinks Hubs `668413a209fc0b7725c254047e104d5545d833c1`
+  y Cloud `cc52a184e104302cc63b34e0438720a2f85a61ad`.
+- Gitlinks del cierre anterior al hardening de permisos: Hubs
   `668413a209fc0b7725c254047e104d5545d833c1`; Cloud
   `43210079d3ddcd8ec7a5d9588cf3546a8efce9b0`. Hubs ya está integrado en la
   raíz; el puntero Cloud corresponde al hardening causal posterior al rollout
@@ -69,8 +74,8 @@ topología ni coste.
   principal `APP` y `AFRAME` son objetos, la escena quedó cargada y `entered`,
   con renderer, 22 sistemas, canvas y avatar activos, `Personas (1)` y cero
   errores de consola. El estado esperado de bots es exactamente cero según el
-  readback DB/health ya aceptado. No se abrió el selector ni se subió/guardó
-  ningún GLB: persistencia y dos cuentas siguen pendientes.
+  readback DB/health ya aceptado. Aquella pasada no abrió el selector ni
+  subió/guardó ningún GLB; G2 completó después persistencia y dos cuentas.
 - La fuente fuerza `allow_promotion=false` y `allow_remixing=false`.
   Reticulum comprueba propiedad, credenciales de ficheros y tamaños;
   eso no demuestra por sí solo validación completa del rig en servidor.
@@ -114,11 +119,12 @@ topología ni coste.
   54 joints). Ambos cubren upper-body y full-body con los nombres exactos del
   validador. Se crearán como máximo dos registros privados nuevos; no se
   redistribuirán los ejemplos descargados de terceros.
-- El readback productivo del 3 de septiembre confirmó 12/12 Deployments listos,
-  dos cuentas habilitadas con dos logins y ningún proceso de prueba activo. El
-  navegador interno conserva una sesión con permisos de administración. La
-  segunda identidad prevista es `info@meta-hubs.org`; si el magic link no
-  resuelve a una cuenta distinta ya existente, G2 se detiene sin crear otra.
+- El readback productivo inicial del 3 de septiembre confirmó 12/12 Deployments
+  listos, dos cuentas habilitadas con dos logins y ningún proceso de prueba
+  activo. G2 terminó usando `info@virtualmente.com` como cuenta A y creando por
+  el flujo normal autorizado `info@meta-hubs.org` como cuenta B aislada y no
+  administradora. Producción contiene ahora tres cuentas habilitadas; no se
+  crearon recursos, topología ni coste.
 - El checkpoint productivo previo a G2 quedó publicado y validado en
   `/Users/yengalvez/.yenhubs-private/glb-acceptance-20260903/checkpoints/checkpoint-pre-g2-20260903`:
   361 tablas, 100 migraciones, 18 hubs y 33/33 pares de medios; los cinco
@@ -128,6 +134,52 @@ topología ni coste.
   falló con `:storage_error`. El volumen conserva subdirectorios `2755`
   propiedad de UID/GID 1000 mientras Reticulum ejecuta sin capacidades y sin
   grupo suplementario 1000. No se reintentó ni se subió `modelT.glb`.
+- La causa se corrigió e integró sin cambiar imagen ni topología: Reticulum
+  recibe `fsGroup=1000` y `fsGroupChangePolicy=Always`. La generación de 44
+  recursos, el diff no secreto y la comparación exacta de Secrets limitaron
+  el rollout a ese `securityContext`; el apply protegido terminó con 12/12
+  Deployments listos, Lease libre, lock ausente y el mismo balanceador, nodo y
+  dos PVC de 10 GiB. El diff posterior es cero.
+- La repetición causal de `CamisaNegra.glb` creó `CRimmfo` y `modelT.glb` creó
+  `h2tMVFb`, ambos para la cuenta A `2334843008492503188`, activos, privados,
+  no remezclables y con cero listings. Sus seis pares físicos están en
+  `ret-pvc` y los endpoints exactos responden. Las búsquedas públicas por
+  nombre/ID y Featured devuelven cero coincidencias.
+- Ambos modelos se seleccionaron y usaron en la sala. `CamisaNegra` expone 67
+  huesos y `modelT` 54; caminar/correr, primera/tercera persona y
+  sentarse/levantarse funcionan. Un observador con contexto aislado recibió
+  `modelT`, sus 54 huesos, el movimiento y los cambios sentado/de pie. La carga
+  fría de escritorio y 390x844 pasa; los únicos errores de consola son el
+  micrófono denegado por el navegador automatizado y el favicon 404 conocido.
+- `verify-live-reactivation.sh` terminó después del rollout con **0 fallos / 0
+  avisos** y confirma 361 tablas, 100 migraciones, 18 salas y 39/39 pares de
+  medios. Mailtrap confirma que el primer enlace para B fue
+  entregado a `info@meta-hubs.org` a las 07:34 UTC, pero IONOS estaba abierto
+  en el buzón distinto `info@virtualmente.com`. Un único reenvío autorizado se
+  entregó a las 14:25 UTC y creó su token; el propietario lo abrió a las 16:11
+  UTC, fuera de los 30 minutos admitidos, por lo que Reticulum lo rechazó
+  correctamente como caducado. No es un fallo SMTP ni de la página de
+  verificación. El token apareció en la URL compartida, pero ya era inválido y
+  no se conserva ni reutiliza. El enlace fresco posterior fue entregado a las
+  20:56 UTC, pero su `identifier_hash` no coincide con ninguno de los dos
+  logins existentes. Un enlace diagnóstico autorizado para
+  `info@virtualmente.com` sí coincide con la cuenta A
+  `2334843008492503188`, por lo que no hay una deriva global de `PHX_KEY`: la
+  premisa incorrecta era que `info@meta-hubs.org` ya pertenecía a la segunda
+  cuenta. El propietario ordenó después resolver la comprobación sin más pausas:
+  Chrome tenía todavía la sesión A, lo que explicó el primer error de identidad;
+  tras cerrarla, un enlace nuevo verificó correctamente
+  `info@meta-hubs.org`. La cuenta B creada es `2372004458029646083`, habilitada
+  y `is_admin=false`. Su vista **Mis avatares** está vacía y no ofrece ninguna
+  ficha ni control de edición para `CRimmfo` o `h2tMVFb`; el readback DB confirma
+  tres cuentas habilitadas, cero avatares objetivo para B, propietario A intacto,
+  ambos flags privados en false y cero listings. Los enlaces usados quedaron
+  consumidos y las pestañas externas abiertas por el agente se cerraron.
+- Una búsqueda local imprimió accidentalmente el valor de `SMTP_PASS` presente
+  en dos artefactos Cloud. No se repite ni se publica el valor: queda tratado
+  como comprometido y debe rotarse antes de cualquier rollout posterior. La
+  rotación no forma parte de esta lectura ni es necesaria para terminar la
+  comprobación de cuenta B ya autorizada.
 - El bloque autónomo posterior montó **AvatarEditor y AvatarPreview reales**
   localmente, con Three/WebGL, estilos, split GLB y PNG reales; aisló en memoria
   cuenta/upload y usó GLTFLoader directo en lugar del wrapper/proxy Hubs.
@@ -256,23 +308,25 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
   registros, cambiar topología ni publicar catálogo.
 - [x] Crear y validar una sola vez el checkpoint conjunto DB + `ret-pvc`; dejar
   escritores reanudados y Lease libre antes de abrir el flujo de subida.
-- [ ] Con la cuenta A ya autenticada, abrir `Subir GLB (privado)`, comprobar
+- [x] Con la cuenta A ya autenticada, abrir `Subir GLB (privado)`, comprobar
   preview/rig/miniatura y guardar `CamisaNegra.glb` y `modelT.glb`. Recargar,
   seleccionarlos desde Mis avatares y registrar los identificadores devueltos.
   El primer intento de `CamisaNegra.glb` llegó hasta preview y miniatura, pero
-  no creó avatar por el fallo de permisos de promoción descrito arriba; solo se
-  repetirá tras desplegar la causa corregida.
-- [ ] Readback API/DB exacto de ambos: propietario A, `allow_promotion=false`,
+  no creó avatar por el fallo de permisos de promoción descrito arriba. Tras
+  desplegar la causa exacta, una sola repetición creó `CRimmfo`; `modelT.glb`
+  creó `h2tMVFb` a la primera.
+- [x] Readback API/DB exacto de ambos: propietario A, `allow_promotion=false`,
   `allow_remixing=false`, cero `avatar_listing`, ficheros físicos presentes y
   ausencia de Featured/búsqueda pública. No imprimir tokens ni datos de login.
-- [ ] Con un observador aislado, comprobar primera/tercera persona,
+- [x] Con un observador aislado, comprobar primera/tercera persona,
   idle/walk/run, sentarse/levantarse, manos, escala, suelo y representación
-  remota. Después autenticar secuencialmente la cuenta B existente y demostrar
-  que ninguno aparece en sus Mis avatares ni ofrece edición.
-- [ ] Carga fría final en escritorio y móvil, conservación de avatares previos,
-  cierre de sesiones y de procesos. Los dos nuevos se conservan; no borrar
-  automáticamente.
-- [ ] Completar los siete criterios con evidencia no sensible y actualizar
+  remota. Movimiento y pose remotos están demostrados con `modelT`; la cuenta B
+  aislada muestra **Mis avatares** vacío y no ofrece edición de los dos IDs.
+- [x] Carga fría final en escritorio y móvil, conservación de avatares previos,
+  cierre de pestañas y de procesos. Escritorio y móvil pasan, los medios previos
+  siguen presentes y todas las pestañas externas abiertas por el agente se
+  cerraron. Los dos nuevos se conservan; no borrar automáticamente.
+- [x] Completar los siete criterios con evidencia no sensible y actualizar
   plan, estado humano, contrato y changelog. Si no cambia producto, no repetir
   test, build, checkpoint, deploy o `--full`.
 
@@ -336,12 +390,14 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
   Los cinco controles de la PR técnica pasaron; las cuatro copias automáticas
   redundantes del evento push se cancelaron. La promoción usó `[skip ci]` y no
   repitió la suite sobre bytes idénticos.
-- [ ] Como han cambiado bytes de despliegue: terminar las secciones afectadas del
+- [x] Como han cambiado bytes de despliegue: terminar las secciones afectadas del
   verificador y el procedimiento de build/digest/rollout de
   `deployment/README.md`, bajo el alcance de publicación/producción autorizado.
   No hace falta build de imagen: integrar el gitlink raíz, regenerar, revisar
   el diff y aplicar por el driver protegido; después
-  verificar permisos/servicios y reanudar G2 sin otro checkpoint.
+  verificar permisos/servicios y reanudar G2 sin otro checkpoint. Completado
+  con Cloud `cc52a184`, raíz `0857229`, diff posterior cero y verificador live
+  **0/0**; no hubo build de imagen ni cambio de topología.
 
 ### G4 — Cerrar sin otra ronda general
 
@@ -350,22 +406,34 @@ de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance
 - [x] Integrar el puntero Cloud, verificador, estado humano y changelog tras
   inspeccionar diff, enlaces y secretos. La PR raíz #24 dejó `main=7fcda31b`
   con Hubs `668413a20` y Cloud `43210079d`; no se ejecutó otro `--full`.
-- [x] Terminar este bloque: no crear otro Goal, heartbeat, auditoría o tarea
-  automáticamente. G2 permanece pendiente y requiere una decisión humana nueva.
+- [x] Terminar este bloque: no crear otro heartbeat, auditoría o tarea
+  automáticamente. La identidad se resolvió con el buzón exacto y la cuenta B no
+  administradora creada por el flujo normal; no queda otra verificación live.
+
+## Estado de trabajo
+
+- **G2 COMPLETO:** `info@virtualmente.com` es A; `info@meta-hubs.org` es B. B
+  está habilitada, no es administradora y su **Mis avatares** está vacío. DB
+  confirma cero coincidencias con `CRimmfo`/`h2tMVFb`; los dos pertenecen
+  exclusivamente a A, siguen activos, privados y sin listings.
+- **CONTRATO COMPLETO:** la API de **Mis avatares** filtra por el ID autenticado
+  y rechaza consultar el ID ajeno; `update` y `delete` rechazan al no propietario
+  con 401. La UI no ofrece fichas ni edición ajena.
+- **LISTO al final:** integrar este cierre documental por Git con `[skip ci]` y
+  verificar `origin/main`/gitlinks, sin abrir otro CI largo.
+- **CERRADO y no repetible:** checkpoint, uploads, corrección de `ret-pvc`,
+  rollout, restore, verificador live, E2E, pruebas focales y suites largas.
 
 ## Próximo paso y parada
 
-**Siguiente:** congelar la corrección Cloud con el único `--full` final,
-publicarla e integrarla; regenerar y aplicar por la ruta protegida, comprobar
-que `ret-pvc` es escribible por el grupo 1000 y que los 12 Deployments vuelven
-a estar listos. Después repetir una sola vez `CamisaNegra.glb` y continuar con
-`modelT.glb`. El checkpoint ya existe y no se repite; no hace falta construir
-otra imagen ni crear recursos.
+**Siguiente:** solo cierre Git documental: diff-check, comprobación de enlaces y
+secretos sobre estos cinco documentos, commit/PR con `[skip ci]`, merge y
+verificación de `origin/main` y gitlinks. No queda otro rollout, checkpoint,
+suite larga, restore, infraestructura ni borrado.
 
-Se continúa sin preguntas entre comprobaciones locales reversibles.
-Se pide solo lo que falte para una acción concreta: permisos de uso donde sean
-necesarios, cuentas/target y escrituras de la sesión; no pedir al propietario
-que busque estas muestras. Una autorización específica vale
-para toda esa sesión mientras no cambien datos, destino, riesgo ni coste.
-Una divergencia de identidad, secreto expuesto, pérdida de estado seguro o
-fallo sin causa demostrable detiene los efectos, no reabre H5.
+Se continúa sin preguntas dentro de esta aceptación ya autorizada, incluida la
+transmisión estrictamente necesaria del correo a la dirección exacta. No pedir
+al propietario que busque muestras, pulse enlaces ni repita autorizaciones. Solo
+una credencial imprescindible que el agente no pueda usar, una divergencia de
+identidad, una pérdida de estado seguro, un cambio de datos/destino/riesgo/coste
+o un fallo grave nuevo sin causa demostrable detiene los efectos; no reabre H5.

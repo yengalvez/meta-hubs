@@ -11,8 +11,13 @@ pueden cargar mediante el flujo neutral **Subir GLB (privado)**.
 La compatibilidad ya presente en el cliente Hubs se conserva. La interfaz
 neutral está incluida en la fuente `b2697e7` del build `33245207737`, desplegado
 con Sitting v2; no está pendiente otro rollout de ese renombrado. Esto no
-sustituye la aceptación específica con GLB reales upper-body/full-body,
-persistencia y dos cuentas, que dirige `PLAN_ACTUAL.md`.
+sustituía la aceptación específica con GLB reales upper-body/full-body. Esa
+prueba ya ha guardado y usado en producción un export Ready Player Me y otro
+Avaturn/Blender, con readback privado y representación remota. La cuenta B
+`info@meta-hubs.org` quedó creada como usuario habilitado no administrador; su
+`Mis avatares` está vacío, no ofrece edición de esos IDs y la base confirma que
+no posee ninguno. El contrato backend/UI restringe listado y edición al
+propietario, según `PLAN_ACTUAL.md`.
 
 Fuentes y decisión vigente:
 

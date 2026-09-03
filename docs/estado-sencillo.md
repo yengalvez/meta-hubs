@@ -4,19 +4,25 @@ Ultima actualización: **3 de septiembre de 2026**
 
 ## Respuesta corta
 
-**H5 y Sitting v2 están terminados. G2 ya está en marcha y ha descubierto un
-único fallo real al guardar el primer GLB.** El plan activo está en
+**H5, Sitting v2 y la aceptación G2 de avatares privados están terminados.** El plan activo está en
 [`PLAN_ACTUAL.md`](../PLAN_ACTUAL.md); el de Sitting se ha guardado íntegro en
 `OLD/docs/PLAN_ACTUAL-sitting-v2-completed-2026-08-30.md`.
 
-El checkpoint completo previo ya está validado. `CamisaNegra.glb` se cargó y se
-vio completo en el editor, pero el servidor no pudo mover sus ficheros del área
-temporal al almacenamiento definitivo; por tanto no se creó un avatar parcial.
-No se reintentó ni se subió `modelT.glb`. La causa converge en permisos heredados
-de `ret-pvc`, no en el GLB ni en otra feature. La corrección mínima está preparada
-en Cloud, su suite de generador pasa 35/35 y ya está integrada en
-`master=cc52a184`. Falta fijar ese puntero en la raíz, desplegarlo por la ruta
-protegida y retomar los dos guardados.
+El checkpoint completo previo está validado. El único fallo real era que
+Reticulum no heredaba el grupo necesario para mover medios de la zona temporal
+a `ret-pvc`; se corrigió en el manifiesto, se integró en `main=0857229` y se
+desplegó por la ruta protegida sin cambiar imágenes, topología ni coste.
+`CamisaNegra.glb` y `modelT.glb` ya están guardados como dos avatares privados,
+se ven, caminan, corren y se sientan, y un observador aislado recibe su modelo,
+movimiento y pose. El verificador live termina con **0 fallos y 0 avisos**.
+
+No queda otra suite, checkpoint ni despliegue. `info@virtualmente.com` es la
+cuenta A que creó los dos avatares. `info@meta-hubs.org` es el buzón receptor,
+no el remitente: los enlaces salen de `noreply@meta-hubs.org`. Tras retirar de
+Chrome la sesión antigua de A, un enlace nuevo creó e inició correctamente una
+cuenta B normal y distinta. Su **Mis avatares** está vacío y no ofrece edición;
+la base confirma que B no posee ninguno de los dos IDs y que A conserva ambos
+activos, privados y sin listings.
 
 **El fallo del selector ya está corregido e integrado en Hubs:** rechazar un archivo
 nuevo permitía guardar el anterior por error. Se reprodujo y la corrección pasa
@@ -24,7 +30,8 @@ nuevo permitía guardar el anterior por error. Se reprodujo y la corrección pas
 completa de Hubs terminó verde con 119 pruebas, cliente y Admin compilados.
 La PR Hubs #7 pasó también seguridad y su build completo y quedó fusionada en
 `master=668413a20`. El puntero raíz quedó integrado por la PR #22 en
-`main=4f3d91a17`; no se ha cambiado el metaverso live.
+`main=4f3d91a17`. El cliente Hubs no necesitó otra imagen durante la corrección
+G2; solo cambió el contrato de montaje de Reticulum ya descrito.
 
 **Ya tenemos los dos ejemplos: Avaturn y Mixamo.** Los he descargado yo de
 ejemplos públicos, sin usar fotos tuyas ni crear cuentas. Ambos se ven en una
@@ -35,7 +42,8 @@ Son muestras de prueba, no una contratación ni una integración de Avaturn.
 con los dos modelos y se corrigió la cámara que mostraba solo un fragmento de
 Mixamo. Ahora se ven los avatares completos y generan miniaturas. Los archivos
 corruptos, demasiado grandes o sin esqueleto se rechazan. El guardado se simuló
-solo en memoria: esto no demuestra todavía persistencia ni privacidad real.
+solo en memoria: aquel bloque no lo demostraba por sí solo; G2 ya demostró
+después persistencia, uso e aislamiento reales.
 
 ## Lo que quedó cerrado: recuperación
 
@@ -63,7 +71,9 @@ Los planes de ambas etapas están archivados; ninguno dirige trabajo nuevo.
 ## Lo que ya está demostrado
 
 - PostgreSQL conserva las tablas y conteos esperados.
-- Los **33/33 pares de medios** están presentes.
+- El checkpoint previo a G2 conserva **33/33 pares de medios** y el estado live
+  posterior contiene **39/39**: los anteriores más los seis pares de los dos
+  avatares nuevos.
 - Los cinco servicios escritores están activos y saludables; PostgreSQL está
   `1/1`.
 - El lock de recuperación está ausente, la Lease está libre y no quedan
@@ -145,7 +155,8 @@ la PR #20 se fusionó en `main` como `032136ce`, con exactamente Hubs
 el cierre terminal y no requiere repetir ninguna suite larga.
 
 El residuo DNS es mantenimiento separado; no exige reabrir Sitting ni levantar
-servidores. No se ha accedido a IONOS para este nuevo trabajo.
+servidores. El acceso posterior a IONOS se limitó a los dos buzones autorizados
+para la aceptación G2; no se modificaron DNS ni cuentas de correo.
 
 ## Lo que toca ahora: avatares GLB
 
@@ -156,19 +167,19 @@ La rama local es `codex/private-glb-acceptance`. Hay tres pasos prácticos:
    miniaturas reales. Los tres archivos inválidos se rechazan. No equivale a
    guardado persistente, animación en sala ni prueba de un avatar de solo torso.
    Los resultados están [documentados](../features/avaturn/sample-check-2026-08-31.md).
-2. **La sesión G2 está concretada y autorizada, pero aún no ha escrito:** producción
-   `meta-hubs.org`, las dos cuentas existentes y dos archivos recuperados del
-   propio proyecto —uno Ready Player Me y otro Avaturn/Blender—. No se usarán
-   las muestras públicas descargadas. Antes de guardar se hará un único
-   checkpoint DB + medios; después se crearán como máximo dos avatares privados,
-   se comprobarán con ambas cuentas y se verán en movimiento/pose. La
-   confirmación inmediata para el checkpoint, los magic links estrictamente
-   necesarios y los dos uploads exactos ya está recibida.
-3. **Rollout terminado:** la imagen oficial de Hubs `668413a20` está
-   desplegada por digest en la instancia existente. Se creó antes un checkpoint
-   completo DB + medios; después quedaron 12/12 servicios listos, diff cero y
-   el verificador live dio **0 fallos / 0 avisos**. No se crearon recursos ni se
-   subieron las muestras.
+2. **La sesión G2 ya ha creado exactamente dos avatares privados:**
+   `CamisaNegra.glb` es `CRimmfo` y `modelT.glb` es `h2tMVFb`. Ambos pertenecen
+   a la cuenta A, tienen promoción y remix desactivados, cero listings y seis
+   pares físicos presentes. No aparecen en búsqueda ni Featured. Se cargan en
+   la sala, animan y sincronizan movimiento y sentado/de pie con un observador.
+3. **La cuenta B está aislada:** el buzón exacto `info@meta-hubs.org` recibió el
+   enlace de `noreply@meta-hubs.org`. El primer intento falló porque Chrome aún
+   estaba autenticado como A; tras cerrar A y pedir uno nuevo, B quedó creada
+   como cuenta habilitada y no administradora. En su **Mis avatares** no aparece
+   ninguna ficha ni control de edición. El readback confirma tres cuentas
+   habilitadas, cero avatares objetivo para B, propietario A intacto y cero
+   listings. No queda otro rollout, test largo, checkpoint, recurso, coste ni
+   borrado.
 
 Los cambios se fusionaron desde `codex/private-glb-selection`: candidata
 `e83adaf38`, merge Hubs `668413a20`, raíz `4f3d91a17`. La sección oficial y el
@@ -179,16 +190,17 @@ que este plan prohíbe. El build `33504152150` produjo el digest
 18 salas y 33/33 pares de medios. El primer apply detectó una marca temporal
 heredada de Reticulum y se cerró con seguridad; se corrigió solo esa causa y el
 reintento terminó verde. La corrección permanente está en Cloud
-`master=43210079d`.
+`master=43210079d`. La corrección G2 posterior de escritura en `ret-pvc` quedó
+en Cloud `cc52a184` y raíz `main=0857229`; no cambió la imagen Hubs.
 
 El navegador interno cargó el bundle nuevo en escritorio y móvil 390×844,
 sin errores ni desbordamiento; solo aparece el warning `background` ya conocido.
 La comprobación final entró de verdad en la sala con el micrófono silenciado y
 sin vídeo: `APP`, `AFRAME`, la escena, el renderizador, sus 22 sistemas, el
 canvas y el avatar quedaron activos; la UI mostró `Personas (1)` y no hubo
-errores. La pestaña se cerró al terminar. No se abrió el selector ni se guardó
-un GLB: eso sigue siendo la aceptación persistente posterior, no parte del
-rollout ya cerrado. No queda un proceso local consumiendo CPU.
+errores. Aquella pasada no abrió el selector; G2 sí lo abrió después y guardó
+los dos avatares descritos arriba. No queda un proceso local de verificación
+consumiendo CPU.
 
 **“Privado” quiere decir no listado en el catálogo**, no archivo secreto ni
 cifrado. Otras personas deben poder verlo cuando lo llevas puesto en la sala.
@@ -217,17 +229,16 @@ E2E multiusuario, checkpoint, rollout productivo y aceptación visual están
 terminados. El cleanup de cuatro DNS sin coste es mantenimiento menor, no parte
 de la feature ni otro proyecto.
 
-**GLB: código y rollout terminados; aceptación persistente pendiente.** Los
-archivos ya están conseguidos y el candidato está operativo. Falta una sesión
-separada para guardar como máximo dos avatares con permiso, comprobar dos
-cuentas y su uso visible en sala. No son otras siete suites largas ni se repite
-lo que ya pasó. No doy un porcentaje que mezcle rollout cerrado con escrituras
-que todavía no se han autorizado de forma concreta.
+**GLB: 100 % funcional y aceptado.** Código, checkpoint, corrección, rollout,
+los dos guardados privados, readback, catálogo, uso en sala, observador remoto,
+carga fría, verificador live y aislamiento con B están terminados. Solo se está
+integrando esta evidencia documental en Git; no hay otra batería larga ni otra
+intervención en DigitalOcean.
 
 ## Cuándo se para
 
-No se pide supervisión entre comprobaciones locales. Se devuelve el control al
-cerrar el objetivo acotado o cuando haga falta una decisión real: autorización
-de publicación/producción, cuenta/licencia, identidad distinta, secreto expuesto
-o efecto no previsto. Un fallo normal se corrige por su causa sin abrir otro
-proyecto. Crear un Goal no autoriza automáticamente todas las fases posteriores.
+No se pide supervisión ni confirmaciones repetidas dentro del G2 ya autorizado.
+Se devuelve el control al cerrar el objetivo o solo si aparece una credencial
+imprescindible inaccesible, una identidad distinta, una pérdida de estado seguro,
+un cambio real de datos/destino/riesgo/coste o un fallo grave nuevo sin causa
+demostrable. Un fallo normal se corrige por su causa sin abrir otro proyecto.
