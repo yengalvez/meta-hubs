@@ -943,3 +943,31 @@ Time reference: Europe/Madrid (CEST).
 | 2026-09-03 | El enlace fresco de B quedó `Delivered` a las 20:56 UTC, pero se detuvo antes de abrirlo por una divergencia de identidad demostrada. | Su hash no coincide con ninguno de los dos logins existentes; un enlace diagnóstico permitido de `info@virtualmente.com` sí coincide con A `2334843008492503188`, descartando deriva global de `PHX_KEY`. Como `disable_sign_up` no está activo, abrir B crearía una tercera cuenta, prohibida por el plan. La otra cuenta existente `2221865104901668866` está habilitada, tiene cero coincidencias con `CRimmfo`/`h2tMVFb`, mientras A tiene las dos; la búsqueda propia y las mutaciones están ligadas al account ID autenticado y devuelven 401 para un dueño distinto. No se consumió ningún token ni se cambió producción. |
 | 2026-09-03 | Se resolvió la identidad final sin repetir ningún bloque técnico: el buzón `info@meta-hubs.org` estaba guardado en el gestor de Chrome y recibe desde `noreply@meta-hubs.org`; `info@virtualmente.com` era la sesión A conservada. | El primer enlace de B chocó con esa sesión A y mostró el error esperado. Tras cerrar A y solicitar un enlace nuevo, la verificación inició `info@meta-hubs.org` y creó B `2372004458029646083`, habilitada y `is_admin=false`. En **Mis avatares** de B no aparece ninguna ficha ni edición. DB confirma 3/3 cuentas habilitadas, 0 coincidencias de B con `CRimmfo`/`h2tMVFb`, propietario A intacto, flags privados en false y 0 listings. Las pestañas externas abiertas por el agente se cerraron; no hubo borrado, catálogo, infraestructura, topología, coste, test, checkpoint, rollout ni verificador repetido. |
 | 2026-09-03 | La PR raíz #28 integró el cierre documental de G2 con `[skip ci]` como `main=28dddf7e64f701e3a9d8268cc976cd2cc3d5543d`. | `origin/main` conserva los gitlinks exactos Hubs `668413a209fc0b7725c254047e104d5545d833c1` y Cloud `cc52a184e104302cc63b34e0438720a2f85a61ad`. El checkout de trabajo quedó limpio; el checkout histórico `/Users/Shared/Gits/YenHubs` no se sincronizó porque contiene cambios y archivos sin seguimiento ajenos a este cierre. No se abrió CI ni se tocó producción. |
+
+## 2026-09-05 — Creador de avatares, trabajo local en curso
+
+El plan G2 cerrado se conservó íntegro en OLD. El prototipo de creador reutiliza
+AvatarEditor, guardado privado y selección existentes. El vestuario Quaternius
+se descartó tras la aclaración de estilo empresarial y mínimo 5+5+5 piezas.
+MakeHuman permite ensamblar cinco tops, cinco pantalones y cinco peinados sobre
+dos bases. CC0 y CC-BY 4.0 documentados por pieza; créditos en UI y glTF.
+Se corrigieron la transparencia global del exportador y las máscaras de cuerpo
+que ocultaban brazos tras cambiar a camiseta. El compositor elimina recursos
+no seleccionados y sus cuatro pruebas focales cubren 300 combinaciones.
+
+El editor real, con backend aislado en memoria, mostró ambas bases y guardó
+americana/lana/coleta: GLTF 34,466 B, BIN 4,284,948 B, miniatura 177,617 B,
+720x1280 y flags false/false. No acredita persistencia real ni aceptación de sala.
+El ensamblador portátil reproduce exactamente el GLB masculino normalizado.
+Pendientes: completar revisión visual/pose, comprobaciones finales afectadas,
+integración y despliegue. SMTP debe rotarse antes del rollout por exposición
+histórica. Sin push, PR, infraestructura, checkpoint ni cambio productivo aquí.
+
+El cierre local posterior confirma editor móvil 390x844 y guardado simulado
+femenino sin pelo (PNG 720x1280, flags privados false/false). Diez renders
+verifican el jersey con los cinco pantalones en ambas bases tras corregir la
+intersección en cintura. Build webpack productivo pasa con dos avisos de tamaño;
+Gitleaks de assets/staged, Actionlint y diff-check pasan. Hubs quedó limpio en
+3987f8b6acce3aedb32fd3bf454dbdf9530df686. El primer commit rechazó dos globales
+Node en el normalizador; importar process y Buffer corrigió esa causa exacta.
+Esto no cierra la aceptación productiva ni elimina la rotación SMTP pendiente.

@@ -1,12 +1,34 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **3 de septiembre de 2026**
+Ultima actualización: **5 de septiembre de 2026**
 
-## Respuesta corta
+## Trabajo actual: creador de avatares
+
+Estamos preparando un creador integrado: elegir un personaje, personalizar su
+apariencia y guardarlo directamente como avatar privado. El objetivo está activo
+y el trabajo se sigue en `PLAN_ACTUAL.md`. Primero se comprueban gratuidad,
+licencias y un modelo real; después se implementa, prueba e integra.
+No se ha desplegado todavía este creador. No se contratarán servicios ni se
+creará infraestructura. La recuperación y los avatares privados ya probados no
+se vuelven a abrir. Su plan anterior está conservado en
+`OLD/docs/PLAN_ACTUAL-glb-completed-2026-09-03.md`.
+
+El editor ya tiene cinco prendas superiores, cinco pantalones y cinco peinados
+independientes, con ropa empresarial y casual de MakeHuman. La muestra con
+americana, pantalón de lana y coleta se ha guardado correctamente en la prueba
+local, con miniatura y privacidad. También se ha visto la segunda base corporal.
+Se conservan los créditos de los autores en el creador y en el archivo exportado.
+La prueba móvil local también permite personalizar y guardar. El código está
+publicado en la rama de trabajo; falta imagen oficial, integración, despliegue
+y comprobar movimiento y persistencia reales. No confundir el guardado local simulado con un avatar ya disponible
+en producción. Antes del despliegue sigue pendiente la rotación segura de la
+contraseña SMTP expuesta en una sesión anterior.
+
+## Cierre anterior: avatares privados G2
 
 **H5, Sitting v2 y la aceptación G2 de avatares privados están terminados e
 integrados.** El registro de cierre está en
-[`PLAN_ACTUAL.md`](../PLAN_ACTUAL.md); el de Sitting se ha guardado íntegro en
+`OLD/docs/PLAN_ACTUAL-glb-completed-2026-09-03.md`; el de Sitting se ha guardado íntegro en
 `OLD/docs/PLAN_ACTUAL-sitting-v2-completed-2026-08-30.md`.
 
 El checkpoint completo previo está validado. El único fallo real era que

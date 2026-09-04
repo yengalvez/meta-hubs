@@ -1,0 +1,28 @@
+{
+  "status": "candidate-not-deployed",
+  "source": "https://static.makehumancommunity.org/assets/assetpacks.html",
+  "buildTool": "MPFB v2.0.17 (80919fa), offline Blender 4.4.1",
+  "tops": [
+    {"id":"polo","asset":"namuhekam_male_polo_shirt","author":"Namuhekam","license":"CC0-1.0"},
+    {"id":"blazer","asset":"toigo_male_suit_tie_and_jacket","author":"Margaret Toigo","license":"CC0-1.0","change":"Separated jacket from trouser mesh"},
+    {"id":"doublebreasted","asset":"toigo_male_double-breasted_suit","author":"Margaret Toigo","license":"CC0-1.0","change":"Separated jacket from trouser mesh"},
+    {"id":"sweater","asset":"toigo_fisherman_sweater","author":"Margaret Toigo","license":"CC0-1.0","change":"Added garment clearance"},
+    {"id":"tshirt","asset":"toigo_basic_tucked_t-shirt","author":"Margaret Toigo","license":"CC0-1.0","change":"Extended hem for long trousers"}
+  ],
+  "bottoms": [
+    {"id":"suit","asset":"toigo_male_suit_tie_and_jacket","author":"Margaret Toigo","license":"CC0-1.0","change":"Separated trousers from jacket"},
+    {"id":"denim","asset":"mindfront_male_trousers_1","author":"Mindfront","license":"CC-BY-4.0"},
+    {"id":"chinos","asset":"mindfront_male_trousers_2","author":"Mindfront","license":"CC-BY-4.0"},
+    {"id":"jeans","asset":"punkduck_male_classic_jeans","author":"punkduck","license":"CC-BY-4.0"},
+    {"id":"wool","asset":"toigo_wool_pants","author":"Margaret Toigo","license":"CC0-1.0"}
+  ],
+  "hair": [
+    {"id":"short01","asset":"short01","author":"MakeHuman Team","license":"CC0-1.0"},
+    {"id":"short02","asset":"short02","author":"MakeHuman Team","license":"CC0-1.0"},
+    {"id":"bob01","asset":"bob01","author":"MakeHuman Team","license":"CC0-1.0"},
+    {"id":"ponytail01","asset":"ponytail01","author":"MakeHuman Team","license":"CC0-1.0"},
+    {"id":"afro01","asset":"afro01","author":"MakeHuman Team","license":"CC0-1.0"}
+  ],
+  "commonChanges": "Fitted to selected body, rigged, texture resolution reduced, GLB export and transparency normalization. Preserve attribution in UI and exported asset.",
+  "remaining": ["Live private save, reload and account isolation", "Cold-room use, pose and remote observation"]
+}
