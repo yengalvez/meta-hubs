@@ -79,6 +79,8 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   test-and-deploy-storybook 33928843616 en curso. No relanzar ni duplicar.
   Reentrada: consultar esos IDs; si fallan, examinar solo el diagnóstico nuevo.
   Documentación raíz guardada localmente en 2e49aa4, aún sin publicar.
+  PR Hubs #8 abierta en borrador contra master; no fusionar como aceptada antes
+  de la comprobación productiva. https://github.com/yengalvez/hubs/pull/8
 - [ ] Despliegue protegido y aceptación productiva.
   Antes del rollout: rotación segura de SMTP_PASS por exposición histórica,
   checkpoint DB+medios, imagen/digest y manifest generado. Después, creación,
