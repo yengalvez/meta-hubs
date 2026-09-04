@@ -84,6 +84,10 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   checkpoint DB+medios, imagen/digest y manifest generado. Después, creación,
   recarga, privacidad y uso/pose/remoto en sala con navegador interno.
   No imprimir valores, no crear infraestructura, no repetir recovery ni H5.
+  Mailtrap mantiene sesión interna; formulario Add API Token abierto sin guardar
+  (settings/api-tokens/new). No se ha creado ni revocado ningún token. Requiere
+  intervención del propietario para la credencial nueva; conservar la antigua
+  hasta sustituirla por la ruta protegida y comprobar envío, después revocarla.
 - [ ] Cerrar documentos, Git y Goal tras comprobar el resultado real.
 
 Revisión independiente inicial de viabilidad/licencia ya realizada; evidencia en
