@@ -971,3 +971,12 @@ Gitleaks de assets/staged, Actionlint y diff-check pasan. Hubs quedó limpio en
 3987f8b6acce3aedb32fd3bf454dbdf9530df686. El primer commit rechazó dos globales
 Node en el normalizador; importar process y Buffer corrigió esa causa exacta.
 Esto no cierra la aceptación productiva ni elimina la rotación SMTP pendiente.
+
+El seguimiento del 5 de septiembre confirmó verdes imagen oficial 33928876505
+y test-and-deploy-storybook 33928843616 sobre 3987f8b6. La API autenticada de
+paquetes confirma versión GHCR 1211442752, tag avatar-creator-20260905-3987f8b6-83
+y digest sha256:f03df945f3206d3a19a1f54377986d8969e1912dbf09640f4e5bdcaa99275412,
+idéntico al resultado del build. Docker local no está instalado y GHCR deniega
+la consulta anónima; se verificó por metadata autenticada sin instalar ni cambiar
+visibilidad. Seguimiento pausado, PR Hubs #8 aún borrador. Sin despliegue ni
+mutación de credenciales; la aceptación productiva permanece pendiente.

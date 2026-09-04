@@ -19,7 +19,8 @@ americana, pantalón de lana y coleta se ha guardado correctamente en la prueba
 local, con miniatura y privacidad. También se ha visto la segunda base corporal.
 Se conservan los créditos de los autores en el creador y en el archivo exportado.
 La prueba móvil local también permite personalizar y guardar. El código está
-publicado en la rama de trabajo; falta imagen oficial, integración, despliegue
+publicado en la rama de trabajo y la imagen oficial y CI han terminado bien.
+Faltan integración final, despliegue
 y comprobar movimiento y persistencia reales. No confundir el guardado local simulado con un avatar ya disponible
 en producción. Antes del despliegue sigue pendiente la rotación segura de la
 contraseña SMTP expuesta en una sesión anterior.

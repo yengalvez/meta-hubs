@@ -71,13 +71,15 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   Diez renders verifican jersey con cada pantalón y ambas bases tras corregir
   intersecciones en cintura. Flexión artificial de piernas en visor demuestra
   que las prendas siguen al rig, NO acredita el protocolo Sitting de una sala.
-- [ ] Seguridad final, commit, publicación e imagen oficial.
+- [x] Seguridad final, commit, publicación de rama Hubs e imagen oficial.
   Commit Hubs local 3987f8b6acce3aedb32fd3bf454dbdf9530df686, árbol limpio.
   Gitleaks (assets y staged), Actionlint y diff-check pasan. Build de producción
   local correcto con dos avisos de tamaño. Rama Hubs publicada; security-ci
-  33928843627 verde. Imagen oficial única 33928876505 sobre 3987f8b6 en curso;
-  test-and-deploy-storybook 33928843616 en curso. No relanzar ni duplicar.
-  Reentrada: consultar esos IDs; si fallan, examinar solo el diagnóstico nuevo.
+  33928843627 y 33929030946 verdes. Imagen oficial única 33928876505 sobre
+  3987f8b6 y test-and-deploy-storybook 33928843616 terminaron verdes.
+  GHCR versión 1211442752 confirma tag avatar-creator-20260905-3987f8b6-83 y
+  ghcr.io/yengalvez/hubs@sha256:f03df945f3206d3a19a1f54377986d8969e1912dbf09640f4e5bdcaa99275412.
+  Digest coincide con salida del build; seguimiento pausado. No relanzar.
   Documentación raíz guardada localmente en 2e49aa4, aún sin publicar.
   PR Hubs #8 abierta en borrador contra master; no fusionar como aceptada antes
   de la comprobación productiva. https://github.com/yengalvez/hubs/pull/8
