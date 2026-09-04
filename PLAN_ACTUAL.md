@@ -74,7 +74,11 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
 - [ ] Seguridad final, commit, publicación e imagen oficial.
   Commit Hubs local 3987f8b6acce3aedb32fd3bf454dbdf9530df686, árbol limpio.
   Gitleaks (assets y staged), Actionlint y diff-check pasan. Build de producción
-  local correcto con dos avisos de tamaño. Publicación e imagen pendientes.
+  local correcto con dos avisos de tamaño. Rama Hubs publicada; security-ci
+  33928843627 verde. Imagen oficial única 33928876505 sobre 3987f8b6 en curso;
+  test-and-deploy-storybook 33928843616 en curso. No relanzar ni duplicar.
+  Reentrada: consultar esos IDs; si fallan, examinar solo el diagnóstico nuevo.
+  Documentación raíz guardada localmente en 2e49aa4, aún sin publicar.
 - [ ] Despliegue protegido y aceptación productiva.
   Antes del rollout: rotación segura de SMTP_PASS por exposición histórica,
   checkpoint DB+medios, imagen/digest y manifest generado. Después, creación,
