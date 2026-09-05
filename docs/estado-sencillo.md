@@ -4,6 +4,26 @@ Ultima actualización: **5 de septiembre de 2026**
 
 ## Trabajo actual: creador de avatares
 
+**Prioridad actual: corregir la animación antes de desplegar.** La revisión del
+propietario detectó deformaciones de pecho/pie y una transición incorrecta al
+levantarse. No basta con arreglar el polo. Se corregirá y demostrará en local
+con ambas bases y ropa; SMTP solo bloquea el posterior despliegue, no este trabajo.
+El rubio claro ya funciona en la muestra local: se aclaró la textura base sin
+cambiar la forma ni la transparencia del pelo. Ya se han revisado los cinco
+peinados claros y guardado una muestra femenina en la prueba local.
+No se amplía todavía el catálogo.
+
+Avance local: corregida la adaptación de orientación y de postura inicial de
+los brazos. Ambos cuerpos completan tres ciclos de sentarse/levantarse sin
+desplazamiento acumulado de cadera o torso. El femenino también se ha visto
+caminando. Falta completar revisión de prendas y comprobarlo en la sala real;
+estas pruebas locales no equivalen a un despliegue aceptado.
+
+Las correcciones están publicadas en la rama de trabajo, commit `8c74e8c22`.
+TypeScript y 131 pruebas pasan. La compilación oficial `33970705664` está en
+curso; todavía no está desplegada. Después faltan la creación persistente y el
+uso en la sala real, con la renovación segura del correo previa al despliegue.
+
 Estamos preparando un creador integrado: elegir un personaje, personalizar su
 apariencia y guardarlo directamente como avatar privado. El objetivo está activo
 y el trabajo se sigue en `PLAN_ACTUAL.md`. Primero se comprueban gratuidad,

@@ -66,6 +66,79 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   BIN 4,284,948 B y PNG 177,617 B (720x1280), flags false/false.
   Esta evidencia NO es persistencia productiva ni aceptación de sala.
 - [ ] Cerrar aceptación visual final, móvil y movimiento relevante.
+  Nueva evidencia del propietario: el botón de pose manual de la demo doblaba
+  mal las piernas. Sustituido en el harness local por fullbody-locomotion real
+  y los clips compartidos de Hubs; Sentarse/Levantarse/Caminar disponibles.
+  La revisión posterior del propietario rechaza también la demo con clips Hubs:
+  deformación de pecho y pie izquierdo, partes deformadas al sentarse y cuerpo
+  elevado/brazos hacia atrás al levantarse. El diagnóstico de solo piel/polo
+  era insuficiente. Animación NO aceptada; causa aún por demostrar.
+  Próximo trabajo autorizado: reproducir y corregir localmente, sin pedir otra
+  confirmación ni depender de SMTP. Comparar postura de reposo, orientación de
+  huesos, pesos y transformación de clips; comprobar además que sit libera
+  torso/cadera al volver a idle. Separar defecto del harness de defecto runtime.
+  Probar cuerpo sin prendas y vestido, ambas bases: idle, caminar, sentarse,
+  levantarse y repetir el ciclo sin deformaciones, deriva ni poses retenidas.
+  Corregir la causa en el builder/retarget/runtime que corresponda; no ocultarla
+  mediante máscaras de ropa ni cambios exclusivos del visor. Conservar controles,
+  catálogo y guardado ya válidos. Pruebas focales y demostración visual antes de
+  otro build. Corregir también pelo claro; ampliar vestuario queda para después.
+  Investigación previa solicitada: documentación oficial MPFB Animation y
+  operador mapmixamo.py de v2.0.17 confirman una etapa explícita de mapeo entre
+  rigs (COPY_ROTATION y COPY_LOCATION para Hips). El loader actual de Hubs
+  renombra tracks pero no compensa las orientaciones de reposo entre rigs.
+  Los GLB actuales difieren en Spine2, LeftFoot y LeftUpLeg respecto a los clips;
+  por tanto el nombre mixamo no acredita compatibilidad directa. Validar un
+  retarget correcto antes de regenerar todo; revisar separadamente la salida de
+  sit y sus tracks de torso/cadera. No se ha demostrado aún una solución final.
+  Fuente: https://github.com/makehumancommunity/mpfb2/blob/master/docs/ui/operations/animops.md
+  Preparado avatar-animation-retarget.js: cambio de bases de orientación antes
+  y después de cada quaternion. Conectado al runtime solo para GLB del creador
+  marcados makehuman-mixamo-v1; no publicado ni aceptado. Cuatro pruebas focales
+  pasan. La cuarta cubre el fallo observado Missing animation bind bone:
+  RightShoulder: los clips sin skin cargan Object3D, no Bone; la captura ya
+  admite sus transformaciones con nombre. Demo interna 62267 confirma idle/sit
+  reales activos. Inspección visual posterior: brazos aún incorrectos al volver
+  a idle; el cambio de base por sí solo NO demuestra retarget visual correcto.
+  Comparación controlada posterior: brazos incorrectos también en idle inicial,
+  sin pasar por sit. Alineación A/T de hombro/brazo/antebrazo implementada usando
+  direcciones articulares, sin cambiar assets; demo masculina muestra brazos a
+  los lados en idle y junto a piernas en sit. Cinco pruebas focales y ESLint pasan.
+  Captura adelantada antes del await para evitar contaminación por fallback;
+  harness reconectado por identidad del avatar, no por escena persistente.
+  Siguiente paso: comprobar vuelta a pie, ciclos, caminar, base femenina y
+  prendas/cuerpo; aceptación visual completa aún pendiente, igual que sala real.
+  Evidencia posterior de demo con componente real: tres ciclos completos por
+  base retornan a idle con deriva máxima de posición 0 en Hips/Spine/Spine1/Spine2;
+  diferencia angular máxima 0.000407 rad (masculino) y 0.000371 (femenino),
+  constante en los tres ciclos. Femenino inspeccionado en idle/sit/walk con polo
+  y chinos; no demuestra todavía cuerpo sin prendas, todo el vestuario ni IK/red
+  de sala. Harness privado editor-local/entry.jsx incluye Verificar 3 ciclos.
+  Pestaña interna conservada en http://127.0.0.1:62267/ (servidor sesión 79368).
+  Pelo claro: corregidas las texturas oscuras de cinco peinados por base mediante
+  prepare-creator-hair.cjs (Sharp offline); alfa verificado idéntico y contratos
+  nodes/meshes/skins/accessors comparados intactos contra Git. Rubio claro visible
+  en editor real masculino, con cuatro accesos a tonos y selector libre conservado.
+  Cuatro pruebas del compositor pasan sobre los nuevos assets (300 combinaciones).
+  Los cinco peinados claros ya se han inspeccionado en el editor: corto natural,
+  corto con raya, melena y afro masculinos; coleta femenina. Guardado local nuevo
+  femenino/coleta/chaqueta/chinos correcto: GLTF 34,873 B, BIN 5,230,092 B y PNG
+  195,617 B (720x1280); 52 huesos y flags promoción/remix false. Sin persistencia real.
+  Prendas: americana/corbata inspeccionada en sit, chaqueta cruzada inspeccionada
+  sentada con zoom 2x y polo en idle ampliado. Sin la deformación de brazos/pecho
+  anterior en esas muestras. Nueve pruebas focales pasan; el compositor verifica
+  marca de rig y texturas preparadas en las 300 combinaciones. ESLint de los
+  archivos de runtime/controles y tests modificados pasa. Estas muestras no
+  sustituyen la comprobación de sala real.
+  Candidato correctivo local Hubs 8c74e8c22: TypeScript y 131 tests pasan;
+  ESLint, HTMLHint, Gitleaks staged y Actionlint pasan. El hook de commit volvió
+  a ejecutar 131 tests automáticamente; no lanzar otra vez esos tests sin cambios.
+  Publicado en codex/avatar-creator (PR Hubs #8 sigue en borrador). Build oficial
+  único 33970705664 sobre 8c74e8c2256b921baaac163822a9effc225f3ff8 confirmado activo
+  en Docker Build and Push el 5 de septiembre a las 14:04 UTC; tag solicitado
+  avatar-creator-20260905-8c74e8c2. No cancelar ni relanzar. Al terminar, verificar
+  resultado y digest, además de CI de rama; SMTP sigue siendo requisito del rollout.
+  No regenerar assets ni construir/desplegar otra imagen hasta resolverlo.
   Editor local móvil 390x844 verificado: controles, preview y guardado privado
   simulado pasan en ambas bases; falta uso/pose/remoto en la sala real.
   Diez renders verifican jersey con cada pantalón y ambas bases tras corregir
@@ -80,6 +153,9 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   GHCR versión 1211442752 confirma tag avatar-creator-20260905-3987f8b6-83 y
   ghcr.io/yengalvez/hubs@sha256:f03df945f3206d3a19a1f54377986d8969e1912dbf09640f4e5bdcaa99275412.
   Digest coincide con salida del build; seguimiento pausado. No relanzar.
+  Esa imagen prueba compilación, NO calidad de animación: no desplegarla con los
+  defectos anteriores. Si la reparación cambia bytes productivos, congelar y
+  validar el candidato corregido antes de construir una nueva imagen una vez.
   Documentación raíz guardada localmente en 2e49aa4, aún sin publicar.
   PR Hubs #8 abierta en borrador contra master; no fusionar como aceptada antes
   de la comprobación productiva. https://github.com/yengalvez/hubs/pull/8

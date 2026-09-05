@@ -980,3 +980,65 @@ idéntico al resultado del build. Docker local no está instalado y GHCR deniega
 la consulta anónima; se verificó por metadata autenticada sin instalar ni cambiar
 visibilidad. Seguimiento pausado, PR Hubs #8 aún borrador. Sin despliegue ni
 mutación de credenciales; la aceptación productiva permanece pendiente.
+
+La revisión visual del propietario encontró la pose manual errónea del harness
+y el límite de aclarado del pelo. El harness ahora ejecuta fullbody-locomotion
+sin modificar el componente productivo, con sus clips Mixamo compartidos y
+velocidad simulada para caminar. La demo local 127.0.0.1:59776 permite sentarse,
+levantarse y caminar; sit ya no invierte las piernas. Las capturas de sit/walk
+revelan un defecto nuevo de intersección piel/polo, pendiente antes del rollout.
+No se afirma aceptación en sala, red, ni corrección del pelo. Sin build oficial
+nuevo ni despliegue; la ampliación de prendas queda para después por indicación
+del propietario.
+
+La segunda revisión del propietario invalida la aceptación de animación de la
+demo: pecho, pie izquierdo, sentado y transición de levantarse presentan
+deformaciones. PLAN_ACTUAL.md prioriza diagnóstico causal y corrección local,
+separando rig/retarget/transiciones/prendas y harness/runtime, con ambas bases
+y ciclos repetidos. No se presenta la imagen verde como apta para desplegar.
+SMTP no es prerrequisito de esta reparación. No se ha aplicado aún una reparación
+de esos defectos ni activado el Goal mediante esta actualización documental.
+# Corrección local de captura del rig — 2026-09-05
+
+- Publicado 8c74e8c2256b921baaac163822a9effc225f3ff8 en rama Hubs
+  codex/avatar-creator. Único build oficial 33970705664 con RetPageOriginDockerfile,
+  cache habilitada y tag avatar-creator-20260905-8c74e8c2; SHA y paso Docker Build
+  and Push confirmados activos a las 14:04 UTC. PR #8 permanece draft. Sin rollout.
+
+- Cierre correctivo local en Hubs 8c74e8c22 (no publicado): TypeScript, 131 tests,
+  ESLint/HTMLHint, Gitleaks staged y Actionlint pasan. Hook repitió 131 tests al
+  hacer commit; no repetir sin causa. Cinco peinados claros inspeccionados.
+  Guardado local femenino/coleta/chaqueta/chinos: GLTF 34873, BIN 5230092, PNG
+  195617 bytes, 720x1280, 52 huesos, flags false/false. No persistencia productiva.
+
+- Revisión ampliada: polo idle, americana/corbata sit, chaqueta cruzada sit con
+  zoom 2x, sin deformación anterior de pecho/brazos en esas muestras. Nueve tests
+  focales pasan; marca makehuman-mixamo-v1 y creatorNeutralHair verificadas en
+  300 composiciones. ESLint de runtime/controles/tests modificados pasa.
+
+- Pelo claro: preparación offline de las diez texturas de cabello con Sharp
+  0.35.4, alfa preservado exactamente; nodes/meshes/skins/accessors sin cambios
+  contra HEAD en ambas bases. Rubio claro inspeccionado en demo masculina.
+  Cuatro pruebas del compositor pasan, incluyendo 300 combinaciones. Guía de
+  regeneración añadida a features/avatar-creator/README.md. Sin despliegue.
+
+- Demo: tres ciclos completos por base con el componente real. Hips y tres
+  huesos Spine retornan con deriva de posición cero; diferencia angular máxima
+  0.000406623 rad masculino / 0.000370704 femenino, sin acumulación por ciclo.
+  Femenino visualizado en idle, sit y walk con polo/chinos. Sin sala/IK/red y
+  sin aceptación general de vestuario. Pestaña 62267 conservada como entregable.
+
+- Avance posterior: idle inicial también presentaba brazos incorrectos, sin
+  transición previa. Alinear referencias A/T por direcciones articulares corrige
+  ese observable en demo masculina idle/sit. 5/5 pruebas focales y ESLint pasan.
+  Falta verificar transición completa, otras bases y sala. Captura antes del
+  await y reenganche por avatar corregidos; no hay nuevo build ni despliegue.
+
+- Los clips de animación no incluyen skin: GLTFLoader crea Object3D para sus
+  nodos, por lo que filtrar isBone dejaba vacía la referencia. Diagnóstico
+  observado en demo: Missing animation bind bone: RightShoulder.
+- Captura corregida y prueba de regresión añadida: 4/4 pruebas focales pasan.
+- Demo interna en 62267 ejecuta ahora idle/sit con retarget del creador; los
+  brazos siguen visualmente incorrectos al levantarse. No aceptado ni desplegado.
+- Próxima comparación: postura de referencia frente a idle inicial, después
+  transición sit/idle; no repetir build oficial ni modificar producción.

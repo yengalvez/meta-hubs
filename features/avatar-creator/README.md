@@ -1,5 +1,32 @@
 # Integrated avatar creator
 
+### Rig adaptation, current corrective candidate
+
+Hubs commit `8c74e8c22` adapts shared rotation clips only for creator Hips nodes
+marked `yenhubsCreatorRig=makehuman-mixamo-v1`. It captures animation-only glTF
+Object3D references, compensates bind orientations and aligns arm A/T reference
+directions. Unmarked avatars keep their existing path; no Sitting protocol,
+schema, backend or upstream release change. Runtime changes are isolated to
+fullbody-locomotion and shared clip loading plus a utility. Rollback is the prior
+Hubs image/commit; new creator avatars require this adapter for correct poses.
+Local evidence: 131 tests and TypeScript, both bases with three sit/stand cycles,
+representative clothing and private-save simulation. In-room IK/network and real
+private persistence are still required before accepting deployment.
+
+### Local hair-colour correction (2026-09-05)
+
+After `build-business-avatar-assets.py` and `normalize-business-avatar.mjs`, run
+`node scripts/prepare-creator-hair.cjs INPUT.glb OUTPUT.glb` from Hubs for each
+body. This offline-only step requires Sharp 0.35.4 available to Node (the local
+workspace runtime supplied it via NODE_PATH); there is no browser dependency.
+Use the original normalized input, not an already prepared output: the script
+rejects a second application. It creates neutral light hair textures while
+verifying pixel-for-pixel alpha preservation. Meshes, nodes, skins and accessors
+were compared against the prior Git assets and are unchanged. Five materials
+per body are processed. The compositor prunes unused original texture data.
+The original colour picker remains; four named tone shortcuts were added.
+Blond was inspected in the real local editor; no production acceptance claimed.
+
 Status: MakeHuman implementation locally verified; not deployed.
 Visual requirement clarified 2026-09-05: adult RPM/Avaturn-like characters with
 business clothing (shirt, jacket/tie), not anime/chibi/cosplay/fantasy. The current
