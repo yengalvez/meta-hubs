@@ -1000,6 +1000,21 @@ SMTP no es prerrequisito de esta reparación. No se ha aplicado aún una reparac
 de esos defectos ni activado el Goal mediante esta actualización documental.
 # Corrección local de captura del rig — 2026-09-05
 
+- Imagen correctiva 33970705664 y Storybook 33970680750 verdes. Imagen sobre
+  8c74e8c2256b921baaac163822a9effc225f3ff8, run 84, final 14:09:11 UTC.
+  API autenticada GHCR verifica versión 1212987062, tag
+  avatar-creator-20260905-8c74e8c2-84 y digest
+  sha256:dcd6ae8728066322c4ef7252acb9b9744706d7c4c652bb2896093ea11c9901d8.
+  No hay trabajos CI pendientes ni nuevo despliegue; no repetir build.
+
+- CI seguridad del correctivo verde (33970683330, 33970680748); Storybook
+  33970680750 e imagen 33970705664 todavía activos. La API informa que el antiguo
+  heartbeat ya no existe; no se recreó, no se relanzó ningún run.
+- Incidente: una búsqueda con glob de inputs alcanzó el fichero local ignorado
+  y expuso SMTP_PASS. Se notificó sin repetir el valor. Rotación ya pendiente
+  sigue obligatoria antes de rollout; búsquedas futuras solo sobre fuentes
+  trackeadas explícitas. No hubo cambio de credencial ni producción.
+
 - Publicado 8c74e8c2256b921baaac163822a9effc225f3ff8 en rama Hubs
   codex/avatar-creator. Único build oficial 33970705664 con RetPageOriginDockerfile,
   cache habilitada y tag avatar-creator-20260905-8c74e8c2; SHA y paso Docker Build

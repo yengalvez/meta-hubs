@@ -134,10 +134,15 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   ESLint, HTMLHint, Gitleaks staged y Actionlint pasan. El hook de commit volvió
   a ejecutar 131 tests automáticamente; no lanzar otra vez esos tests sin cambios.
   Publicado en codex/avatar-creator (PR Hubs #8 sigue en borrador). Build oficial
-  único 33970705664 sobre 8c74e8c2256b921baaac163822a9effc225f3ff8 confirmado activo
-  en Docker Build and Push el 5 de septiembre a las 14:04 UTC; tag solicitado
-  avatar-creator-20260905-8c74e8c2. No cancelar ni relanzar. Al terminar, verificar
-  resultado y digest, además de CI de rama; SMTP sigue siendo requisito del rollout.
+  único 33970705664 sobre 8c74e8c2256b921baaac163822a9effc225f3ff8 terminó verde
+  el 5 de septiembre a las 14:09:11 UTC; tag avatar-creator-20260905-8c74e8c2-84.
+  GHCR confirma versión 1212987062 y digest
+  sha256:dcd6ae8728066322c4ef7252acb9b9744706d7c4c652bb2896093ea11c9901d8.
+  No volver a construir estos bytes. SMTP sigue siendo requisito del rollout.
+  Seguridad CI del SHA corregido verde: 33970683330 y 33970680748. Storybook
+  33970680750 e imagen 33970705664 también terminaron verdes. No hay runs pendientes.
+  El antiguo heartbeat resultado-imagen-creador-yenhubs ya no existe según la API;
+  no se recreó. No hace falta seguimiento de estos runs terminados.
   No regenerar assets ni construir/desplegar otra imagen hasta resolverlo.
   Editor local móvil 390x844 verificado: controles, preview y guardado privado
   simulado pasan en ambas bases; falta uso/pose/remoto en la sala real.
@@ -168,6 +173,10 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   (settings/api-tokens/new). No se ha creado ni revocado ningún token. Requiere
   intervención del propietario para la credencial nueva; conservar la antigua
   hasta sustituirla por la ruta protegida y comprobar envío, después revocarla.
+  Incidente adicional durante preparación: un glob de búsqueda alcanzó el
+  input-values.local.yaml ignorado y mostró SMTP_PASS. No conservar el valor;
+  la sustitución pendiente es obligatoria. No volver a buscar con glob de inputs:
+  usar exclusivamente rutas de fuentes trackeadas explícitas, nunca valores locales.
 - [ ] Cerrar documentos, Git y Goal tras comprobar el resultado real.
 
 Revisión independiente inicial de viabilidad/licencia ya realizada; evidencia en

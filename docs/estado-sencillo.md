@@ -20,8 +20,9 @@ caminando. Falta completar revisión de prendas y comprobarlo en la sala real;
 estas pruebas locales no equivalen a un despliegue aceptado.
 
 Las correcciones están publicadas en la rama de trabajo, commit `8c74e8c22`.
-TypeScript y 131 pruebas pasan. La compilación oficial `33970705664` está en
-curso; todavía no está desplegada. Después faltan la creación persistente y el
+TypeScript y 131 pruebas pasan. La compilación oficial `33970705664`, Storybook
+y seguridad han terminado correctamente; todavía no está desplegada.
+Después faltan la creación persistente y el
 uso en la sala real, con la renovación segura del correo previa al despliegue.
 
 Estamos preparando un creador integrado: elegir un personaje, personalizar su
