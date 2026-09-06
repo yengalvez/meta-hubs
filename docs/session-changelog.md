@@ -1,5 +1,53 @@
 # Session Changelog
 
+## 2026-09-06 (creador desplegado y correo renovado)
+
+- Imagen visual 71fa7209d construida por run 34040735085, digest 1d6f8e21807b2303f4ac2c613065583bb230bbf218652638f496b26d64973814; no desplegada todavía. Reconciliación de recibos conserva diez secciones y pide solo advisories/static/security/hubs/browser-capacity: secuencia única en terminal50586.
+- Inventario Mailtrap y comparación privada del sufijo identifican la antigua SMTP como Sending Onboarding API token 19f61175ac1, fila5477652, Account Admin aún activo. Nueva YenHubs SMTP septiembre/fila5550313 sigue intacta y funcional. Menú antiguo preparado para handoff de retirada; no pulsado Delete token. No imprimir valores ni asumir revocación.
+
+- Aceptación real masculina de pose/remoto: dos clientes con ?allow_multi, navegación nativa al hash Seat_recovery_2_-_REPOSITION y reserva autorizada. El observador recibe oDvn9Qt/isSitting=true/acción sit y, al pulsar Levantarse en A, false/idle y postura normal. Inspección frontal/posterior sin deformación previa de brazos/torso. Usar hash nativo evita pulsaciones instantáneas de teclado ineficaces; allow_multi evita el cierre normal de la primera pestaña.
+
+- Readback SQL read-only del avatar oDvn9Qt: activo, privado (promoción/remix false), mismo propietario que G2, cero listings y tres archivos activos de esa cuenta. La primera invocación sin stdin no ejecutó consulta; la segunda con exec -i confirmó los datos, sin escrituras.
+- Contraste/fondo corregidos en candidato Hubs 71fa7209d. Harness alineado con global.scss/ui-root.scss reales; escritorio e iframe390x844 muestran controles legibles y permiten personalización/guardado local femenino. Gitleaks/Actionlint/Sass/webpack y 131 tests del hook pasan. No confundir evidencia local con móvil productivo.
+
+- Imagen de capas 01859ab9b: build 34039159856 verde y digest f85c52a2fc63b7c881cd2abc0a273fb0fc6ecd660f7bdfd5d8950a7a815eba82 desplegado mediante generador/apply exit 0, sin cambios de secretos. Reticulum reiniciado correctamente. Verificador lanzado demasiado pronto detectó 503 y falta de readiness; el definitivo después del rollout terminó 0 fallos/0 avisos. No repetir despliegue por esa comprobación adelantada.
+- Primer avatar del creador guardado realmente: oDvn9Qt, YenHubs Empresa 20260906, masculino con americana/corbata, traje y pelo rubio. Persiste al recargar Mis avatares y se selecciona para la sala. No equivale aún a aceptación de pose/remoto/privacidad completa.
+- Tercera persona sí muestra el avatar real al presentar el navegador interno. Las capturas anteriores del canvas en segundo plano estaban obsoletas; runtime confirma GLTF/cámara/capas/escala correctas. Sentarse rechaza por no tener asiento a menos de 2 m; acercarse antes de probar pose, sin cambiar Sitting.
+- Editor visible tras corrección de capa; nueva evidencia de contraste blanco sobre blanco y fondo translúcido. Reparación local solo CSS preparada y compilada, aún sin publicar. No construir hasta completar diagnóstico de uso en sala: botón de tercera persona aún sin avatar visible y logs JSON/HTML por investigar.
+
+- Continuación 16:18: IONOS conservaba la sesión. A petición expresa del
+  propietario se abrió el buzón y se consumió inmediatamente un único enlace
+  nuevo, confirmando Verificación completa y cuenta info@virtualmente.com.
+  Un filtro AX limitado a /verify dejó visible el enlace con ruta /; no se
+  conserva ni reutiliza, y las lecturas posteriores redactan parámetros auth_.
+- La prueba autenticada localizó un fallo de superposición real: editor y selector
+  fullscreen a z-index 70; DOM posterior tapa al editor. No hubo guardado. Fix
+  acotado a ui-root.scss (fullscreen+1, debajo de popover/modal), Sass y diff-check
+  verdes. Pendiente imagen oficial y aceptación visual antes de guardar.
+
+- Aceptación pública adicional: carga fría del vestíbulo y selector real pasan;
+  Crear avatar y Subir GLB (privado) visibles junto al catálogo. Crear sin sesión
+  presenta el control de autenticación. No se guardó ningún avatar ni se envió
+  otro correo. La sesión original aún espera el enlace del propietario.
+
+- Keychain nueva validada por SMTP STARTTLS con certificado verificado, sin
+  imprimir valores. Checkpoint único checkpoint-pre-creator-20260906 exit 0,
+  1316 s, 361 tablas/100 migraciones/18 salas/39 pares completos. Timeout
+  transitorio durante reanudación, seguido de cierre correcto y readback 12/12.
+- Preparación privada cambia solo SMTP_PASS y OVERRIDE_HUBS_IMAGE. Secret de
+  descarga idéntico; diff no secreto solo Hubs y huella de mapa de imágenes.
+  gen-hcce y apply exit 0 con cold-rebind-legacy-active-v1; Reticulum reiniciado.
+  Digest Hubs dcd6ae8728066322c4ef7252acb9b9744706d7c4c652bb2896093ea11c9901d8.
+- Verificador inicial detenido por omitir variables de perfil. Invocación
+  correcta RESTORE_TARGET_MODE=cold-rebind y
+  RECOVERY_CHECKPOINT_RUNNER_GENERATION=legacy-absent termina 0 fallos/0 avisos.
+  No se modificó código ni se repitió el despliegue para corregir la invocación.
+- Mailtrap confirma Delivered, 13:41 UTC, del único acceso a info@virtualmente.com,
+  mediante YenHubs SMTP septiembre. La apertura de la vista blob del correo fue
+  bloqueada por política del navegador; no se sorteó. Pendiente acceso personal
+  del propietario, aceptación autenticada del creador, revocación antigua y Git.
+  Evidencia privada en ~/.yenhubs-private/avatar-rollout-20260906/.
+
 ## 2026-08-28 (hardening operativo local posterior a H5)
 
 | Time | Action | Result |
@@ -943,3 +991,133 @@ Time reference: Europe/Madrid (CEST).
 | 2026-09-03 | El enlace fresco de B quedó `Delivered` a las 20:56 UTC, pero se detuvo antes de abrirlo por una divergencia de identidad demostrada. | Su hash no coincide con ninguno de los dos logins existentes; un enlace diagnóstico permitido de `info@virtualmente.com` sí coincide con A `2334843008492503188`, descartando deriva global de `PHX_KEY`. Como `disable_sign_up` no está activo, abrir B crearía una tercera cuenta, prohibida por el plan. La otra cuenta existente `2221865104901668866` está habilitada, tiene cero coincidencias con `CRimmfo`/`h2tMVFb`, mientras A tiene las dos; la búsqueda propia y las mutaciones están ligadas al account ID autenticado y devuelven 401 para un dueño distinto. No se consumió ningún token ni se cambió producción. |
 | 2026-09-03 | Se resolvió la identidad final sin repetir ningún bloque técnico: el buzón `info@meta-hubs.org` estaba guardado en el gestor de Chrome y recibe desde `noreply@meta-hubs.org`; `info@virtualmente.com` era la sesión A conservada. | El primer enlace de B chocó con esa sesión A y mostró el error esperado. Tras cerrar A y solicitar un enlace nuevo, la verificación inició `info@meta-hubs.org` y creó B `2372004458029646083`, habilitada y `is_admin=false`. En **Mis avatares** de B no aparece ninguna ficha ni edición. DB confirma 3/3 cuentas habilitadas, 0 coincidencias de B con `CRimmfo`/`h2tMVFb`, propietario A intacto, flags privados en false y 0 listings. Las pestañas externas abiertas por el agente se cerraron; no hubo borrado, catálogo, infraestructura, topología, coste, test, checkpoint, rollout ni verificador repetido. |
 | 2026-09-03 | La PR raíz #28 integró el cierre documental de G2 con `[skip ci]` como `main=28dddf7e64f701e3a9d8268cc976cd2cc3d5543d`. | `origin/main` conserva los gitlinks exactos Hubs `668413a209fc0b7725c254047e104d5545d833c1` y Cloud `cc52a184e104302cc63b34e0438720a2f85a61ad`. El checkout de trabajo quedó limpio; el checkout histórico `/Users/Shared/Gits/YenHubs` no se sincronizó porque contiene cambios y archivos sin seguimiento ajenos a este cierre. No se abrió CI ni se tocó producción. |
+
+## 2026-09-05 — Creador de avatares, trabajo local en curso
+
+El plan G2 cerrado se conservó íntegro en OLD. El prototipo de creador reutiliza
+AvatarEditor, guardado privado y selección existentes. El vestuario Quaternius
+se descartó tras la aclaración de estilo empresarial y mínimo 5+5+5 piezas.
+MakeHuman permite ensamblar cinco tops, cinco pantalones y cinco peinados sobre
+dos bases. CC0 y CC-BY 4.0 documentados por pieza; créditos en UI y glTF.
+Se corrigieron la transparencia global del exportador y las máscaras de cuerpo
+que ocultaban brazos tras cambiar a camiseta. El compositor elimina recursos
+no seleccionados y sus cuatro pruebas focales cubren 300 combinaciones.
+
+El editor real, con backend aislado en memoria, mostró ambas bases y guardó
+americana/lana/coleta: GLTF 34,466 B, BIN 4,284,948 B, miniatura 177,617 B,
+720x1280 y flags false/false. No acredita persistencia real ni aceptación de sala.
+El ensamblador portátil reproduce exactamente el GLB masculino normalizado.
+Pendientes: completar revisión visual/pose, comprobaciones finales afectadas,
+integración y despliegue. SMTP debe rotarse antes del rollout por exposición
+histórica. Sin push, PR, infraestructura, checkpoint ni cambio productivo aquí.
+
+El cierre local posterior confirma editor móvil 390x844 y guardado simulado
+femenino sin pelo (PNG 720x1280, flags privados false/false). Diez renders
+verifican el jersey con los cinco pantalones en ambas bases tras corregir la
+intersección en cintura. Build webpack productivo pasa con dos avisos de tamaño;
+Gitleaks de assets/staged, Actionlint y diff-check pasan. Hubs quedó limpio en
+3987f8b6acce3aedb32fd3bf454dbdf9530df686. El primer commit rechazó dos globales
+Node en el normalizador; importar process y Buffer corrigió esa causa exacta.
+Esto no cierra la aceptación productiva ni elimina la rotación SMTP pendiente.
+
+El seguimiento del 5 de septiembre confirmó verdes imagen oficial 33928876505
+y test-and-deploy-storybook 33928843616 sobre 3987f8b6. La API autenticada de
+paquetes confirma versión GHCR 1211442752, tag avatar-creator-20260905-3987f8b6-83
+y digest sha256:f03df945f3206d3a19a1f54377986d8969e1912dbf09640f4e5bdcaa99275412,
+idéntico al resultado del build. Docker local no está instalado y GHCR deniega
+la consulta anónima; se verificó por metadata autenticada sin instalar ni cambiar
+visibilidad. Seguimiento pausado, PR Hubs #8 aún borrador. Sin despliegue ni
+mutación de credenciales; la aceptación productiva permanece pendiente.
+
+La revisión visual del propietario encontró la pose manual errónea del harness
+y el límite de aclarado del pelo. El harness ahora ejecuta fullbody-locomotion
+sin modificar el componente productivo, con sus clips Mixamo compartidos y
+velocidad simulada para caminar. La demo local 127.0.0.1:59776 permite sentarse,
+levantarse y caminar; sit ya no invierte las piernas. Las capturas de sit/walk
+revelan un defecto nuevo de intersección piel/polo, pendiente antes del rollout.
+No se afirma aceptación en sala, red, ni corrección del pelo. Sin build oficial
+nuevo ni despliegue; la ampliación de prendas queda para después por indicación
+del propietario.
+
+La segunda revisión del propietario invalida la aceptación de animación de la
+demo: pecho, pie izquierdo, sentado y transición de levantarse presentan
+deformaciones. PLAN_ACTUAL.md prioriza diagnóstico causal y corrección local,
+separando rig/retarget/transiciones/prendas y harness/runtime, con ambas bases
+y ciclos repetidos. No se presenta la imagen verde como apta para desplegar.
+SMTP no es prerrequisito de esta reparación. No se ha aplicado aún una reparación
+de esos defectos ni activado el Goal mediante esta actualización documental.
+# Corrección local de captura del rig — 2026-09-05
+
+- Imagen correctiva 33970705664 y Storybook 33970680750 verdes. Imagen sobre
+  8c74e8c2256b921baaac163822a9effc225f3ff8, run 84, final 14:09:11 UTC.
+  API autenticada GHCR verifica versión 1212987062, tag
+  avatar-creator-20260905-8c74e8c2-84 y digest
+  sha256:dcd6ae8728066322c4ef7252acb9b9744706d7c4c652bb2896093ea11c9901d8.
+  No hay trabajos CI pendientes ni nuevo despliegue; no repetir build.
+
+- CI seguridad del correctivo verde (33970683330, 33970680748); Storybook
+  33970680750 e imagen 33970705664 todavía activos. La API informa que el antiguo
+  heartbeat ya no existe; no se recreó, no se relanzó ningún run.
+- Incidente: una búsqueda con glob de inputs alcanzó el fichero local ignorado
+  y expuso SMTP_PASS. Se notificó sin repetir el valor. Rotación ya pendiente
+  sigue obligatoria antes de rollout; búsquedas futuras solo sobre fuentes
+  trackeadas explícitas. No hubo cambio de credencial ni producción.
+
+- Publicado 8c74e8c2256b921baaac163822a9effc225f3ff8 en rama Hubs
+  codex/avatar-creator. Único build oficial 33970705664 con RetPageOriginDockerfile,
+  cache habilitada y tag avatar-creator-20260905-8c74e8c2; SHA y paso Docker Build
+  and Push confirmados activos a las 14:04 UTC. PR #8 permanece draft. Sin rollout.
+
+- Cierre correctivo local en Hubs 8c74e8c22 (no publicado): TypeScript, 131 tests,
+  ESLint/HTMLHint, Gitleaks staged y Actionlint pasan. Hook repitió 131 tests al
+  hacer commit; no repetir sin causa. Cinco peinados claros inspeccionados.
+  Guardado local femenino/coleta/chaqueta/chinos: GLTF 34873, BIN 5230092, PNG
+  195617 bytes, 720x1280, 52 huesos, flags false/false. No persistencia productiva.
+
+- Revisión ampliada: polo idle, americana/corbata sit, chaqueta cruzada sit con
+  zoom 2x, sin deformación anterior de pecho/brazos en esas muestras. Nueve tests
+  focales pasan; marca makehuman-mixamo-v1 y creatorNeutralHair verificadas en
+  300 composiciones. ESLint de runtime/controles/tests modificados pasa.
+
+- Pelo claro: preparación offline de las diez texturas de cabello con Sharp
+  0.35.4, alfa preservado exactamente; nodes/meshes/skins/accessors sin cambios
+  contra HEAD en ambas bases. Rubio claro inspeccionado en demo masculina.
+  Cuatro pruebas del compositor pasan, incluyendo 300 combinaciones. Guía de
+  regeneración añadida a features/avatar-creator/README.md. Sin despliegue.
+
+- Demo: tres ciclos completos por base con el componente real. Hips y tres
+  huesos Spine retornan con deriva de posición cero; diferencia angular máxima
+  0.000406623 rad masculino / 0.000370704 femenino, sin acumulación por ciclo.
+  Femenino visualizado en idle, sit y walk con polo/chinos. Sin sala/IK/red y
+  sin aceptación general de vestuario. Pestaña 62267 conservada como entregable.
+
+- Avance posterior: idle inicial también presentaba brazos incorrectos, sin
+  transición previa. Alinear referencias A/T por direcciones articulares corrige
+  ese observable en demo masculina idle/sit. 5/5 pruebas focales y ESLint pasan.
+  Falta verificar transición completa, otras bases y sala. Captura antes del
+  await y reenganche por avatar corregidos; no hay nuevo build ni despliegue.
+
+- Los clips de animación no incluyen skin: GLTFLoader crea Object3D para sus
+  nodos, por lo que filtrar isBone dejaba vacía la referencia. Diagnóstico
+  observado en demo: Missing animation bind bone: RightShoulder.
+- Captura corregida y prueba de regresión añadida: 4/4 pruebas focales pasan.
+- Demo interna en 62267 ejecuta ahora idle/sit con retarget del creador; los
+  brazos siguen visualmente incorrectos al levantarse. No aceptado ni desplegado.
+- Próxima comparación: postura de referencia frente a idle inicial, después
+  transición sit/idle; no repetir build oficial ni modificar producción.
+# 2026-09-06 — Corrección de coordinación de validación
+
+- Terminal50586: advisories PASS; static terminó sus checks pero invalidó el recibo
+  al cambiar PLAN_ACTUAL.md durante la ejecución. No es un fallo productivo.
+- Congelar archivos versionados durante static/security y finalizar con recibos;
+  conservar diez bloques anteriores y advisories. Monitor previo pausado.
+# 2026-09-06 — Aceptación productiva del creador y contraste
+
+- Validación53735/finalize exit0. Imagen71fa7209 aplicada, Hubs y Reticulum Ready;
+  verificador70056: 0 fallos/0 avisos. Sin cambios de secretos ni infraestructura.
+- Dos avatares privados oDvn9Qt/wB3FSNL: guardado, selección, persistencia,
+  postura y recepción remota. Readback DB privado y tres archivos activos cada uno.
+- UI productiva7bf6375f, viewport390x844: contraste/preview/controles/Guardar
+  accesibles, sin overflow horizontal. Cancelación sin tercer avatar.
+- Retirada antigua credencial Mailtrap verificada tras acción del usuario.
+- Pendiente integración Git. Evidencia detallada privada avatar-rollout-20260906.

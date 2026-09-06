@@ -6,6 +6,9 @@ desplegar, actualizar ni implementar features.
 
 ## Inventario
 
+El plan GLB terminado se conserva en `OLD/docs/PLAN_ACTUAL-glb-completed-2026-09-03.md`;
+su sustituto para el trabajo nuevo es `PLAN_ACTUAL.md` (creador integrado).
+
 | Ruta | Motivo | Sustituto activo |
 | --- | --- | --- |
 | `OLD/docs/hubs-ce-digitalocean-deploy-guide.md` | guia inicial sustituida | `deployment/README.md` |

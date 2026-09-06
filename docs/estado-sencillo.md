@@ -1,12 +1,77 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **3 de septiembre de 2026**
+Ultima actualización: **6 de septiembre de 2026**
 
-## Respuesta corta
+## Trabajo actual: creador de avatares
+
+**Estado actual: creador desplegado y probado; pendiente el cierre de Git.**
+Dos avatares empresariales, masculino y femenino, están guardados como privados,
+persisten y funcionan en sala. Se comprobaron sentarse, levantarse y la recepción
+desde otra conexión. El editor ya tiene contraste corregido y funciona a tamaño
+móvil 390x844 (prueba responsive, no teléfono físico). La clave antigua fue retirada.
+La validación completa terminó correctamente y producción pasa con cero fallos
+y cero avisos. Queda integrar el código y cerrar documentación; no repetir
+recuperación, respaldo, compilación ni despliegue.
+
+Los párrafos siguientes son antecedentes; el estado vigente es el de arriba.
+
+Estado anterior, ya superado en lo relativo al acceso:
+Respaldo completo y 12 servicios listos. La comprobación productiva pasa con
+0 fallos y 0 avisos. La nueva clave de correo funciona: Mailtrap confirma la
+entrega del acceso a info@virtualmente.com. El navegador interno bloquea abrir
+la vista de texto de ese enlace; debe abrirlo personalmente el propietario.
+No hace falta otra clave. Después faltan guardado real, recarga, privacidad y
+movimiento en sala, revocar la clave antigua y cerrar Git. No repetir respaldo,
+compilación ni despliegue. El creador todavía no está aceptado por completo.
+
+Antecedentes locales (las referencias a despliegue pendiente están superadas):
+La revisión del
+propietario detectó deformaciones de pecho/pie y una transición incorrecta al
+levantarse. No basta con arreglar el polo. Se corregirá y demostrará en local
+con ambas bases y ropa; SMTP solo bloquea el posterior despliegue, no este trabajo.
+El rubio claro ya funciona en la muestra local: se aclaró la textura base sin
+cambiar la forma ni la transparencia del pelo. Ya se han revisado los cinco
+peinados claros y guardado una muestra femenina en la prueba local.
+No se amplía todavía el catálogo.
+
+Avance local: corregida la adaptación de orientación y de postura inicial de
+los brazos. Ambos cuerpos completan tres ciclos de sentarse/levantarse sin
+desplazamiento acumulado de cadera o torso. El femenino también se ha visto
+caminando. Falta completar revisión de prendas y comprobarlo en la sala real;
+estas pruebas locales no equivalen a un despliegue aceptado.
+
+Las correcciones están publicadas en la rama de trabajo, commit `8c74e8c22`.
+TypeScript y 131 pruebas pasan. La compilación oficial `33970705664`, Storybook
+y seguridad han terminado correctamente; todavía no está desplegada.
+Después faltan la creación persistente y el
+uso en la sala real, con la renovación segura del correo previa al despliegue.
+
+Estamos preparando un creador integrado: elegir un personaje, personalizar su
+apariencia y guardarlo directamente como avatar privado. El objetivo está activo
+y el trabajo se sigue en `PLAN_ACTUAL.md`. Primero se comprueban gratuidad,
+licencias y un modelo real; después se implementa, prueba e integra.
+No se ha desplegado todavía este creador. No se contratarán servicios ni se
+creará infraestructura. La recuperación y los avatares privados ya probados no
+se vuelven a abrir. Su plan anterior está conservado en
+`OLD/docs/PLAN_ACTUAL-glb-completed-2026-09-03.md`.
+
+El editor ya tiene cinco prendas superiores, cinco pantalones y cinco peinados
+independientes, con ropa empresarial y casual de MakeHuman. La muestra con
+americana, pantalón de lana y coleta se ha guardado correctamente en la prueba
+local, con miniatura y privacidad. También se ha visto la segunda base corporal.
+Se conservan los créditos de los autores en el creador y en el archivo exportado.
+La prueba móvil local también permite personalizar y guardar. El código está
+publicado en la rama de trabajo y la imagen oficial y CI han terminado bien.
+Faltan integración final, despliegue
+y comprobar movimiento y persistencia reales. No confundir el guardado local simulado con un avatar ya disponible
+en producción. Antes del despliegue sigue pendiente la rotación segura de la
+contraseña SMTP expuesta en una sesión anterior.
+
+## Cierre anterior: avatares privados G2
 
 **H5, Sitting v2 y la aceptación G2 de avatares privados están terminados e
 integrados.** El registro de cierre está en
-[`PLAN_ACTUAL.md`](../PLAN_ACTUAL.md); el de Sitting se ha guardado íntegro en
+`OLD/docs/PLAN_ACTUAL-glb-completed-2026-09-03.md`; el de Sitting se ha guardado íntegro en
 `OLD/docs/PLAN_ACTUAL-sitting-v2-completed-2026-08-30.md`.
 
 El checkpoint completo previo está validado. El único fallo real era que

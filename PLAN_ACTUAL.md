@@ -1,440 +1,358 @@
-# PLAN ACTUAL — Aceptación de avatares GLB privados
+# PLAN ACTUAL — Creador de avatares dentro de YenHubs
+Versión: v2 aceptación productiva. Fecha: 6 de septiembre de 2026.
+Workspace: /Users/Shared/Gits/YenHubs-features. Rama raíz: codex/avatar-creator.
 
-Versión: **GLB v8 — G2 cerrado e integrado**
-Última revisión: **3 de septiembre de 2026 (Europe/Madrid)**
-Autoridad: **este fichero es la única cola ejecutable**.
-El plan completo de Sitting v2 está cerrado y archivado en
-`OLD/docs/PLAN_ACTUAL-sitting-v2-completed-2026-08-30.md`.
+## Estado vigente de cierre — 6 septiembre, tras despliegue final
 
-## Resultado y límite
+Este bloque sustituye los estados temporales de las evidencias históricas inferiores.
+- [x] Credencial Mailtrap antigua retirada por el usuario y ausencia verificada;
+  nueva credencial conservada. Acceso IONOS resuelto autónomamente.
+- [x] Validación exacta completada: terminal53735 exit0, static/security/hubs/
+  browser-capacity PASS y finalize aprobado; advisories y diez bloques previos reutilizados.
+- [x] Imagen71fa7209 desplegada por generador/apply protegido, digest1d6f8e21807b2303f4ac2c613065583bb230bbf218652638f496b26d64973814.
+  Solo cambió imagen Hubs y hash de control; secrets sin cambios. Reticulum Ready
+  antes de verificador70056: 0 fallos/0 avisos. Versión UI7bf6375f.
+- [x] Masculino oDvn9Qt y femenino wB3FSNL guardados y seleccionados en sala;
+  persistencia, sentarse/levantarse y recepción remota comprobadas. DB: ambos
+  activos, mismo propietario G2, flags privados, cero listados, tres archivos activos.
+- [x] Editor productivo 390x844 sin desbordamiento horizontal; controles legibles,
+  preview femenino con traje y rubio, Guardar accesible. Muestra cancelada, sin
+  un tercer avatar. Es prueba responsive de escritorio, no dispositivo físico.
+- [ ] Integrar PR Hubs8 y gitlink raíz; actualizar documentación final y verificar remoto.
+No repetir suites, despliegue, respaldo ni recuperación. Evidencias de esta fase:
+~/.yenhubs-private/avatar-rollout-20260906/{frozen-sections.private.log,
+contrast-live-ready-verifier.private.log,female-live-evidence.md,
+credential-retirement-confirmed.md,contrast-rollout-completed.md}.
 
-Demostrar que un cliente puede cargar un avatar GLB compatible, verlo y usarlo
-correctamente, guardado en su cuenta **sin publicarlo en el catálogo**.
-Se acepta la función existente; solo se implementará una corrección si aparece
-un fallo reproducible. No se construye un editor ni una integración de proveedor.
+## Resultado
+Al entrar en una sala, el usuario podrá elegir un avatar existente o crear uno
+personalizando un personaje con assets incluidos, verlo y guardarlo directamente
+en Mis avatares. Se busca la alternativa gratuita más rápida y mantenible a RPM.
+Crear significa modificar rasgos/apariencia; una subida manual o enlace externo
+por sí solos no satisfacen el encargo. No se exige generación desde selfie.
 
-**Privado significa no listado**, no cifrado ni inaccesible mediante su URL:
-otras personas en la sala necesitan poder representar el avatar.
-La cuenta B no debe recibirlo en Mis avatares ni poder modificar el de A.
-Los contratos primarios son `features/avaturn/README.md` y
-`features/rpm-avatars/README.md`.
+Requisito visual confirmado por el propietario el 5 de septiembre: personajes
+adultos de estilo Ready Player Me/Avaturn, adecuados para empresas. Debe haber
+camisa y vestuario profesional (chaqueta/corbata); camiseta puede complementar.
+No anime, chibi, cosplay ni ropa de fantasía. La túnica/explorador del prototipo
+NO es un entregable aceptable. Reutilizar controles, composición y guardado;
+sustituir los assets o el proveedor antes de publicar/desplegar. No repetir las
+pruebas de lógica que no cambien; verificar licencia, apariencia y rig del sustituto.
 
-H5 y Sitting v2 permanecen terminados. No se repiten restore, `--full`,
-staging, E2E de exclusión de sillas ni rollout por abrir este plan.
-Bots, proveedores externos, upgrades upstream y limpieza DNS son trabajos
-separados. El propietario autorizó el 1 de septiembre publicar e integrar el
-candidato de código actual y desplegarlo sobre la instancia productiva existente
-de `meta-hubs.org`, con checkpoint conjunto DB + medios previo y verificación
-fría posterior. No autoriza recursos nuevos, cambios de topología o coste,
-publicar/subir las muestras Avaturn/Mixamo ni escrituras de aceptación con dos
-cuentas fuera de G2. El 3 de septiembre el propietario autorizó expresamente el
-checkpoint, los magic links estrictamente necesarios y los dos uploads exactos
-descritos en este plan. No autorizó borrados, catálogo, infraestructura,
-topología ni coste. Esa autorización sigue cubriendo los enlaces frescos
-estrictamente necesarios para autenticar las dos direcciones exactas durante
-esta misma aceptación; no hace falta volver a confirmarla mientras no cambien
-los datos, el destino, el riesgo ni el coste.
+Mínimo de personalización confirmado: cinco modelos distintos de prendas
+superiores/camisas, cinco modelos distintos de pantalones y cinco peinados,
+combinables por separado. Colores adicionales no cuentan como modelos distintos.
+Un personaje prefijado o un selector de outfits completos no satisface el encargo.
+Antes de ampliar código, inventariar esas quince piezas con licencia y rig aptos;
+si un catálogo candidato no las tiene, no simular variedad mediante recolores.
 
-## Fuente y evidencia que se conservan
+## Alcance y autoridad
+El propietario solicita análisis, elección, implementación, pruebas, integración
+y montaje operativo sin interrupciones rutinarias. Incluye el despliegue en la
+instancia existente y aceptación con cuentas de prueba ya disponibles.
+No contratar planes, introducir costes ni crear infraestructura. Usar solo
+navegador interno. No enviar fotografías personales a proveedores.
+Conservar elección de avatares existentes e importación privada GLB.
+H5, Sitting y G2 están cerrados; el plan G2 se conserva íntegro en
+OLD/docs/PLAN_ACTUAL-glb-completed-2026-09-03.md.
+El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto.
 
-- Workspace: `/Users/Shared/Gits/YenHubs-features`.
-- Rama local: `codex/private-glb-acceptance`; la PR raíz #28 integró el cierre
-  documental en `28dddf7e64f701e3a9d8268cc976cd2cc3d5543d`. Ese `main` conserva
-  la corrección de
-  permisos y fija los gitlinks Hubs `668413a209fc0b7725c254047e104d5545d833c1`
-  y Cloud `cc52a184e104302cc63b34e0438720a2f85a61ad`.
-- Gitlinks del cierre anterior al hardening de permisos: Hubs
-  `668413a209fc0b7725c254047e104d5545d833c1`; Cloud
-  `43210079d3ddcd8ec7a5d9588cf3546a8efce9b0`. Hubs ya está integrado en la
-  raíz; el puntero Cloud corresponde al hardening causal posterior al rollout
-  y se integra en el cierre documental.
-- La preparación está guardada en el commit raíz local `e454251`. El candidato
-  posterior de selección se publicó como Hubs PR #7 y está integrado en
-  `master=668413a209fc0b7725c254047e104d5545d833c1` (candidata original
-  `e83adaf38715f837a30d390273f488ffc2bcf42b`): selector y preview, una
-  utilidad de encuadre y dos focales. El gitlink raíz quedó integrado mediante
-  la PR #22 en `main=4f3d91a176e8b0b7514bfe018328dcefacf6282e`. La imagen nueva
-  ya fue construida, desplegada y verificada; la PR raíz #24 integró el cierre
-  y ambos gitlinks en `main=7fcda31b0d4e2fe89c462c5e07ab9471d3b0cbcf`.
-- El build Hubs [33245207737](https://github.com/yengalvez/hubs/actions/runs/33245207737)
-  pasó sobre `b2697e7e6f571d195346cc156f0f1631eedc841a`.
-  Al abrir G0, editor, selector, ayuda, validadores y español coincidían con ese
-  corte. La interfaz neutral ya estaba incluida en la imagen publicada;
-  la nueva corrección local del editor del 31 de agosto todavía no.
-- El rollout aceptado de Sitting fijó Hubs
-  `sha256:e8f9423ace1bf4108ae5a7ce59c1b45cf0b44b74ea944fdb82fee47e4d7be5b0`
-  y Reticulum
-  `sha256:256c292d0d5a69e021322bdbd11b3f318f2d44bee580433252e0b04ade1d5e18`.
-  Su evidencia está en `docs/session-changelog.md`, bloque del 30 de agosto.
-  No es una recaptura de Kubernetes ni una aceptación de subidas GLB.
-- El navegador interno cargó en frío
-  `https://meta-hubs.org/VJopCY3/inicio` en escritorio y 390×844 con el bundle
-  nuevo `hub-5733d7ae4df22f27da2e.js`, WebGL, cero errores y sin overflow. El
-  único warning es `background`, heredado y ya clasificado. La aceptación final
-  entró de forma visible con el micrófono silenciado y sin vídeo: en el contexto
-  principal `APP` y `AFRAME` son objetos, la escena quedó cargada y `entered`,
-  con renderer, 22 sistemas, canvas y avatar activos, `Personas (1)` y cero
-  errores de consola. El estado esperado de bots es exactamente cero según el
-  readback DB/health ya aceptado. Aquella pasada no abrió el selector ni
-  subió/guardó ningún GLB; G2 completó después persistencia y dos cuentas.
-- La fuente fuerza `allow_promotion=false` y `allow_remixing=false`.
-  Reticulum comprueba propiedad, credenciales de ficheros y tamaños;
-  eso no demuestra por sí solo validación completa del rig en servidor.
-- Hay 2 casos unitarios de textos neutrales y 3 de skeleton sintético.
-  No equivalen a abrir GLB reales ni a guardar con dos cuentas.
-  No se han repetido esas pruebas sobre código inalterado.
-- La focal nueva `hubs/test/unit/react-components/avatar-editor-selection.test.js`
-  reproduce 3 fallos sobre la base: Guardar habilitado tras GLB corrupto/grande
-  y procesamiento del anterior al enviar. Tras la corrección pasa **11/11**
-  con el editor React montado y validadores reales; parser 3D, preview y
-  transportes están aislados. No es aceptación visual ni guardado en servidor.
-  ESLint de los dos archivos y diff-check pasan. La recomprobación independiente
-  dirigida del hallazgo no encontró huecos materiales; no se reabrió la auditoría.
-  Los avisos locales de Browserslist antiguo y `punycode` no son fallos de esta
-  focal y no justifican actualizar dependencias dentro de este cambio.
-- La candidata congelada `e83adaf38` pasó una sola vez la sección oficial
-  `hubs`: lint, **119/119** unidades (incluidos 11 selector + 8 bounds/cámara),
-  compilación Hubs y lint/compilación Admin. El recibo privado exacto quedó
-  ligado al input `2e387a74d5deb3397073a748bffdd6d25ed430f4c3457b9656d835c4a8f09629`.
-  No se repite esa sección sobre los mismos bytes.
-- La PR Hubs #7 pasó sus dos controles `static-security` y el workflow completo
-  `test-and-deploy-storybook`; se fusionó con `[skip ci]` en `668413a20`. No se
-  abrió un run post-merge duplicado.
-- La PR raíz #22 dejó verdes los gitlinks, Gitleaks de worktree/rango,
-  Actionlint, ShellCheck y PostgreSQL 12.19/14.23. Su último subpaso intentó
-  repetir la batería histórica de recovery sin cambios: se canceló
-  deliberadamente tras 22 minutos para respetar este plan. La PR se fusionó
-  por administración con `[skip ci]` en `4f3d91a17`; no se presenta ese job
-  cancelado como verde ni como evidencia GLB.
-- Por indicación del propietario, el agente obtuvo muestras públicas Avaturn
-  y Mixamo Xbot: ambas cargan y se ven localmente, con sus hashes y límites de
-  uso en [la evidencia de muestras](features/avaturn/sample-check-2026-08-31.md).
-  No hace falta que el propietario busque archivos. No es aceptación del
-  editor ni autorización de uso comercial; tampoco se han subido al servidor.
-- Para G2 no se usarán esas muestras públicas. El bundle recuperado del propio
-  proyecto aporta dos exports ya utilizados por el propietario en esta misma
-  instancia: `CamisaNegra.glb` (generator `Ready Player Me`, 1.045.168 bytes,
-  SHA-256 `13beeca3d3f8d9d0857cf7bde180fd736663864becfd84dbb4cddeba6e8fb676`,
-  67 joints) y `modelT.glb` (generator `Avaturn.me | Blender`, 14.273.828 bytes,
-  SHA-256 `c48f963a058832d1802cc6b268945e9c764b1eec738f0104488229e73f9a1c2f`,
-  54 joints). Ambos cubren upper-body y full-body con los nombres exactos del
-  validador. Se crearán como máximo dos registros privados nuevos; no se
-  redistribuirán los ejemplos descargados de terceros.
-- El readback productivo inicial del 3 de septiembre confirmó 12/12 Deployments
-  listos, dos cuentas habilitadas con dos logins y ningún proceso de prueba
-  activo. G2 terminó usando `info@virtualmente.com` como cuenta A y creando por
-  el flujo normal autorizado `info@meta-hubs.org` como cuenta B aislada y no
-  administradora. Producción contiene ahora tres cuentas habilitadas; no se
-  crearon recursos, topología ni coste.
-- El checkpoint productivo previo a G2 quedó publicado y validado en
-  `/Users/yengalvez/.yenhubs-private/glb-acceptance-20260903/checkpoints/checkpoint-pre-g2-20260903`:
-  361 tablas, 100 migraciones, 18 hubs y 33/33 pares de medios; los cinco
-  escritores se reanudaron y la Lease quedó libre. La primera subida real
-  renderizó correctamente `CamisaNegra.glb`, pero el guardado no creó avatar:
-  las tres cargas temporales devolvieron 200 y la promoción a `/storage/owned`
-  falló con `:storage_error`. El volumen conserva subdirectorios `2755`
-  propiedad de UID/GID 1000 mientras Reticulum ejecuta sin capacidades y sin
-  grupo suplementario 1000. No se reintentó ni se subió `modelT.glb`.
-- La causa se corrigió e integró sin cambiar imagen ni topología: Reticulum
-  recibe `fsGroup=1000` y `fsGroupChangePolicy=Always`. La generación de 44
-  recursos, el diff no secreto y la comparación exacta de Secrets limitaron
-  el rollout a ese `securityContext`; el apply protegido terminó con 12/12
-  Deployments listos, Lease libre, lock ausente y el mismo balanceador, nodo y
-  dos PVC de 10 GiB. El diff posterior es cero.
-- La repetición causal de `CamisaNegra.glb` creó `CRimmfo` y `modelT.glb` creó
-  `h2tMVFb`, ambos para la cuenta A `2334843008492503188`, activos, privados,
-  no remezclables y con cero listings. Sus seis pares físicos están en
-  `ret-pvc` y los endpoints exactos responden. Las búsquedas públicas por
-  nombre/ID y Featured devuelven cero coincidencias.
-- Ambos modelos se seleccionaron y usaron en la sala. `CamisaNegra` expone 67
-  huesos y `modelT` 54; caminar/correr, primera/tercera persona y
-  sentarse/levantarse funcionan. Un observador con contexto aislado recibió
-  `modelT`, sus 54 huesos, el movimiento y los cambios sentado/de pie. La carga
-  fría de escritorio y 390x844 pasa; los únicos errores de consola son el
-  micrófono denegado por el navegador automatizado y el favicon 404 conocido.
-- `verify-live-reactivation.sh` terminó después del rollout con **0 fallos / 0
-  avisos** y confirma 361 tablas, 100 migraciones, 18 salas y 39/39 pares de
-  medios. Mailtrap confirma que el primer enlace para B fue
-  entregado a `info@meta-hubs.org` a las 07:34 UTC, pero IONOS estaba abierto
-  en el buzón distinto `info@virtualmente.com`. Un único reenvío autorizado se
-  entregó a las 14:25 UTC y creó su token; el propietario lo abrió a las 16:11
-  UTC, fuera de los 30 minutos admitidos, por lo que Reticulum lo rechazó
-  correctamente como caducado. No es un fallo SMTP ni de la página de
-  verificación. El token apareció en la URL compartida, pero ya era inválido y
-  no se conserva ni reutiliza. El enlace fresco posterior fue entregado a las
-  20:56 UTC, pero su `identifier_hash` no coincide con ninguno de los dos
-  logins existentes. Un enlace diagnóstico autorizado para
-  `info@virtualmente.com` sí coincide con la cuenta A
-  `2334843008492503188`, por lo que no hay una deriva global de `PHX_KEY`: la
-  premisa incorrecta era que `info@meta-hubs.org` ya pertenecía a la segunda
-  cuenta. El propietario ordenó después resolver la comprobación sin más pausas:
-  Chrome tenía todavía la sesión A, lo que explicó el primer error de identidad;
-  tras cerrarla, un enlace nuevo verificó correctamente
-  `info@meta-hubs.org`. La cuenta B creada es `2372004458029646083`, habilitada
-  y `is_admin=false`. Su vista **Mis avatares** está vacía y no ofrece ninguna
-  ficha ni control de edición para `CRimmfo` o `h2tMVFb`; el readback DB confirma
-  tres cuentas habilitadas, cero avatares objetivo para B, propietario A intacto,
-  ambos flags privados en false y cero listings. Los enlaces usados quedaron
-  consumidos y las pestañas externas abiertas por el agente se cerraron.
-- Una búsqueda local imprimió accidentalmente el valor de `SMTP_PASS` presente
-  en dos artefactos Cloud. No se repite ni se publica el valor: queda tratado
-  como comprometido y debe rotarse antes de cualquier rollout posterior. La
-  rotación no forma parte de esta lectura ni es necesaria para terminar la
-  comprobación de cuenta B ya autorizada.
-- El bloque autónomo posterior montó **AvatarEditor y AvatarPreview reales**
-  localmente, con Three/WebGL, estilos, split GLB y PNG reales; aisló en memoria
-  cuenta/upload y usó GLTFLoader directo en lugar del wrapper/proxy Hubs.
-  Se reprodujo y corrigió el encuadre Xbot, incluyendo manos en formato vertical.
-  Ambos positivos dan preview y miniatura de 720×1280. Los tres negativos
-  deshabilitan Guardar y no aumentan los dos envíos simulados. Pasan 6 casos de
-  bounds y 2 de cámara; no se repitió la focal 11/11, cuyos hashes se conservan.
-  Esto no prueba la integración completa del loader, servidor, permisos o sala.
+## Criterios de aceptación
+- Creador accesible desde el selector en el vestíbulo y desde la sala.
+- Personalización visual útil con assets de procedencia y licencia verificables.
+- Gratuidad para el uso integrado destinado a clientes, no solo un trial.
+- Preview, exportación GLB compatible, guardado privado y selección sin descargar
+  y volver a subir manualmente. Cancelar no crea registros.
+- Avatar persistente tras recargar; aislamiento por cuenta y ausencia del catálogo.
+- Uso/pose/remoto y pantalla móvil; no invalidar las evidencias previas ajenas.
+- Dependencias acotadas, sin credenciales en cliente ni confianza en mensajes ajenos.
+- Publicación, imagen oficial, checkpoint DB+medios, rollout protegido y readback.
+- Si ninguna vía satisface el alcance, documentar evidencia y límite concreto;
+  no declarar imposible lo que solo requiere una integración razonable.
 
-## Comprobaciones finitas de aceptación
+## Trabajo
+- [x] Comparar opciones y fijar una vía gratuita para uso empresarial.
+  MakeHuman CC0 y tres pantalones CC BY 4.0, inventariados en
+  features/avatar-creator/wardrobe.json. Quaternius fue un prototipo descartado.
+- [x] Implementar personalización 5+5+5, ambas bases, preview y guardado privado.
+  Se conserva la selección existente y la subida GLB. Compositor con eliminación
+  de recursos no seleccionados y créditos en UI/glTF; sin proveedor externo.
+- [x] Incorporar ensamblador portátil y procedencia de assets.
+  Hubs scripts/build-business-avatar-assets.py y normalize-business-avatar.mjs.
+- [x] Comprobar lógica y build local afectados.
+  126 tests y TypeScript verdes; ajuste posterior solo del jersey validado por
+  las cuatro pruebas focales (300 combinaciones). Build de producción verde,
+  con dos avisos de tamaño de assets/entrypoints. No se ejecutó --full.
+- [x] Revisar una muestra en el editor real con backend local simulado.
+  Masculino y femenino cargan; americana/lana/coleta genera GLTF 34,466 B,
+  BIN 4,284,948 B y PNG 177,617 B (720x1280), flags false/false.
+  Esta evidencia NO es persistencia productiva ni aceptación de sala.
+- [x] Cerrar aceptación visual final, móvil y movimiento relevante.
+  Completado según el estado vigente superior; se conserva debajo el diagnóstico histórico.
+  Nueva evidencia del propietario: el botón de pose manual de la demo doblaba
+  mal las piernas. Sustituido en el harness local por fullbody-locomotion real
+  y los clips compartidos de Hubs; Sentarse/Levantarse/Caminar disponibles.
+  La revisión posterior del propietario rechaza también la demo con clips Hubs:
+  deformación de pecho y pie izquierdo, partes deformadas al sentarse y cuerpo
+  elevado/brazos hacia atrás al levantarse. El diagnóstico de solo piel/polo
+  era insuficiente. Animación NO aceptada; causa aún por demostrar.
+  Próximo trabajo autorizado: reproducir y corregir localmente, sin pedir otra
+  confirmación ni depender de SMTP. Comparar postura de reposo, orientación de
+  huesos, pesos y transformación de clips; comprobar además que sit libera
+  torso/cadera al volver a idle. Separar defecto del harness de defecto runtime.
+  Probar cuerpo sin prendas y vestido, ambas bases: idle, caminar, sentarse,
+  levantarse y repetir el ciclo sin deformaciones, deriva ni poses retenidas.
+  Corregir la causa en el builder/retarget/runtime que corresponda; no ocultarla
+  mediante máscaras de ropa ni cambios exclusivos del visor. Conservar controles,
+  catálogo y guardado ya válidos. Pruebas focales y demostración visual antes de
+  otro build. Corregir también pelo claro; ampliar vestuario queda para después.
+  Investigación previa solicitada: documentación oficial MPFB Animation y
+  operador mapmixamo.py de v2.0.17 confirman una etapa explícita de mapeo entre
+  rigs (COPY_ROTATION y COPY_LOCATION para Hips). El loader actual de Hubs
+  renombra tracks pero no compensa las orientaciones de reposo entre rigs.
+  Los GLB actuales difieren en Spine2, LeftFoot y LeftUpLeg respecto a los clips;
+  por tanto el nombre mixamo no acredita compatibilidad directa. Validar un
+  retarget correcto antes de regenerar todo; revisar separadamente la salida de
+  sit y sus tracks de torso/cadera. No se ha demostrado aún una solución final.
+  Fuente: https://github.com/makehumancommunity/mpfb2/blob/master/docs/ui/operations/animops.md
+  Preparado avatar-animation-retarget.js: cambio de bases de orientación antes
+  y después de cada quaternion. Conectado al runtime solo para GLB del creador
+  marcados makehuman-mixamo-v1; no publicado ni aceptado. Cuatro pruebas focales
+  pasan. La cuarta cubre el fallo observado Missing animation bind bone:
+  RightShoulder: los clips sin skin cargan Object3D, no Bone; la captura ya
+  admite sus transformaciones con nombre. Demo interna 62267 confirma idle/sit
+  reales activos. Inspección visual posterior: brazos aún incorrectos al volver
+  a idle; el cambio de base por sí solo NO demuestra retarget visual correcto.
+  Comparación controlada posterior: brazos incorrectos también en idle inicial,
+  sin pasar por sit. Alineación A/T de hombro/brazo/antebrazo implementada usando
+  direcciones articulares, sin cambiar assets; demo masculina muestra brazos a
+  los lados en idle y junto a piernas en sit. Cinco pruebas focales y ESLint pasan.
+  Captura adelantada antes del await para evitar contaminación por fallback;
+  harness reconectado por identidad del avatar, no por escena persistente.
+  Siguiente paso: comprobar vuelta a pie, ciclos, caminar, base femenina y
+  prendas/cuerpo; aceptación visual completa aún pendiente, igual que sala real.
+  Evidencia posterior de demo con componente real: tres ciclos completos por
+  base retornan a idle con deriva máxima de posición 0 en Hips/Spine/Spine1/Spine2;
+  diferencia angular máxima 0.000407 rad (masculino) y 0.000371 (femenino),
+  constante en los tres ciclos. Femenino inspeccionado en idle/sit/walk con polo
+  y chinos; no demuestra todavía cuerpo sin prendas, todo el vestuario ni IK/red
+  de sala. Harness privado editor-local/entry.jsx incluye Verificar 3 ciclos.
+  Pestaña interna conservada en http://127.0.0.1:62267/ (servidor sesión 79368).
+  Pelo claro: corregidas las texturas oscuras de cinco peinados por base mediante
+  prepare-creator-hair.cjs (Sharp offline); alfa verificado idéntico y contratos
+  nodes/meshes/skins/accessors comparados intactos contra Git. Rubio claro visible
+  en editor real masculino, con cuatro accesos a tonos y selector libre conservado.
+  Cuatro pruebas del compositor pasan sobre los nuevos assets (300 combinaciones).
+  Los cinco peinados claros ya se han inspeccionado en el editor: corto natural,
+  corto con raya, melena y afro masculinos; coleta femenina. Guardado local nuevo
+  femenino/coleta/chaqueta/chinos correcto: GLTF 34,873 B, BIN 5,230,092 B y PNG
+  195,617 B (720x1280); 52 huesos y flags promoción/remix false. Sin persistencia real.
+  Prendas: americana/corbata inspeccionada en sit, chaqueta cruzada inspeccionada
+  sentada con zoom 2x y polo en idle ampliado. Sin la deformación de brazos/pecho
+  anterior en esas muestras. Nueve pruebas focales pasan; el compositor verifica
+  marca de rig y texturas preparadas en las 300 combinaciones. ESLint de los
+  archivos de runtime/controles y tests modificados pasa. Estas muestras no
+  sustituyen la comprobación de sala real.
+  Candidato correctivo local Hubs 8c74e8c22: TypeScript y 131 tests pasan;
+  ESLint, HTMLHint, Gitleaks staged y Actionlint pasan. El hook de commit volvió
+  a ejecutar 131 tests automáticamente; no lanzar otra vez esos tests sin cambios.
+  Publicado en codex/avatar-creator (PR Hubs #8 sigue en borrador). Build oficial
+  único 33970705664 sobre 8c74e8c2256b921baaac163822a9effc225f3ff8 terminó verde
+  el 5 de septiembre a las 14:09:11 UTC; tag avatar-creator-20260905-8c74e8c2-84.
+  GHCR confirma versión 1212987062 y digest
+  sha256:dcd6ae8728066322c4ef7252acb9b9744706d7c4c652bb2896093ea11c9901d8.
+  No volver a construir estos bytes. SMTP sigue siendo requisito del rollout.
+  Seguridad CI del SHA corregido verde: 33970683330 y 33970680748. Storybook
+  33970680750 e imagen 33970705664 también terminaron verdes. No hay runs pendientes.
+  El antiguo heartbeat resultado-imagen-creador-yenhubs ya no existe según la API;
+  no se recreó. No hace falta seguimiento de estos runs terminados.
+  No regenerar assets ni construir/desplegar otra imagen hasta resolverlo.
+  Editor local móvil 390x844 verificado: controles, preview y guardado privado
+  simulado pasan en ambas bases; falta uso/pose/remoto en la sala real.
+  Diez renders verifican jersey con cada pantalón y ambas bases tras corregir
+  intersecciones en cintura. Flexión artificial de piernas en visor demuestra
+  que las prendas siguen al rig, NO acredita el protocolo Sitting de una sala.
+- [x] Seguridad final, commit, publicación de rama Hubs e imagen oficial.
+  Commit Hubs local 3987f8b6acce3aedb32fd3bf454dbdf9530df686, árbol limpio.
+  Gitleaks (assets y staged), Actionlint y diff-check pasan. Build de producción
+  local correcto con dos avisos de tamaño. Rama Hubs publicada; security-ci
+  33928843627 y 33929030946 verdes. Imagen oficial única 33928876505 sobre
+  3987f8b6 y test-and-deploy-storybook 33928843616 terminaron verdes.
+  GHCR versión 1211442752 confirma tag avatar-creator-20260905-3987f8b6-83 y
+  ghcr.io/yengalvez/hubs@sha256:f03df945f3206d3a19a1f54377986d8969e1912dbf09640f4e5bdcaa99275412.
+  Digest coincide con salida del build; seguimiento pausado. No relanzar.
+  Esa imagen prueba compilación, NO calidad de animación: no desplegarla con los
+  defectos anteriores. Si la reparación cambia bytes productivos, congelar y
+  validar el candidato corregido antes de construir una nueva imagen una vez.
+  Documentación raíz guardada localmente en 2e49aa4, aún sin publicar.
+  PR Hubs #8 abierta en borrador contra master; no fusionar como aceptada antes
+  de la comprobación productiva. https://github.com/yengalvez/hubs/pull/8
+- [x] Despliegue protegido y aceptación productiva.
+  Completado con 71fa7209 y verificador70056; los estados siguientes son históricos.
+  ESTADO DE REANUDACIÓN: run 34040735085 SUCCESS para 71fa7209db719c261c9ff7e0af0ba498e358403f;
+  GHCR 1215697092, tag avatar-creator-20260906-71fa7209-86, digest
+  sha256:1d6f8e21807b2303f4ac2c613065583bb230bbf218652638f496b26d64973814.
+  Aún NO desplegado. Heartbeat pausado al terminar. Finalizador 47978 terminó:
+  diez bloques válidos, faltan advisories/static/security/hubs/browser-capacity.
+  Única secuencia para esos cinco iniciada en terminal 50586, log privado
+  avatar-rollout-20260906/current-sections.private.log; consultar mismo handle,
+  no repetir los diez bloques válidos ni relanzar esta secuencia.
+  Terminal50586 terminó exit1: advisories PASS; static ejecutó sus comprobaciones
+  sin errores pero rechazó el recibo: «Section inputs changed while static was running».
+  Causa identificada: se editó este plan durante static, que incluye root completo.
+  Seguimiento pausado. Conservar advisories y las diez secciones válidas anteriores.
+  Siguiente secuencia: static/security/hubs/browser-capacity y finalize; no editar
+  archivos versionados mientras se valida. Registrar avance fuera del árbol durante
+  esa secuencia. No repetir advisories ni --full. Sigue pendiente la clave antigua.
+  SEGURIDAD pendiente de acción humana: la clave SMTP anterior coincide de forma
+  única con la fila Mailtrap 5477652, Sending Onboarding API token 19f61175ac1,
+  que conserva permisos Account Admin. Comparación privada del sufijo visible;
+  ningún valor completo se imprimió. La nueva fila 5550313, YenHubs SMTP septiembre,
+  ya funciona y NO debe borrarse. Navegador interno pestaña20 tiene abierto el
+  menú de la fila antigua (Delete token). La retirada final de una credencial
+  mediante UI requiere handoff; el agente no la ha pulsado ni la da por revocada.
+  No desplegar otra imagen hasta resolver esa clave antigua expuesta.
+  NUEVO CANDIDATO VISUAL 71fa7209d: controles con contraste y fondo opaco.
+  Validado con global.scss real en escritorio y iframe 390x844: personalización
+  femenina y guardado local simulado correctos. Sass, webpack del harness,
+  Gitleaks staged, Actionlint y 131 tests obligatorios del hook pasan.
+  No implica todavía publicación/aceptación móvil productiva. No repetir tests.
+  Publicado en rama Hubs; imagen oficial única 34040735085 en curso, prefijo
+  tag avatar-creator-20260906-71fa7209. Raíz f25d0b0 guarda evidencias/gitlink.
+  No relanzar. Si verde, verificar digest y desplegar solo esta imagen por el
+  perfil protegido anterior; esperar Reticulum Ready antes del verificador.
+  Pose/remoto del avatar masculino oDvn9Qt pasan en sala real: navegación nativa
+  #Seat_recovery_2_-_REPOSITION reserva F0E14C01-EFF0-4976-B8B6-E0BEF1F9E1B2;
+  componente local y segundo cliente reciben isSitting=true/acción sit. Al
+  pulsar Levantarse, remoto recibe false/idle y vuelve a posición de pie normal.
+  Capturas frontal y posterior sin el torso/brazos rotos anteriores. No forzar
+  componente, ni editar transformaciones. Falta comprobación femenina/móvil
+  productiva sobre el candidato visual, retirada de credencial antigua y Git.
+  Método reutilizable: las dos pestañas deben llevar ?allow_multi (opción nativa
+  onConcurrentLoad); sin ella Hubs cierra la sesión anterior al abrir otra.
+  Sentarse se prueba mediante hash con nombre publicado, no con bucles de teclas.
+  Observador 27 levantado al acabar: reserva null/isSitting false comprobados,
+  pestaña temporal cerrada. Principal 1 permanece de pie y silenciada.
+  Reconciliación de recibos iniciada una sola vez, terminal 47978:
+  ./scripts/verify-project.sh --finalize --evidence-dir
+  /Users/yengalvez/.cache/yenhubs/project-verification. Sigue ejecutándose sin
+  salida final; solo lee huellas/recibos existentes, no lanza suites. Consultar
+  ese mismo handle sin relanzarlo y registrar qué secciones faltan de verdad.
+  DB read-only de oDvn9Qt: active, promoción/remix false, mismo propietario
+  que G2 h2tMVFb, cero listings y tres archivos activos del propietario.
+  El movimiento por pulsaciones instantáneas de CUA solo avanza centímetros;
+  no multiplicar bucles de teclas para llegar al asiento. Input.dispatchKeyEvent
+  CDP no está admitido: no usar rutas alternativas no autorizadas. La postura
+  sentada/remota productiva sigue pendiente, sin evidencia de fallo de rig.
+  Harness antiguo 62267 ya no escucha. Nuevo servidor local sesión 88860,
+  http://127.0.0.1:53783/; /mobile mantiene iframe390x844. Pestaña interna26.
+  Viewport override temporal restaurado. El harness ya importa global.scss y
+  ui-root.scss reales: no volver a aceptar contraste desde el antiguo tema claro.
+  ESTADO MÁS RECIENTE 6 septiembre 16:40 local: imagen 01859ab9b construida
+  por run 34039159856 verde, GHCR 1215633585, tag con sufijo -85 y digest
+  sha256:f85c52a2fc63b7c881cd2abc0a273fb0fc6ecd660f7bdfd5d8950a7a815eba82.
+  Desplegada por gen-hcce/apply protegidos exit 0, sin cambios de Secrets;
+  diff solo Hubs y huella de imágenes. Reticulum rollout status exit 0.
+  Verificador definitivo layer-live-ready-verifier.private.log: 0 fallos/0 avisos.
+  Primera comprobación lanzada antes de acabar el reinicio dio 5 fallos por
+  servicio aún no Ready/HTTP 503; se conservó y repitió solo tras rollout success.
+  Regla: esperar SIEMPRE rollout status antes del verificador, no en paralelo.
+  Editor ya visible y guardado real correcto: YenHubs Empresa 20260906,
+  avatar oDvn9Qt, masculino/corto con raya/americana y corbata/traje/rubio claro.
+  Persiste en Mis avatares tras recarga; selección y aviso Tu avatar ha sido
+  cambiado confirmados. Sala abierta con micrófono silenciado. No duplicar avatar.
+  Aún pendientes DB/privacidad, representación/pose/remoto y móvil productivos.
+  Defecto visual adicional demostrado: selects blancos con texto rgb(237,245,255)
+  y fondo del editor rgba(8,16,31,0.76) deja ver el selector. Reparación CSS local
+  sin publicar en avatar-editor.scss y ui-root.scss; Sass y diff-check verdes.
+  No construir otra imagen hasta revisar juntos los problemas reales pendientes.
+  Tercera persona no mostró avatar al probar; logs guardan SyntaxError JSON por
+  respuesta HTML a las 14:37 UTC. Causa y vigencia aún por determinar; no atribuir
+  al rig sin evidencia. Browser interno 2, pestaña 1, sala VJopCY3 autenticada.
+  ACLARACIÓN posterior: no era fallo de tercera persona. APP/AFRAME/scene y GLTF
+  oDvn9Qt cargados, modo cámara 5, escala y capas correctas. visibility.set(true)
+  refrescó el canvas y mostró el avatar empresarial de espaldas. Las capturas de
+  WebGL en segundo plano eran antiguas; hacer visible el navegador interno para
+  aceptar animación. Sentarse devuelve Sin asiento a menos de 2 metros: mover
+  al personaje junto a asiento antes de evaluar pose. No corregir cámara ni rig
+  por ese falso indicio. El error JSON histórico queda por localizar si persiste.
+  Seguimiento continuar-creador-tras-imagen-de-capas PAUSADO al terminar el build.
+  ACTUALIZACIÓN 6 de septiembre 16:24 local: acceso RESUELTO. Por petición
+  explícita del propietario se abrió webmail IONOS en navegador interno, con
+  sesión conservada. Un enlace nuevo recibido a las 16:18 se usó inmediatamente;
+  Verificación completa y sesión info@virtualmente.com confirmadas. No volver
+  a bloquear por Mailtrap ni pedir al propietario que abra futuros enlaces:
+  preparar primero IONOS y consumir el correo nuevo de inmediato.
+  El enlace de un solo uso apareció en AX por un filtro de redacción insuficiente;
+  no se conserva ni reutiliza. Se completó el acceso; filtrar cualquier URL
+  con parámetros auth_, no solo la ruta /verify.
+  NUEVA CAUSA PRODUCTIVA: el editor y MediaBrowser comparten z-index 70, y el
+  selector posterior en DOM tapa los controles aunque AX los exponga. Captura
+  real 704x994 y geometría DOM lo demuestran. No se pulsó Guardar ni creó avatar.
+  Corrección acotada en ui-root.scss: editor a fullscreen+1, por debajo de
+  popovers/modal. Sass y diff-check pasan. Se requiere imagen oficial correctiva,
+  rollout protegido y comprobar visualmente editor por encima del selector,
+  cerrar/regresar y guardado real. Reutilizar checkpoint fresco validado; no
+  repetir rigging, assets, correo ni pruebas ajenas. No hotpatch productivo.
+  Candidato Hubs 01859ab9b053779f9534ff479333d1399de5093f publicado; raíz
+  19899ed conserva el gitlink. Build oficial único 34039159856 en curso desde
+  14:26 UTC, tag avatar-creator-20260906-01859ab9. No relanzar ni duplicar.
+  Al terminar verde: verificar digest, cambiar solo imagen Hubs, generar/revisar
+  diff no secreto/aplicar con cold-rebind-legacy-active-v1, reiniciar Reticulum
+  y probar editor visible y persistencia. SMTP y acceso ya están resueltos.
+  Estado vigente 6 de septiembre: DESPLEGADO; aceptación autenticada pendiente.
+  Checkpoint único checkpoint-pre-creator-20260906 completo: 361 tablas, 100
+  migraciones, 18 salas y 39/39 pares. Exit 0, 1316 segundos; cinco escritores
+  reanudados y bloqueo/Lease liberados. Hubo un timeout transitorio al reanudar;
+  el procedimiento terminó correctamente y se comprobaron 12/12 servicios listos.
+  gen-hcce y apply protegidos exit 0, perfil cold-rebind-legacy-active-v1;
+  Reticulum reiniciado. Único cambio de Secret: SMTP_PASS. Diff no secreto:
+  imagen Hubs y huella derivada del mapa de imágenes. Digest productivo:
+  sha256:dcd6ae8728066322c4ef7252acb9b9744706d7c4c652bb2896093ea11c9901d8.
+  Verificador live 0 fallos/0 avisos usando RESTORE_TARGET_MODE=cold-rebind y
+  RECOVERY_CHECKPOINT_RUNNER_GENERATION=legacy-absent, contexto do-ams3-hubs-ce.
+  Primera invocación detenida: se omitieron esas variables y eligió por defecto
+  durable-active. Corregida solo la invocación, sin otro rollout ni cambios de código.
+  Correo único a info@virtualmente.com Delivered el 6 de septiembre 13:41 UTC,
+  remitente noreply@meta-hubs.org, API Key YenHubs SMTP septiembre: envío real
+  con la clave nueva confirmado. La credencial antigua aún NO está revocada.
+  El navegador bloqueó abrir la vista blob del texto del correo por política.
+  No sortearlo mediante CDP, otro navegador o extracción alternativa. El propietario
+  tuvo que intervenir entonces; ese bloqueo quedó superado por IONOS y el
+  acceso autónomo de las 16:18. Después: guardado persistente, recarga, privacidad,
+  uso/pose/remoto y cierre Git. No afirmar aceptación funcional completa.
+  No repetir checkpoint, build, apply ni verificador sobre estos mismos bytes.
+  Evidencia privada: ~/.yenhubs-private/avatar-rollout-20260906/.
+  Comprobación pública posterior en navegador interno: carga fría del vestíbulo,
+  Cambiar avatar y selector correctos; visibles Crear avatar, Subir GLB (privado)
+  y catálogo existente. Crear avatar sin sesión exige autenticación y no crea
+  registros. La pestaña original sigue esperando el enlace enviado; no se reenvió.
+  Antecedentes de preparación, superados donde contradigan el estado anterior:
+  Antes del rollout: rotación segura de SMTP_PASS por exposición histórica,
+  checkpoint DB+medios, imagen/digest y manifest generado. Después, creación,
+  recarga, privacidad y uso/pose/remoto en sala con navegador interno.
+  No imprimir valores, no crear infraestructura, no repetir recovery ni H5.
+  El 6 de septiembre el propietario completó la creación privada en Mailtrap.
+  Comprobada presencia de la entrada Keychain account info@virtualmente.com,
+  service YenHubs-creator-SMTP-20260905-01, sin imprimir su valor. No solicitar
+  de nuevo su creación. Autenticación SMTP nueva aceptada con TLS y certificado
+  verificado, sin enviar mensajes. Siguiente: checkpoint y sustitución por la
+  ruta protegida. Conservar la credencial
+  antigua hasta comprobar el envío con la nueva; después revocar la antigua.
+  Presencia en llavero no equivale a validez SMTP ni a sustitución productiva.
+  Incidente adicional durante preparación: un glob de búsqueda alcanzó el
+  input-values.local.yaml ignorado y mostró SMTP_PASS. No conservar el valor;
+  la sustitución pendiente es obligatoria. No volver a buscar con glob de inputs:
+  usar exclusivamente rutas de fuentes trackeadas explícitas, nunca valores locales.
+- [ ] Cerrar documentos, Git y Goal tras comprobar el resultado real.
 
-Se reutiliza cada evidencia verde sobre los mismos bytes y condiciones. Una
-corrección repite solo los casos que pueda invalidar.
+Revisión independiente inicial de viabilidad/licencia ya realizada; evidencia en
+features/avatar-creator/README.md. No repetir auditorías generales sin causa nueva.
 
-1. **Dos positivos reales:** GLB 2.0 procedentes de dos pipelines distintos;
-   entre ambos cubren upper-body compatible y full-body/Mixamo. Registrar
-   procedencia/licencia, SHA-256, tamaño y rig. No cuentan mocks ni clips de
-   animación sin avatar.
-2. **Tres negativos:** corrupto, mayor de 64 MiB y sin skeleton compatible.
-   Rechazo comprensible antes de guardar, sin crear avatar/listing.
-   Probar los límites del servidor solo con focales locales, no mediante
-   cargas maliciosas ni archivos gigantes en producción.
-   Incluir localmente la transición **válido → rechazado**: Guardar bloqueado
-   o archivo anterior conservado identificado inequívocamente; nunca guardar
-   un archivo distinto del que la UI confirma. No basta empezar siempre vacío.
-3. **Editor:** entrada neutral y ayuda visibles; preview y rig válidos antes
-   de habilitar Guardar. La miniatura se genera durante el guardado y debe
-   verse tras recargar. Repetir para cada positivo, sin aceptar preview vacío.
-4. **Guardado de A:** reaparece tras recargar en Mis avatares y puede
-   seleccionarse. Readback del avatar exacto: propietario correcto, ambos
-   flags en false, cero `avatar_listing`, ausente de Featured/búsqueda pública.
-5. **Cuenta B aislada:** no aparece en sus Mis avatares ni ofrece edición.
-   El control API de modificación ajena se verifica con test local; no se
-   intenta una escritura ajena en producción. Su visualización remota es
-   esperada, no una filtración del listado.
-6. **Uso real:** primera/tercera persona, idle/walk/run, sentarse/levantarse,
-   manos, escala, orientación y contacto con suelo; B ve pose y movimientos
-   coherentes. La pose se prueba con estos avatares, sin repetir la carrera
-   de exclusión ya aceptada de Sitting v2.
-7. **Carga fría y conservación:** escritorio y móvil con los nuevos avatares,
-   sin errores ni warnings inesperados. Conservar los avatares preexistentes.
-   No hay migración ni rollout para una aceptación sin cambios de código;
-   si hay corrección, probar compatibilidad/rollback de datos localmente y
-   preparar reversión del cliente, sin restaurar toda la DB como prueba.
-
-## Cola ejecutable
-
-### Bloque autónomo solicitado el 31 de agosto
-
-Bloque local completado: previews/miniaturas reales, tres negativos y corrección
-causal de cámara con sus focales. Se trabajó individualmente, sin supervisión
-rutinaria, sin repetir bloques verdes y sin crear monitor. El Goal de este
-bloque se cierra al entregar su evidencia; **no equivale al cierre de G2 ni de
-la feature**. La publicación,
-licencias para ese destino, cuentas y escrituras productivas conservan sus
-puertas. Se avisa solo ante una decisión imprescindible, no entre pruebas.
-
-### Bloque de publicación y rollout autorizado el 1 de septiembre
-
-Congelar una sola candidata exacta, validarla proporcionalmente sin repetir
-H5, Sitting ni `--full`, integrar primero Hubs y después el gitlink raíz,
-construir la imagen Hubs por el workflow oficial y fijarla por digest. Antes de
-aplicar, crear un checkpoint conjunto DB + `ret-pvc`; regenerar, revisar y
-aplicar mediante el driver protegido, reiniciar Reticulum y ejecutar el
-verificador live más una carga fría. Se conserva la imagen anterior como
-rollback. Este bloque no completa G2 ni habilita la subida de muestras de
-terceros.
-
-### G0 — Cierre anterior y alcance
-
-- [x] Confirmar main/gitlinks, rama limpia y cierre de H5/Sitting.
-- [x] Guardar el plan Sitting exacto y registrar su sustitución en OLD.
-- [x] Limitar GLB a aceptación existente y separar fuente de prueba live.
-- [x] Revisión independiente única del plan: corregida la secuencia de
-  miniatura y añadido el caso válido → rechazado. No hubo cambio de producto.
-- [x] Validación documental: archivo Sitting byte-idéntico, diff-check,
-  enlaces locales, Gitleaks de los siete documentos y Actionlint/ShellCheck
-  de workflows raíz sin fallos; gitlinks inalterados. Sin suite de producto.
-
-### G1 — Preparar archivos y una sesión acotada
-
-- [x] Inventariar los dos ejemplos iniciales y los 42 GLB trackeados de Hubs y
-  Cloud: ninguno reúne mesh con skin y los 12 huesos exigidos por el importador.
-- [x] Focal local válido → rechazado: fallo reproducido y corregido. Se
-  invalida el anterior antes de leer el nuevo, se descartan validaciones
-  tardías y se impide cambiar de archivo durante el envío. **11/11** cubre
-  corrupción, tamaño, submit directo, espera, carreras, cancelar, reintentar,
-  rig incompatible, alias privado histórico y bloqueo durante upload.
-- [x] Obtener por encargo del propietario dos muestras públicas reales de
-  Avaturn y Mixamo; registrar fuentes, tamaños, hashes y condiciones de uso.
-  Se conservan fuera de Git y solo para evaluación local, no para redistribución.
-- [x] Cargar los dos archivos con el loader y validadores actuales en navegador
-  interno: 52/67 huesos, upper-body requerido y full-body válidos, modelos
-  visibles y sin errores de consola. Ambos son full-body; no se declara
-  aceptado por separado un archivo solo upper-body ni el flujo persistente.
-- [x] Probar el preview real del editor: Xbot reproducía el encuadre incorrecto.
-  Corregidos bounds con skin/morphs y cámara según ancho/alto; los dos modelos
-  y sus PNG se ven completos. Seis casos geométricos y dos de cámara pasan.
-- [x] Tres negativos en el editor local: corrupto, 64 MiB + 1 byte y GLB
-  serializado sin skin. Mensaje correcto, Guardar bloqueado y cero nuevos envíos.
-  Los criterios 1–3 tienen evidencia local con las limitaciones registradas;
-  4–7 y los controles server-side no se dan por probados por el simulador.
-- [x] **Checkpoint de aceptación persistente validado:** target fijado en la
-  instancia productiva existente `meta-hubs.org`; dos cuentas existentes,
-  dos exports propios exactos y máximo **dos avatares nuevos**. Se conservarán
-  al terminar para evitar un borrado no autorizado; una limpieza posterior será
-  independiente. Crear un único checkpoint conjunto DB + medios inmediatamente
-  antes de subir/guardar, según `deployment/create-checkpoint.sh`, sin restore
-  de ensayo. No crear staging ni usar las muestras públicas Avaturn/Mixamo.
-
-**Hallazgo del inventario:** `hubs/src/assets/models/DefaultAvatar.glb`
-(829504 bytes, SHA-256
-`ae8b624db8d7d713fb51b73159a228c4686210dc647fa826864ba11600af8abc`)
-y `hubs-cloud/community-edition/services/reticulum/test/fixtures/test.glb`
-son rigs legacy sin hombros/brazos/antebrazos requeridos por el importador actual.
-No se usarán como positivos ni se rebajará el validador para hacerlos pasar.
-Esto no demuestra que el avatar legacy ya guardado deje de funcionar.
-Los clips Mixamo tampoco sustituyen un avatar full-body. No se usan archivos
-de `OLD/` como entrada activa ni se buscan archivos personales fuera del alcance.
-
-### G2 — Ejecutar la aceptación
-
-- [x] **Confirmación inmediata única recibida:** checkpoint productivo, magic
-  links solo si hacen falta para las dos direcciones exactas, subida de los dos
-  exports propios y creación de máximo dos avatares privados. No incluye borrar
-  registros, cambiar topología ni publicar catálogo.
-- [x] Crear y validar una sola vez el checkpoint conjunto DB + `ret-pvc`; dejar
-  escritores reanudados y Lease libre antes de abrir el flujo de subida.
-- [x] Con la cuenta A ya autenticada, abrir `Subir GLB (privado)`, comprobar
-  preview/rig/miniatura y guardar `CamisaNegra.glb` y `modelT.glb`. Recargar,
-  seleccionarlos desde Mis avatares y registrar los identificadores devueltos.
-  El primer intento de `CamisaNegra.glb` llegó hasta preview y miniatura, pero
-  no creó avatar por el fallo de permisos de promoción descrito arriba. Tras
-  desplegar la causa exacta, una sola repetición creó `CRimmfo`; `modelT.glb`
-  creó `h2tMVFb` a la primera.
-- [x] Readback API/DB exacto de ambos: propietario A, `allow_promotion=false`,
-  `allow_remixing=false`, cero `avatar_listing`, ficheros físicos presentes y
-  ausencia de Featured/búsqueda pública. No imprimir tokens ni datos de login.
-- [x] Con un observador aislado, comprobar primera/tercera persona,
-  idle/walk/run, sentarse/levantarse, manos, escala, suelo y representación
-  remota. Movimiento y pose remotos están demostrados con `modelT`; la cuenta B
-  aislada muestra **Mis avatares** vacío y no ofrece edición de los dos IDs.
-- [x] Carga fría final en escritorio y móvil, conservación de avatares previos,
-  cierre de pestañas y de procesos. Escritorio y móvil pasan, los medios previos
-  siguen presentes y todas las pestañas externas abiertas por el agente se
-  cerraron. Los dos nuevos se conservan; no borrar automáticamente.
-- [x] Completar los siete criterios con evidencia no sensible y actualizar
-  plan, estado humano, contrato y changelog. Si no cambia producto, no repetir
-  test, build, checkpoint, deploy o `--full`.
-
-### G3 — Corregir únicamente si hay fallo
-
-- [x] Causa local G1 corregida y focal verde; no se cambió rig, límite de
-  tamaño, API, schema, permisos, listados ni datos persistidos.
-- [x] Segunda causa local: cámara basada en vértices sin skin y encuadre solo
-  vertical. Corrección aislada en preview/utilidad, sin cambiar los modelos;
-  validación geométrica y visual local descrita en la evidencia de muestras.
-- [x] Candidata congelada en Hubs `e83adaf38`; sección afectada validada una
-  vez con 119 unidades, builds Hubs/Admin y recibo exacto. No se repite.
-- [x] Publicar e integrar Hubs PR #7 tras sus checks oficiales verdes:
-  `master=668413a20`.
-- [x] Integrar el gitlink raíz exacto y los documentos mediante PR #22:
-  `main=4f3d91a17`. Los checks proporcionales pasaron; se detuvo únicamente la
-  repetición de recovery fuera de alcance.
-- [x] Construir desde Hubs `master=668413a20` por el workflow oficial.
-  Actions `33504152150` terminó verde y publicó
-  `ghcr.io/yengalvez/hubs@sha256:04544546d59a43703c536a63ea09a32c3f51f90f8c2e97109d788499f65f672f`.
-  No ejecutar ahora el hook global de commit de Hubs como sustituto de esos
-  archivos: relanzaría toda la unidad aunque el bloque actual solo es focal.
-- [x] Crear y validar antes del rollout el checkpoint conjunto DB + medios en
-  `/Users/yengalvez/.yenhubs-private/glb-rollout-20260901/checkpoints/checkpoint-pre-668413a20`.
-  Conserva 361 tablas, 100 migraciones, 18 hubs y los 33 pares de medios; los
-  cinco escritores se reanudaron y la Lease quedó libre.
-- [x] Aplicar por el driver protegido la generación de 44 recursos
-  `cold-rebind-legacy-active-v1`. El diff previo excluyendo Secrets cambia solo
-  la imagen Hubs y la huella de imágenes del Namespace; los dos Secrets
-  generados coinciden en claves y valores con producción.
-  El primer apply publicó Hubs y después se cerró fail-closed: la marca
-  operativa heredada `kubectl.kubernetes.io/restartedAt` de Reticulum era el
-  único campo distinto en los doce snapshots. El clúster quedó con Hubs nuevo
-  listo, PostgreSQL listo, cinco escritores a cero, Lease libre y sin lock de
-  recuperación. Reparación causal: retirar solo esa marca que el manifiesto no
-  contiene, repetir una vez el mismo apply y añadir una regresión permanente al
-  comparador; no se regeneró, recapturó ni cambió otra entrada. Tras retirar
-  con UID/resourceVersion la única marca, el reintento causal terminó verde y
-  dejó 12/12 Deployments listos y la Lease libre.
-- [x] Reiniciar Reticulum tras Hubs, ejecutar el verificador live y comprobar
-  carga fría sin subir ni guardar los GLB de muestra. El diff posterior fue
-  cero y el verificador final terminó con **0 fallos / 0 avisos**, DB
-  361/100/18/33 y medios 33/33. Escritorio y móvil cargan el bundle nuevo sin
-  errores. La entrada visible final dejó `APP`, `AFRAME`, escena cargada y
-  `entered`, renderer, 22 sistemas, canvas y avatar activos, sin errores de
-  consola; micrófono silenciado, vídeo ausente y la pestaña cerrada al terminar.
-- [x] Corregir los dos huecos operativos revelados por el rollout: Cloud PR
-  #30 validó el marcador `restartedAt` y PR #31 lo promovió a
-  `master=43210079d`; el verificador legacy acepta cero salas bot solo si todo
-  el payload vacío sigue siendo exacto y coherente.
-- [x] G2 reveló un fallo reproducible: la escritura temporal funciona, pero la
-  promoción duradera no puede crear rutas en `ret-pvc`. Se conserva el
-  diagnóstico y se corrige solo el contrato de grupo del Pod, sin schema,
-  topología, imagen ni datos.
-- [x] Preparar la corrección duradera en Cloud: Reticulum usa exactamente
-  `fsGroup=1000` y `fsGroupChangePolicy=Always`; generador y verificador la
-  fijan y rechazan deriva. Las pruebas focales pasan 30/30 y la suite completa
-  del generador pasa 35/35.
-- [x] Publicar e integrar los mismos bytes mediante Cloud PR #32 a
-  `development` y PR #33 a `master=cc52a184e104302cc63b34e0438720a2f85a61ad`.
-  Los cinco controles de la PR técnica pasaron; las cuatro copias automáticas
-  redundantes del evento push se cancelaron. La promoción usó `[skip ci]` y no
-  repitió la suite sobre bytes idénticos.
-- [x] Como han cambiado bytes de despliegue: terminar las secciones afectadas del
-  verificador y el procedimiento de build/digest/rollout de
-  `deployment/README.md`, bajo el alcance de publicación/producción autorizado.
-  No hace falta build de imagen: integrar el gitlink raíz, regenerar, revisar
-  el diff y aplicar por el driver protegido; después
-  verificar permisos/servicios y reanudar G2 sin otro checkpoint. Completado
-  con Cloud `cc52a184`, raíz `0857229`, diff posterior cero y verificador live
-  **0/0**; no hubo build de imagen ni cambio de topología.
-
-### G4 — Cerrar sin otra ronda general
-
-- [x] Publicar evidencia no sensible de los criterios cerrados y residuos reales
-  en estos documentos; la feature no se marca completa por fuente/unitarios.
-- [x] Integrar el puntero Cloud, verificador, estado humano y changelog tras
-  inspeccionar diff, enlaces y secretos. La PR raíz #24 dejó `main=7fcda31b`
-  con Hubs `668413a20` y Cloud `43210079d`; no se ejecutó otro `--full`.
-- [x] Terminar este bloque: no crear otro heartbeat, auditoría o tarea
-  automáticamente. La identidad se resolvió con el buzón exacto y la cuenta B no
-  administradora creada por el flujo normal; no queda otra verificación live.
-
-## Estado de trabajo
-
-- **G2 COMPLETO:** `info@virtualmente.com` es A; `info@meta-hubs.org` es B. B
-  está habilitada, no es administradora y su **Mis avatares** está vacío. DB
-  confirma cero coincidencias con `CRimmfo`/`h2tMVFb`; los dos pertenecen
-  exclusivamente a A, siguen activos, privados y sin listings.
-- **CONTRATO COMPLETO:** la API de **Mis avatares** filtra por el ID autenticado
-  y rechaza consultar el ID ajeno; `update` y `delete` rechazan al no propietario
-  con 401. La UI no ofrece fichas ni edición ajena.
-- **CIERRE GIT COMPLETO:** PR raíz #28 fusionada con `[skip ci]` como
-  `28dddf7e64f701e3a9d8268cc976cd2cc3d5543d`; `origin/main` y los dos gitlinks
-  exactos quedaron verificados sin abrir otro CI largo.
-- **CERRADO y no repetible:** checkpoint, uploads, corrección de `ret-pvc`,
-  rollout, restore, verificador live, E2E, pruebas focales y suites largas.
-
-## Próximo paso y parada
-
-**Siguiente:** ninguno dentro de este plan. G2 está aceptado e integrado; una
-feature posterior debe abrir un plan nuevo sin reactivar H5, Sitting, restore,
-checkpoint, rollout ni estas pruebas GLB.
-
-Se continúa sin preguntas dentro de esta aceptación ya autorizada, incluida la
-transmisión estrictamente necesaria del correo a la dirección exacta. No pedir
-al propietario que busque muestras, pulse enlaces ni repita autorizaciones. Solo
-una credencial imprescindible que el agente no pueda usar, una divergencia de
-identidad, una pérdida de estado seguro, un cambio de datos/destino/riesgo/coste
-o un fallo grave nuevo sin causa demostrable detiene los efectos; no reabre H5.
+## Estado y continuidad
+Base comprobada limpia: raíz d4583be, Hubs 668413a20, Cloud cc52a184.
+El Goal corresponde exclusivamente a este creador.
+La evaluación de julio es antecedente, no veto permanente a la solicitud actual.
+Investigar primero precio/licencia/export; parar investigación cuando otra fuente
+no cambie la decisión. Un fallo repite solo el paso cuya causa se haya corregido.
+No confundir tiempos de espera con trabajo que exige repetir suites.
