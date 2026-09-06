@@ -2,6 +2,11 @@
 
 ## 2026-09-06 (creador desplegado y correo renovado)
 
+- Aceptación pública adicional: carga fría del vestíbulo y selector real pasan;
+  Crear avatar y Subir GLB (privado) visibles junto al catálogo. Crear sin sesión
+  presenta el control de autenticación. No se guardó ningún avatar ni se envió
+  otro correo. La sesión original aún espera el enlace del propietario.
+
 - Keychain nueva validada por SMTP STARTTLS con certificado verificado, sin
   imprimir valores. Checkpoint único checkpoint-pre-creator-20260906 exit 0,
   1316 s, 361 tablas/100 migraciones/18 salas/39 pares completos. Timeout

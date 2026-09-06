@@ -188,6 +188,10 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   uso/pose/remoto y cierre Git. No afirmar aceptación funcional completa.
   No repetir checkpoint, build, apply ni verificador sobre estos mismos bytes.
   Evidencia privada: ~/.yenhubs-private/avatar-rollout-20260906/.
+  Comprobación pública posterior en navegador interno: carga fría del vestíbulo,
+  Cambiar avatar y selector correctos; visibles Crear avatar, Subir GLB (privado)
+  y catálogo existente. Crear avatar sin sesión exige autenticación y no crea
+  registros. La pestaña original sigue esperando el enlace enviado; no se reenvió.
   Antecedentes de preparación, superados donde contradigan el estado anterior:
   Antes del rollout: rotación segura de SMTP_PASS por exposición histórica,
   checkpoint DB+medios, imagen/digest y manifest generado. Después, creación,
