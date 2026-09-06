@@ -1,5 +1,25 @@
 # Session Changelog
 
+## 2026-09-06 (creador desplegado y correo renovado)
+
+- Keychain nueva validada por SMTP STARTTLS con certificado verificado, sin
+  imprimir valores. Checkpoint único checkpoint-pre-creator-20260906 exit 0,
+  1316 s, 361 tablas/100 migraciones/18 salas/39 pares completos. Timeout
+  transitorio durante reanudación, seguido de cierre correcto y readback 12/12.
+- Preparación privada cambia solo SMTP_PASS y OVERRIDE_HUBS_IMAGE. Secret de
+  descarga idéntico; diff no secreto solo Hubs y huella de mapa de imágenes.
+  gen-hcce y apply exit 0 con cold-rebind-legacy-active-v1; Reticulum reiniciado.
+  Digest Hubs dcd6ae8728066322c4ef7252acb9b9744706d7c4c652bb2896093ea11c9901d8.
+- Verificador inicial detenido por omitir variables de perfil. Invocación
+  correcta RESTORE_TARGET_MODE=cold-rebind y
+  RECOVERY_CHECKPOINT_RUNNER_GENERATION=legacy-absent termina 0 fallos/0 avisos.
+  No se modificó código ni se repitió el despliegue para corregir la invocación.
+- Mailtrap confirma Delivered, 13:41 UTC, del único acceso a info@virtualmente.com,
+  mediante YenHubs SMTP septiembre. La apertura de la vista blob del correo fue
+  bloqueada por política del navegador; no se sorteó. Pendiente acceso personal
+  del propietario, aceptación autenticada del creador, revocación antigua y Git.
+  Evidencia privada en ~/.yenhubs-private/avatar-rollout-20260906/.
+
 ## 2026-08-28 (hardening operativo local posterior a H5)
 
 | Time | Action | Result |

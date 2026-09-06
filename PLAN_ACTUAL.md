@@ -1,5 +1,5 @@
 # PLAN ACTUAL — Creador de avatares dentro de YenHubs
-Versión: v2 implementación. Fecha: 5 de septiembre de 2026.
+Versión: v2 aceptación productiva. Fecha: 6 de septiembre de 2026.
 Workspace: /Users/Shared/Gits/YenHubs-features. Rama raíz: codex/avatar-creator.
 
 ## Resultado
@@ -165,6 +165,30 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   PR Hubs #8 abierta en borrador contra master; no fusionar como aceptada antes
   de la comprobación productiva. https://github.com/yengalvez/hubs/pull/8
 - [ ] Despliegue protegido y aceptación productiva.
+  Estado vigente 6 de septiembre: DESPLEGADO; aceptación autenticada pendiente.
+  Checkpoint único checkpoint-pre-creator-20260906 completo: 361 tablas, 100
+  migraciones, 18 salas y 39/39 pares. Exit 0, 1316 segundos; cinco escritores
+  reanudados y bloqueo/Lease liberados. Hubo un timeout transitorio al reanudar;
+  el procedimiento terminó correctamente y se comprobaron 12/12 servicios listos.
+  gen-hcce y apply protegidos exit 0, perfil cold-rebind-legacy-active-v1;
+  Reticulum reiniciado. Único cambio de Secret: SMTP_PASS. Diff no secreto:
+  imagen Hubs y huella derivada del mapa de imágenes. Digest productivo:
+  sha256:dcd6ae8728066322c4ef7252acb9b9744706d7c4c652bb2896093ea11c9901d8.
+  Verificador live 0 fallos/0 avisos usando RESTORE_TARGET_MODE=cold-rebind y
+  RECOVERY_CHECKPOINT_RUNNER_GENERATION=legacy-absent, contexto do-ams3-hubs-ce.
+  Primera invocación detenida: se omitieron esas variables y eligió por defecto
+  durable-active. Corregida solo la invocación, sin otro rollout ni cambios de código.
+  Correo único a info@virtualmente.com Delivered el 6 de septiembre 13:41 UTC,
+  remitente noreply@meta-hubs.org, API Key YenHubs SMTP septiembre: envío real
+  con la clave nueva confirmado. La credencial antigua aún NO está revocada.
+  El navegador bloqueó abrir la vista blob del texto del correo por política.
+  No sortearlo mediante CDP, otro navegador o extracción alternativa. El propietario
+  debe abrir personalmente su enlace; no pedir otra clave ni reenviar salvo
+  caducidad comprobada. Después: guardado persistente, recarga, privacidad,
+  uso/pose/remoto y cierre Git. No afirmar aceptación funcional completa.
+  No repetir checkpoint, build, apply ni verificador sobre estos mismos bytes.
+  Evidencia privada: ~/.yenhubs-private/avatar-rollout-20260906/.
+  Antecedentes de preparación, superados donde contradigan el estado anterior:
   Antes del rollout: rotación segura de SMTP_PASS por exposición histórica,
   checkpoint DB+medios, imagen/digest y manifest generado. Después, creación,
   recarga, privacidad y uso/pose/remoto en sala con navegador interno.

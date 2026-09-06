@@ -1,10 +1,20 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **5 de septiembre de 2026**
+Ultima actualización: **6 de septiembre de 2026**
 
 ## Trabajo actual: creador de avatares
 
-**Prioridad actual: corregir la animación antes de desplegar.** La revisión del
+**Estado actual: editor corregido desplegado, pendiente de aceptación con sesión.**
+Respaldo completo y 12 servicios listos. La comprobación productiva pasa con
+0 fallos y 0 avisos. La nueva clave de correo funciona: Mailtrap confirma la
+entrega del acceso a info@virtualmente.com. El navegador interno bloquea abrir
+la vista de texto de ese enlace; debe abrirlo personalmente el propietario.
+No hace falta otra clave. Después faltan guardado real, recarga, privacidad y
+movimiento en sala, revocar la clave antigua y cerrar Git. No repetir respaldo,
+compilación ni despliegue. El creador todavía no está aceptado por completo.
+
+Antecedentes locales (las referencias a despliegue pendiente están superadas):
+La revisión del
 propietario detectó deformaciones de pecho/pie y una transición incorrecta al
 levantarse. No basta con arreglar el polo. Se corregirá y demostrará en local
 con ambas bases y ropa; SMTP solo bloquea el posterior despliegue, no este trabajo.
