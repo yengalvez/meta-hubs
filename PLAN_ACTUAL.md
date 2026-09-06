@@ -169,10 +169,14 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   checkpoint DB+medios, imagen/digest y manifest generado. Después, creación,
   recarga, privacidad y uso/pose/remoto en sala con navegador interno.
   No imprimir valores, no crear infraestructura, no repetir recovery ni H5.
-  Mailtrap mantiene sesión interna; formulario Add API Token abierto sin guardar
-  (settings/api-tokens/new). No se ha creado ni revocado ningún token. Requiere
-  intervención del propietario para la credencial nueva; conservar la antigua
-  hasta sustituirla por la ruta protegida y comprobar envío, después revocarla.
+  El 6 de septiembre el propietario completó la creación privada en Mailtrap.
+  Comprobada presencia de la entrada Keychain account info@virtualmente.com,
+  service YenHubs-creator-SMTP-20260905-01, sin imprimir su valor. No solicitar
+  de nuevo su creación. Autenticación SMTP nueva aceptada con TLS y certificado
+  verificado, sin enviar mensajes. Siguiente: checkpoint y sustitución por la
+  ruta protegida. Conservar la credencial
+  antigua hasta comprobar el envío con la nueva; después revocar la antigua.
+  Presencia en llavero no equivale a validez SMTP ni a sustitución productiva.
   Incidente adicional durante preparación: un glob de búsqueda alcanzó el
   input-values.local.yaml ignorado y mostró SMTP_PASS. No conservar el valor;
   la sustitución pendiente es obligatoria. No volver a buscar con glob de inputs:
