@@ -189,3 +189,11 @@ Do not re-run H5/restore or unrelated closed suites.
 Source and asset provenance: hubs/src/assets/models/avatar-creator/LICENSE.md.
 Rollback: previous approved Hubs image digest via tracked generator/guarded apply;
 private GLBs use the pre-existing persisted contract and need no data rollback.
+# Aceptación visual del tema productivo — 6 septiembre
+
+El editor debe cubrir el selector y usar una superficie opaca. Los selects y
+botones del creador heredan el tema explícitamente para evitar texto claro sobre
+controles nativos blancos. El candidato 71fa7209d se comprueba con global.scss
+y ui-root.scss reales, también a 390x844; un harness con tema claro aislado no
+es evidencia suficiente de contraste productivo. Guardado real ya comprobado
+con oDvn9Qt; pose/remoto y aceptación móvil productiva siguen pendientes.

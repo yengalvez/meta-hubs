@@ -165,6 +165,50 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   PR Hubs #8 abierta en borrador contra master; no fusionar como aceptada antes
   de la comprobación productiva. https://github.com/yengalvez/hubs/pull/8
 - [ ] Despliegue protegido y aceptación productiva.
+  NUEVO CANDIDATO VISUAL 71fa7209d: controles con contraste y fondo opaco.
+  Validado con global.scss real en escritorio y iframe 390x844: personalización
+  femenina y guardado local simulado correctos. Sass, webpack del harness,
+  Gitleaks staged, Actionlint y 131 tests obligatorios del hook pasan.
+  No implica todavía publicación/aceptación móvil productiva. No repetir tests.
+  DB read-only de oDvn9Qt: active, promoción/remix false, mismo propietario
+  que G2 h2tMVFb, cero listings y tres archivos activos del propietario.
+  El movimiento por pulsaciones instantáneas de CUA solo avanza centímetros;
+  no multiplicar bucles de teclas para llegar al asiento. Input.dispatchKeyEvent
+  CDP no está admitido: no usar rutas alternativas no autorizadas. La postura
+  sentada/remota productiva sigue pendiente, sin evidencia de fallo de rig.
+  Harness antiguo 62267 ya no escucha. Nuevo servidor local sesión 88860,
+  http://127.0.0.1:53783/; /mobile mantiene iframe390x844. Pestaña interna26.
+  Viewport override temporal restaurado. El harness ya importa global.scss y
+  ui-root.scss reales: no volver a aceptar contraste desde el antiguo tema claro.
+  ESTADO MÁS RECIENTE 6 septiembre 16:40 local: imagen 01859ab9b construida
+  por run 34039159856 verde, GHCR 1215633585, tag con sufijo -85 y digest
+  sha256:f85c52a2fc63b7c881cd2abc0a273fb0fc6ecd660f7bdfd5d8950a7a815eba82.
+  Desplegada por gen-hcce/apply protegidos exit 0, sin cambios de Secrets;
+  diff solo Hubs y huella de imágenes. Reticulum rollout status exit 0.
+  Verificador definitivo layer-live-ready-verifier.private.log: 0 fallos/0 avisos.
+  Primera comprobación lanzada antes de acabar el reinicio dio 5 fallos por
+  servicio aún no Ready/HTTP 503; se conservó y repitió solo tras rollout success.
+  Regla: esperar SIEMPRE rollout status antes del verificador, no en paralelo.
+  Editor ya visible y guardado real correcto: YenHubs Empresa 20260906,
+  avatar oDvn9Qt, masculino/corto con raya/americana y corbata/traje/rubio claro.
+  Persiste en Mis avatares tras recarga; selección y aviso Tu avatar ha sido
+  cambiado confirmados. Sala abierta con micrófono silenciado. No duplicar avatar.
+  Aún pendientes DB/privacidad, representación/pose/remoto y móvil productivos.
+  Defecto visual adicional demostrado: selects blancos con texto rgb(237,245,255)
+  y fondo del editor rgba(8,16,31,0.76) deja ver el selector. Reparación CSS local
+  sin publicar en avatar-editor.scss y ui-root.scss; Sass y diff-check verdes.
+  No construir otra imagen hasta revisar juntos los problemas reales pendientes.
+  Tercera persona no mostró avatar al probar; logs guardan SyntaxError JSON por
+  respuesta HTML a las 14:37 UTC. Causa y vigencia aún por determinar; no atribuir
+  al rig sin evidencia. Browser interno 2, pestaña 1, sala VJopCY3 autenticada.
+  ACLARACIÓN posterior: no era fallo de tercera persona. APP/AFRAME/scene y GLTF
+  oDvn9Qt cargados, modo cámara 5, escala y capas correctas. visibility.set(true)
+  refrescó el canvas y mostró el avatar empresarial de espaldas. Las capturas de
+  WebGL en segundo plano eran antiguas; hacer visible el navegador interno para
+  aceptar animación. Sentarse devuelve Sin asiento a menos de 2 metros: mover
+  al personaje junto a asiento antes de evaluar pose. No corregir cámara ni rig
+  por ese falso indicio. El error JSON histórico queda por localizar si persiste.
+  Seguimiento continuar-creador-tras-imagen-de-capas PAUSADO al terminar el build.
   ACTUALIZACIÓN 6 de septiembre 16:24 local: acceso RESUELTO. Por petición
   explícita del propietario se abrió webmail IONOS en navegador interno, con
   sesión conservada. Un enlace nuevo recibido a las 16:18 se usó inmediatamente;
@@ -182,6 +226,12 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   rollout protegido y comprobar visualmente editor por encima del selector,
   cerrar/regresar y guardado real. Reutilizar checkpoint fresco validado; no
   repetir rigging, assets, correo ni pruebas ajenas. No hotpatch productivo.
+  Candidato Hubs 01859ab9b053779f9534ff479333d1399de5093f publicado; raíz
+  19899ed conserva el gitlink. Build oficial único 34039159856 en curso desde
+  14:26 UTC, tag avatar-creator-20260906-01859ab9. No relanzar ni duplicar.
+  Al terminar verde: verificar digest, cambiar solo imagen Hubs, generar/revisar
+  diff no secreto/aplicar con cold-rebind-legacy-active-v1, reiniciar Reticulum
+  y probar editor visible y persistencia. SMTP y acceso ya están resueltos.
   Estado vigente 6 de septiembre: DESPLEGADO; aceptación autenticada pendiente.
   Checkpoint único checkpoint-pre-creator-20260906 completo: 361 tablas, 100
   migraciones, 18 salas y 39/39 pares. Exit 0, 1316 segundos; cinco escritores
@@ -200,8 +250,8 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   con la clave nueva confirmado. La credencial antigua aún NO está revocada.
   El navegador bloqueó abrir la vista blob del texto del correo por política.
   No sortearlo mediante CDP, otro navegador o extracción alternativa. El propietario
-  debe abrir personalmente su enlace; no pedir otra clave ni reenviar salvo
-  caducidad comprobada. Después: guardado persistente, recarga, privacidad,
+  tuvo que intervenir entonces; ese bloqueo quedó superado por IONOS y el
+  acceso autónomo de las 16:18. Después: guardado persistente, recarga, privacidad,
   uso/pose/remoto y cierre Git. No afirmar aceptación funcional completa.
   No repetir checkpoint, build, apply ni verificador sobre estos mismos bytes.
   Evidencia privada: ~/.yenhubs-private/avatar-rollout-20260906/.

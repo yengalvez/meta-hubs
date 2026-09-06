@@ -2,6 +2,14 @@
 
 ## 2026-09-06 (creador desplegado y correo renovado)
 
+- Readback SQL read-only del avatar oDvn9Qt: activo, privado (promoción/remix false), mismo propietario que G2, cero listings y tres archivos activos de esa cuenta. La primera invocación sin stdin no ejecutó consulta; la segunda con exec -i confirmó los datos, sin escrituras.
+- Contraste/fondo corregidos en candidato Hubs 71fa7209d. Harness alineado con global.scss/ui-root.scss reales; escritorio e iframe390x844 muestran controles legibles y permiten personalización/guardado local femenino. Gitleaks/Actionlint/Sass/webpack y 131 tests del hook pasan. No confundir evidencia local con móvil productivo.
+
+- Imagen de capas 01859ab9b: build 34039159856 verde y digest f85c52a2fc63b7c881cd2abc0a273fb0fc6ecd660f7bdfd5d8950a7a815eba82 desplegado mediante generador/apply exit 0, sin cambios de secretos. Reticulum reiniciado correctamente. Verificador lanzado demasiado pronto detectó 503 y falta de readiness; el definitivo después del rollout terminó 0 fallos/0 avisos. No repetir despliegue por esa comprobación adelantada.
+- Primer avatar del creador guardado realmente: oDvn9Qt, YenHubs Empresa 20260906, masculino con americana/corbata, traje y pelo rubio. Persiste al recargar Mis avatares y se selecciona para la sala. No equivale aún a aceptación de pose/remoto/privacidad completa.
+- Tercera persona sí muestra el avatar real al presentar el navegador interno. Las capturas anteriores del canvas en segundo plano estaban obsoletas; runtime confirma GLTF/cámara/capas/escala correctas. Sentarse rechaza por no tener asiento a menos de 2 m; acercarse antes de probar pose, sin cambiar Sitting.
+- Editor visible tras corrección de capa; nueva evidencia de contraste blanco sobre blanco y fondo translúcido. Reparación local solo CSS preparada y compilada, aún sin publicar. No construir hasta completar diagnóstico de uso en sala: botón de tercera persona aún sin avatar visible y logs JSON/HTML por investigar.
+
 - Continuación 16:18: IONOS conservaba la sesión. A petición expresa del
   propietario se abrió el buzón y se consumió inmediatamente un único enlace
   nuevo, confirmando Verificación completa y cuenta info@virtualmente.com.
