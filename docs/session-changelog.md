@@ -1121,3 +1121,10 @@ de esos defectos ni activado el Goal mediante esta actualización documental.
   accesibles, sin overflow horizontal. Cancelación sin tercer avatar.
 - Retirada antigua credencial Mailtrap verificada tras acción del usuario.
 - Pendiente integración Git. Evidencia detallada privada avatar-rollout-20260906.
+# 2026-09-06 — Integración completada
+
+- Hubs PR8 fusionada: e9d57e403d4aa228531a11e4c68b38bf517a6cd8 contiene el candidato
+  71fa7209 y no cambia su árbol. Raíz PR30 fusionada: 731af3869f2a40f6bcf7f0aecfa25bf5c8b5aef0.
+- origin/main comprobado: Hubs71fa7209, Cloudcc52a184. Checkout antiguo YenHubs
+  no se sincroniza porque estaba sucio; permanece intacto.
+- Cierre documental separado, sin repetir validaciones largas ni despliegue.

@@ -4,14 +4,16 @@ Ultima actualización: **6 de septiembre de 2026**
 
 ## Trabajo actual: creador de avatares
 
-**Estado actual: creador desplegado y probado; pendiente el cierre de Git.**
+**Estado actual: creador desplegado, probado e integrado.**
 Dos avatares empresariales, masculino y femenino, están guardados como privados,
 persisten y funcionan en sala. Se comprobaron sentarse, levantarse y la recepción
 desde otra conexión. El editor ya tiene contraste corregido y funciona a tamaño
 móvil 390x844 (prueba responsive, no teléfono físico). La clave antigua fue retirada.
 La validación completa terminó correctamente y producción pasa con cero fallos
-y cero avisos. Queda integrar el código y cerrar documentación; no repetir
-recuperación, respaldo, compilación ni despliegue.
+y cero avisos. Hubs8 y raíz30 ya están fusionadas con los punteros verificados.
+El creador está disponible desde Cambiar avatar → Crear avatar. No hay cuota de
+un proveedor de avatares ni infraestructura nueva. No repetir recuperación,
+respaldo, compilación ni despliegue. Ampliar prendas queda para un encargo futuro.
 
 Los párrafos siguientes son antecedentes; el estado vigente es el de arriba.
 
