@@ -2,6 +2,11 @@
 
 ## 2026-09-06 (creador desplegado y correo renovado)
 
+- Imagen visual 71fa7209d construida por run 34040735085, digest 1d6f8e21807b2303f4ac2c613065583bb230bbf218652638f496b26d64973814; no desplegada todavía. Reconciliación de recibos conserva diez secciones y pide solo advisories/static/security/hubs/browser-capacity: secuencia única en terminal50586.
+- Inventario Mailtrap y comparación privada del sufijo identifican la antigua SMTP como Sending Onboarding API token 19f61175ac1, fila5477652, Account Admin aún activo. Nueva YenHubs SMTP septiembre/fila5550313 sigue intacta y funcional. Menú antiguo preparado para handoff de retirada; no pulsado Delete token. No imprimir valores ni asumir revocación.
+
+- Aceptación real masculina de pose/remoto: dos clientes con ?allow_multi, navegación nativa al hash Seat_recovery_2_-_REPOSITION y reserva autorizada. El observador recibe oDvn9Qt/isSitting=true/acción sit y, al pulsar Levantarse en A, false/idle y postura normal. Inspección frontal/posterior sin deformación previa de brazos/torso. Usar hash nativo evita pulsaciones instantáneas de teclado ineficaces; allow_multi evita el cierre normal de la primera pestaña.
+
 - Readback SQL read-only del avatar oDvn9Qt: activo, privado (promoción/remix false), mismo propietario que G2, cero listings y tres archivos activos de esa cuenta. La primera invocación sin stdin no ejecutó consulta; la segunda con exec -i confirmó los datos, sin escrituras.
 - Contraste/fondo corregidos en candidato Hubs 71fa7209d. Harness alineado con global.scss/ui-root.scss reales; escritorio e iframe390x844 muestran controles legibles y permiten personalización/guardado local femenino. Gitleaks/Actionlint/Sass/webpack y 131 tests del hook pasan. No confundir evidencia local con móvil productivo.
 
@@ -1100,3 +1105,19 @@ de esos defectos ni activado el Goal mediante esta actualización documental.
   brazos siguen visualmente incorrectos al levantarse. No aceptado ni desplegado.
 - Próxima comparación: postura de referencia frente a idle inicial, después
   transición sit/idle; no repetir build oficial ni modificar producción.
+# 2026-09-06 — Corrección de coordinación de validación
+
+- Terminal50586: advisories PASS; static terminó sus checks pero invalidó el recibo
+  al cambiar PLAN_ACTUAL.md durante la ejecución. No es un fallo productivo.
+- Congelar archivos versionados durante static/security y finalizar con recibos;
+  conservar diez bloques anteriores y advisories. Monitor previo pausado.
+# 2026-09-06 — Aceptación productiva del creador y contraste
+
+- Validación53735/finalize exit0. Imagen71fa7209 aplicada, Hubs y Reticulum Ready;
+  verificador70056: 0 fallos/0 avisos. Sin cambios de secretos ni infraestructura.
+- Dos avatares privados oDvn9Qt/wB3FSNL: guardado, selección, persistencia,
+  postura y recepción remota. Readback DB privado y tres archivos activos cada uno.
+- UI productiva7bf6375f, viewport390x844: contraste/preview/controles/Guardar
+  accesibles, sin overflow horizontal. Cancelación sin tercer avatar.
+- Retirada antigua credencial Mailtrap verificada tras acción del usuario.
+- Pendiente integración Git. Evidencia detallada privada avatar-rollout-20260906.

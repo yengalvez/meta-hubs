@@ -182,8 +182,10 @@ the editor at fullscreen + 1, below popovers and modal dialogs. Acceptance must
 visually prove the editor is unobscured, usable by pointer, and returns to the
 selector on close/save; accessibility-tree presence alone is insufficient.
 
-Acceptance remaining: official layering-fix image and guarded rollout;
-cold-room usage, persistence, private ownership and remote pose.
+Production acceptance completed on 2026-09-06: official 71fa7209 image and guarded
+rollout; real room usage, persistence, private ownership and remote sitting state.
+Male oDvn9Qt and female wB3FSNL remain private; DB confirms zero listings and
+three active media files each. Live verifier: zero failures and zero warnings.
 Do not re-run H5/restore or unrelated closed suites.
 
 Source and asset provenance: hubs/src/assets/models/avatar-creator/LICENSE.md.
@@ -196,4 +198,6 @@ botones del creador heredan el tema explícitamente para evitar texto claro sobr
 controles nativos blancos. El candidato 71fa7209d se comprueba con global.scss
 y ui-root.scss reales, también a 390x844; un harness con tema claro aislado no
 es evidencia suficiente de contraste productivo. Guardado real ya comprobado
-con oDvn9Qt; pose/remoto y aceptación móvil productiva siguen pendientes.
+con oDvn9Qt y wB3FSNL; pose/remoto comprobados en producción. UI desplegada
+7bf6375f probada a 390x844: preview, controles, rubio, scroll y Guardar accesibles,
+sin overflow horizontal. Es validación responsive, no prueba en teléfono físico.

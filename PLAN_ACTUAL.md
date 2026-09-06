@@ -2,6 +2,28 @@
 Versión: v2 aceptación productiva. Fecha: 6 de septiembre de 2026.
 Workspace: /Users/Shared/Gits/YenHubs-features. Rama raíz: codex/avatar-creator.
 
+## Estado vigente de cierre — 6 septiembre, tras despliegue final
+
+Este bloque sustituye los estados temporales de las evidencias históricas inferiores.
+- [x] Credencial Mailtrap antigua retirada por el usuario y ausencia verificada;
+  nueva credencial conservada. Acceso IONOS resuelto autónomamente.
+- [x] Validación exacta completada: terminal53735 exit0, static/security/hubs/
+  browser-capacity PASS y finalize aprobado; advisories y diez bloques previos reutilizados.
+- [x] Imagen71fa7209 desplegada por generador/apply protegido, digest1d6f8e21807b2303f4ac2c613065583bb230bbf218652638f496b26d64973814.
+  Solo cambió imagen Hubs y hash de control; secrets sin cambios. Reticulum Ready
+  antes de verificador70056: 0 fallos/0 avisos. Versión UI7bf6375f.
+- [x] Masculino oDvn9Qt y femenino wB3FSNL guardados y seleccionados en sala;
+  persistencia, sentarse/levantarse y recepción remota comprobadas. DB: ambos
+  activos, mismo propietario G2, flags privados, cero listados, tres archivos activos.
+- [x] Editor productivo 390x844 sin desbordamiento horizontal; controles legibles,
+  preview femenino con traje y rubio, Guardar accesible. Muestra cancelada, sin
+  un tercer avatar. Es prueba responsive de escritorio, no dispositivo físico.
+- [ ] Integrar PR Hubs8 y gitlink raíz; actualizar documentación final y verificar remoto.
+No repetir suites, despliegue, respaldo ni recuperación. Evidencias de esta fase:
+~/.yenhubs-private/avatar-rollout-20260906/{frozen-sections.private.log,
+contrast-live-ready-verifier.private.log,female-live-evidence.md,
+credential-retirement-confirmed.md,contrast-rollout-completed.md}.
+
 ## Resultado
 Al entrar en una sala, el usuario podrá elegir un avatar existente o crear uno
 personalizando un personaje con assets incluidos, verlo y guardarlo directamente
@@ -65,7 +87,8 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   Masculino y femenino cargan; americana/lana/coleta genera GLTF 34,466 B,
   BIN 4,284,948 B y PNG 177,617 B (720x1280), flags false/false.
   Esta evidencia NO es persistencia productiva ni aceptación de sala.
-- [ ] Cerrar aceptación visual final, móvil y movimiento relevante.
+- [x] Cerrar aceptación visual final, móvil y movimiento relevante.
+  Completado según el estado vigente superior; se conserva debajo el diagnóstico histórico.
   Nueva evidencia del propietario: el botón de pose manual de la demo doblaba
   mal las piernas. Sustituido en el harness local por fullbody-locomotion real
   y los clips compartidos de Hubs; Sentarse/Levantarse/Caminar disponibles.
@@ -164,12 +187,57 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   Documentación raíz guardada localmente en 2e49aa4, aún sin publicar.
   PR Hubs #8 abierta en borrador contra master; no fusionar como aceptada antes
   de la comprobación productiva. https://github.com/yengalvez/hubs/pull/8
-- [ ] Despliegue protegido y aceptación productiva.
+- [x] Despliegue protegido y aceptación productiva.
+  Completado con 71fa7209 y verificador70056; los estados siguientes son históricos.
+  ESTADO DE REANUDACIÓN: run 34040735085 SUCCESS para 71fa7209db719c261c9ff7e0af0ba498e358403f;
+  GHCR 1215697092, tag avatar-creator-20260906-71fa7209-86, digest
+  sha256:1d6f8e21807b2303f4ac2c613065583bb230bbf218652638f496b26d64973814.
+  Aún NO desplegado. Heartbeat pausado al terminar. Finalizador 47978 terminó:
+  diez bloques válidos, faltan advisories/static/security/hubs/browser-capacity.
+  Única secuencia para esos cinco iniciada en terminal 50586, log privado
+  avatar-rollout-20260906/current-sections.private.log; consultar mismo handle,
+  no repetir los diez bloques válidos ni relanzar esta secuencia.
+  Terminal50586 terminó exit1: advisories PASS; static ejecutó sus comprobaciones
+  sin errores pero rechazó el recibo: «Section inputs changed while static was running».
+  Causa identificada: se editó este plan durante static, que incluye root completo.
+  Seguimiento pausado. Conservar advisories y las diez secciones válidas anteriores.
+  Siguiente secuencia: static/security/hubs/browser-capacity y finalize; no editar
+  archivos versionados mientras se valida. Registrar avance fuera del árbol durante
+  esa secuencia. No repetir advisories ni --full. Sigue pendiente la clave antigua.
+  SEGURIDAD pendiente de acción humana: la clave SMTP anterior coincide de forma
+  única con la fila Mailtrap 5477652, Sending Onboarding API token 19f61175ac1,
+  que conserva permisos Account Admin. Comparación privada del sufijo visible;
+  ningún valor completo se imprimió. La nueva fila 5550313, YenHubs SMTP septiembre,
+  ya funciona y NO debe borrarse. Navegador interno pestaña20 tiene abierto el
+  menú de la fila antigua (Delete token). La retirada final de una credencial
+  mediante UI requiere handoff; el agente no la ha pulsado ni la da por revocada.
+  No desplegar otra imagen hasta resolver esa clave antigua expuesta.
   NUEVO CANDIDATO VISUAL 71fa7209d: controles con contraste y fondo opaco.
   Validado con global.scss real en escritorio y iframe 390x844: personalización
   femenina y guardado local simulado correctos. Sass, webpack del harness,
   Gitleaks staged, Actionlint y 131 tests obligatorios del hook pasan.
   No implica todavía publicación/aceptación móvil productiva. No repetir tests.
+  Publicado en rama Hubs; imagen oficial única 34040735085 en curso, prefijo
+  tag avatar-creator-20260906-71fa7209. Raíz f25d0b0 guarda evidencias/gitlink.
+  No relanzar. Si verde, verificar digest y desplegar solo esta imagen por el
+  perfil protegido anterior; esperar Reticulum Ready antes del verificador.
+  Pose/remoto del avatar masculino oDvn9Qt pasan en sala real: navegación nativa
+  #Seat_recovery_2_-_REPOSITION reserva F0E14C01-EFF0-4976-B8B6-E0BEF1F9E1B2;
+  componente local y segundo cliente reciben isSitting=true/acción sit. Al
+  pulsar Levantarse, remoto recibe false/idle y vuelve a posición de pie normal.
+  Capturas frontal y posterior sin el torso/brazos rotos anteriores. No forzar
+  componente, ni editar transformaciones. Falta comprobación femenina/móvil
+  productiva sobre el candidato visual, retirada de credencial antigua y Git.
+  Método reutilizable: las dos pestañas deben llevar ?allow_multi (opción nativa
+  onConcurrentLoad); sin ella Hubs cierra la sesión anterior al abrir otra.
+  Sentarse se prueba mediante hash con nombre publicado, no con bucles de teclas.
+  Observador 27 levantado al acabar: reserva null/isSitting false comprobados,
+  pestaña temporal cerrada. Principal 1 permanece de pie y silenciada.
+  Reconciliación de recibos iniciada una sola vez, terminal 47978:
+  ./scripts/verify-project.sh --finalize --evidence-dir
+  /Users/yengalvez/.cache/yenhubs/project-verification. Sigue ejecutándose sin
+  salida final; solo lee huellas/recibos existentes, no lanza suites. Consultar
+  ese mismo handle sin relanzarlo y registrar qué secciones faltan de verdad.
   DB read-only de oDvn9Qt: active, promoción/remix false, mismo propietario
   que G2 h2tMVFb, cero listings y tres archivos activos del propietario.
   El movimiento por pulsaciones instantáneas de CUA solo avanza centímetros;
