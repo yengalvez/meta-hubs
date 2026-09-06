@@ -18,7 +18,9 @@ Este bloque sustituye los estados temporales de las evidencias históricas infer
 - [x] Editor productivo 390x844 sin desbordamiento horizontal; controles legibles,
   preview femenino con traje y rubio, Guardar accesible. Muestra cancelada, sin
   un tercer avatar. Es prueba responsive de escritorio, no dispositivo físico.
-- [ ] Integrar PR Hubs8 y gitlink raíz; actualizar documentación final y verificar remoto.
+- [x] Integrar PR Hubs8 y gitlink raíz: Hubs8 fusionada en e9d57e403;
+  raíz30 fusionada en 731af3869, remoto comprobado con Hubs71fa7209 y Cloudcc52a184.
+  Cierre funcional e integración completados; esta entrega registra el cierre documental.
 No repetir suites, despliegue, respaldo ni recuperación. Evidencias de esta fase:
 ~/.yenhubs-private/avatar-rollout-20260906/{frozen-sections.private.log,
 contrast-live-ready-verifier.private.log,female-live-evidence.md,
@@ -344,7 +346,9 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   input-values.local.yaml ignorado y mostró SMTP_PASS. No conservar el valor;
   la sustitución pendiente es obligatoria. No volver a buscar con glob de inputs:
   usar exclusivamente rutas de fuentes trackeadas explícitas, nunca valores locales.
-- [ ] Cerrar documentos, Git y Goal tras comprobar el resultado real.
+- [x] Cerrar documentos y Git tras comprobar el resultado real.
+  Hubs8 y raíz30 fusionadas, punteros remotos exactos comprobados. Goal se completa
+  después de verificar en remoto esta entrega documental; no requiere más pruebas largas.
 
 Revisión independiente inicial de viabilidad/licencia ya realizada; evidencia en
 features/avatar-creator/README.md. No repetir auditorías generales sin causa nueva.
