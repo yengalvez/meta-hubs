@@ -165,6 +165,23 @@ El checkout antiguo /Users/Shared/Gits/YenHubs está sucio y se conserva intacto
   PR Hubs #8 abierta en borrador contra master; no fusionar como aceptada antes
   de la comprobación productiva. https://github.com/yengalvez/hubs/pull/8
 - [ ] Despliegue protegido y aceptación productiva.
+  ACTUALIZACIÓN 6 de septiembre 16:24 local: acceso RESUELTO. Por petición
+  explícita del propietario se abrió webmail IONOS en navegador interno, con
+  sesión conservada. Un enlace nuevo recibido a las 16:18 se usó inmediatamente;
+  Verificación completa y sesión info@virtualmente.com confirmadas. No volver
+  a bloquear por Mailtrap ni pedir al propietario que abra futuros enlaces:
+  preparar primero IONOS y consumir el correo nuevo de inmediato.
+  El enlace de un solo uso apareció en AX por un filtro de redacción insuficiente;
+  no se conserva ni reutiliza. Se completó el acceso; filtrar cualquier URL
+  con parámetros auth_, no solo la ruta /verify.
+  NUEVA CAUSA PRODUCTIVA: el editor y MediaBrowser comparten z-index 70, y el
+  selector posterior en DOM tapa los controles aunque AX los exponga. Captura
+  real 704x994 y geometría DOM lo demuestran. No se pulsó Guardar ni creó avatar.
+  Corrección acotada en ui-root.scss: editor a fullscreen+1, por debajo de
+  popovers/modal. Sass y diff-check pasan. Se requiere imagen oficial correctiva,
+  rollout protegido y comprobar visualmente editor por encima del selector,
+  cerrar/regresar y guardado real. Reutilizar checkpoint fresco validado; no
+  repetir rigging, assets, correo ni pruebas ajenas. No hotpatch productivo.
   Estado vigente 6 de septiembre: DESPLEGADO; aceptación autenticada pendiente.
   Checkpoint único checkpoint-pre-creator-20260906 completo: 361 tablas, 100
   migraciones, 18 salas y 39/39 pares. Exit 0, 1316 segundos; cinco escritores

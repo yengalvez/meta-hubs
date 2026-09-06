@@ -4,7 +4,15 @@ Ultima actualización: **6 de septiembre de 2026**
 
 ## Trabajo actual: creador de avatares
 
-**Estado actual: editor corregido desplegado, pendiente de aceptación con sesión.**
+**Estado actual: sesión resuelta; corregida una superposición del editor.**
+He abierto IONOS y completado el acceso con un correo fresco. No necesitas
+abrir más enlaces mientras esa sesión siga vigente. La prueba real reveló que
+el selector tapaba al configurador; la corrección cambia solo su capa visual.
+Sass y las 131 pruebas del hook pasan en Hubs 01859ab9b. Falta publicar la imagen
+corregida y comprobar guardado, recarga, privacidad y movimiento. No se rehace
+el respaldo, el catálogo ni las animaciones por este ajuste.
+
+Estado anterior, ya superado en lo relativo al acceso:
 Respaldo completo y 12 servicios listos. La comprobación productiva pasa con
 0 fallos y 0 avisos. La nueva clave de correo funciona: Mailtrap confirma la
 entrega del acceso a info@virtualmente.com. El navegador interno bloquea abrir

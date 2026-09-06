@@ -174,8 +174,16 @@ There is no write until Save. Existing preview skeleton validation and header/
 size validation remain mandatory. All template URIs are embedded, selection IDs
 and colours are allowlisted. No untrusted postMessage or arbitrary URL accepted.
 
-Acceptance remaining: official image; checkpoint and guarded
-rollout; cold-room usage, persistence, private ownership and remote pose.
+The corrective rig image was deployed on 2026-09-06 with a joint checkpoint and
+a live verifier result of zero failures/warnings. Authenticated production UI
+then revealed an integration defect: AvatarEditor and the still-mounted media
+browser share the fullscreen layer, so later DOM order hides the editor. Keep
+the editor at fullscreen + 1, below popovers and modal dialogs. Acceptance must
+visually prove the editor is unobscured, usable by pointer, and returns to the
+selector on close/save; accessibility-tree presence alone is insufficient.
+
+Acceptance remaining: official layering-fix image and guarded rollout;
+cold-room usage, persistence, private ownership and remote pose.
 Do not re-run H5/restore or unrelated closed suites.
 
 Source and asset provenance: hubs/src/assets/models/avatar-creator/LICENSE.md.

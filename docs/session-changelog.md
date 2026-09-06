@@ -2,6 +2,16 @@
 
 ## 2026-09-06 (creador desplegado y correo renovado)
 
+- Continuación 16:18: IONOS conservaba la sesión. A petición expresa del
+  propietario se abrió el buzón y se consumió inmediatamente un único enlace
+  nuevo, confirmando Verificación completa y cuenta info@virtualmente.com.
+  Un filtro AX limitado a /verify dejó visible el enlace con ruta /; no se
+  conserva ni reutiliza, y las lecturas posteriores redactan parámetros auth_.
+- La prueba autenticada localizó un fallo de superposición real: editor y selector
+  fullscreen a z-index 70; DOM posterior tapa al editor. No hubo guardado. Fix
+  acotado a ui-root.scss (fullscreen+1, debajo de popover/modal), Sass y diff-check
+  verdes. Pendiente imagen oficial y aceptación visual antes de guardar.
+
 - Aceptación pública adicional: carga fría del vestíbulo y selector real pasan;
   Crear avatar y Subir GLB (privado) visibles junto al catálogo. Crear sin sesión
   presenta el control de autenticación. No se guardó ningún avatar ni se envió
