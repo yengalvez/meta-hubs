@@ -1,5 +1,36 @@
 # Session Changelog
 
+## 2026-09-07 (reparación visual desplegada; aceptación de sala pendiente)
+
+- Hubs7556174: detección del marcador de creador a través de Group/Bone,
+  bind coherente con PropertyBinding, sin elevar clavículas; altura Head1.6m
+  antes de inflación y fallback de ojos sintéticos; separación acotada de
+  chaquetas preservando normales, skin y mangas. Pruebas focales y137 tests
+  del hook pasan. Revisión independiente reproduce la causa de hombros/palmas;
+  local masculino/femenino sin crecimiento del desplazamiento tras tres ciclos.
+- Run34120895345 verde, única imagen8f826b834e68fd401920df759e6a51cd6e8d934356083f38ea2023eeb2880631.
+  PR Hubs9 y raíz32 en borrador. No fusionar por pruebas locales solamente.
+- Checkpoint84926 exit0,1301s, DB361 tablas/100 migraciones y48 pares de medios;
+  cinco escritores reanudados1/1 y locks liberados. Primera tentativa rechazó
+  árboles sucios antes de pausar servicios. Timeout intermedio del segundo
+  proceso resuelto por el propio flujo, sin intervención ni repetición.
+- Static30814 y Hubs25648 PASS; security/browser-capacity25786 PASS;
+  finalize52496 exit0 sobre raízc4973e7. Tentativas anteriores sin recibo válido
+  no cuentan como PASS: cambio de inputs o guard de procesos pendientes.
+  Se conserva la evidencia exacta y no se ejecutó --full.
+- Spokeqa3U3Ke publicado a f6VKtim: solo dos flags de orientación cambiados;
+  GLB servido confirma posiciones/rotaciones intactas y ambos flagsfalse.
+- Generación inicial rechazó rutas de entrada/salida no emparejadas antes de
+  aplicar; corregida la invocación, gen-hcce exit0. Secrets idénticos; diff solo
+  imagen Hubs y hash del mapa. Apply58101 exit0 con perfil protegido existente;
+  Reticulum11492 Ready. Verificador67434 exit0: 0 fallos/0 avisos.
+- CUA perdió la sesión al abrir la sala; su inventario confirma Mac bloqueado
+  y desbloqueo automático fallido. Pendiente aceptación cercana en navegador
+  interno de los cuatro defectos, con ambos avatares existentes, sin nuevos
+  guardados. No afirmar aceptación final ni fusionar todavía. Esta actualización
+  es documental posterior al candidato validado; no repetir suites verdes.
+  Evidencias: ~/.yenhubs-private/avatar-visual-repair-20260907/.
+
 ## 2026-09-06 (creador desplegado y correo renovado)
 
 - Imagen visual 71fa7209d construida por run 34040735085, digest 1d6f8e21807b2303f4ac2c613065583bb230bbf218652638f496b26d64973814; no desplegada todavía. Reconciliación de recibos conserva diez secciones y pide solo advisories/static/security/hubs/browser-capacity: secuencia única en terminal50586.

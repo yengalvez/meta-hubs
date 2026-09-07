@@ -4,11 +4,15 @@ Ultima actualización: **7 de septiembre de 2026**
 
 ## Trabajo actual: creador de avatares
 
-**Estado actual: guardado funcionando; cuatro defectos visuales en reparación.**
-Faltan los triángulos de la espalda, hombros elevados, orientación de manos y
-posición sobre la silla. La revisión anterior no detectó bien esos detalles y
-no sirve como aceptación visual final. Primero se reproduce cada causa; después
-se comprueba de cerca y en la sala real. No se rehace la recuperación ni el acceso.
+**Estado actual: correcciones desplegadas; falta revisión visual en sala.**
+Se corrigió cómo la sala reconoce el esqueleto, la altura del avatar y el cruce
+entre pantalón y chaqueta. Las dos sillas ya fijan su orientación. La nueva
+versión está en el servidor y la comprobación operativa da cero fallos y avisos.
+Las pruebas locales no sustituyen ver de cerca espalda, hombros, manos y asiento
+en la sala. Esa última comprobación se ha detenido porque el Mac está bloqueado;
+solo hace falta desbloquearlo, el agente hará las pruebas. No hay que recrear
+avatares, volver a iniciar sesión ni repetir respaldo, build o despliegue.
+Las PR de integración siguen en borrador hasta esa aceptación visual.
 
 **Cierre anterior del 6 de septiembre (aceptación visual ahora reabierta):**
 Dos avatares empresariales, masculino y femenino, están guardados como privados,

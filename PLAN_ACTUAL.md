@@ -8,6 +8,28 @@ La observación del propietario invalida la aceptación visual anterior, no el
 guardado, la privacidad ni la infraestructura. No está terminado este bloque.
 Se conservan los cierres funcionales anteriores; no repetir H5, G2 ni recuperación.
 
+### Punto de continuación: imagen desplegada, aceptación visual pendiente
+
+Hubs `7556174efe55855319e379c1c6aa7c14f5629a3f` está desplegado con digest
+`8f826b834e68fd401920df759e6a51cd6e8d934356083f38ea2023eeb2880631`.
+Static/Hubs/security/browser-capacity PASS y finalize52496 exit0 sobre raíz
+`c4973e7`; esta actualización posterior es exclusivamente documental.
+Checkpoint completo1301s y cinco escritores reanudados. Apply58101 exit0,
+Reticulum11492 Ready y verificador67434: 0 fallos/0 avisos.
+Spoke publicado en `f6VKtim`: ambos asientos conservan posición/rotación y
+`willMaintainInitialOrientation=false`, comprobado en el GLB servido.
+
+La adaptación del rig reconoce el marcador dentro de Group/Bone; conserva la
+clavícula, corrige la referencia de altura y separa chaqueta/pantalón sin alterar
+pesos ni avatares importados ajenos al creador. Ambas bases probadas en local.
+Esto NO cierra todavía los cuatro defectos: falta inspección cercana en sala con
+los avatares ya guardados `wB3FSNL` y `oDvn9Qt`, de pie y en ambos asientos.
+El navegador interno informó que el Mac está bloqueado. Pedir solo desbloquearlo;
+el agente realiza la prueba. No abrir Chrome externo ni repetir acceso/guardado.
+Después de aceptación real, integrar Hubs PR9 y raíz PR32 y cerrar documentos.
+No repetir build, respaldo, despliegue, suites verdes ni recuperación.
+Evidencia privada: `~/.yenhubs-private/avatar-visual-repair-20260907/`.
+
 - [ ] Espalda: reproducir los triángulos y distinguir normales, capas o skinning;
   corregir la causa y comprobar frente/espalda/lateral en ambas bases con ropa.
 - [ ] Hombros: la revisión independiente reproduce elevación de 2–3,4 cm por
