@@ -1,10 +1,31 @@
 # PLAN ACTUAL — Creador de avatares dentro de YenHubs
-Versión: v2 aceptación productiva. Fecha: 6 de septiembre de 2026.
-Workspace: /Users/Shared/Gits/YenHubs-features. Rama raíz: codex/avatar-creator.
+Versión: v3 reparación visual. Fecha: 7 de septiembre de 2026.
+Workspace: /Users/Shared/Gits/YenHubs-features. Rama raíz: codex/avatar-visual-repair.
 
-## Estado vigente de cierre — 6 septiembre, tras despliegue final
+## Estado vigente — reparación visual solicitada el 7 de septiembre
 
-Este bloque sustituye los estados temporales de las evidencias históricas inferiores.
+La observación del propietario invalida la aceptación visual anterior, no el
+guardado, la privacidad ni la infraestructura. No está terminado este bloque.
+Se conservan los cierres funcionales anteriores; no repetir H5, G2 ni recuperación.
+
+- [ ] Espalda: reproducir los triángulos y distinguir normales, capas o skinning;
+  corregir la causa y comprobar frente/espalda/lateral en ambas bases con ropa.
+- [ ] Hombros: la revisión independiente reproduce elevación de 2–3,4 cm por
+  alinear clavículas; excluir esa compensación de referencia, probar y ver.
+- [ ] Manos: comprobar el avatar real y su marcador de rig, reproducir la palma
+  hacia atrás y corregir el espacio/orientación causal, no una rotación arbitraria.
+- [ ] Silla: contrastar ancla publicada, pelvis y geometría de asiento; corregir
+  solo el componente o contenido causante. Reservas Sitting permanecen cerradas.
+- [ ] Validar cambios afectados, integrar y desplegar por ruta protegida con
+  checkpoint previo; comprobar cada defecto en sala, también con GLB ya guardado.
+
+No ampliar prendas ni proveedor. Pruebas locales de postura no sustituyen la
+posición en la silla real. No declarar aceptación por isSitting=true, tests verdes
+o una captura lejana. Registrar resultados concretos y límites antes del cierre.
+
+## Cierre histórico — 6 septiembre, antes de los defectos visuales comunicados
+
+Este bloque conserva evidencia anterior; la aceptación visual queda reabierta arriba.
 - [x] Credencial Mailtrap antigua retirada por el usuario y ausencia verificada;
   nueva credencial conservada. Acceso IONOS resuelto autónomamente.
 - [x] Validación exacta completada: terminal53735 exit0, static/security/hubs/

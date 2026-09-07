@@ -1128,3 +1128,30 @@ de esos defectos ni activado el Goal mediante esta actualización documental.
 - origin/main comprobado: Hubs71fa7209, Cloudcc52a184. Checkout antiguo YenHubs
   no se sincroniza porque estaba sucio; permanece intacto.
 - Cierre documental separado, sin repetir validaciones largas ni despliegue.
+
+# 2026-09-07 — Reparación visual reabierta por el propietario
+
+- Creador guardado funciona; se reabren espalda, hombros, palmas y alineación de
+  silla. El cierre anterior no capturó adecuadamente estos defectos visuales.
+- Sala wB3FSNL/UI7bf6375f: Hips Group sin extras precede al Bone con marcador;
+  la adaptación no se activaba. Detección por extras originales y bind first-match
+  corregidos localmente. Revisor independiente: raw/inflado idénticos; palmas
+  pasan de predominio Z (.886–.993) a X (.890–.967), sin giro arbitrario de muñeca.
+- La compensación de clavícula subía hombros 2–3,4 cm; se conserva su pendiente.
+- Reproducción local: Lana atraviesa Chaqueta cruzada en espalda; Traje no.
+  Holgura acotada compartida por preview/sala elimina la mancha visible en idle.
+- Sala: root vertical .280m, cabeza de referencia 1.260m frente a cámara 1.6m;
+  normalización del creador y detección de ojos sintéticos corregidas localmente.
+  Dos waypoints existentes mantienen orientación inicial: pendiente corregir en
+  Spoke por publicación normal, sin mover geometría ni cambiar reservas.
+- 11 pruebas focales verdes. Pendientes validación completa por bloques afectados,
+  aceptación visual de transiciones, publicación protegida y comprobación en sala.
+  Producción todavía intacta; no declarar terminada la reparación.
+- Candidato Hubs7556174ef: commit hook 137 tests PASS; holgura excluye vértices
+  de brazos para conservar puños, con prueba específica. Tres ciclos locales
+  completos no acumulan desplazamiento (0m; deriva angular ~0.000371rad).
+- Primer checkpoint abortó antes de pausar por árbol Git sucio; no hubo cambio
+  productivo. Se debe reintentar solo después de guardar y comprobar los tres
+  repositorios limpios. Static ejecutó sus comprobaciones sin hallar secretos,
+  pero rechazó el recibo porque el candidato cambió durante la ejecución;
+  no se considera PASS. Congelar archivos antes de emitir el recibo definitivo.

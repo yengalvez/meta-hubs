@@ -201,3 +201,26 @@ es evidencia suficiente de contraste productivo. Guardado real ya comprobado
 con oDvn9Qt y wB3FSNL; pose/remoto comprobados en producción. UI desplegada
 7bf6375f probada a 390x844: preview, controles, rubio, scroll y Guardar accesibles,
 sin overflow horizontal. Es validación responsive, no prueba en teléfono físico.
+
+## Visual repair reopened 2026-09-07
+
+The owner's four visual reports supersede the prior pose acceptance. Storage and
+privacy remain accepted. Production inflation wraps named joints in same-named
+Groups and leaves extras on identity Bones: creator detection must inspect extras
+on the original node, while bind capture must select the first named transform,
+as Three PropertyBinding does. Otherwise the room silently skips retargeting.
+Preserve anatomical clavicle slope; compensate only upper/lower arm reference.
+
+Bundled jackets need lower-hem clearance over independently chosen trousers.
+The correction clones geometry, preserves skin weights and smooth-normal seams,
+is idempotent, and only applies to marked creator models and exact bundled jacket
+materials. Preview and room share it, including already saved GLBs; no migration.
+Creator model height is normalized before inflation to Hubs' 1.6m head reference.
+Injected-eye metadata must also survive detection through the wrapper. Unmarked
+imports are not resized. Published seats must face their authored orientation,
+not retain the visitor's approach heading.
+
+Acceptance pending: both bodies, front/back/side, idle/walk/sit/stand; no trouser
+breakthrough, relaxed shoulders, lateral palms, pelvis on actual chair cushion.
+The local harness now reproduces wrappers and the JSON preprocessor. It does not
+replace the final real-room check. No restore or infrastructure changes.

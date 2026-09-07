@@ -1,10 +1,16 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **6 de septiembre de 2026**
+Ultima actualización: **7 de septiembre de 2026**
 
 ## Trabajo actual: creador de avatares
 
-**Estado actual: creador desplegado, probado e integrado.**
+**Estado actual: guardado funcionando; cuatro defectos visuales en reparación.**
+Faltan los triángulos de la espalda, hombros elevados, orientación de manos y
+posición sobre la silla. La revisión anterior no detectó bien esos detalles y
+no sirve como aceptación visual final. Primero se reproduce cada causa; después
+se comprueba de cerca y en la sala real. No se rehace la recuperación ni el acceso.
+
+**Cierre anterior del 6 de septiembre (aceptación visual ahora reabierta):**
 Dos avatares empresariales, masculino y femenino, están guardados como privados,
 persisten y funcionan en sala. Se comprobaron sentarse, levantarse y la recepción
 desde otra conexión. El editor ya tiene contraste corregido y funciona a tamaño
