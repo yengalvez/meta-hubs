@@ -22,15 +22,38 @@ cerrada esta ampliación: ese candidato solo corrige copias de geometría.
 - [ ] GLB reimportado y componente local verificados; falta sala con avatar guardado
   y observador. Evidencia local: 50 contratos/ajustes idempotentes, diez conjuntos
   Blender, 28 tests focales, nombres productivos y tres ciclos por base sin deriva.
-- [ ] ACTIVE: congelar/verificar/build; ropa/manos invalidan el candidato anterior;
-  un único respaldo autorizado con diagnóstico, retorno de cinco escritores,
-  despliegue protegido, contacto azul local/remoto e integración.
+- [x] Congelado Hubs bdf79ccec y raíz bf38e08, publicados. Full81057 exit0:
+  quince secciones PASS; Actions34260275857 SUCCESS, imagen52fb6c5b.
+- [ ] ACTIVE: reparar el respaldo y completar despliegue/contacto azul/integración.
+  El único reintento autorizado83438 terminó exit1: storage-backup/stream,
+  detalle `cancellation-reserve` durante running. No hay respaldo conjunto válido.
+  Cinco escritores reanudados1/1, bloqueo de operación ausente y Lease libre
+  comprobados18:18UTC. No desplegado. Seguimiento reactivado tras autorización.
+  El propietario ordena después reparar lo incorrecto y continuar sin pedir de
+  nuevo permiso por esta reparación. Reproducir/corregir la causa manteniendo
+  protecciones, validar y hacer el respaldo corregido antes de desplegar.
+  Una revisión independiente acotada cubre el supervisor; no reabre avatares.
+  Corrección local: suprimir lecturas repetidas de la misma autoridad conservando
+  lectura privada/hash/vínculo exactos y los plazos existentes. Prueba focal67849:
+  47 PASS, incluidas tres capacidades durante20s y cancelación/reaping antes10s
+  al congelar una. Validación completa del candidato corregido pendiente.
+  Full79373 terminó con doce secciones PASS y static/recovery/h5 FAIL: anotación
+  ShellCheck, exigencia de Git limpio y carrera de la prueba SIGKILL entre una
+  renovación ya iniciada y su confirmación. La prueba ahora exige salida del
+  heartbeat exacto, como máximo una CAS en vuelo y versión estable después;
+  conserva la comprobación del grupo de copia eliminado. Sin cambio del Lease
+  productivo. Guardar candidato limpio y repetir solo secciones invalidadas.
+  Full/build nuevos del cliente no son necesarios
+  para los mismos bytes de Hubs; si cambia el código de respaldo, validar ese cambio.
 
 Evidencia conservada: dba93430e y raíz 5ea6ea80 pasaron full completo; Actions
 34245178065 terminó verde, digest 93114a9abebd526fb38f925616b303dd30c8afd04ea95ea7d1b949223fb6dbc5.
 El checkpoint posterior falló en stream de medios (causa exacta aún desconocida),
 restauró los cinco escritores y liberó locks. Producción sigue en 014b76a0.
-No se ha ejecutado el reintento; monitor previo pausado para no aplicar el plan viejo.
+El reintento posterior falló como se indica arriba; imagen nueva lista pero sin
+desplegar. Registro diagnóstico privado: clothing-blender-20260908/
+checkpoint-diagnostic-retry.private.log. No atribuir aún el fallo a red/archivo:
+la evidencia concreta es falta de margen de cancelación del supervisor.
 
 ## Asiento: medición nueva del 8 de septiembre
 

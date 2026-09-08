@@ -2180,8 +2180,9 @@ if [[ ( "${STUB_MODE:-}" == parent-death-stream ||
 fi
 if [[ "${STUB_MODE:-}" == multi-guard-stream &&
       "$joined" == "exec -n hcce parent-death-probe -- destructive-stream" ]]; then
+  printf '%s\n' "$$" >"$STUB_STATE_DIR/multi-guard-stream-pid"
   printf started >"$STUB_STATE_DIR/multi-guard-stream-started"
-  sleep 0.2
+  sleep "${STUB_SUSTAINED_STREAM_SECONDS:-0.2}"
   printf completed >"$STUB_STATE_DIR/multi-guard-stream-completed"
   exit 0
 fi
@@ -11643,6 +11644,7 @@ while True:
   kill -0 -- "-$leader_pid" 2>/dev/null
 )
 
+# shellcheck disable=SC2030 # Fixture environment is intentionally subshell-local.
 run_runner_identity_handshake_test() (
   local stop_path failure_path ready_path watcher_pid="" watcher_identity=""
   NAMESPACE=hcce
@@ -12920,6 +12922,8 @@ run_storage_helper_contract_tests() {
 
 run_parent_death_stream_test() {
   local parent_death_owner_pid="" parent_death_rv_before parent_death_rv_after
+  local parent_death_rv_settled parent_death_heartbeat_pid parent_death_heartbeat_identity
+  local parent_death_heartbeat_live=true parent_death_renewal_delta
   local parent_death_grandchild_pid parent_death_grandchild_state
   local parent_death_stream_pid parent_death_stream_pgid
   local parent_death_stream_group_state
@@ -12933,6 +12937,8 @@ run_parent_death_stream_test() {
       NAMESPACE=hcce
       source "$1"
       recovery_acquire_operation_serialization root-recovery
+      printf "%s\n%s\n" "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" \
+        "$RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY" >"$2/parent-death-heartbeat"
       recovery_kubectl_stream_mutate 30 exec -n hcce parent-death-probe -- destructive-stream
       printf completed >"$2/parent-death-owner-completed"
     ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$STUB_STATE_DIR" &
@@ -12987,10 +12993,44 @@ run_parent_death_stream_test() {
   done
   parent_death_rv_after="$(jq -r '.metadata.resourceVersion' \
     "$STUB_STATE_DIR/serialization-lease.json")"
+  parent_death_heartbeat_pid="$(sed -n '1p' "$STUB_STATE_DIR/parent-death-heartbeat")"
+  parent_death_heartbeat_identity="$(sed -n '2p' "$STUB_STATE_DIR/parent-death-heartbeat")"
+  if [[ ! "$parent_death_heartbeat_pid" =~ ^[1-9][0-9]*$ ||
+        -z "$parent_death_heartbeat_identity" ]]; then
+    fail 'parent death fixture records its exact heartbeat identity' 'missing heartbeat capability'
+    return
+  fi
+  for _ in {1..200}; do
+    if ! (
+      # shellcheck source=deployment/lib/recovery-safety.sh
+      source "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+      recovery_process_identity_is_live "$parent_death_heartbeat_pid" \
+        "$parent_death_heartbeat_identity"
+    ); then
+      parent_death_heartbeat_live=false
+      break
+    fi
+    sleep 0.01
+  done
+  # A CAS already in flight when the owner dies may finish. It cannot be
+  # recalled, but the heartbeat must exit and must never begin another cycle.
+  # Observe stability beyond the fixture's one-second heartbeat interval.
+  parent_death_rv_after="$(jq -r '.metadata.resourceVersion' \
+    "$STUB_STATE_DIR/serialization-lease.json")"
+  sleep 2
+  parent_death_rv_settled="$(jq -r '.metadata.resourceVersion' \
+    "$STUB_STATE_DIR/serialization-lease.json")"
+  parent_death_renewal_delta=-1
+  if [[ "$parent_death_rv_before" =~ ^lease-rv-[0-9]+$ &&
+        "$parent_death_rv_after" =~ ^lease-rv-[0-9]+$ ]]; then
+    parent_death_renewal_delta=$(( ${parent_death_rv_after#lease-rv-} - ${parent_death_rv_before#lease-rv-} ))
+  fi
   if [[ -e "$STUB_STATE_DIR/parent-death-stream-terminated" &&
         ! -e "$STUB_STATE_DIR/parent-death-stream-completed" &&
         ! -e "$STUB_STATE_DIR/parent-death-owner-completed" &&
-        "$parent_death_rv_before" == "$parent_death_rv_after" &&
+        "$parent_death_heartbeat_live" == false &&
+        "$parent_death_renewal_delta" -ge 0 && "$parent_death_renewal_delta" -le 1 &&
+        "$parent_death_rv_after" == "$parent_death_rv_settled" &&
         "$parent_death_stream_pid" =~ ^[1-9][0-9]*$ &&
         "$parent_death_stream_pgid" =~ ^[1-9][0-9]*$ &&
         -z "$parent_death_stream_group_state" &&
@@ -13000,7 +13040,7 @@ run_parent_death_stream_test() {
     pass 'parent SIGKILL kills orphaned stream group and stops Lease renewal'
   else
     fail 'parent SIGKILL kills orphaned stream group and stops Lease renewal' \
-      "rv-before=$parent_death_rv_before rv-after=$parent_death_rv_after stream=$parent_death_stream_pid pgid=$parent_death_stream_pgid group-state=${parent_death_stream_group_state:-gone} grandchild=$parent_death_grandchild_pid state=$parent_death_grandchild_state"
+      "rv-before=$parent_death_rv_before rv-after=$parent_death_rv_after rv-settled=$parent_death_rv_settled heartbeat-live=$parent_death_heartbeat_live stream=$parent_death_stream_pid pgid=$parent_death_stream_pgid group-state=${parent_death_stream_group_state:-gone} grandchild=$parent_death_grandchild_pid state=$parent_death_grandchild_state"
   fi
 }
 
@@ -13382,6 +13422,94 @@ run_multi_guard_stream_regression_tests() {
   expect_success \
     'a later guard increment predating the inner baseline cannot create false freshness' \
     run_multi_guard_round_robin_case inner-baseline
+}
+
+# shellcheck disable=SC2030,SC2031 # Each fixture owns its environment and publisher PIDs inside this subshell.
+run_sustained_capability_stream_case() (
+  local mode="$1" directory stop index guard pid identity hash authority_sha status=0 elapsed stream_pid
+  local EXPECTED_KUBE_CONTEXT NAMESPACE EXPECTED_NAMESPACE_UID EXPECTED_RET_PVC_UID
+  local STUB_MODE STUB_SUSTAINED_STREAM_SECONDS RECOVERY_STREAM_DIAGNOSTIC_CONTEXT
+  local -a publishers=() arguments=()
+  reset_stub
+  directory="$(mktemp -d "$TMP_DIR/sustained-capabilities.XXXXXX")" || return 1
+  chmod 700 "$directory"
+  stop="$directory/stop"
+  trap 'touch "$stop"; for pid in "${publishers[@]}"; do wait "$pid" || :; done' EXIT
+  export EXPECTED_KUBE_CONTEXT=fixture-context NAMESPACE=hcce
+  export EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid
+  export STUB_MODE=multi-guard-stream STUB_SUSTAINED_STREAM_SECONDS=20
+  export RECOVERY_STREAM_DIAGNOSTIC_CONTEXT=database-restore
+  unset RECOVERY_STREAM_POLL_SECONDS RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS
+  source "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+  hash="$(printf fixture | shasum -a 256 | awk '{print $1}')"
+  for index in 1 2 3; do
+    guard="$directory/guard-$index"
+    mkdir -m 700 "$guard"
+    : >"$guard/failure"
+    : >"$guard/progress"
+    chmod 600 "$guard/failure" "$guard/progress"
+    python3 "$ROOT_DIR/tests/recovery/fixtures/stream-capability-publisher.py" \
+      "$guard" "$stop" "$STUB_STATE_DIR/multi-guard-stream-started" \
+      "$([[ "$mode" == frozen && "$index" == 2 ]] && printf yes || printf no)" \
+      "$index" &
+    pid=$!
+    publishers+=("$pid")
+    identity="$(recovery_process_start_identity "$pid")" || return 1
+    jq -cnS --arg base "$guard" --argjson pid "$pid" --arg identity "$identity" \
+      --arg hash "$hash" --arg namespace_uid "${RECOVERY_NAMESPACE_UID:-}" \
+      --arg operation_id "${RECOVERY_OPERATION_ID:-}" \
+      --arg owner "${RECOVERY_OPERATION_OWNER:-}" \
+      --arg lock_name "${RECOVERY_OPERATION_LOCK_NAME:-}" \
+      --arg lock_uid "${RECOVERY_OPERATION_LOCK_UID:-}" \
+      --arg lock_rv "${RECOVERY_OPERATION_LOCK_RESOURCE_VERSION:-}" \
+      --arg lease_name "${RECOVERY_SERIALIZATION_LEASE_NAME:-}" \
+      --arg lease_uid "${RECOVERY_SERIALIZATION_LEASE_UID:-}" \
+      --arg lease_holder "${RECOVERY_SERIALIZATION_LEASE_HOLDER:-}" '
+      {schema_version:1,kind:"durable-runner-quiescence-monitor",pid:$pid,
+       start_identity:$identity,context:"fixture-context",namespace:"hcce",
+       namespace_uid:$namespace_uid,operation_id:$operation_id,operation_owner:$owner,
+       operation_lock:{name:$lock_name,uid:$lock_uid,resource_version:$lock_rv},
+       lease:{name:$lease_name,uid:$lease_uid,holder:$lease_holder},runtime_generation:"durable-v2",
+       paths:{authority:($base+"/ready.authority.json"),ready:($base+"/ready"),
+         failure:($base+"/failure"),progress:($base+"/progress"),stop:($base+"/stop"),
+         final:($base+"/final"),control_baseline:($base+"/control"),durable_baseline:($base+"/durable")},
+       hashes:{control_baseline_sha256:$hash,control_capability_sha256:$hash,durable_baseline_sha256:$hash}}' \
+      >"$guard/ready.authority.json" || return 1
+    chmod 600 "$guard/ready.authority.json"
+    authority_sha="$(recovery_sha256_digest "$guard/ready.authority.json")" || return 1
+    printf 'ready:%s:%s:%s:%s\n' "$hash" "$hash" "$hash" "$authority_sha" >"$guard/ready"
+    chmod 600 "$guard/ready"
+    arguments+=(--guard-process-capability durable-runner-quiescence-monitor
+      "$pid" "$identity" "$guard/failure" "$guard/ready" "$guard/progress"
+      "$guard/ready.authority.json" "$authority_sha" 10)
+  done
+  if recovery_kubectl_stream_supervised 0 35 "${arguments[@]}" -- \
+    exec -n hcce parent-death-probe -- destructive-stream; then status=0; else status=$?; fi
+  stream_pid="$(cat "$STUB_STATE_DIR/multi-guard-stream-pid" 2>/dev/null || :)"
+  [[ "$stream_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  ! kill -0 "$stream_pid" 2>/dev/null || return 1
+  if [[ "$mode" == healthy ]]; then
+    [[ "$status" == 0 && -s "$STUB_STATE_DIR/multi-guard-stream-completed" ]]
+  else
+    [[ "$status" != 0 && -s "$directory/guard-2/frozen" &&
+       ! -e "$STUB_STATE_DIR/multi-guard-stream-completed" ]] || {
+      printf 'Frozen stream: status=%s frozen=%s completed=%s\n' "$status" \
+        "$([[ -s "$directory/guard-2/frozen" ]] && printf yes || printf no)" \
+        "$([[ -e "$STUB_STATE_DIR/multi-guard-stream-completed" ]] && printf yes || printf no)" >&2
+      return 1
+    }
+    # Compare the fixture's Python clock with itself: Darwin's production
+    # CLOCK_MONOTONIC includes suspend time, unlike Python's monotonic clock.
+    elapsed=$(( $(python3 -I -c 'import time; print(time.monotonic_ns() // 1000000)') - $(<"$directory/guard-2/frozen") ))
+    [[ "$elapsed" -lt 10000 ]] || { printf 'Frozen cancellation elapsed=%s ms\n' "$elapsed" >&2; return 1; }
+  fi
+)
+
+run_sustained_capability_stream_tests() {
+  expect_success 'three real capabilities sustain twenty seconds at production polling and freshness' \
+    run_sustained_capability_stream_case healthy
+  expect_success 'a frozen capability cancels a sustained stream inside its original deadline' \
+    run_sustained_capability_stream_case frozen
 }
 
 run_stream_guard_abort_tests() {
@@ -14294,7 +14422,7 @@ run_recovery_operation_fence_failure_test() (
   # shellcheck source=deployment/lib/recovery-safety.sh
   source "$ROOT_DIR/deployment/lib/recovery-safety.sh"
   prepare_recovery_operation_fence_library_fixture || return 1
-  # shellcheck disable=SC2030 # Set and consumed inside this test subshell.
+  # shellcheck disable=SC2030,SC2031 # Set and consumed inside this test subshell.
   export STUB_MODE="$mode"
   if recovery_activate_recovery_operation_fence \
       active_identity >/dev/null 2>&1; then
@@ -16421,6 +16549,7 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == storage-backup-monitor-extra ]]; the
 fi
 
 if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == stream-guards ]]; then
+  run_sustained_capability_stream_tests
   run_stream_guard_timing_contract_tests
   run_multi_guard_stream_regression_tests
   run_stream_guard_abort_tests
@@ -16434,6 +16563,13 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == stream-guards ]]; then
     exit 1
   fi
   printf 'Focused guarded-stream tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == sustained-capabilities ]]; then
+  run_sustained_capability_stream_tests
+  [[ "$FAIL_COUNT" == 0 ]] || exit 1
+  printf 'Focused sustained capability tests passed: %s.\n' "$PASS_COUNT"
   exit 0
 fi
 
@@ -19703,6 +19839,7 @@ run_checkpoint_writer_monitor_tests
 run_storage_helper_contract_tests
 run_stream_guard_timing_contract_tests
 run_multi_guard_stream_regression_tests
+run_sustained_capability_stream_tests
 run_stream_guard_abort_tests
 run_stream_lease_diagnostic_split_tests
 run_stream_capability_authority_tamper_tests

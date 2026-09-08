@@ -1831,12 +1831,18 @@ recovery_kubectl_stream_supervised() {
           return 1
         fi
         if [[ -n "${guard_authority_sha256s[$index]}" ]]; then
-          if ! recovery_read_private_file_once \
+          # The launch audit already validated the complete capability tuple.
+          # Keep its immutable path/hash binding, but do not hash the same
+          # authority three more times via the READY-derived lookup: that
+          # lookup only appends this suffix and does not read READY contents.
+          # Duplicate descriptor/process work consumes the fixed freshness
+          # window; it does not provide another independent attestation.
+          if [[ "${guard_ready_markers[$index]}" != /* ||
+                "${guard_authority_paths[$index]}" != \
+                "${guard_ready_markers[$index]}.authority.json" ]] ||
+             ! recovery_read_private_file_once \
               "${guard_authority_paths[$index]}" 65536 \
-              "${guard_authority_sha256s[$index]}" >/dev/null ||
-             [[ "$(recovery_monitor_authority_sha256_for_ready \
-               "${guard_ready_markers[$index]}" 2>/dev/null || :)" != \
-               "${guard_authority_sha256s[$index]}" ]]; then
+              "${guard_authority_sha256s[$index]}" >/dev/null; then
             stream_record_diagnostic "guard-process:$index"
             return 1
           fi

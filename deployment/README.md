@@ -2274,6 +2274,13 @@ inside stream supervision has a maximum five-second request timeout; it is
 reduced to one second when the remaining freshness budget is at most five
 seconds so cancellation and exact process-group reaping still fit within that
 budget. Timing overrides are accepted only under local fixture attestation.
+During continuous polling, the already validated capability keeps its exact
+absolute READY-to-authority path binding and one owner/mode/hash-checked read
+of the immutable authority. Repeating the same authority lookup adds no
+independent evidence and consumes the unchanged freshness/cancellation budget.
+The sustained-capability regression uses three real publishers for 20 seconds
+at production timing, then verifies a frozen publisher aborts and reaps the
+stream within the original ten-second deadline.
 Guard failure,
 stale/non-monotonic progress, Lease loss, caller death, timeout or PID reuse
 aborts and reaps the exact isolated process group using its PID plus start

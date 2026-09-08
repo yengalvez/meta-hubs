@@ -1,6 +1,36 @@
 # Session Changelog
 
+## 2026-09-08 (reparación autorizada del supervisor de respaldo)
+
+- El propietario pide corregir lo incorrecto y continuar hasta terminar; queda
+  autorizada la reparación del respaldo y su continuación protegida.
+- Revisión independiente acotada identifica lecturas/hash duplicados de la misma
+  autoridad durante polling. Se conserva una lectura privada con hash exacto y
+  vínculo absoluto READY/authority, sin ampliar frescura, plazos ni reserva.
+  Microprueba local: nueve comprobaciones pasan de 1298 a 532 ms; no demuestra
+  por sí sola la causa completa del fallo productivo ni acepta un respaldo.
+- Prueba sostenida con tres capacidades reales y caso congelado añadida.
+  Se corrige su comparación de relojes macOS usando el mismo reloj del fixture.
+  Foco67849 exit0:47 PASS, incluido stream sano20s y cancelación/reaping del
+  congelado antes10s. Validación completa y nuevo respaldo pendientes; no desplegado.
+- Full79373: doce secciones PASS; static/recovery/h5 no aceptadas por anotación
+  de lint, repositorio no limpio y una carrera en el fixture SIGKILL: el grupo
+  murió, pero una CAS en vuelo terminó tras medir la versión previa. El fixture
+  exige ahora heartbeat exacto terminado, máximo una CAS pendiente y estabilidad
+  posterior durante dos intervalos; no modifica la renovación productiva.
+  Repetir comprobaciones afectadas tras guardar el candidato limpio.
+
 ## 2026-09-08 (ropa y manos, candidato local con Blender)
+
+- Candidato Hubs bdf79ccec y raíz bf38e08 publicados. Full81057 exit0 con quince
+  secciones PASS; Actions34260275857 SUCCESS, digest52fb6c5b (GHCR1224580317).
+- Único reintento diagnóstico autorizado83438 falló storage-backup/stream:
+  `running` / `cancellation-reserve`, archive_status1 y monitor_status0.
+  DB completa no convierte el respaldo conjunto en válido. No despliegue.
+  El driver terminó exit1 tras restaurar escritores; lectura independiente18:18UTC
+  confirmó los cinco1/1, configmap de operación ausente y Lease libre.
+  Monitor pausado. Hace falta dirección para reparar el mecanismo, no otro
+  reintento idéntico ni relajación de guardas. Pruebas/imagen del cliente preservadas.
 
 - Ajuste localizado de bajos exteriores al pantalón elegido, conservando rig,
   UV, materiales y originales. 50 combinaciones estructurales, diez conjuntos

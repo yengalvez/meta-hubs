@@ -9,9 +9,13 @@ con Blender y el navegador interno. Se han comprobado 50 combinaciones de ropa,
 diez conjuntos representativos en varias poses y ambas bases caminando y sentadas.
 Las manos recuperan movimiento de muñecas y dedos; los bajos exteriores acompañan
 al pantalón. Falta publicar este candidato y verlo en sala desde dos conexiones.
-El respaldo anterior falló sin desplegar; los cinco servicios volvieron a estar
-listos. Está autorizado un único reintento con más diagnóstico tras congelar
-la versión nueva. La aceptación visual no está cerrada.
+La validación completa y la imagen oficial nueva ya están listas. El único
+reintento autorizado del respaldo también falló: el supervisor aborta la copia
+de medios al perder margen para cancelarla con seguridad. Los cinco servicios
+están otra vez listos y no se ha desplegado. El propietario ha autorizado reparar
+el respaldo y continuar: la corrección local pasa47 pruebas focales, pero quedan
+comprobaciones completas antes de copiar y publicar. Seguimiento automático activo.
+La aceptación visual no está cerrada.
 
 La corrección del asiento y de locomoción `9f7c858ac` ya está desplegada tras
 validación completa, imagen oficial y respaldo. Tu marcador sigue sin moverse.
