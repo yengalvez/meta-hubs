@@ -1218,6 +1218,17 @@ de esos defectos ni activado el Goal mediante esta actualización documental.
   no se sincroniza porque estaba sucio; permanece intacto.
 - Cierre documental separado, sin repetir validaciones largas ni despliegue.
 
+# 2026-09-08 — Aceptación de asiento detecta ajuste desigual entre copias
+
+- Candidato 9f7c858ac desplegado con checkpoint completo y Actions34233957940;
+  verificador vivo cero fallos/cero avisos. Sin excepción de advisories Hex.
+- Dos sesiones internas con mismo avatar guardado: rig replicado idéntico,
+  contacto local sobre azul y remoto desplazado 9,38cm lateral/1,86cm vertical.
+- BufferGeometry.clone comparte userData; la etiqueta de holgura contaminaba
+  copias sin ajustar sus vértices. Se separa metadata en la geometría clonada.
+- Regresión caché/local/headless/remoto e idempotencia: 7 tests focales PASS.
+  Pendiente publicar candidato corregido y aceptar en sala antes de integrar.
+
 # 2026-09-07 — Reparación visual reabierta por el propietario
 
 - Creador guardado funciona; se reabren espalda, hombros, palmas y alineación de

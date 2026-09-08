@@ -4,16 +4,15 @@ Ultima actualización: **8 de septiembre de 2026**
 
 ## Trabajo actual: creador de avatares
 
-El fallo del segundo asiento de la sala nueva está reproducido: la pelvis
-termina a 14 cm del suelo. No se ha movido tu marcador ni desplegado otra versión.
-Referencia ya confirmada: apoyar justo sobre el triángulo azul. Hay una
-corrección candidata local que calcula el apoyo de cada cuerpo y corrige
-la posición completa, no tu marcador. Aún no está desplegada ni aceptada en sala.
-El candidato Hubs `9f7c858ac` pasa las 157 pruebas del cliente, incluidas las
-transiciones reales del controlador y del IK. Continúa validación final,
-imagen oficial, respaldo y despliegue protegido antes de comprobar la sala.
+La corrección del asiento y de locomoción `9f7c858ac` ya está desplegada tras
+validación completa, imagen oficial y respaldo. Tu marcador sigue sin moverse.
+El apoyo local coincide con la parte superior del triángulo azul, pero la prueba
+con otro participante detectó una diferencia real en la chaqueta. Se ha localizado
+y corregido en código: las copias de geometría compartían una marca de ajuste
+sin compartir los vértices ajustados. Siete pruebas focales pasan. Falta publicar
+esta corrección pequeña y repetir la aceptación con ambos participantes.
 
-**Estado actual: correcciones desplegadas; falta revisión visual en sala.**
+**Antecedente: correcciones desplegadas; aceptación visual reabierta.**
 Actualización posterior: el propietario rechaza aún los movimientos de piernas
 y brazos. Se ha localizado y corregido EN LOCAL una pérdida de rotación del
 torso al adaptar las extremidades, además de la selección de dirección al girar.

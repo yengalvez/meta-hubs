@@ -237,6 +237,10 @@ Bundled jackets need lower-hem clearance over independently chosen trousers.
 The correction clones geometry, preserves skin weights and smooth-normal seams,
 is idempotent, and only applies to marked creator models and exact bundled jacket
 materials. Preview and room share it, including already saved GLBs; no migration.
+The cloned geometry must own its `userData`: this Three.js version shares that
+object across `BufferGeometry.clone()`. A shared fitted marker incorrectly skips
+untouched cached/headless/remote copies. Regression covers identical one-time
+fitting of those copies without modifying cached vertices or metadata.
 Creator model height is normalized before inflation to Hubs' 1.6m head reference.
 Injected-eye metadata must also survive detection through the wrapper. Unmarked
 imports are not resized. Published seats must face their authored orientation,

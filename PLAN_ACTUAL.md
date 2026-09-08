@@ -36,7 +36,7 @@ Ejecutar el único `--full` con caché privada de recibos existentes; no iniciar
 checkpoint en paralelo porque el guard de procesos invalidaría los recibos.
 
 - [x] Referencia azul y corrección local con regresiones focales.
-- [ ] Congelar candidato, ejecutar único `--full` con reutilización de recibos
+- [ ] Congelar candidato corregido, ejecutar único `--full` con reutilización de recibos
   exactos y construir una imagen oficial de ese SHA; no modificar durante gates.
 - [ ] Crear checkpoint DB+medios previo al cambio, comprobar retorno de escritores,
   generar/diff/aplicar manifiesto con solo la imagen Hubs nueva y reiniciar Reticulum.
@@ -44,6 +44,22 @@ checkpoint en paralelo porque el guard de procesos invalidaría los recibos.
   volver a sentarse y observador. Verificar contacto en espacio del marcador.
 - [ ] Registrar resultado real y cerrar integración del cambio, sin reabrir H5
   ni infraestructura. Si un gate falla, reparar causa demostrada antes de otro intento.
+
+### Aceptación real del 8 de septiembre: copia local/remota de prendas
+
+El candidato `9f7c858ac` pasó el gate completo (sin excepción Hex), se construyó
+en Actions `34233957940` y se desplegó por manifiesto protegido con checkpoint
+DB+medios completo. Imagen `sha256:014b76a0766d81f7c1523702c64c0b91ca1c6f2f998db576847dc2b646541a71`.
+Verificador vivo: cero fallos y cero avisos. Esto NO cierra la aceptación visual.
+Dos sesiones internas, misma sala y avatar guardado, mostraron matrices de rig
+idénticas pero distinta geometría de chaqueta: contacto local exacto sobre azul,
+contacto remoto desplazado 9,38 cm lateral y 1,86 cm vertical.
+Causa demostrada: `BufferGeometry.clone()` comparte `userData` en este Three.js;
+la marca de ajuste contaminaba geometrías cacheadas/headless sin ajustar sus
+vértices. Corrección focal: copiar `userData` antes de marcar la geometría nueva.
+Regresión de caché/local/headless/remoto: cada copia se ajusta exactamente una
+vez, conserva fuente y coincide; 7 tests focales PASS. Falta congelar, gate,
+build oficial y repetir aceptación local/remota tras el despliegue corregido.
 
 ## Estado vigente — reparación visual solicitada el 7 de septiembre
 
