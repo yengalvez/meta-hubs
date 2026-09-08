@@ -1,16 +1,32 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **7 de septiembre de 2026**
+Ultima actualización: **8 de septiembre de 2026**
 
 ## Trabajo actual: creador de avatares
 
+El fallo del segundo asiento de la sala nueva está reproducido: la pelvis
+termina a 14 cm del suelo. No se ha movido tu marcador ni desplegado otra versión.
+Referencia ya confirmada: apoyar justo sobre el triángulo azul. Hay una
+corrección candidata local que calcula el apoyo de cada cuerpo y corrige
+la posición completa, no tu marcador. Aún no está desplegada ni aceptada en sala.
+El candidato Hubs `9f7c858ac` pasa las 157 pruebas del cliente, incluidas las
+transiciones reales del controlador y del IK. Continúa validación final,
+imagen oficial, respaldo y despliegue protegido antes de comprobar la sala.
+
 **Estado actual: correcciones desplegadas; falta revisión visual en sala.**
+Actualización posterior: el propietario rechaza aún los movimientos de piernas
+y brazos. Se ha localizado y corregido EN LOCAL una pérdida de rotación del
+torso al adaptar las extremidades, además de la selección de dirección al girar.
+Doce pruebas focales pasan, incluidas las cuatro marchas en ambos modelos reales.
+Esta segunda corrección todavía NO está desplegada ni aceptada visualmente en sala.
+El Mac ya permite navegador interno; no pedir de nuevo desbloqueo por el estado antiguo.
+
+Antecedente del primer despliegue visual:
 Se corrigió cómo la sala reconoce el esqueleto, la altura del avatar y el cruce
 entre pantalón y chaqueta. Las dos sillas ya fijan su orientación. La nueva
 versión está en el servidor y la comprobación operativa da cero fallos y avisos.
 Las pruebas locales no sustituyen ver de cerca espalda, hombros, manos y asiento
-en la sala. Esa última comprobación se ha detenido porque el Mac está bloqueado;
-solo hace falta desbloquearlo, el agente hará las pruebas. No hay que recrear
+en la sala. El bloqueo antiguo del Mac ya no aplica. No hay que recrear
 avatares, volver a iniciar sesión ni repetir respaldo, build o despliegue.
 Las PR de integración siguen en borrador hasta esa aceptación visual.
 

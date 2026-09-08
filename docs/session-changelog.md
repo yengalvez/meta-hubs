@@ -1,6 +1,64 @@
 # Session Changelog
 
+## 2026-09-08 (desfase de asiento medido; referencia visual pendiente)
+
+- Aclaración posterior del usuario resuelta: **justo encima del triángulo azul**,
+  y=0.69862; no volver a preguntar ni usar la falda gris. Candidato local añade
+  avatar-seat-contact/anchor, integra destino rig/POV y evita bloquear posición
+  antigua del creador al sentarse. Conserva espera si el modelo aún no existe.
+- Editor aislado, rig real inflado: contacto masculino
+  [0.004174,0.392541,0.027001], femenino [-0.013369,0.374873,0.048524].
+  Muestra de perfil masculina sit sitúa el probe rojo bajo pelvis, no en Hips.
+  Estos valores no son offsets universales: se miden por avatar/prendas.
+- Revisión dirigida detectó predicción con rig anterior y llegada sin componente;
+  corregidos. Test ahora mueve el rig como childMatch (no mantiene padre fijo),
+  diferentes yaw/tamaños y asset del triángulo: 2 tests PASS. Primer test del
+  asset falló por ruta fuera del checkout: usa ahora el asset idéntico de Hubs,
+  evitando dependencia del checkout hermano en CI. No nueva suite larga,
+  commit, publicación, imagen, despliegue ni cambio de escena.
+- Pendiente: aceptación de IK real, transiciones/carga y observador remoto;
+  no declarar corregido en producción por estas pruebas locales.
+
+- Continuación explícita del usuario: acabar sin pausa injustificada. Se añadió
+  prueba del controller/IK/childMatch de producción, con efectos externos aislados.
+  Reveló que la cámara es `ik.ikRoot.camera`, no `ik.camera`: corregido antes de
+  desplegar. 4 casos de integración PASS, incluyendo réplica transform/state en
+  ambos órdenes. 2 tests de superficie clonada PASS (no Hips/pies/frente y sin
+  mutar rig vivo); 2 de geometría/matrices PASS. Test usa Three real del fork,
+  sin sobreescribir updateMatrices, y carga SkeletonUtils ESM real en Node.
+  Falta aceptación online; se prepara candidato y único gate full con recibos.
+- Candidato Hubs `9f7c858ac32ce8e342a88b5a2548490f9485a735`: hook PASS,
+  157 tests, lint/HTML; Gitleaks raíz/Hubs sin secretos. Se conserva el arreglo
+  de locomoción junto al asiento. Warnings de ShellCheck observados en hook
+  heredado sin modificar quedan fuera del cambio; no modernizar ese hook.
+  Candidato preparado para único full con recibos reutilizables, sin checkpoint
+  simultáneo, luego build oficial y aceptación online.
+
+- Sala interna dCTfKVK, asiento 2 editado por usuario: Spoke y publicación
+  coinciden en posición [1.565976,-0.406443,0.415660], yaw -106.112°, escala 1.
+  Sin cambios de contenido, permisos, infraestructura o despliegue.
+- Sentada wB3FSNL: Hips mundo [1.369561,0.140855,0.364426]; relativo al
+  waypoint [0.005287,0.547298,0.202918]. Revisor read-only confirma el aporte
+  exacto de 0.15 m delante por travelByWaypoint y falta de calibración del clip.
+- Asset de Spoke: bajo torso y≈0.902, cara superior pirámide y≈0.69862.
+  La descripción del usuario menciona ambos; 20.3 cm de diferencia requieren
+  resolver referencia antes de introducir un offset. No dar Hips por contacto
+  de malla ni trasladar el marcador para ocultar el error.
+- Tras medir, el navegador mostró desconexión de sala; no se alteró producción.
+  Se conservan reparaciones locales de locomoción pendientes de aceptación.
+
 ## 2026-09-07 (reparación visual desplegada; aceptación de sala pendiente)
+
+- Nueva evidencia piernas/brazos en todas direcciones: no cierre ni otro rollout.
+  Corrección local de selector al marco corporal+Z y compensación de ancestros
+  omitidos para creador. Revisor demuestra hasta42,59° de error previo; helper
+  real queda <=0,010062° en ambos GLB/cuatro marchas, sentado intacto y caso de
+  ancestro retenido sin doble compensación. Doce regresiones focales PASS,
+  ocho basadas en GLB reales con claves y puntos intermedios. Test angular exige
+  quaterniones normalizados; primer intento sin normalizar medía artefacto de
+  longitud, se corrigió la medición sin aflojar tolerancia0,02°. ESLint fuente PASS.
+  Visor local50317 incluye cuatro direcciones; pendiente aceptación de sala y
+  prendas (intersección polo/pantalón visible). Sin nuevo build oficial/backups.
 
 - Hubs7556174: detección del marcador de creador a través de Group/Bone,
   bind coherente con PropertyBinding, sin elevar clavículas; altura Head1.6m

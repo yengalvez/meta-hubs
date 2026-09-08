@@ -2,6 +2,49 @@
 Versión: v3 reparación visual. Fecha: 7 de septiembre de 2026.
 Workspace: /Users/Shared/Gits/YenHubs-features. Rama raíz: codex/avatar-visual-repair.
 
+## Asiento: medición nueva del 8 de septiembre
+
+Sala solicitada: `dCTfKVK`, segundo asiento `Seat_recovery_2_-_REPOSITION`.
+Comprobado en navegador interno y Spoke `qa3U3Ke`: posición publicada
+`[1.565976,-0.406443,0.415660]`, yaw -106.112°, escala 1; no se ha movido.
+Avatar `wB3FSNL` sentado: Hips mundial `[1.369561,0.140855,0.364426]`.
+En coordenadas del marcador: Hips `[0.005287,0.547298,0.202918]`, rig
+`[0,0,0.15]`. El controlador usa ojos de pie (1.6 m y 0.15 m adelante),
+después el clip baja la pelvis; no hay calibración de contacto de asiento.
+No resolver con una constante arbitraria de 30 cm ni editando la silla.
+
+Referencia confirmada expresamente por el usuario: JUSTO ENCIMA DEL TRIÁNGULO
+AZUL, cara superior y=0.69862 del helper; NO bajo del torso gris (y≈0.902).
+No confundir el centro articular Hips con la superficie de las nalgas.
+Corrección candidata LOCAL: medición de superficie posterior de pelvis sobre
+copia del rig en pose final, alineación del POV/rig por matrices y desbloqueo
+del IK antes de resolver la nueva posición. Prueba matemática de yaw/escala
+y asset real PASS; contacto calculado en editor masculino/femenino. Aún falta
+aceptación visual, transiciones y réplica remota; NO desplegado. Preservar
+avatares legacy y reservas. La sala se desconectó
+después de obtener estas mediciones; no es evidencia de un fallo del rig.
+
+Continuación autorizada: terminar y verificar en sala, sin pausa por mera
+finalización local. Regresiones con controlador/IK/childMatch reales: 4 PASS
+(dos superficies, sentado→sentado, levantarse, modelo tardío, llegada animada,
+orden de réplica y legacy); superficie clonada: 2 PASS; geometría/matrices: 2 PASS.
+La prueba real detectó y corrigió el acceso a cámara: pertenece a `ik.ikRoot`,
+no a `ik`. No considerar el PASS matemático anterior como prueba de integración.
+Candidato congelado Hubs: `9f7c858ac32ce8e342a88b5a2548490f9485a735`.
+Hook: 157 tests PASS, lint/HTML PASS. Gitleaks raíz/Hubs sin secretos.
+Ejecutar el único `--full` con caché privada de recibos existentes; no iniciar
+checkpoint en paralelo porque el guard de procesos invalidaría los recibos.
+
+- [x] Referencia azul y corrección local con regresiones focales.
+- [ ] Congelar candidato, ejecutar único `--full` con reutilización de recibos
+  exactos y construir una imagen oficial de ese SHA; no modificar durante gates.
+- [ ] Crear checkpoint DB+medios previo al cambio, comprobar retorno de escritores,
+  generar/diff/aplicar manifiesto con solo la imagen Hubs nueva y reiniciar Reticulum.
+- [ ] En navegador interno: avatar ya guardado, asiento editado, levantarse,
+  volver a sentarse y observador. Verificar contacto en espacio del marcador.
+- [ ] Registrar resultado real y cerrar integración del cambio, sin reabrir H5
+  ni infraestructura. Si un gate falla, reparar causa demostrada antes de otro intento.
+
 ## Estado vigente — reparación visual solicitada el 7 de septiembre
 
 La observación del propietario invalida la aceptación visual anterior, no el
@@ -9,6 +52,29 @@ guardado, la privacidad ni la infraestructura. No está terminado este bloque.
 Se conservan los cierres funcionales anteriores; no repetir H5, G2 ni recuperación.
 
 ### Punto de continuación: imagen desplegada, aceptación visual pendiente
+
+Nueva observación del propietario: piernas Y brazos incorrectos al avanzar,
+retroceder y moverse lateralmente. Se reabre la aceptación de locomoción completa,
+no solo pose sentada. Reparación local en curso: elegir dirección en el marco
+del cuerpo +Z, no del contenedor player-info; test de cuatro direcciones y cinco
+giros pasa. Esto no demuestra todavía que el retarget de todos los clips sea
+correcto. Revisar los GLB reales y brazos/piernas en las cuatro animaciones,
+ambas bases, antes de otro build/despliegue. Harness local ampliado a cuatro
+direcciones; revisión causal acotada solicitada al revisor de rig existente.
+No fusionar PR9/PR32 ni declarar cierre mientras persista este defecto.
+
+Diagnóstico nuevo demostrado: el filtrado de Hips/Spine elimina rotación de la
+que dependen las pistas locales de extremidades; desviaciones hasta42,59°.
+Helper local compensa ancestros omitidos solo para creador, sin animar torso;
+selección de dirección usa orientación corporal. Recheck independiente de ambos
+GLB y cuatro marchas: error máximo0,010062°, sentado intacto y sin doble aporte
+de ancestro retenido. Regresión incorporada con ocho casos de assets reales más
+cuatro casos de dirección/compensación; PASS. No es aceptación en sala.
+Muestra interna local actual: http://127.0.0.1:50317/ (terminal98582), controles
+Caminar/Atrás/Izquierda/Derecha. Aún sin nueva imagen ni despliegue. Falta terminar
+aceptación visual completa y validación de candidato antes de publicar. La muestra
+también deja visible intersección del polo con pantalón: no declarar todas las
+prendas visualmente aceptadas por corregir orientaciones articulares.
 
 Hubs `7556174efe55855319e379c1c6aa7c14f5629a3f` está desplegado con digest
 `8f826b834e68fd401920df759e6a51cd6e8d934356083f38ea2023eeb2880631`.

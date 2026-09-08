@@ -1,5 +1,27 @@
 # Integrated avatar creator
 
+## Candidate seat-contact correction (2026-09-08, not deployed)
+
+The owner explicitly defines seated contact at the **top of the blue pyramid**
+in Spoke's waypoint helper: local `[0, 0.69862, 0]`, not the grey torso bottom.
+Hubs and Spoke currently carry byte-identical `spawn-point.glb` helpers.
+Creator-only calibration measures the posterior pelvis surface after the final
+retargeted sit pose on a cloned skeleton. It does not substitute the Hips joint
+or adjust published scene geometry. The viewport target uses the destination
+rig produced by `childMatch`; moving only the rendered mesh is insufficient.
+
+Affected core: `character-controller-system.js` final seat placement/pending
+model load and `ik-controller.js` creator sitting-position lock. Baseline remains
+`prod-2026-03-11`; no network schema, reservation protocol, stored GLB or backend
+contract changes. Imported legacy avatars without creator calibration use their
+existing route. Rollback is the prior client image; scene and data stay unchanged.
+
+Local checks: helper geometry/contact matrix regression (origin/destination
+scale and yaw differ), real male/female editor calibration, source lint; actual
+controller/IK/childMatch integration for delayed load, animated arrival, seat-to-seat,
+stand-up and both network transform/state orders; cloned-skin surface isolation.
+Remaining acceptance: live room and observing browser. These tests are not live acceptance.
+
 ### Rig adaptation, current corrective candidate
 
 Hubs commit `8c74e8c22` adapts shared rotation clips only for creator Hips nodes
