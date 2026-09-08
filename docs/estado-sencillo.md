@@ -4,6 +4,15 @@ Ultima actualización: **8 de septiembre de 2026**
 
 ## Trabajo actual: creador de avatares
 
+Ampliación actual: la ropa y las manos ya tienen una corrección local revisada
+con Blender y el navegador interno. Se han comprobado 50 combinaciones de ropa,
+diez conjuntos representativos en varias poses y ambas bases caminando y sentadas.
+Las manos recuperan movimiento de muñecas y dedos; los bajos exteriores acompañan
+al pantalón. Falta publicar este candidato y verlo en sala desde dos conexiones.
+El respaldo anterior falló sin desplegar; los cinco servicios volvieron a estar
+listos. Está autorizado un único reintento con más diagnóstico tras congelar
+la versión nueva. La aceptación visual no está cerrada.
+
 La corrección del asiento y de locomoción `9f7c858ac` ya está desplegada tras
 validación completa, imagen oficial y respaldo. Tu marcador sigue sin moverse.
 El apoyo local coincide con la parte superior del triángulo azul, pero la prueba

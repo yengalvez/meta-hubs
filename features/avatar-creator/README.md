@@ -1,5 +1,33 @@
 # Integrated avatar creator
 
+## Clothing and hands corrective candidate (2026-09-08, local acceptance)
+
+Creator-only runtime fitting transfers lower outer-garment hem weights from the
+selected trousers and provides bounded 3 cm rest clearance. Polo, sweater and
+both jackets participate; the intentionally tucked T-shirt does not. Skin names,
+UVs, materials, credits and stored GLBs remain unchanged. Local/headless copies
+are fitted independently without contaminating cached geometry; suit trousers
+are excluded from jacket fitting even when their material is shared.
+
+The animation adapter restores authored wrist/finger tracks for creator rigs,
+propagates the forearm reference correction to the hand chain, and binds to the
+actual target node names. Legacy clips and avatars keep the existing route.
+Upstream baseline remains `prod-2026-03-11`; no backend or persisted contract
+changes. Rollback is the previous client image. Saved creator avatars receive
+the correction when loaded, without re-uploading.
+
+Evidence: 50 composed outfit source/candidate pairs preserve GLB contracts and
+idempotence; ten representative outfits cover both bodies, every top and every
+bottom in Blender front/side/back rest, raised arms, bent elbows, torso twist and
+seated poses. Original assets and editable diagnostic Blend copies are preserved
+outside the repository. Fresh candidate reimport preserves normalized weights
+and GLB metadata. 28 focused tests cover fit copies, cache isolation, hand binding
+and all six motions on both real rigs; real-asset tests use the production name
+normalizer and Three sanitization. Internal-browser idle/walk/sit and three full
+cycles on each body show no accumulated position drift. These checks do not imply
+every possible animation frame is intersection-free; in-room local/observer
+acceptance remains mandatory before closing the visual repair.
+
 ## Candidate seat-contact correction (2026-09-08, not deployed)
 
 The owner explicitly defines seated contact at the **top of the blue pyramid**

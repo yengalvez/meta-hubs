@@ -1,6 +1,36 @@
 # PLAN ACTUAL — Creador de avatares dentro de YenHubs
-Versión: v3 reparación visual. Fecha: 7 de septiembre de 2026.
+Versión: v4 reparación visual con Blender. Fecha: 8 de septiembre de 2026.
 Workspace: /Users/Shared/Gits/YenHubs-features. Rama raíz: codex/avatar-visual-repair.
+
+## Ampliación vigente: ropa durante movimientos (8 septiembre)
+
+El propietario autoriza un único reintento de checkpoint con diagnóstico ampliado
+y pide usar Blender Metaverse para corregir las intersecciones de ropa al moverse.
+Añade expresamente revisar las manos, que parecen adelantadas y poco naturales:
+comprobar posición y orientación en idle, marcha y sentado, en ambas bases;
+separar rig/retarget/clip de postura arbitraria del visor antes de corregir.
+Primero se revisan copias compuestas de los GLB actuales en Blender y en el motor;
+no modificar la sesión `avatar-workbench.blend` ni el checkout histórico sucio.
+El respaldo final queda detrás de la congelación del candidato de ropa para evitar
+otra pausa productiva redundante. No desplegar dba93430e por sí solo y dar por
+cerrada esta ampliación: ese candidato solo corrige copias de geometría.
+
+- [x] Inspeccionar pesos, geometría y ajustes runtime de ambas bases;
+  reproducir intersecciones en prendas seleccionadas sin superponer el catálogo.
+- [x] Corregir la causa localizada en copia preservando rig, materiales, UV y
+  créditos; comprobar brazos arriba, codos, giros, cadera/rodillas sentadas y marchas.
+- [ ] GLB reimportado y componente local verificados; falta sala con avatar guardado
+  y observador. Evidencia local: 50 contratos/ajustes idempotentes, diez conjuntos
+  Blender, 28 tests focales, nombres productivos y tres ciclos por base sin deriva.
+- [ ] ACTIVE: congelar/verificar/build; ropa/manos invalidan el candidato anterior;
+  un único respaldo autorizado con diagnóstico, retorno de cinco escritores,
+  despliegue protegido, contacto azul local/remoto e integración.
+
+Evidencia conservada: dba93430e y raíz 5ea6ea80 pasaron full completo; Actions
+34245178065 terminó verde, digest 93114a9abebd526fb38f925616b303dd30c8afd04ea95ea7d1b949223fb6dbc5.
+El checkpoint posterior falló en stream de medios (causa exacta aún desconocida),
+restauró los cinco escritores y liberó locks. Producción sigue en 014b76a0.
+No se ha ejecutado el reintento; monitor previo pausado para no aplicar el plan viejo.
 
 ## Asiento: medición nueva del 8 de septiembre
 

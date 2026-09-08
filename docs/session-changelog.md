@@ -1,5 +1,24 @@
 # Session Changelog
 
+## 2026-09-08 (ropa y manos, candidato local con Blender)
+
+- Ajuste localizado de bajos exteriores al pantalón elegido, conservando rig,
+  UV, materiales y originales. 50 combinaciones estructurales, diez conjuntos
+  representativos en cinco poses y tres vistas; no se sustituyen templates por
+  un roundtrip Blender. El cambio runtime cubre también avatares guardados.
+- Restauradas pistas originales de muñecas/dedos y corregida referencia de mano.
+  Revisión independiente detectó omisión por duplicados headless, clasificación
+  del pantalón de traje y nombres de dedos; los tres hallazgos se corrigieron.
+  28 pruebas focales PASS; otras 12 de assets repiten con normalizador productivo
+  real. ESLint y bundle del visor PASS. Contratos GLB fuente/candidato idénticos
+  y reimport femenino sin pesos inválidos.
+- Navegador interno: ambas bases idle/marcha/sentado, bajo del polo de perfil y
+  espalda, dedos enlazados con namespace real; tres ciclos desde reposo con cero
+  deriva de posición y error angular numérico menor de 0,024 grados.
+  La primera medición iniciada sentado se descartó como comparación de estados
+  distintos, no como deriva. Pendientes full/build, único checkpoint autorizado,
+  despliegue y aceptación local/remota del asiento azul. No cambios productivos.
+
 ## 2026-09-08 (desfase de asiento medido; referencia visual pendiente)
 
 - Aclaración posterior del usuario resuelta: **justo encima del triángulo azul**,
