@@ -1554,10 +1554,17 @@ recovery_kubectl_stream_supervised() {
         }
       elif ((current_milliseconds - guard_fresh_progress_milliseconds[index] >=
         guard_maximum_stale_seconds[index] * 1000)); then
-        {
+        # No destructive child exists yet. An early guard can age while a
+        # later guard completes its initial audit. Require another increment
+        # within the ORIGINAL startup deadline instead of treating that
+        # pre-launch observation as a running stream freshness violation.
+        if ((current_milliseconds - guard_baseline_observation_milliseconds[index] >=
+          initial_deadline_seconds * 1000)); then
           stream_outer_fail 1 "guard-stale:$index:$((current_milliseconds - guard_fresh_progress_milliseconds[index])):${guard_fresh_progress[$index]}"
           return $?
-        }
+        fi
+        guard_fresh_advanced[index]=0
+        all_guards_fresh=false
       fi
     done
     [[ "$all_guards_fresh" != true ]] || break

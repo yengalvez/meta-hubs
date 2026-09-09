@@ -1,5 +1,16 @@
 # Session Changelog
 
+## 2026-09-09 (frescura antes de crear el stream)
+
+- Foco38503 crea un checkpoint local válido, pero no alcanza la inyección:
+  guard-baseline/guard-stale:0:10087:3, sin stream ni mutación. No aceptado.
+- La preparación vuelve a exigir un incremento cuando una observación inicial
+  envejece mientras se auditan los otros guards. Mantiene el plazo original
+  desde su primera observación, sin renovarlo ni ampliar frescura productiva.
+- Foco60464:95PASS; foco93748:51PASS, incluida demora de11s en un guard inicial,
+  actualización nueva y comienzo/final real del stream. Integración de storage
+  y gates siguen pendientes; no hay respaldo ni despliegue productivos nuevos.
+
 ## 2026-09-09 (margen de arranque y reloj de pruebas)
 
 - Diagnóstico45042 identifica launch/cancellation-reserve en preparación local.

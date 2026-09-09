@@ -13184,7 +13184,7 @@ run_multi_guard_round_robin_case() (
   trap 'cleanup_stream_guard_fixture_publishers || :' EXIT INT TERM
 
   case "$case_name" in
-    round-robin-success|round-robin-startup-grace|launch-window-realign)
+    round-robin-success|round-robin-startup-grace|launch-window-realign|outer-baseline-realign)
       # Every publisher starts only after its initial baseline read. The slow
       # guard leaves a deliberately bounded gap between counters 2 and 3 while
       # both fast guards continue at 0.15/0.20 seconds. A serial refresher
@@ -13193,7 +13193,10 @@ run_multi_guard_round_robin_case() (
       # fast lower bounds current. Production remains fixed at ten seconds by
       # the timing contract; only this attested fixture uses six.
       maximum_stale_seconds=10
-      if [[ "$case_name" == round-robin-startup-grace ]]; then
+      if [[ "$case_name" == outer-baseline-realign ]]; then
+        initial_deadline_seconds=30
+        slow_interval=0.25
+      elif [[ "$case_name" == round-robin-startup-grace ]]; then
         # The guard freshness budget is deliberately shorter than the slow
         # next sweep. The pre-launch alignment may use the independent startup
         # allowance, while post-launch freshness must remain strict.
@@ -13315,6 +13318,17 @@ run_multi_guard_round_robin_case() (
           "$GUARD_OBSERVATION_DIR/$guard_name-baseline-read" \
           "$progress_value" || return 1
         function_stack=" ${FUNCNAME[*]} "
+        if [[ "$MULTI_GUARD_CASE" == outer-baseline-realign &&
+              "$guard_name" == guard-three && "$progress_value" -ge 2 &&
+              "${stream_outer_stage:-}" == guard-baseline &&
+              ! -e "$GUARD_OBSERVATION_DIR/outer-baseline-delayed" ]]; then
+          # The first guard has advanced, then ages during another audit.
+          # No child exists: a fresh increment must be required without
+          # resetting or extending the original startup deadline.
+          sleep 11
+          fixture_publish_guard_observation_once \
+            "$GUARD_OBSERVATION_DIR/outer-baseline-delayed" 1 || return 1
+        fi
         if [[ "$MULTI_GUARD_CASE" == round-robin-success &&
               "$guard_name" == guard-three &&
               "$function_stack" == *" supervised_stream_guards_are_continuously_healthy "* &&
@@ -13379,7 +13393,11 @@ run_multi_guard_round_robin_case() (
   done
 
   case "$case_name" in
-    round-robin-success|round-robin-startup-grace)
+    round-robin-success|round-robin-startup-grace|outer-baseline-realign)
+      if [[ "$case_name" == outer-baseline-realign &&
+            ! -e "$observation_dir/outer-baseline-delayed" ]]; then
+        return 1
+      fi
       if [[ "$case_name" == round-robin-success &&
             ! -e "$observation_dir/continuity-cost-before-budget" ]]; then
         return 1
@@ -13438,6 +13456,9 @@ run_multi_guard_round_robin_case() (
 )
 
 run_multi_guard_stream_regression_tests() {
+  expect_success \
+    'outer baseline requires fresh progress after a slow audit within its original startup budget' \
+    run_multi_guard_round_robin_case outer-baseline-realign
   expect_success \
     'three heterogeneous guards launch and complete only through round-robin freshness' \
     run_multi_guard_round_robin_case round-robin-success

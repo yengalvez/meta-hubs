@@ -62,6 +62,13 @@ cerrada esta ampliación: ese candidato solo corrige copias de geometría.
   PASS temporales con ese reloj no bastaban; el foco nuevo los revalida.
   Próximo: candidato limpio, tres inyecciones storage, secciones y finalize;
   aún no hay nuevo respaldo productivo ni despliegue.
+  Foco38503 sí creó el checkpoint local, pero la restauración se detuvo antes
+  del stream: guard-baseline/guard-stale:0:10087:3. El guard inicial envejecía
+  durante otras auditorías y se aplicaba prematuramente el límite de ejecución.
+  Ahora exige otro incremento dentro del plazo inicial ORIGINAL, sin reiniciar
+  su reloj; la ejecución conserva diez segundos. Foco60464:95PASS; regresión
+  93748:51PASS, incluye demora inicial11s y exige actualización nueva.
+  Congelar esta corrección y revalidar las tres inyecciones antes del gate.
   Full/build nuevos del cliente no son necesarios
   para los mismos bytes de Hubs; si cambia el código de respaldo, validar ese cambio.
 
