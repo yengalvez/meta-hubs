@@ -43,6 +43,14 @@ cerrada esta ampliación: ese candidato solo corrige copias de geometría.
   heartbeat exacto, como máximo una CAS en vuelo y versión estable después;
   conserva la comprobación del grupo de copia eliminado. Sin cambio del Lease
   productivo. Guardar candidato limpio y repetir solo secciones invalidadas.
+  La secuencia90464 terminó: static/security PASS, recovery FAIL. Tres casos de
+  storage no inyectaron el fallo porque su mutador vencía a90s y el stream
+  arrancaba después; rendezvous local corregido a300s y copia simulada acotada
+  a30s sin marcador de revocación al vencer. El límite real de cancelación sigue
+  en10s. El último escenario perdió Lease durante reposo del Mac (04:25–04:42UTC,
+  confirmado por pmset); ejecutar las pruebas con caffeinate ligado al comando.
+  Foco63586 rechazó correctamente el árbol sucio antes de probar la corrección:
+  guardar candidato limpio antes del foco y del gate; no cuenta como aceptación.
   Full/build nuevos del cliente no son necesarios
   para los mismos bytes de Hubs; si cambia el código de respaldo, validar ese cambio.
 

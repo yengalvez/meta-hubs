@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-09-09 (coordinación de pruebas de restauración)
+
+- Secuencia90464: static/security PASS sobre4e0ae68; recovery falla en tres
+  inyecciones storage porque el mutador esperaba90s y el stream empezaba después.
+  Corregido solo el fixture: rendezvous300s para cubrir preparación y guard
+  inicial120s; stream simulado durable acotado30s, sin marcador terminated al
+  vencer, de modo que no puede aprobar la revocación obligatoria antes10s.
+- Tras la comprobación309, el escenario siguiente perdió
+  Lease durante reposo local04:25–04:42UTC (pmset). No hubo operación productiva.
+  Los siguientes comandos usan caffeinate-i temporal, sin cambiar ajustes.
+- Foco63586 terminó antes de la prueba: el checkpoint del fixture exige Git
+  limpio. Congelar este candidato antes del foco corregido y de los gates.
+  Ningún plazo ni protección productivos se amplía; despliegue aún pendiente.
+
 ## 2026-09-08 (reparación autorizada del supervisor de respaldo)
 
 - El propietario pide corregir lo incorrecto y continuar hasta terminar; queda

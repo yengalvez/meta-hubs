@@ -1886,6 +1886,14 @@ run_restore_stream_fixture() {
     TERM INT
   (
     trap '' TERM INT
+    # A missing/failed fixture mutator must not leave this simulated stream
+    # running until the production one-hour timeout. Keep enough time for the
+    # ten-second revocation assertion; natural expiry is not a revocation PASS
+    # because it never writes the required terminated marker.
+    if [[ "${STUB_MODE:-}" == restore-*-durable-capability-stream ]]; then
+      sleep 30
+      exit 94
+    fi
     while :; do sleep 1; done
   ) &
   printf '%s' "$!" >"$STUB_STATE_DIR/$marker_prefix-grandchild-pid"
@@ -9457,7 +9465,10 @@ run_guarded_durable_restore_child() {
         local mutation_marker="$STUB_STATE_DIR/restore-$child-$swap_mode-mutated"
         local writer_ready_authority \
           durable_ready_authority writer_next durable_next _
-        stream_deadline=$((SECONDS + 90))
+        # Preparation precedes the child's bounded 120-second initial guard.
+        # This is only the fixture injection rendezvous, not a production
+        # freshness or cancellation budget.
+        stream_deadline=$((SECONDS + 300))
         while (( SECONDS < stream_deadline )); do
           [[ -e "$stream_marker" ]] && break
           if [[ -s "$child_finished_marker" ]]; then
@@ -9470,7 +9481,7 @@ run_guarded_durable_restore_child() {
           sleep 0.01
         done
         if [[ ! -e "$stream_marker" ]]; then
-          printf 'fixture mutator timed out after 90 seconds waiting for %s\n' \
+          printf 'fixture mutator timed out after 300 seconds waiting for %s\n' \
             "$stream_marker" >&2
           exit 4
         fi
