@@ -2154,7 +2154,7 @@ if [[ ( "${STUB_MODE:-}" == parent-death-stream ||
       "$joined" == "exec -n hcce parent-death-probe -- destructive-stream" ]]; then
   stream_marker_prefix="${STUB_MODE%-stream}"
   stream_monotonic_milliseconds() {
-    python3 -I -c 'import time; print(time.monotonic_ns() // 1_000_000)'
+    python3 -I -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) // 1_000_000)'
   }
   stream_publish_monotonic_marker() {
     local marker_path="$1" next_path="${1}.next.$$"
@@ -2174,13 +2174,18 @@ if [[ ( "${STUB_MODE:-}" == parent-death-stream ||
   printf '%s' "$$" >"$STUB_STATE_DIR/$stream_marker_prefix-stream-pid"
   printf '%s' "$stream_group_id" \
     >"$STUB_STATE_DIR/$stream_marker_prefix-stream-pgid"
+  # Capture the lower bound before installing the signal handler. A TERM
+  # during the start-marker subprocess must not produce an earlier end stamp.
+  stream_start_lower_bound="$(stream_monotonic_milliseconds)" || exit 93
   trap 'stream_publish_monotonic_marker "$STUB_STATE_DIR/$stream_marker_prefix-stream-terminated"; exit 143' TERM INT
   (
     trap '' TERM INT
     while :; do sleep 1; done
   ) &
   printf '%s' "$!" >"$STUB_STATE_DIR/$stream_marker_prefix-grandchild-pid"
-  stream_publish_monotonic_marker \
+  printf '%s\n' "$stream_start_lower_bound" \
+    >"$STUB_STATE_DIR/$stream_marker_prefix-stream-started.next.$$" || exit 93
+  mv -f -- "$STUB_STATE_DIR/$stream_marker_prefix-stream-started.next.$$" \
     "$STUB_STATE_DIR/$stream_marker_prefix-stream-started" || exit 93
   wait
   printf completed >"$STUB_STATE_DIR/$stream_marker_prefix-stream-completed"
@@ -13310,6 +13315,17 @@ run_multi_guard_round_robin_case() (
           "$GUARD_OBSERVATION_DIR/$guard_name-baseline-read" \
           "$progress_value" || return 1
         function_stack=" ${FUNCNAME[*]} "
+        if [[ "$MULTI_GUARD_CASE" == round-robin-success &&
+              "$guard_name" == guard-three &&
+              "$function_stack" == *" supervised_stream_guards_are_continuously_healthy "* &&
+              ! -e "$STUB_STATE_DIR/multi-guard-stream-started" ]]; then
+          # A real pre-launch continuity read incurs latency. Its cost must
+          # remain inside alignment, before the final reserve is accepted.
+          [[ "$function_stack" == *" refresh_supervised_stream_guards_for_launch "* ]] || return 1
+          sleep 0.2
+          fixture_publish_guard_observation_once \
+            "$GUARD_OBSERVATION_DIR/continuity-cost-before-budget" 1 || return 1
+        fi
         if [[ "$MULTI_GUARD_CASE" == round-robin-success ||
               "$MULTI_GUARD_CASE" == round-robin-startup-grace ||
               "$MULTI_GUARD_CASE" == launch-window-realign ]]; then
@@ -13364,6 +13380,10 @@ run_multi_guard_round_robin_case() (
 
   case "$case_name" in
     round-robin-success|round-robin-startup-grace)
+      if [[ "$case_name" == round-robin-success &&
+            ! -e "$observation_dir/continuity-cost-before-budget" ]]; then
+        return 1
+      fi
       if [[ "$status" == 0 &&
             -e "$STUB_STATE_DIR/multi-guard-stream-started" &&
             -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
@@ -13509,14 +13529,25 @@ run_sustained_capability_stream_case() (
         "$([[ -e "$STUB_STATE_DIR/multi-guard-stream-completed" ]] && printf yes || printf no)" >&2
       return 1
     }
-    # Compare the fixture's Python clock with itself: Darwin's production
-    # CLOCK_MONOTONIC includes suspend time, unlike Python's monotonic clock.
-    elapsed=$(( $(python3 -I -c 'import time; print(time.monotonic_ns() // 1000000)') - $(<"$directory/guard-2/frozen") ))
-    [[ "$elapsed" -lt 10000 ]] || { printf 'Frozen cancellation elapsed=%s ms\n' "$elapsed" >&2; return 1; }
+    # Both processes use the same system clock as the production supervisor.
+    # Python 3.9 on Darwin gives time.monotonic() a per-process origin.
+    elapsed=$(( $(python3 -I -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) // 1000000)') - $(<"$directory/guard-2/frozen") ))
+    [[ "$elapsed" -ge 0 && "$elapsed" -lt 10000 ]] || { printf 'Frozen cancellation elapsed=%s ms\n' "$elapsed" >&2; return 1; }
   fi
 )
 
 run_sustained_capability_stream_tests() {
+  expect_success 'fixture timestamps share a monotonic epoch across processes' \
+    python3 -I -c '
+import subprocess
+import sys
+import time
+before = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+child = int(subprocess.check_output([sys.executable, "-I", "-c",
+    "import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC))"]))
+after = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+assert before <= child <= after, (before, child, after)
+'
   expect_success 'three real capabilities sustain twenty seconds at production polling and freshness' \
     run_sustained_capability_stream_case healthy
   expect_success 'a frozen capability cancels a sustained stream inside its original deadline' \
@@ -13546,7 +13577,8 @@ import sys
 import time
 
 mode, started_path, failure_marker, progress_marker = sys.argv[1:]
-deadline = time.monotonic() + 10
+# Startup is independent of the post-launch production freshness contract.
+deadline = time.monotonic() + 60
 progress = 1
 while not os.path.exists(started_path):
     if time.monotonic() >= deadline:
@@ -13585,7 +13617,7 @@ PY
         NAMESPACE=hcce
         source "$1"
         recovery_kubectl_stream_supervised 0 30 \
-          --guard-process "$2" "$3" "$4" "$5" 3 -- \
+          --guard-process "$2" "$3" "$4" "$5" 10 -- \
           exec -n hcce parent-death-probe -- destructive-stream
         ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$guard_pid" \
         "$guard_start_identity" "$failure_marker" "$progress_marker"
@@ -13695,7 +13727,7 @@ import sys
 import time
 
 started_path, progress_marker = sys.argv[1:]
-deadline = time.monotonic() + 10
+deadline = time.monotonic() + 60
 progress = 1
 while not os.path.exists(started_path):
     if time.monotonic() >= deadline:
@@ -13773,15 +13805,6 @@ PY
         "$stream_elapsed_milliseconds" =~ ^-?[0-9]+$ ]]; then
     if ((stream_elapsed_milliseconds >= 0 &&
          stream_elapsed_milliseconds < 5000)); then
-      timing_within_deadline=true
-    elif ((stream_elapsed_milliseconds == -1 &&
-           elapsed_milliseconds < 10000)); then
-      # The fixture publishes these two millisecond readings from separate
-      # Python interpreters and has observed them one millisecond out of order
-      # under scheduling pressure. In that exact case the stream markers prove
-      # revocation inside their one-millisecond uncertainty; the wider whole-
-      # call bound detects a hung pre-launch fixture without pretending that
-      # its setup time belongs to the destructive freshness window.
       timing_within_deadline=true
     fi
   fi

@@ -21,7 +21,9 @@ while not stop.exists() and time.monotonic() < deadline:
         started_at = now
     if freeze == "yes" and started_at is not None and now - started_at > 2:
         if not (directory / "frozen").exists():
-            (directory / "frozen").write_text(str(time.monotonic_ns() // 1000000))
+            (directory / "frozen").write_text(
+                str(time.clock_gettime_ns(time.CLOCK_MONOTONIC) // 1000000)
+            )
         time.sleep(0.01)
         continue
     counter += 1

@@ -1,5 +1,20 @@
 # Session Changelog
 
+## 2026-09-09 (margen de arranque y reloj de pruebas)
+
+- Diagnóstico45042 identifica launch/cancellation-reserve en preparación local.
+  El supervisor mide el margen después de identidad y continuidad dentro de
+  la alineación, mientras el hijo sigue bloqueado; conserva límites productivos.
+- Foco11799 termina con95PASS; ShellCheck-x26861 PASS. La regresión introduce
+  coste en continuidad y exige que suceda antes de aceptar el margen.
+- Python3.9/mac usa un origen monotónico por proceso, demostrado con un hijo
+  fuera del intervalo del padre. Estampas compartidas pasan a CLOCK_MONOTONIC
+  del sistema, con canary entre procesos. Cancelación exige tiempos no negativos
+  y los mismos límites; eliminada tolerancia anterior de -1ms.
+- Fixtures de aborto separan rendezvous60s de frescura10s productiva. La captura
+  inicial precede al trap y no puede subestimar la duración. Foco previo37950
+  no se aceptó por tiempo negativo. No cambia producción ni se acepta respaldo.
+
 ## 2026-09-09 (coordinación de pruebas de restauración)
 
 - Secuencia90464: static/security PASS sobre4e0ae68; recovery falla en tres

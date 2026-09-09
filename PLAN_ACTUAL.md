@@ -51,6 +51,17 @@ cerrada esta ampliación: ese candidato solo corrige copias de geometría.
   confirmado por pmset); ejecutar las pruebas con caffeinate ligado al comando.
   Foco63586 rechazó correctamente el árbol sucio antes de probar la corrección:
   guardar candidato limpio antes del foco y del gate; no cuenta como aceptación.
+  Focos39958/45042 fallaron durante preparación; diagnóstico exacto launch/
+  cancellation-reserve. La alineación ahora incluye identidad y continuidad
+  antes de medir el margen, sin duplicarlas después salvo Lease externo.
+  Foco11799: 95 PASS y ShellCheck-x26861 PASS. Incluye demora de continuidad
+  antes del margen, tres capacidades reales y revocación acotada comprobada.
+  Las pruebas usaban time.monotonic de Python3.9/mac con origen por proceso:
+  sustituido solo para estampas compartidas por CLOCK_MONOTONIC del sistema,
+  comprobación entre procesos y rechazo de tiempos negativos. Los antiguos
+  PASS temporales con ese reloj no bastaban; el foco nuevo los revalida.
+  Próximo: candidato limpio, tres inyecciones storage, secciones y finalize;
+  aún no hay nuevo respaldo productivo ni despliegue.
   Full/build nuevos del cliente no son necesarios
   para los mismos bytes de Hubs; si cambia el código de respaldo, validar ese cambio.
 

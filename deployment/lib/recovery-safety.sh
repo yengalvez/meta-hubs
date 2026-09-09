@@ -1653,7 +1653,7 @@ recovery_kubectl_stream_supervised() {
       # alignment runs. Derive the launch budget from the capabilities that
       # still have to execute: cancellation needs its fixed reserve; an
       # unguarded Lease needs one complete bounded GET as well. The final
-      # lightweight continuity observation is local and remains inside that
+      # lightweight continuity observation must finish before measuring that
       # cancellation reserve. An exact
       # checkpoint-writer capability already validates this operation's Lease,
       # lock and identity on every progress round, so repeating a synchronous
@@ -1742,6 +1742,20 @@ recovery_kubectl_stream_supervised() {
           fi
         done
         if [[ "$all_refresh_guards_fresh" == true ]]; then
+          if [[ -z "$requested_launch_budget_milliseconds" ]]; then
+            # These observations have nonzero cost. Perform them while the
+            # child is still gated, before deciding that a simultaneous
+            # launch window exists, not after accepting a nearly spent one.
+            if ! recovery_process_identity_is_live "$stream_pid" "$stream_start_identity"; then
+              stream_record_diagnostic stream-identity
+              return 1
+            fi
+            if ! recovery_process_identity_is_live "$caller_pid" "$caller_start_identity"; then
+              stream_record_diagnostic caller-identity
+              return 1
+            fi
+            supervised_stream_guards_are_continuously_healthy || return 1
+          fi
           supervised_stream_guard_remaining_milliseconds >/dev/null || return 1
           remaining_milliseconds="$supervised_stream_guard_remaining_milliseconds_value"
           if ((remaining_milliseconds > launch_budget_required_milliseconds)); then
@@ -2063,12 +2077,14 @@ os.execvp(sys.argv[3], sys.argv[3:])
       return 1
     fi
     stream_diagnostic_stage=launch
-    if ! recovery_process_identity_is_live "$stream_pid" "$stream_start_identity"; then
+    if [[ "${#guard_pids[@]}" == 0 ]] &&
+       ! recovery_process_identity_is_live "$stream_pid" "$stream_start_identity"; then
       stream_record_diagnostic stream-identity
       supervised_stream_cleanup
       return 1
     fi
-    if ! recovery_process_identity_is_live "$caller_pid" "$caller_start_identity"; then
+    if [[ "${#guard_pids[@]}" == 0 ]] &&
+       ! recovery_process_identity_is_live "$caller_pid" "$caller_start_identity"; then
       stream_record_diagnostic caller-identity
       supervised_stream_cleanup
       return 1
@@ -2079,10 +2095,11 @@ os.execvp(sys.argv[3], sys.argv[3:])
         supervised_stream_cleanup
         return 1
       fi
-    fi
-    if ! supervised_stream_guards_are_continuously_healthy; then
-      supervised_stream_cleanup
-      return 1
+      # Only an external Lease read adds work after the alignment audit.
+      if ! supervised_stream_guards_are_continuously_healthy; then
+        supervised_stream_cleanup
+        return 1
+      fi
     fi
     if ! supervised_stream_guard_has_cancellation_reserve; then
       stream_record_diagnostic cancellation-reserve
