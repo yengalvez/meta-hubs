@@ -1,5 +1,15 @@
 # Session Changelog
 
+## 2026-09-09 (restauración de almacenamiento integrada)
+
+- Job5031 exit0 sobre5496032: inflight-pid, inflight-progress e inflight-authority
+  pasan50 comprobaciones cada uno. Se crea el checkpoint por la ruta real en
+  fixtures locales y se exige inicio del stream antes de inyectar el fallo;
+  reaping inferior a diez segundos conserva lock, fence y frontera cero.
+- Evidencia local conservada en fixtures DCM6xh, HerYIS y DiusiY. No equivale a
+  aceptación productiva: siguen pendientes secciones afectadas/finalize,
+  respaldo conjunto, despliegue y aceptación visual y remota del avatar/asiento.
+
 ## 2026-09-09 (plazo global y coste de la consulta Lease)
 
 - Revisión acotada tras2659 identifica deadline global de refresh no aplicado

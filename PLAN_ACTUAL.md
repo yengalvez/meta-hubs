@@ -76,7 +76,10 @@ cerrada esta ampliación: ese candidato solo corrige copias de geometría.
   Foco49749:97PASS y ShellCheck posterior PASS, ejecutados en serie. Incluye
   caducidad absoluta sin abrir el gate, índice del guard en el diagnóstico y
   GET lento realmente iniciado antes de congelar progreso, con revocación<5s.
-  No es aceptación integrada: faltan tres casos storage y secciones/finalize.
+  Job5031 terminó exit0: tres casos storage inflight-pid, inflight-progress e
+  inflight-authority, 50 PASS cada uno. Todos crean el checkpoint por la ruta
+  real local, inyectan tras iniciar el stream y comprueban reaping<10s con
+  lock, fence y frontera cero conservados. Faltan secciones/finalize y producción.
   Full/build nuevos del cliente no son necesarios
   para los mismos bytes de Hubs; si cambia el código de respaldo, validar ese cambio.
 
