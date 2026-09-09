@@ -69,6 +69,14 @@ cerrada esta ampliación: ese candidato solo corrige copias de geometría.
   su reloj; la ejecución conserva diez segundos. Foco60464:95PASS; regresión
   93748:51PASS, incluye demora inicial11s y exige actualización nueva.
   Congelar esta corrección y revalidar las tres inyecciones antes del gate.
+  Diagnóstico posterior2659: refresh/stream-identity antes de copiar. Revisión
+  acotada confirma un plazo global no aplicado en todas las ramas e identidad
+  duplicada; corregidos sin ampliar plazos. La consulta Lease externa y su
+  observación final ahora quedan dentro de la alineación, antes del margen.
+  Foco49749:97PASS y ShellCheck posterior PASS, ejecutados en serie. Incluye
+  caducidad absoluta sin abrir el gate, índice del guard en el diagnóstico y
+  GET lento realmente iniciado antes de congelar progreso, con revocación<5s.
+  No es aceptación integrada: faltan tres casos storage y secciones/finalize.
   Full/build nuevos del cliente no son necesarios
   para los mismos bytes de Hubs; si cambia el código de respaldo, validar ese cambio.
 

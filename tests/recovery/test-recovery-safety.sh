@@ -13184,7 +13184,7 @@ run_multi_guard_round_robin_case() (
   trap 'cleanup_stream_guard_fixture_publishers || :' EXIT INT TERM
 
   case "$case_name" in
-    round-robin-success|round-robin-startup-grace|launch-window-realign|outer-baseline-realign)
+    round-robin-success|round-robin-startup-grace|launch-window-realign|outer-baseline-realign|refresh-deadline)
       # Every publisher starts only after its initial baseline read. The slow
       # guard leaves a deliberately bounded gap between counters 2 and 3 while
       # both fast guards continue at 0.15/0.20 seconds. A serial refresher
@@ -13193,7 +13193,10 @@ run_multi_guard_round_robin_case() (
       # fast lower bounds current. Production remains fixed at ten seconds by
       # the timing contract; only this attested fixture uses six.
       maximum_stale_seconds=10
-      if [[ "$case_name" == outer-baseline-realign ]]; then
+      if [[ "$case_name" == refresh-deadline ]]; then
+        initial_deadline_seconds=4
+        slow_interval=0.25
+      elif [[ "$case_name" == outer-baseline-realign ]]; then
         initial_deadline_seconds=30
         slow_interval=0.25
       elif [[ "$case_name" == round-robin-startup-grace ]]; then
@@ -13209,7 +13212,9 @@ run_multi_guard_round_robin_case() (
         # the first guard then has too little simultaneous budget for a Lease
         # read plus cancellation. Its next healthy sweep must realign launch.
         slow_interval=8.50
-        initial_deadline_seconds=12
+        # Use the normal startup allowance for the successful realignment.
+        # A separate four-second case proves the total deadline is enforced.
+        initial_deadline_seconds=30
         maximum_stale_seconds=10
         require_lease=1
       fi
@@ -13318,6 +13323,16 @@ run_multi_guard_round_robin_case() (
           "$GUARD_OBSERVATION_DIR/$guard_name-baseline-read" \
           "$progress_value" || return 1
         function_stack=" ${FUNCNAME[*]} "
+        if [[ "$MULTI_GUARD_CASE" == refresh-deadline &&
+              "$guard_name" == guard-three &&
+              "$function_stack" == *" refresh_supervised_stream_guards_for_launch "* &&
+              ! -e "$GUARD_OBSERVATION_DIR/refresh-delayed" ]]; then
+          # All publishers remain healthy, but startup cannot accept a new
+          # window after its immutable total alignment budget has expired.
+          sleep 5
+          fixture_publish_guard_observation_once \
+            "$GUARD_OBSERVATION_DIR/refresh-delayed" 1 || return 1
+        fi
         if [[ "$MULTI_GUARD_CASE" == outer-baseline-realign &&
               "$guard_name" == guard-three && "$progress_value" -ge 2 &&
               "${stream_outer_stage:-}" == guard-baseline &&
@@ -13376,7 +13391,8 @@ run_multi_guard_round_robin_case() (
         --guard-process "$GUARD_THREE_PID" "$GUARD_THREE_IDENTITY" \
           "$GUARD_THREE_FAILURE" "$GUARD_THREE_PROGRESS" "$GUARD_MAX_STALE_SECONDS" -- \
         exec -n hcce parent-death-probe -- destructive-stream
-    ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"; then
+    ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" \
+      >"$guard_dir/supervisor.log" 2>&1; then
     status=0
   else
     status=$?
@@ -13393,6 +13409,15 @@ run_multi_guard_round_robin_case() (
   done
 
   case "$case_name" in
+    refresh-deadline)
+      if [[ "$status" != 0 &&
+            -e "$observation_dir/refresh-delayed" &&
+            ! -e "$STUB_STATE_DIR/multi-guard-stream-started" ]] &&
+         grep -q 'database_restore_stream_detail:guard-refresh-timeout' \
+           "$guard_dir/supervisor.log"; then
+        return 0
+      fi
+      ;;
     round-robin-success|round-robin-startup-grace|outer-baseline-realign)
       if [[ "$case_name" == outer-baseline-realign &&
             ! -e "$observation_dir/outer-baseline-delayed" ]]; then
@@ -13456,6 +13481,9 @@ run_multi_guard_round_robin_case() (
 )
 
 run_multi_guard_stream_regression_tests() {
+  expect_success \
+    'refresh rejects healthy progress arriving after its immutable total deadline' \
+    run_multi_guard_round_robin_case refresh-deadline
   expect_success \
     'outer baseline requires fresh progress after a slow audit within its original startup budget' \
     run_multi_guard_round_robin_case outer-baseline-realign
@@ -13581,6 +13609,7 @@ run_stream_guard_abort_tests() {
   local elapsed_path elapsed_milliseconds lease_timeout_log
   local stream_started_milliseconds stream_terminated_milliseconds
   local stream_elapsed_milliseconds timing_within_deadline
+  local slow_read_marker frozen_marker frozen_milliseconds
   for guard_mode in marker exit stale; do
     reset_stub
     failure_marker="$TMP_DIR/stream-guard-$guard_mode.failure"
@@ -13735,6 +13764,8 @@ PY
   progress_marker="$TMP_DIR/stream-guard-slow-lease.progress"
   elapsed_path="$TMP_DIR/stream-guard-slow-lease.elapsed"
   lease_timeout_log="$TMP_DIR/stream-guard-slow-lease.timeouts"
+  slow_read_marker="$TMP_DIR/stream-guard-slow-lease.read-started"
+  frozen_marker="$TMP_DIR/stream-guard-slow-lease.frozen"
   : >"$failure_marker"
   printf '1\n' >"$progress_marker"
   : >"$lease_timeout_log"
@@ -13742,15 +13773,16 @@ PY
   started_path="$STUB_STATE_DIR/guard-failure-stream-started"
   terminated_path="$STUB_STATE_DIR/guard-failure-stream-terminated"
   completed_path="$STUB_STATE_DIR/guard-failure-stream-completed"
-  python3 - "$started_path" "$progress_marker" <<'PY' &
+  python3 - "$slow_read_marker" "$progress_marker" "$frozen_marker" <<'PY' &
 import os
 import sys
 import time
 
-started_path, progress_marker = sys.argv[1:]
+slow_read_marker, progress_marker, frozen_marker = sys.argv[1:]
 deadline = time.monotonic() + 60
 progress = 1
-while not os.path.exists(started_path):
+last_progress_time = time.clock_gettime_ns(time.CLOCK_MONOTONIC) // 1000000
+while not os.path.exists(slow_read_marker):
     if time.monotonic() >= deadline:
         sys.exit(2)
     progress += 1
@@ -13758,8 +13790,14 @@ while not os.path.exists(started_path):
     with open(next_marker, "w", encoding="utf-8") as marker:
         marker.write(f"{progress}\n")
     os.chmod(next_marker, 0o600)
+    last_progress_time = time.clock_gettime_ns(time.CLOCK_MONOTONIC) // 1000000
     os.replace(next_marker, progress_marker)
     time.sleep(0.01)
+# Keep the guard healthy until the slow post-launch GET actually begins.
+# Date its loss from BEFORE its last publication, not a later observation.
+with open(frozen_marker, "w", encoding="utf-8") as marker:
+    marker.write(f"{last_progress_time}\n")
+os.chmod(frozen_marker, 0o600)
 time.sleep(30)
 PY
   # shellcheck disable=SC2031 # PID belongs to this top-level test shell.
@@ -13773,6 +13811,7 @@ PY
   expect_failure 'slow Lease checks cannot consume the guard cancellation budget' '' \
     env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
       EXPECTED_RET_PVC_UID=fixture-pvc-uid STUB_MODE=guard-failure-stream \
+      LEASE_SLOW_READ_MARKER="$slow_read_marker" \
       RECOVERY_STREAM_POLL_SECONDS=0.01 bash -c '
         set -euo pipefail
         NAMESPACE=hcce
@@ -13783,7 +13822,10 @@ PY
         recovery_require_operation_serialization_stream() {
           local timeout_seconds="${1:-5}"
           printf "%s\n" "$timeout_seconds" >>"$lease_timeout_log"
-          if [[ -e "$started_path" ]]; then sleep "$timeout_seconds"; fi
+          if [[ -e "$started_path" ]]; then
+            : >"$LEASE_SLOW_READ_MARKER"
+            sleep "$timeout_seconds"
+          fi
         }
         started_milliseconds="$(recovery_monotonic_milliseconds)"
         stream_status=0
@@ -13813,10 +13855,12 @@ PY
   elapsed_milliseconds="$(cat "$elapsed_path" 2>/dev/null || :)"
   stream_started_milliseconds="$(cat "$started_path" 2>/dev/null || :)"
   stream_terminated_milliseconds="$(cat "$terminated_path" 2>/dev/null || :)"
+  frozen_milliseconds="$(cat "$frozen_marker" 2>/dev/null || :)"
   if [[ "$stream_started_milliseconds" =~ ^[0-9]+$ &&
+        "$frozen_milliseconds" =~ ^[0-9]+$ &&
         "$stream_terminated_milliseconds" =~ ^[0-9]+$ ]]; then
     stream_elapsed_milliseconds=$((
-      stream_terminated_milliseconds - stream_started_milliseconds
+      stream_terminated_milliseconds - frozen_milliseconds
     ))
   else
     stream_elapsed_milliseconds=""
@@ -13825,21 +13869,22 @@ PY
   if [[ "$elapsed_milliseconds" =~ ^[0-9]+$ &&
         "$stream_elapsed_milliseconds" =~ ^-?[0-9]+$ ]]; then
     if ((stream_elapsed_milliseconds >= 0 &&
-         stream_elapsed_milliseconds < 5000)); then
+         stream_elapsed_milliseconds < 5000 &&
+         frozen_milliseconds >= stream_started_milliseconds)); then
       timing_within_deadline=true
     fi
   fi
   if [[ "$timing_within_deadline" == true ]] &&
      awk 'NF != 1 || $1 !~ /^[1-5]$/ || $1 > 2 { exit 1 }
           END { if (NR < 2) exit 1 }' "$lease_timeout_log" &&
-     [[ -e "$started_path" && -e "$terminated_path" &&
+     [[ -e "$slow_read_marker" && -e "$started_path" && -e "$terminated_path" &&
         ! -e "$completed_path" &&
         "$grandchild_pid" =~ ^[1-9][0-9]*$ &&
         ( -z "$grandchild_state" || "$grandchild_state" == Z* ) ]]; then
     pass 'slow Lease guard loss is revoked and reaped inside its stale deadline'
   else
     fail 'slow Lease guard loss exceeded its end-to-end stale deadline' \
-      "call-elapsed=${elapsed_milliseconds:-missing} stream-elapsed=${stream_elapsed_milliseconds:-missing} timeouts=$(tr '\n' ',' <"$lease_timeout_log") started=$([[ -e "$started_path" ]] && printf yes || printf no) terminated=$([[ -e "$terminated_path" ]] && printf yes || printf no) completed=$([[ -e "$completed_path" ]] && printf yes || printf no) grandchild=${grandchild_pid:-missing} state=${grandchild_state:-gone}"
+      "call-elapsed=${elapsed_milliseconds:-missing} revocation-elapsed=${stream_elapsed_milliseconds:-missing} frozen=${frozen_milliseconds:-missing} timeouts=$(tr '\n' ',' <"$lease_timeout_log") started=$([[ -e "$started_path" ]] && printf yes || printf no) terminated=$([[ -e "$terminated_path" ]] && printf yes || printf no) completed=$([[ -e "$completed_path" ]] && printf yes || printf no) grandchild=${grandchild_pid:-missing} state=${grandchild_state:-gone} output=${LAST_OUTPUT:-empty}"
   fi
 
   reset_stub
@@ -13982,7 +14027,8 @@ PY
         "$started_path"
   kill -TERM "$guard_pid" 2>/dev/null || :
   wait "$guard_pid" 2>/dev/null || :
-  if [[ "$LAST_OUTPUT" == *'database_restore_stream_detail:lease-window:0'* ]]; then
+  if [[ "$LAST_OUTPUT" == *'database_restore_stream_detail:lease-window:0'* ||
+        "$LAST_OUTPUT" == *'database_restore_stream_detail:guard-refresh-timeout:0:'* ]]; then
     pass 'Lease-window diagnostic identifies the first stale guard index'
   else
     fail 'Lease-window diagnostic omitted the stale guard index' \

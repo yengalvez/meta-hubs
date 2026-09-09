@@ -1,5 +1,22 @@
 # Session Changelog
 
+## 2026-09-09 (plazo global y coste de la consulta Lease)
+
+- Revisión acotada tras2659 identifica deadline global de refresh no aplicado
+  en todas las ramas y comprobación consecutiva duplicada de identidad.
+  Se exige vencimiento absoluto en cada ronda y antes de aceptar la ventana;
+  capacidades completas conservan la identidad final del validador común.
+- Un caso posterior demuestra gasto de margen después de alineación en la
+  ruta Lease externa. Ahora GET y continuidad quedan dentro de la ventana
+  candidata bloqueada y la reserva se mide después; límites sin ampliar.
+- Foco49749 termina97PASS y ShellCheck-x posterior PASS. El caso de éxito
+  usa preparación normal30s; otro caso4s prueba caducidad. El diagnóstico
+  conserva índice de guard. La consulta lenta se provoca realmente y solo
+  entonces se congela progreso: revocación medida desde antes de su última
+  publicación, no desde un instante posterior ni con tiempos negativos.
+- Pruebas y revisión estática ejecutadas en serie. No hay nuevo respaldo ni
+  despliegue productivo; falta restauración integrada y validación de secciones.
+
 ## 2026-09-09 (frescura antes de crear el stream)
 
 - Foco38503 crea un checkpoint local válido, pero no alcanza la inyección:

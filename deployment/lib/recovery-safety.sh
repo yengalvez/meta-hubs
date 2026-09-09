@@ -1182,6 +1182,9 @@ recovery_stream_guard_process_is_healthy() {
       "$authority_path" "$authority_sha256" "$authority_kind" \
       "$guard_pid" "$guard_start_identity" "$failure_marker" \
       "$ready_marker" "$progress_marker" || return 1
+    # The complete validator ends with this exact live identity check.
+    # Numeric guards below still require their independent check.
+    return 0
   fi
   recovery_process_identity_is_live "$guard_pid" "$guard_start_identity"
 }
@@ -1647,6 +1650,7 @@ recovery_kubectl_stream_supervised() {
       local requested_launch_budget_milliseconds="${1:-}"
       local all_refresh_guards_fresh
       local launch_alignment_started_milliseconds
+      local launch_alignment_deadline_milliseconds
       local launch_budget_required_milliseconds
       local -a refresh_baseline_progress=()
       local -a refresh_baseline_observation_milliseconds=()
@@ -1654,6 +1658,9 @@ recovery_kubectl_stream_supervised() {
       launch_alignment_started_milliseconds="$(
         recovery_monotonic_milliseconds
       )" || return 1
+      launch_alignment_deadline_milliseconds=$((
+        launch_alignment_started_milliseconds + refresh_deadline_seconds * 1000
+      ))
       [[ -z "$requested_launch_budget_milliseconds" ||
          "$requested_launch_budget_milliseconds" =~ ^[1-9][0-9]*$ ]] || return 2
       # The isolated child is already blocked at its private gate when this
@@ -1712,6 +1719,12 @@ recovery_kubectl_stream_supervised() {
       # freshness budget. Every guard receives a complete signed audit in the
       # final loop round, followed by one lightweight continuity observation.
       while [[ "${#guard_pids[@]}" -gt 0 ]]; do
+        current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+        if ((current_milliseconds >= launch_alignment_deadline_milliseconds)); then
+          supervised_stream_guard_remaining_milliseconds >/dev/null || return 1
+          stream_record_diagnostic "guard-refresh-timeout:${supervised_stream_guard_remaining_index}:${supervised_stream_guard_remaining_milliseconds_value}"
+          return 1
+        fi
         for index in "${!guard_pids[@]}"; do
           recovery_stream_guard_process_is_healthy \
             "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
@@ -1737,6 +1750,11 @@ recovery_kubectl_stream_supervised() {
           guard_last_observation_milliseconds[index]="$observation_milliseconds"
         done
         current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+        if ((current_milliseconds >= launch_alignment_deadline_milliseconds)); then
+          supervised_stream_guard_remaining_milliseconds >/dev/null || return 1
+          stream_record_diagnostic "guard-refresh-timeout:${supervised_stream_guard_remaining_index}:${supervised_stream_guard_remaining_milliseconds_value}"
+          return 1
+        fi
         all_refresh_guards_fresh=true
         for index in "${!guard_pids[@]}"; do
           if [[ "${refresh_advanced[$index]}" != 1 ]]; then
@@ -1764,9 +1782,34 @@ recovery_kubectl_stream_supervised() {
             supervised_stream_guards_are_continuously_healthy || return 1
           fi
           supervised_stream_guard_remaining_milliseconds >/dev/null || return 1
+          if ((current_milliseconds >= launch_alignment_deadline_milliseconds)); then
+            stream_record_diagnostic "guard-refresh-timeout:${supervised_stream_guard_remaining_index}:${supervised_stream_guard_remaining_milliseconds_value}"
+            return 1
+          fi
           remaining_milliseconds="$supervised_stream_guard_remaining_milliseconds_value"
           if ((remaining_milliseconds > launch_budget_required_milliseconds)); then
-            break
+            if [[ -z "$requested_launch_budget_milliseconds" &&
+                  "$require_lease" == 1 && -z "$lease_authority_guard_index" ]]; then
+              # The external Lease read and its following observation also
+              # consume time. Keep the child gated until their actual cost
+              # has been paid and a cancellation reserve still exists.
+              if ! supervised_stream_require_lease_within_guard_budget; then
+                stream_record_diagnostic "${supervised_stream_lease_failure_detail:-lease-budget}"
+                return 1
+              fi
+              supervised_stream_guards_are_continuously_healthy || return 1
+              supervised_stream_guard_remaining_milliseconds >/dev/null || return 1
+              if ((current_milliseconds >= launch_alignment_deadline_milliseconds)); then
+                stream_record_diagnostic "guard-refresh-timeout:${supervised_stream_guard_remaining_index}:${supervised_stream_guard_remaining_milliseconds_value}"
+                return 1
+              fi
+              remaining_milliseconds="$supervised_stream_guard_remaining_milliseconds_value"
+              if ((remaining_milliseconds > guard_cancel_reserve_milliseconds)); then
+                break
+              fi
+            else
+              break
+            fi
           fi
           # All guards advanced, but not inside one simultaneous launch
           # window. Keep observing under the independent startup allowance;
@@ -2096,13 +2139,13 @@ os.execvp(sys.argv[3], sys.argv[3:])
       supervised_stream_cleanup
       return 1
     fi
-    if [[ "$require_lease" == 1 && -z "$lease_authority_guard_index" ]]; then
+    if [[ "$require_lease" == 1 && "${#guard_pids[@]}" == 0 ]]; then
       if ! supervised_stream_require_lease_within_guard_budget; then
         stream_record_diagnostic "${supervised_stream_lease_failure_detail:-lease-budget}"
         supervised_stream_cleanup
         return 1
       fi
-      # Only an external Lease read adds work after the alignment audit.
+      # With no guards there is no alignment round to perform this read.
       if ! supervised_stream_guards_are_continuously_healthy; then
         supervised_stream_cleanup
         return 1
