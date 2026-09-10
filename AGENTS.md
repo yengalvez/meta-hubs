@@ -56,7 +56,10 @@ ownership and deployment recovery have been revalidated where relevant.
 
 1. Start from clean base branches and initialized submodules.
 2. Create short-lived `codex/<scope>` branches only in affected repositories.
-3. Create a DB and storage checkpoint before any production mutation.
+3. Classify the rollout before backup work. DB/storage, backend, credentials,
+   infrastructure, recovery and unknown changes require a joint checkpoint.
+   Only the strictly checked visual-client lane in
+   `deployment/client-visual-release.md` is exempt from a new per-release backup.
 4. Implement one coherent change set.
 5. Update the relevant feature specification and `docs/session-changelog.md`.
 6. Run the affected verification sections and finalize their exact evidence.
@@ -93,6 +96,13 @@ sum of PASS labels or receipts copied from another input closure. Do not use
 `npm audit fix --force` or broad dependency upgrades to silence findings.
 Upgrade one compatibility surface at a time and rerun only its invalidated
 sections.
+
+The documented `visual-client-v1` release is a separate, narrow acceptance
+scope: `scripts/verify-client-release.sh` requires exact client evidence and
+the guarded image-only apply boundary. It does not certify recovery or the
+whole repository. Never run the full recovery suite merely to preview a visual
+change, or treat this exception as permission for backend or data changes.
+Unknown source paths or manifest drift fail closed to the complete workflow.
 
 After a live rollout:
 

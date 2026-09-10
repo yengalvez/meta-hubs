@@ -1,5 +1,28 @@
 # Session Changelog
 
+## 2026-09-10 (flujo proporcional y fiabilidad de pruebas)
+
+- Petición del propietario: eliminar esperas desproporcionadas, revisar confianza
+  una vez y corregir problemas materiales. Trabajo aislado desde `8856868` en
+  `YenHubs-workflow`; candidato y prueba larga de `YenHubs-features` preservados.
+- Nueva vía `visual-client-v1`: lista de módulos revisada, SHA desplegado/candidato
+  exactos, cuatro secciones de evidencia y aceptación visual real. La excepción
+  al nuevo checkpoint por entrega solo cubre imagen de navegador y su anotación
+  derivada; datos/backend/infraestructura desconocida conservan circuito completo.
+- Aplicador opt-in: comparación privada contra inventario vivo/dry-run, runtime
+  previamente activo, Lease, cambio CAS de Hubs y resumen de imágenes, lectura
+  posterior y protecciones normales. Modo de comprobación sin escritura persistente.
+- Revisión independiente única detectó dos fallos del ejecutor: `errexit` quedaba
+  desactivado dentro del llamador `||`, y la limpieza confundía procesos de otros
+  checkouts. Corregidos con Bash nuevo y atribución por ruta/cwd. Regresiones
+  demuestran fallo temprano no ocultado, éxito real y aislamiento de procesos.
+  El cambio del harness invalida recibos previos; no reutilizarlos como prueba
+  del nuevo ejecutor ni lanzar la recuperación completa para certificar cliente.
+- Contraste real detectó la respuesta `List` de `kubectl get -f -` aunque solo
+  haya un recurso. El adaptador exige exactamente un elemento; no descarta extras.
+- Validación de la entrega y aceptación en sala aún en curso; este registro no
+  afirma despliegue ni cierre visual. Procedimiento: `deployment/client-visual-release.md`.
+
 ## 2026-09-10 (reanudar el cierre visual)
 
 - Petición explícita de terminar ropa/manos/asiento usando Blender CLI o MCP.

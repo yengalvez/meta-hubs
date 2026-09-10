@@ -128,7 +128,11 @@ Reglas de resolucion:
 
 1. Partir de las ramas base limpias.
 2. Crear una rama `codex/<feature>` solo en los repos afectados.
-3. Si mutara produccion, crear antes:
+3. Clasificar antes de lanzar trabajos largos. Para el cambio visual de cliente
+   estrictamente delimitado, usar [la vía visual](../deployment/client-visual-release.md):
+   prueba local primero, evidencia del cliente, comparación exacta del manifiesto
+   y reversión por digest. No exige un nuevo respaldo para cada cambio visual.
+   Servidor, datos, secretos, infraestructura o cambios desconocidos exigen antes:
 
    ```bash
    ./deployment/create-checkpoint.sh

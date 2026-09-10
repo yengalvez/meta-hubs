@@ -2,6 +2,34 @@
 Versión: v4 reparación visual con Blender. Fecha: 8 de septiembre de 2026.
 Workspace: /Users/Shared/Gits/YenHubs-features. Rama raíz: codex/avatar-visual-repair.
 
+## Prioridad del 10 de septiembre: flujo proporcional
+
+El propietario pide corregir las esperas desproporcionadas y después hacer una
+única revisión de confianza, corrigiendo sus problemas materiales. Trabajo
+aislado en `/Users/Shared/Gits/YenHubs-workflow`, rama `codex/proportional-workflow`,
+desde raíz `8856868`, Hubs `bdf79ccec`, Cloud `cc52a184`. No alterar el candidato
+de la prueba de recuperación ya activa (PID 40262) ni lanzar otro respaldo.
+
+- [x] Clasificar una entrega exclusivamente visual del cliente contra el SHA
+  realmente desplegado; cualquier ruta desconocida exige el circuito completo.
+- [ ] ACTIVE: validar cliente y límites del despliegue sin exigir pruebas de recuperación
+  no afectadas. Conservar el cierre completo para servidor/datos/infraestructura.
+- [ ] Exigir comparación exacta del cambio productivo, digest anterior y ruta
+  de reversión; sin excepción para cambios de datos, secretos o control plane.
+- [ ] Pruebas focales positivas/negativas, revisión independiente única y arreglo
+  de hallazgos materiales; documentar comandos y límites reales.
+- [ ] Retomar la entrega visual con el flujo verificado y aceptación local/remota.
+
+Esta prioridad sustituye la secuencia automática de checkpoint del texto
+histórico inferior, pero no autoriza omitir aceptación visual ni inventar un
+respaldo válido. La automatización existente solo conserva/observa la prueba.
+
+La única revisión independiente encontró y se corrigieron dos fallos materiales:
+errores tempranos ocultables por Bash y bloqueo por procesos de otro checkout.
+Regresiones focales pasan. No repetir la revisión ni recuperar recibos antiguos
+del harness modificado; revalidar las cuatro secciones del cliente. El modo
+dry-run del aplicador se contrasta con las 44 entidades productivas, sin apply.
+
 ## Cierre solicitado el 10 de septiembre
 
 El propietario pide terminar los avatares y permite Blender CLI/MCP con capturas.

@@ -1,5 +1,9 @@
 # YenHubs Deployment Guide
 
+Para reparaciones visuales estrictamente limitadas al cliente, usar
+[la entrega visual proporcional](client-visual-release.md) antes de lanzar
+pruebas de recuperación o un nuevo respaldo. El resto sigue este runbook.
+
 Hubs Community Edition 2.1.0 on DigitalOcean Kubernetes with automated SSL via cert-manager.
 
 > **Last updated**: July 2026 | **Cluster**: `hubs-ce` active on DOKS `1.34.8-do.2`, `HA=false` | **Region**: AMS3

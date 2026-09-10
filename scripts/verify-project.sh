@@ -279,6 +279,7 @@ verification_common_harness_material() {
     ensure_private_evidence_dir \
     default_verification_evidence_dir \
     known_verification_processes_are_absent \
+    verification_process_workdir \
     portable_file_mode \
     portable_file_owner \
     receipt_has_exact_keys \
@@ -286,6 +287,7 @@ verification_common_harness_material() {
     receipt_value \
     repository_path_for_label \
     run_recorded_section \
+    run_section_in_fresh_shell \
     run_section_set \
     section_receipt_path \
     section_was_recorded_as_failed \
@@ -426,18 +428,39 @@ receipt_is_current() {
   fi
 }
 
+verification_process_workdir() {
+  local pid="$1"
+  if [[ -d "/proc/$pid" ]]; then
+    readlink "/proc/$pid/cwd"
+  else
+    lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'
+  fi
+}
+
 known_verification_processes_are_absent() {
-  local matches
+  local matches pid command workdir
   matches="$(ps -axo pid=,command= | awk -v self="$$" '
     $1 != self &&
     $0 ~ /(watch-checkpoint-writers\.mjs|watch-durable-runner-quiescence\.mjs|test-recovery-safety\.sh|restore-checkpoint\.sh|create-checkpoint\.sh|watch-evidence-process\.test\.js)/ {
       print
     }
   ')"
-  [[ -z "$matches" ]] || {
-    printf 'Verification left a known project process running.\n' >&2
-    return 1
-  }
+  while read -r pid command; do
+    [[ -n "$pid" ]] || continue
+    if [[ "$command" == *"$ROOT_DIR/"* ]]; then
+      printf 'Verification left a known process in this checkout (PID %s).\n' "$pid" >&2
+      return 1
+    fi
+    workdir="$(verification_process_workdir "$pid" || true)"
+    if [[ "$workdir" == "$ROOT_DIR" || "$workdir" == "$ROOT_DIR/"* ]]; then
+      printf 'Verification left a known process in this checkout (PID %s).\n' "$pid" >&2
+      return 1
+    fi
+    if [[ -z "$workdir" ]] && kill -0 "$pid" 2>/dev/null; then
+      printf 'Cannot establish checkout ownership of verification process %s.\n' "$pid" >&2
+      return 1
+    fi
+  done <<<"$matches"
 }
 
 write_pass_receipt() {
@@ -669,6 +692,17 @@ run_section_body() {
   esac
 }
 
+run_section_in_fresh_shell() {
+  # A function invoked through `||` inherits Bash's ignored-errexit context,
+  # even into `(set -e; ...)`. A NEW Bash process is necessary: an early failed
+  # test must never be hidden by a later successful build.
+  bash --noprofile --norc -c '
+    set -euo pipefail
+    source "$1"
+    run_section_body "$2"
+  ' _ "$ROOT_DIR/scripts/verify-project.sh" "$1"
+}
+
 run_recorded_section() {
   local section="$1" input_sha receipt section_dir log_path started finished status after_sha pass_log
   input_sha="$(verification_section_input_sha256 "$section")"
@@ -686,10 +720,7 @@ run_recorded_section() {
   chmod 600 "$log_path"
   printf '\n== %s ==\n' "$section"
   set +e
-  (
-    set -euo pipefail
-    run_section_body "$section"
-  ) >"$log_path" 2>&1
+  run_section_in_fresh_shell "$section" >"$log_path" 2>&1
   status="$?"
   set -e
   cat "$log_path"
