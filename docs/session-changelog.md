@@ -27,6 +27,11 @@
   no reescrito y cierre de las quince secciones del candidato integrado. La
   antigua prueba 40262 se preserva, pero su harness y cierre de fuentes no son
   evidencia válida para este candidato nuevo ni obligan a esperar para integrarlo.
+- Integración de bases posterior: Hubs `4b11be4b` en master remoto, árbol idéntico
+  al cliente aceptado; raíz fusionada con main sin conflictos ni reescritura.
+  Finalize identifica exactamente once secciones pendientes y conserva las cuatro
+  del cliente. Se preparan como una ejecución aislada, sin repetir construcción,
+  despliegue ni pruebas visuales, y con parada al primer fallo.
 
 ## 2026-09-10 (flujo proporcional y fiabilidad de pruebas)
 

@@ -40,13 +40,23 @@ de la prueba de recuperación ya activa (PID 40262) ni lanzar otro respaldo.
   Error exacto: `HCCE_TARGET_PROFILE must be unset or exactly one audited legacy
   cold-rebind profile`. Se ha pedido autorización para repetir solo la generación
   correcta, sin apply ni backup; no afecta al despliegue privado ya verificado.
-- [ ] READY: integrar ramas publicadas y punteros, preservando los commits base
-  remotos mediante merge no reescrito. Root/Hubs divergen de main/master;
-  Cloud es descendiente. Congelar el candidato integrado y ejecutar únicamente
-  las secciones sin recibos actuales, después finalize completo. No reutilizar
-  recibos del harness anterior. La prueba antigua PID 40262 no es un requisito
-  de esta integración ni puede certificarla; conservarla como diagnóstico y no
-  modificar su checkout de features mientras siga activa.
+- [ ] ACTIVE: cierre completo de integración. Los merges no reescritos de base
+  están resueltos; Hubs `4b11be4b` ya está en master remoto y conserva exactamente
+  el árbol de la imagen aceptada (`a93ac2c18ddfd8dd49e09da938a680cf742c7c5d`).
+  Cloud `2077675` sigue en rama publicada, sin avanzar master todavía.
+  El comprobador del candidato integrado conserva advisories, Hubs/Admin,
+  browser/capacity y composición; faltan static, security, recovery, H5, HCCE,
+  bot-orchestrator, Dialog, Photomnemonic, Coturn, Spoke y Reticulum.
+  Ejecutar solo esas once secciones y finalize con la caché visual aislada.
+  Driver desacoplado: `~/.yenhubs-private/proportional-workflow-20260910/verify-integrated-candidate.sh`;
+  estado y resultado en `integration.phase`, `integration.log`, `integration.exit`
+  e `integration.finished` del mismo directorio. Para al primer fallo; sin
+  relanzamiento automático, deploy ni backup. Los cambios documentales de cierre
+  exigirán únicamente recibos actuales de sus secciones afectadas.
+  La prueba antigua PID 40262 no es un requisito de esta integración ni puede
+  certificarla; conservarla como diagnóstico y no modificar su checkout de
+  features mientras siga activa. El nuevo candidato tiene otro cierre de fuentes
+  y ejecutor: no copiar ni aceptar los recibos del antiguo para certificarlo.
 
 Esta prioridad sustituye la secuencia automática de checkpoint del texto
 histórico inferior, pero no autoriza omitir aceptación visual ni inventar un
