@@ -25,14 +25,28 @@ de la prueba de recuperación ya activa (PID 40262) ni lanzar otro respaldo.
   Dos clientes reales coinciden en contacto posterior `[0, 0.69862, 0]` en el
   segundo asiento; levantarse libera ambas reservas. Posicionamiento inicial
   del participante mediante controlador para suplir teclado sin tecla sostenida.
-- [ ] ACTIVE: corregir la cámara de primera persona de Creator: la aceptación
-  descubrió cuello/pecho interior invadiendo la vista. Es una limitación previa
-  del alineamiento Head, no regresión del ajuste de bajo de chaqueta. Mantener
-  intactos cuerpo, POV/IK, contacto del asiento, VR y geometría remota. Probar
-  primero un ajuste óptico local reversible antes de construir/desplegar.
-- [ ] Integrar ramas publicadas y punteros al terminar las verificaciones
-  pendientes; no cambiar el checkout de la prueba antigua PID 40262 mientras
-  sigue activa. A las 11:56 UTC lleva 772 comprobaciones PASS sin fallo terminal.
+- [x] Corregir y aceptar la cámara de primera persona de Creator. Hubs
+  `bb624fa50` construido en Actions `34476571404`, imagen `3991885c` aplicada
+  por la vía restringida. Reticulum reiniciado sin cambio de sus dos imágenes;
+  verificador vivo: cero fallos/cero avisos. Navegador frío versión
+  `69a4553dc3921b0e6cf9`, APP/AFRAME/escena cargados, sin errores JavaScript.
+  La vista normal despeja cuello/pecho; al mirar abajo se ve exterior de ropa.
+  Desplazamiento óptico local medido `[0,.1,-.115]`, sin modificar POV ni cuerpo.
+  Dos clientes y dos ciclos de asiento conservan contacto `[0,.69862,0]`;
+  levantarse elimina postura sentada en ambos. Participantes cerrados al acabar.
+- [ ] BLOCKED: regenerar la copia local canónica de features con el perfil
+  `cold-rebind-legacy-active-v1`. Los valores ya apuntan a `3991885c`, pero la
+  invocación local con `HCCE_TARGET_PROFILE=active` fue rechazada antes de generar.
+  Error exacto: `HCCE_TARGET_PROFILE must be unset or exactly one audited legacy
+  cold-rebind profile`. Se ha pedido autorización para repetir solo la generación
+  correcta, sin apply ni backup; no afecta al despliegue privado ya verificado.
+- [ ] READY: integrar ramas publicadas y punteros, preservando los commits base
+  remotos mediante merge no reescrito. Root/Hubs divergen de main/master;
+  Cloud es descendiente. Congelar el candidato integrado y ejecutar únicamente
+  las secciones sin recibos actuales, después finalize completo. No reutilizar
+  recibos del harness anterior. La prueba antigua PID 40262 no es un requisito
+  de esta integración ni puede certificarla; conservarla como diagnóstico y no
+  modificar su checkout de features mientras siga activa.
 
 Esta prioridad sustituye la secuencia automática de checkpoint del texto
 histórico inferior, pero no autoriza omitir aceptación visual ni inventar un
@@ -53,6 +67,13 @@ cliente; sin ella una pestaña termina la otra por diseño. No cambiar preferenc
 persistentes para esta prueba. Los ensayos de cámara y ocultación del observador
 son temporales del navegador y se eliminan recargando, nunca mediante hotpatch
 de producción. El único proceso de recuperación sigue preservado y monitorizado.
+
+Estado productivo final del bloque visual: imagen Hubs
+`ghcr.io/yengalvez/hubs@sha256:3991885c9aac6331d718578dc01e6f9d66531502642a6eb2d9ef0abb868a0b9a`.
+Reversión disponible y verificada: `52fb6c5bfff5e02bcf93ed153d185ffe772a72b99755ac4c8c7b3983142f950d`.
+No hay nuevo checkpoint conjunto ni certificación de recuperación completa.
+Las secciones inferiores conservan antecedentes: no son una orden para repetir
+despliegues, respaldos o pruebas visuales ya aceptadas en este bloque.
 
 ## Cierre solicitado el 10 de septiembre
 

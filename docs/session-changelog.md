@@ -1,5 +1,33 @@
 # Session Changelog
 
+## 2026-09-10 (cámara desplegada y aceptación visual final)
+
+- Hubs `bb624fa50b8cea2a37b1b9304f90f3211cad42da`, Actions `34476571404`
+  SUCCESS, GHCR `1232685171`, digest
+  `3991885c9aac6331d718578dc01e6f9d66531502642a6eb2d9ef0abb868a0b9a`.
+  Perfil visual con cuatro recibos actuales, pruebas de límites y Gitleaks PASS.
+- Generación privada, comprobación image-only y apply protegido terminaron bien.
+  Solo Hubs y la anotación derivada cambiaron. Reticulum reiniciado conservando
+  sus imágenes; verificador vivo final: cero fallos y cero avisos. Reversión
+  `52fb6c5b` conservada y disponible. Sin nuevo backup ni cambios de datos.
+- Sala fría `dCTfKVK/?allow_multi=1`, versión `69a4553dc3921b0e6cf9`:
+  APP/AFRAME/escena y avatar guardado cargados, ambos clientes sin errores JS.
+  Primera persona normal despejada; mirada baja muestra exterior de chaqueta.
+  Offset óptico real `[0,.1,-.115]`. No se inyectó corrección de cámara en navegador.
+- Dos ciclos de sentarse/levantarse/reaproximarse mediante UI; geometría posterior
+  local/remota coincide en `[0,.69862,0]` respecto al segundo asiento. Levantarse
+  quita el estado sentado en ambos clientes. Solo posicionamiento de participantes
+  mediante controlador; no se editó ni guardó escena. Pestañas cerradas al acabar.
+- La actualización de valores locales de features ya contiene el nuevo digest.
+  Su regeneración se detuvo por invocación errónea `HCCE_TARGET_PROFILE=active`:
+  `HCCE_TARGET_PROFILE must be unset or exactly one audited legacy cold-rebind profile`.
+  Se solicita repetir únicamente con `cold-rebind-legacy-active-v1`, sin apply.
+  La configuración privada usada en producción sí está generada y validada.
+- Cierre visual no equivale a integración de ramas principales: aún falta merge
+  no reescrito y cierre de las quince secciones del candidato integrado. La
+  antigua prueba 40262 se preserva, pero su harness y cierre de fuentes no son
+  evidencia válida para este candidato nuevo ni obligan a esperar para integrarlo.
+
 ## 2026-09-10 (flujo proporcional y fiabilidad de pruebas)
 
 - Petición del propietario: eliminar esperas desproporcionadas, revisar confianza

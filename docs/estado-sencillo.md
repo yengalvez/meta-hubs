@@ -1,8 +1,24 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **8 de septiembre de 2026**
+Ultima actualización: **10 de septiembre de 2026**
 
 ## Trabajo actual: creador de avatares
+
+Las correcciones de ropa, manos, asiento y cámara ya están desplegadas. La sala
+pasa la comprobación del servicio con cero fallos y cero avisos. Dos conexiones
+reales coinciden en el apoyo del avatar sobre el asiento, también después de
+levantarse y volver a sentarse. La vista normal ya no atraviesa cuello y pecho.
+
+Los cambios exclusivamente visuales tienen ahora una vía verificada que no
+repite las pruebas largas de recuperación ni otro respaldo completo. Los cambios
+de servidor, datos o infraestructura conservan sus requisitos de seguridad.
+
+Quedan dos cierres separados: regenerar la copia local de recuperación tras un
+error de nombre de perfil (se ha pedido permiso para repetir solo ese paso), e
+integrar las ramas publicadas con su validación completa. No se afirma que esas
+dos tareas estén terminadas ni que exista un nuevo respaldo conjunto válido.
+
+### Antecedentes del 8 de septiembre, superados por el estado anterior
 
 Ampliación actual: la ropa y las manos ya tienen una corrección local revisada
 con Blender y el navegador interno. Se han comprobado 50 combinaciones de ropa,
