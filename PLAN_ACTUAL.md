@@ -12,13 +12,27 @@ de la prueba de recuperación ya activa (PID 40262) ni lanzar otro respaldo.
 
 - [x] Clasificar una entrega exclusivamente visual del cliente contra el SHA
   realmente desplegado; cualquier ruta desconocida exige el circuito completo.
-- [ ] ACTIVE: validar cliente y límites del despliegue sin exigir pruebas de recuperación
+- [x] Validar cliente y límites del despliegue sin exigir pruebas de recuperación
   no afectadas. Conservar el cierre completo para servidor/datos/infraestructura.
-- [ ] Exigir comparación exacta del cambio productivo, digest anterior y ruta
+- [x] Exigir comparación exacta del cambio productivo, digest anterior y ruta
   de reversión; sin excepción para cambios de datos, secretos o control plane.
-- [ ] Pruebas focales positivas/negativas, revisión independiente única y arreglo
+- [x] Pruebas focales positivas/negativas, revisión independiente única y arreglo
   de hallazgos materiales; documentar comandos y límites reales.
-- [ ] Retomar la entrega visual con el flujo verificado y aceptación local/remota.
+- [x] Desplegar la entrega visual con el flujo verificado: Hubs `52fb6c5b`,
+  reinicio de Reticulum sin cambiar su imagen y verificador vivo con cero fallos
+  y cero advertencias. Configuración canónica de features actualizada en sitio.
+- [x] Sentarse/levantarse/reubicarse/volver a sentarse mediante botones reales.
+  Dos clientes reales coinciden en contacto posterior `[0, 0.69862, 0]` en el
+  segundo asiento; levantarse libera ambas reservas. Posicionamiento inicial
+  del participante mediante controlador para suplir teclado sin tecla sostenida.
+- [ ] ACTIVE: corregir la cámara de primera persona de Creator: la aceptación
+  descubrió cuello/pecho interior invadiendo la vista. Es una limitación previa
+  del alineamiento Head, no regresión del ajuste de bajo de chaqueta. Mantener
+  intactos cuerpo, POV/IK, contacto del asiento, VR y geometría remota. Probar
+  primero un ajuste óptico local reversible antes de construir/desplegar.
+- [ ] Integrar ramas publicadas y punteros al terminar las verificaciones
+  pendientes; no cambiar el checkout de la prueba antigua PID 40262 mientras
+  sigue activa. A las 11:56 UTC lleva 772 comprobaciones PASS sin fallo terminal.
 
 Esta prioridad sustituye la secuencia automática de checkpoint del texto
 histórico inferior, pero no autoriza omitir aceptación visual ni inventar un
@@ -28,7 +42,17 @@ La única revisión independiente encontró y se corrigieron dos fallos material
 errores tempranos ocultables por Bash y bloqueo por procesos de otro checkout.
 Regresiones focales pasan. No repetir la revisión ni recuperar recibos antiguos
 del harness modificado; revalidar las cuatro secciones del cliente. El modo
-dry-run del aplicador se contrasta con las 44 entidades productivas, sin apply.
+dry-run del aplicador se contrastó con las 44 entidades productivas; el apply
+guardado posterior terminó correctamente. Cloud `2077675`, raíz `6d99216`.
+Cuatro secciones del cliente y comprobación final de sus recibos pasan, aisladas
+por hash del harness para no pisar evidencia del proceso antiguo. No hay nuevo
+respaldo conjunto, ni se certifica con este circuito la recuperación completa.
+
+Las dos vistas internas requieren `?allow_multi=1`, opción ya existente del
+cliente; sin ella una pestaña termina la otra por diseño. No cambiar preferencias
+persistentes para esta prueba. Los ensayos de cámara y ocultación del observador
+son temporales del navegador y se eliminan recargando, nunca mediante hotpatch
+de producción. El único proceso de recuperación sigue preservado y monitorizado.
 
 ## Cierre solicitado el 10 de septiembre
 

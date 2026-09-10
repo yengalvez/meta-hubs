@@ -20,6 +20,12 @@ control de acceso o estado de recuperación conservan el circuito completo y el
 checkpoint conjunto DB+medios. Si no se puede demostrar el alcance, no usar la
 excepción. Cambiar la lista permitida requiere revisión de ese nuevo contrato.
 
+La calibración óptica del creador incluye una única inserción exacta en
+`camera-system.js`: posición de cámara de escritorio, después de leer POV y
+fuera de VR. El clasificador compara esa inserción contra el archivo anterior;
+no permite cualquier edición de cámara. La utilidad solo desplaza la vista de
+avatares marcados. No cambia POV, IK, cuerpo, red, asiento ni contenido guardado.
+
 ## Pruebas antes de desplegar
 
 ```bash

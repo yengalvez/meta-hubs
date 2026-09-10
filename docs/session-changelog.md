@@ -20,8 +20,19 @@
   del nuevo ejecutor ni lanzar la recuperación completa para certificar cliente.
 - Contraste real detectó la respuesta `List` de `kubectl get -f -` aunque solo
   haya un recurso. El adaptador exige exactamente un elemento; no descarta extras.
-- Validación de la entrega y aceptación en sala aún en curso; este registro no
-  afirma despliegue ni cierre visual. Procedimiento: `deployment/client-visual-release.md`.
+- Cuatro secciones del cliente y comprobación final de recibos PASS. Se desplegó
+  imagen `52fb6c5b` (Actions34260275857) por comparación exacta/CAS; Reticulum
+  reiniciado con la misma imagen. Verificador vivo: cero fallos y cero avisos.
+  Valores canónicos de features actualizados en sitio; no hay nuevo backup.
+- Dos participantes reales en `dCTfKVK/?allow_multi=1`: sentarse, liberar y
+  volver a ocupar por UI; superficie posterior local/remota `[0,.69862,0]`.
+  Preparación de posición mediante controlador, sin modificar escena guardada.
+- La aceptación descubrió una limitación previa de primera persona: cámara
+  alineada al origen Head y cuello/pecho interior visible. Se calibra únicamente
+  la vista óptica de Creator; no tocar la altura física ni usar ojos sintéticos
+  para mover el cuerpo. Prototipo temporal en observador elimina la intrusión
+  y conserva POV/rig; código y nueva aceptación final todavía en curso.
+  Procedimiento: `deployment/client-visual-release.md`.
 
 ## 2026-09-10 (reanudar el cierre visual)
 

@@ -9,10 +9,30 @@ const visualFiles = new Set([
   'src/utils/avatar-animation-retarget.js',
   'src/utils/avatar-creator-garment-fit.js',
   'src/utils/avatar-creator-garment-hems.js',
+  'src/utils/avatar-creator-viewpoint.js',
   'src/utils/mixamo-shared-animations.js'
 ]);
+const cameraPath = 'src/systems/camera-system.js';
+// Core camera code is NOT generally allowlisted. This one reviewed insertion
+// touches only the desktop viewing position; any additional edit fails closed.
+const cameraInsertions = [
+  ['import { INSPECTABLE_FLAGS } from "../bit-systems/inspect-system";',
+    '\nimport { createCreatorViewpointClassifier, creatorViewpointPosition } from "../utils/avatar-creator-viewpoint";'],
+  ['    const scale = new THREE.Vector3();',
+    '\n    const opticalPosition = new THREE.Vector3();\n    const isCreatorViewpoint = createCreatorViewpointClassifier();'],
+  ['          this.avatarPOV.object3D.matrixWorld.decompose(position, quat, scale);',
+    '\n          const avatarMesh = this.avatarRig.querySelector(".model")?.getObject3D("mesh");\n          creatorViewpointPosition(position, quat, isCreatorViewpoint(avatarMesh), opticalPosition);\n          position.copy(opticalPosition);']
+];
+export function isOnlyCreatorCameraIntegration(before, after) {
+  let expected = before;
+  for (const [anchor, addition] of cameraInsertions) {
+    if (expected.split(anchor).length !== 2 || expected.includes(addition)) return false;
+    expected = expected.replace(anchor, anchor + addition);
+  }
+  return expected === after;
+}
 export function isVisualClientPath(name) {
-  return visualFiles.has(name) || /^test\/unit\/[^\n\r]+\.(?:js|json)$/.test(name);
+  return visualFiles.has(name) || name === cameraPath || /^test\/unit\/[^\n\r]+\.(?:js|json)$/.test(name);
 }
 export function inspectClientScope(repository, from, to) {
   const git = (...args) => execFileSync('git', ['-C', repository, ...args], {
@@ -36,6 +56,10 @@ export function inspectClientScope(repository, from, to) {
     if (!/^:(?:100644|000000)$/.test(fields[0]) || fields[1] !== '100644' ||
         !['M', 'A'].includes(fields[4]) || !isVisualClientPath(name)) {
       throw new Error('full_workflow_required_for_nonvisual_change');
+    }
+    if (name === cameraPath && (fields[4] !== 'M' || !isOnlyCreatorCameraIntegration(
+      git('show', `${from}:${name}`), git('show', `${to}:${name}`)))) {
+      throw new Error('full_workflow_required_for_other_camera_change');
     }
     paths.push(name);
   }

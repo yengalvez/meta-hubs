@@ -278,3 +278,27 @@ Acceptance pending: both bodies, front/back/side, idle/walk/sit/stand; no trouse
 breakthrough, relaxed shoulders, lateral palms, pelvis on actual chair cushion.
 The local harness now reproduces wrappers and the JSON preprocessor. It does not
 replace the final real-room check. No restore or infrastructure changes.
+
+## Desktop first-person optical calibration — 2026-09-10
+
+The accepted upstream baseline remains `prod-2026-03-11`. Its headless rendering
+retains neck/chest triangles while Creator IK deliberately aligns the Head origin
+to POV; enabling synthetic eye nodes would change the established body-height
+contract. Live inspection therefore found the cut-open collar in first person,
+although third-person clothing and local/remote seat contact already matched.
+
+A Creator-only viewing offset `(0, 0.10, -0.115)` metres in camera axes is based on
+the bundled actual `Human.low-poly` eye mesh, not injected eye placeholders.
+Normalized eye geometry centers relative to Head in model axes are female
+`(-0.000315, 0.097355, 0.108457)` and male `(-0.001968, 0.104549, 0.122396)`.
+The rounded shared offset is an optical approximation; its acceptance is visual.
+Only desktop first-person rendering changes. POV/IK, standing and seated roots,
+network data, geometry, materials, saved GLBs, third person and VR stay unchanged.
+
+Core touch: one import, cached model classifier and optical position calculation
+inside `camera-system.js` desktop first-person branch. Future upstream camera
+changes may conflict there; keep this insertion or revalidate it deliberately.
+Rollback is the prior approved Hubs digest through the generated image-only path,
+with no data rollback. Tests cover marker gating, model swaps/preload, quaternion
+directions, immutable inputs and repeated-frame stability. Live acceptance must
+cover level/downward view, camera-mode round trip, seating and remote contact.
