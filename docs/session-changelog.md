@@ -1,5 +1,16 @@
 # Session Changelog
 
+## 2026-09-10 (reanudar el cierre visual)
+
+- Petición explícita de terminar ropa/manos/asiento usando Blender CLI o MCP.
+- Producción sigue014b76a0; candidato bdf79ccec/52fb no desplegado. Static y
+  security anteriores PASS. Recovery77876 quedó sin recibo tras desaparecer
+  caffeinate el9sept12:53:21; no se acepta como validación ni se atribuye por
+  ello un defecto nuevo al supervisor. Se reanuda con proceso desacoplado y
+  registro terminal, conservando las correcciones y pruebas ya aceptadas.
+- Blender MCP responde; avatar-workbench.blend está dirty y se preserva.
+  Captura actual y láminas de diez conjuntos inspeccionadas. Falta sala real.
+
 ## 2026-09-09 (restauración de almacenamiento integrada)
 
 - Job5031 exit0 sobre5496032: inflight-pid, inflight-progress e inflight-authority

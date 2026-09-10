@@ -2,6 +2,21 @@
 Versión: v4 reparación visual con Blender. Fecha: 8 de septiembre de 2026.
 Workspace: /Users/Shared/Gits/YenHubs-features. Rama raíz: codex/avatar-visual-repair.
 
+## Cierre solicitado el 10 de septiembre
+
+El propietario pide terminar los avatares y permite Blender CLI/MCP con capturas.
+El resultado sigue siendo ropa/manos y contacto del asiento correctos en sala,
+no mejorar el subsistema de recuperación. Producción comprobada el10sept sigue
+en014b76a0; candidato cliente bdf79ccec/imagen52fb listo y sin cambios nuevos.
+La secuencia77876 pasó static y security, pero no terminó recovery: el proceso
+caffeinate desapareció el9sept12:53:21 local y el log acabó con pérdida de Lease
+tras303 comprobaciones, sin recibo PASS. No hay proceso activo ni respaldo nuevo.
+Reanudar solo recovery/h5 y avisos caducados con ejecución desacoplada de la
+sesión, conservando logs y resultado terminal; no modificar el respaldo salvo
+un fallo reproducible nuevo. Después checkpoint, despliegue y aceptación visual
+local/remota. La sesión Blender avatar-workbench tiene cambios sin guardar:
+se conserva intacta; las copias y capturas anteriores siguen disponibles.
+
 ## Ampliación vigente: ropa durante movimientos (8 septiembre)
 
 El propietario autoriza un único reintento de checkpoint con diagnóstico ampliado
