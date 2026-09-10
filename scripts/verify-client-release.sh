@@ -9,6 +9,12 @@ if [[ $# != 3 || ! "$3" =~ ^(check|run)$ ]]; then
   exit 2
 fi
 node "$ROOT_DIR/scripts/client-release-scope.mjs" "$ROOT_DIR/hubs" "$1" "$2"
+# Different executor generations must not overwrite another checkout's exact
+# receipts for the same input hash. Explicit user evidence directories remain
+# supported; the default client cache is partitioned by executor semantics.
+if [[ -z "$VERIFY_EVIDENCE_DIR" ]]; then
+  VERIFY_EVIDENCE_DIR="$(default_verification_evidence_dir)/visual-client/$(verification_common_harness_material | sha256_stream)"
+fi
 ensure_private_evidence_dir "$VERIFY_EVIDENCE_DIR"
 sections=(advisories hubs browser-capacity composition)
 if [[ "$3" == run ]]; then

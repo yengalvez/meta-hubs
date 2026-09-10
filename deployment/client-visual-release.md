@@ -28,6 +28,8 @@ bash scripts/verify-client-release.sh "$DEPLOYED_HUBS_SHA" "$CANDIDATE_HUBS_SHA"
 
 Exige recibos actuales para advisories, Hubs/Admin, browser/capacity y composición;
 reutiliza solo los que coinciden en contenido, herramientas y logs privados.
+La caché visual predeterminada se separa por versión del ejecutor para no
+sobrescribir los recibos de una recuperación antigua que siga en otro checkout.
 `check` comprueba lo existente sin lanzar esas secciones. Ejecuta además Gitleaks
 del cliente y las pruebas del clasificador. El listado de pruebas de navegador
 no constituye aceptación en sala: sigue siendo obligatoria después del rollout.
