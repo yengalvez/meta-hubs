@@ -12350,12 +12350,56 @@ run_checkpoint_writer_live_pod_defaults_success() {
      ! -s "$WRITER_TEST_FINAL" ]]
 }
 
+run_checkpoint_writer_post_ready_excursion_test() {
+  local writer all_zero output event_seen
+  reset_stub
+  seed_recovery_operation_fence_binding_state dormant
+  output="$TMP_DIR/checkpoint-writer-post-ready-failure"
+  expect_failure 'post-ready writer excursion blocks checkpoint writer resume' '' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_FIXTURE" STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
+    STUB_RUNNER_NAMESPACE=present STUB_RUNNER_POD_PROFILE=fence-stable \
+    STUB_MODE=checkpoint-writer-post-ready-excursion \
+    KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer" \
+    RECOVERY_STREAM_POLL_SECONDS=0.01 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" "$output"
+  event_seen=false
+  [[ ! -e "$STUB_STATE_DIR/checkpoint-writer-post-ready-emitted" ]] || event_seen=true
+  if [[ "$event_seen" == true ]]; then
+    pass 'post-ready writer excursion was actually injected'
+  else
+    fail 'post-ready writer excursion was not reached' "$LAST_OUTPUT"
+  fi
+  all_zero=true
+  for writer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+    if [[ ! -f "$STUB_STATE_DIR/replicas-$writer" ||
+          "$(cat "$STUB_STATE_DIR/replicas-$writer")" != 0 ]]; then
+      all_zero=false
+    fi
+  done
+  if [[ "$all_zero" == true && -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
+     ! grep -Eq 'patch deployment .*"op":"replace","path":"/spec/replicas","value":1' \
+       "$KUBECTL_LOG"; then
+    pass 'failed continuous writer monitor retains lock with every writer at zero'
+  else
+    fail 'failed continuous writer monitor resumed a writer or released authority' \
+      "states=$(for writer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+        printf '%s=%s ' "$writer" "$(cat "$STUB_STATE_DIR/replicas-$writer" 2>/dev/null || printf missing)"
+      done) lock=$([[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]] && printf present || printf absent) resume_patch=$(grep -Ec 'patch deployment .*\"op\":\"replace\",\"path\":\"/spec/replicas\",\"value\":1' "$KUBECTL_LOG" || :) command_output=$LAST_OUTPUT"
+  fi
+}
+
 run_checkpoint_writer_monitor_tests() {
   local mode mutation writer runner_mode all_zero output publication_safe checkpoint_stamp
   local receipt_cleanup_count last_rollout_line lock_delete_line
   if [[ "${YENHUBS_RECOVERY_TEST_CASE:-}" == exit-143 ]]; then
     expect_success 'checkpoint writer exit 143 revokes its descendant group and records failed join' \
       run_checkpoint_writer_exit_143_descendant_test
+    return
+  fi
+  if [[ "${YENHUBS_RECOVERY_TEST_CASE:-}" == post-ready ]]; then
+    run_checkpoint_writer_post_ready_excursion_test
     return
   fi
   reset_stub
@@ -12421,36 +12465,7 @@ run_checkpoint_writer_monitor_tests() {
   expect_success 'checkpoint writer boundary rejects post-ready baseline tampering' \
     run_checkpoint_writer_baseline_tamper_test
 
-  reset_stub
-  seed_recovery_operation_fence_binding_state dormant
-  output="$TMP_DIR/checkpoint-writer-post-ready-failure"
-  expect_failure 'post-ready writer excursion blocks checkpoint writer resume' '' \
-    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
-    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
-    VALUES_FILE="$VALUES_FIXTURE" STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
-    STUB_RUNNER_NAMESPACE=present STUB_RUNNER_POD_PROFILE=fence-stable \
-    STUB_MODE=checkpoint-writer-post-ready-excursion \
-    KUBECTL_BIN="$TMP_DIR/bin/kubectl-checkpoint-writer" \
-    RECOVERY_STREAM_POLL_SECONDS=0.01 \
-    "$ROOT_DIR/deployment/create-checkpoint.sh" "$output"
-  all_zero=true
-  for writer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
-    if [[ ! -f "$STUB_STATE_DIR/replicas-$writer" ||
-          "$(cat "$STUB_STATE_DIR/replicas-$writer")" != 0 ]]; then
-      all_zero=false
-    fi
-  done
-  if [[ -e "$STUB_STATE_DIR/checkpoint-writer-post-ready-emitted" &&
-        "$all_zero" == true && -e "$STUB_STATE_DIR/restore-lock.yaml" ]] &&
-     ! grep -Eq 'patch deployment .*"op":"replace","path":"/spec/replicas","value":1' \
-       "$KUBECTL_LOG"; then
-    pass 'failed continuous writer monitor retains lock with every writer at zero'
-  else
-    fail 'failed continuous writer monitor resumed a writer or released authority' \
-      "states=$(for writer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
-        printf '%s=%s ' "$writer" "$(cat "$STUB_STATE_DIR/replicas-$writer" 2>/dev/null || printf missing)"
-      done) lock=$([[ -e "$STUB_STATE_DIR/restore-lock.yaml" ]] && printf present || printf absent) resume_patch=$(grep -Ec 'patch deployment .*\"op\":\"replace\",\"path\":\"/spec/replicas\",\"value\":1' "$KUBECTL_LOG" || :)"
-  fi
+  run_checkpoint_writer_post_ready_excursion_test
 
   reset_stub
   seed_recovery_operation_fence_binding_state dormant

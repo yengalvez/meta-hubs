@@ -1,6 +1,6 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **10 de septiembre de 2026**
+Ultima actualización: **12 de septiembre de 2026**
 
 ## Trabajo actual: creador de avatares
 
@@ -13,10 +13,11 @@ Los cambios exclusivamente visuales tienen ahora una vía verificada que no
 repite las pruebas largas de recuperación ni otro respaldo completo. Los cambios
 de servidor, datos o infraestructura conservan sus requisitos de seguridad.
 
-Quedan dos cierres separados: regenerar la copia local de recuperación tras un
-error de nombre de perfil (se ha pedido permiso para repetir solo ese paso), e
-integrar las ramas publicadas con su validación completa. No se afirma que esas
-dos tareas estén terminadas ni que exista un nuevo respaldo conjunto válido.
+La copia local de recuperación ya está regenerada y verificada. También está
+corregido el entorno de pruebas de Spoke: sus 68 pruebas pasan. Falta cerrar la
+validación completa e integrar las ramas publicadas. Antes se comprueba de forma
+aislada el caso fallido de recuperación, cuyo fallo simulado no llegó a inyectarse.
+No se repite el despliegue visual ni se afirma que exista un nuevo respaldo conjunto.
 
 ### Antecedentes del 8 de septiembre, superados por el estado anterior
 

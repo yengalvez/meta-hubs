@@ -635,6 +635,9 @@ run_coturn() {
 run_spoke() {
   (
     cd "$ROOT_DIR/hubs-cloud/community-edition/services/spoke"
+    # Hubs build settings must not enable Webpack-only globals in Spoke's AVA
+    # tests. Keep the parent environment intact for the Hubs section.
+    unset BASE_ASSETS_PATH RETICULUM_SERVER
     PUPPETEER_SKIP_DOWNLOAD=true PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
       NODE_PATH="$PWD/node_modules" \
       npx -y -p node@16.13.2 -p yarn@1.22.22 -- bash -c '

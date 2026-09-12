@@ -1,8 +1,39 @@
 # PLAN ACTUAL — Creador de avatares dentro de YenHubs
-Versión: v4 reparación visual con Blender. Fecha: 8 de septiembre de 2026.
-Workspace: /Users/Shared/Gits/YenHubs-features. Rama raíz: codex/avatar-visual-repair.
+Actualizado: 12 de septiembre de 2026.
+Workspace actual: /Users/Shared/Gits/YenHubs-workflow.
+Rama raíz: codex/proportional-workflow. La reparación visual ya está aceptada.
 
-## Prioridad del 10 de septiembre: flujo proporcional
+## Prioridad vigente del 12 de septiembre: terminar los pendientes
+
+El propietario autoriza corregir todos los pendientes del cierre. No se reabre
+el resultado visual, no se repite el despliegue y no se inicia otro respaldo.
+El alcance es la generación local, las pruebas restantes y la integración Git.
+
+- [x] Regenerar la copia local canónica de features con
+  `cold-rebind-legacy-active-v1`: generación y verificador PASS, 44 recursos.
+  Sin apply ni cambio productivo; los valores ya contenían el digest aceptado.
+- [x] Aislar `BASE_ASSETS_PATH` y `RETICULUM_SERVER` dentro de la sección Spoke;
+  AVA real pasa 68 pruebas y la regresión del ejecutor pasa 19 comprobaciones.
+- [ ] Reproducir de forma focal el fallo antiguo de recuperación antes de
+  repetir su sección: el caso post-ready no alcanzó la inyección, pero conservó
+  cinco escritores a cero y el lock. Separar diagnóstico de inyección y seguridad
+  sin rebajar ninguna condición de aceptación ni límite del monitor.
+- [ ] Congelar las correcciones y ejecutar `./scripts/verify-project.sh --full`
+  con la caché privada ya existente. Reutilizar únicamente recibos actuales,
+  refrescar avisos caducados y revalidar las secciones invalidadas por estos cambios.
+  El cierre incluye Spoke, Reticulum, recovery, H5 y el finalize de las 15 secciones.
+- [ ] Integrar Cloud en master y después la raíz en main, sin reescribir historia,
+  tras releer refs remotas y verificar punteros. Hubs master ya contiene `4b11be4b`,
+  cuyo árbol coincide con la imagen visual aceptada.
+
+La ejecución integrada antigua terminó con exit 1 en Spoke el 10 de septiembre;
+static, security, HCCE, bot-orchestrator, Dialog, Photomnemonic y Coturn pasaron.
+El diagnóstico antiguo 40262 también terminó: 898 PASS y un caso fallido, sin
+certificar el candidato integrado. Ninguna de esas ejecuciones sigue activa;
+se conservan sus logs y no se relanzan sin cambios ni se copian sus recibos.
+La automatización está pausada hasta que exista una ejecución nueva comprobada.
+
+## Antecedentes: cierre visual y flujo proporcional del 10 de septiembre
 
 El propietario pide corregir las esperas desproporcionadas y después hacer una
 única revisión de confianza, corrigiendo sus problemas materiales. Trabajo
@@ -34,20 +65,20 @@ de la prueba de recuperación ya activa (PID 40262) ni lanzar otro respaldo.
   Desplazamiento óptico local medido `[0,.1,-.115]`, sin modificar POV ni cuerpo.
   Dos clientes y dos ciclos de asiento conservan contacto `[0,.69862,0]`;
   levantarse elimina postura sentada en ambos. Participantes cerrados al acabar.
-- [ ] BLOCKED: regenerar la copia local canónica de features con el perfil
+- [x] Regenerar la copia local canónica de features con el perfil
   `cold-rebind-legacy-active-v1`. Los valores ya apuntan a `3991885c`, pero la
   invocación local con `HCCE_TARGET_PROFILE=active` fue rechazada antes de generar.
   Error exacto: `HCCE_TARGET_PROFILE must be unset or exactly one audited legacy
-  cold-rebind profile`. Se ha pedido autorización para repetir solo la generación
-  correcta, sin apply ni backup; no afecta al despliegue privado ya verificado.
-- [ ] ACTIVE: cierre completo de integración. Los merges no reescritos de base
+  cold-rebind profile`. Corregido y verificado con autorización el 12 de septiembre,
+  sin apply ni backup; no afecta al despliegue privado ya verificado.
+- [ ] Cierre completo de integración, reanudado en la prioridad vigente superior.
+  Los merges no reescritos de base
   están resueltos; Hubs `4b11be4b` ya está en master remoto y conserva exactamente
   el árbol de la imagen aceptada (`a93ac2c18ddfd8dd49e09da938a680cf742c7c5d`).
   Cloud `2077675` sigue en rama publicada, sin avanzar master todavía.
-  El comprobador del candidato integrado conserva advisories, Hubs/Admin,
-  browser/capacity y composición; faltan static, security, recovery, H5, HCCE,
-  bot-orchestrator, Dialog, Photomnemonic, Coturn, Spoke y Reticulum.
-  Ejecutar solo esas once secciones y finalize con la caché visual aislada.
+  El comprobador del candidato integrado conservó cuatro recibos y ejecutó
+  siete secciones más antes del fallo de Spoke. La reanudación actual usa
+  `--full` con esa caché aislada y decide vigencia por contenido, no por esta lista.
   Driver desacoplado: `~/.yenhubs-private/proportional-workflow-20260910/verify-integrated-candidate.sh`;
   estado y resultado en `integration.phase`, `integration.log`, `integration.exit`
   e `integration.finished` del mismo directorio. Para al primer fallo; sin

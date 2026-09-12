@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-09-12 (corregir los pendientes del cierre)
+
+- Autorización del propietario para terminar los pendientes. Trabajo en
+  `YenHubs-workflow`; checkouts históricos, Blender y sala aceptada preservados.
+- Regenerada la copia canónica ignorada de features con
+  `cold-rebind-legacy-active-v1`: 44 recursos verificados, sin apply ni respaldo.
+- Spoke AVA fallaba al heredar variables de compilación de Hubs. La sección
+  ahora las elimina solo en su subshell: 68 pruebas reales PASS y 19 regresiones
+  del ejecutor PASS, incluida la conservación del entorno del llamador.
+- El diagnóstico anterior de recuperación mezclaba ausencia de inyección con
+  una posible reanudación insegura. Se separan las aserciones y se añade un foco
+  post-ready con salida del comando fallido; las dos condiciones siguen siendo
+  obligatorias. Reproducción y cierre completo del nuevo candidato pendientes.
+
 ## 2026-09-10 (cámara desplegada y aceptación visual final)
 
 - Hubs `bb624fa50b8cea2a37b1b9304f90f3211cad42da`, Actions `34476571404`

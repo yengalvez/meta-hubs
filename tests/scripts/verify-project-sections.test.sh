@@ -64,6 +64,23 @@ else
   fail_test 'expiring advisories evidence owns the Cowlib Git security contract'
 fi
 
+if (
+  export BASE_ASSETS_PATH=https://assets.example.invalid/hubs/
+  export RETICULUM_SERVER=hubs.example.invalid
+  npx() {
+    [[ -z "${BASE_ASSETS_PATH+x}" && -z "${RETICULUM_SERVER+x}" &&
+       "$PUPPETEER_SKIP_DOWNLOAD" == true &&
+       "$NODE_PATH" == "$ROOT_DIR/hubs-cloud/community-edition/services/spoke/node_modules" ]]
+  }
+  run_spoke || exit 1
+  [[ "$BASE_ASSETS_PATH" == https://assets.example.invalid/hubs/ &&
+     "$RETICULUM_SERVER" == hubs.example.invalid ]]
+); then
+  pass_test 'Spoke isolates Hubs build variables without changing the parent environment'
+else
+  fail_test 'Spoke isolates Hubs build variables without changing the parent environment'
+fi
+
 dialog_harness_before="$(verification_section_harness_sha256 dialog)"
 recovery_harness_before="$(verification_section_harness_sha256 recovery)"
 run_recovery() {
