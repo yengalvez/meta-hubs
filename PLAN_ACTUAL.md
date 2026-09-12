@@ -14,10 +14,11 @@ El alcance es la generación local, las pruebas restantes y la integración Git.
   Sin apply ni cambio productivo; los valores ya contenían el digest aceptado.
 - [x] Aislar `BASE_ASSETS_PATH` y `RETICULUM_SERVER` dentro de la sección Spoke;
   AVA real pasa 68 pruebas y la regresión del ejecutor pasa 19 comprobaciones.
-- [ ] Reproducir de forma focal el fallo antiguo de recuperación antes de
-  repetir su sección: el caso post-ready no alcanzó la inyección, pero conservó
-  cinco escritores a cero y el lock. Separar diagnóstico de inyección y seguridad
-  sin rebajar ninguna condición de aceptación ni límite del monitor.
+- [x] Comprobar de forma focal el fallo antiguo de recuperación antes de
+  repetir su sección: 48 PASS sobre `c6dca41`, incluida inyección post-ready
+  realmente observada, cinco escritores a cero y lock conservado. El fallo
+  antiguo no se reproduce en esta ejecución aislada. El diagnóstico separa
+  inyección y seguridad; no se cambia ningún límite del monitor productivo.
 - [ ] Congelar las correcciones y ejecutar `./scripts/verify-project.sh --full`
   con la caché privada ya existente. Reutilizar únicamente recibos actuales,
   refrescar avisos caducados y revalidar las secciones invalidadas por estos cambios.
@@ -32,6 +33,12 @@ El diagnóstico antiguo 40262 también terminó: 898 PASS y un caso fallido, sin
 certificar el candidato integrado. Ninguna de esas ejecuciones sigue activa;
 se conservan sus logs y no se relanzan sin cambios ni se copian sus recibos.
 La automatización está pausada hasta que exista una ejecución nueva comprobada.
+La continuación preparada es
+`~/.yenhubs-private/proportional-workflow-20260912/verify-pending.sh`;
+`post-ready.exit` vale 0 y los archivos `final.commit`, `final.phase`,
+`final.log`, `final.exit` y `final.finished` identifican la nueva ejecución
+completa cuando arranque. Detenerse al primer fallo, conservar diagnóstico y
+corregir solo su causa antes de reintentar. Ningún recibo se copia ni se fabrica.
 
 ## Antecedentes: cierre visual y flujo proporcional del 10 de septiembre
 

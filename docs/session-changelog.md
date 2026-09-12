@@ -12,7 +12,9 @@
 - El diagnóstico anterior de recuperación mezclaba ausencia de inyección con
   una posible reanudación insegura. Se separan las aserciones y se añade un foco
   post-ready con salida del comando fallido; las dos condiciones siguen siendo
-  obligatorias. Reproducción y cierre completo del nuevo candidato pendientes.
+  obligatorias. Foco sobre `c6dca41`: 48 PASS, inyección observada y cinco escritores
+  a cero con lock conservado. El fallo antiguo no se reproduce en este entorno
+  aislado; no se altera ningún límite productivo. Cierre completo pendiente.
 
 ## 2026-09-10 (cámara desplegada y aceptación visual final)
 

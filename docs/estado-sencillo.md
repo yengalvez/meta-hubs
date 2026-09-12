@@ -15,8 +15,9 @@ de servidor, datos o infraestructura conservan sus requisitos de seguridad.
 
 La copia local de recuperación ya está regenerada y verificada. También está
 corregido el entorno de pruebas de Spoke: sus 68 pruebas pasan. Falta cerrar la
-validación completa e integrar las ramas publicadas. Antes se comprueba de forma
-aislada el caso fallido de recuperación, cuyo fallo simulado no llegó a inyectarse.
+validación completa e integrar las ramas publicadas. El caso fallido de
+recuperación pasa ahora 48 comprobaciones aisladas: el error simulado sí se
+provoca y los cinco servicios permanecen bloqueados de forma segura.
 No se repite el despliegue visual ni se afirma que exista un nuevo respaldo conjunto.
 
 ### Antecedentes del 8 de septiembre, superados por el estado anterior
