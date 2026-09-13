@@ -1,6 +1,6 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **12 de septiembre de 2026**
+Ultima actualización: **13 de septiembre de 2026**
 
 ## Trabajo actual: creador de avatares
 
@@ -13,12 +13,15 @@ Los cambios exclusivamente visuales tienen ahora una vía verificada que no
 repite las pruebas largas de recuperación ni otro respaldo completo. Los cambios
 de servidor, datos o infraestructura conservan sus requisitos de seguridad.
 
-La copia local de recuperación ya está regenerada y verificada. También está
-corregido el entorno de pruebas de Spoke: sus 68 pruebas pasan. Falta cerrar la
-validación completa e integrar las ramas publicadas. El caso fallido de
-recuperación pasa ahora 48 comprobaciones aisladas: el error simulado sí se
-provoca y los cinco servicios permanecen bloqueados de forma segura.
-No se repite el despliegue visual ni se afirma que exista un nuevo respaldo conjunto.
+Los pendientes de este encargo están cerrados. La copia local de recuperación
+está regenerada y verificada, el fallo de pruebas de Spoke está corregido y las
+15 secciones de validación han pasado. La recuperación local supera 900
+comprobaciones, más 178 del bloque adicional. Los cambios están integrados en
+las ramas principales del cliente, backend y proyecto raíz.
+
+No se ha repetido el despliegue visual ni creado un nuevo respaldo productivo.
+Las pruebas de recuperación utilizan datos simulados locales; no son una nueva
+restauración de la instancia real.
 
 ### Antecedentes del 8 de septiembre, superados por el estado anterior
 

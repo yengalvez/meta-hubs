@@ -1,7 +1,8 @@
 # PLAN ACTUAL — Creador de avatares dentro de YenHubs
-Actualizado: 12 de septiembre de 2026.
+Actualizado: 13 de septiembre de 2026.
 Workspace actual: /Users/Shared/Gits/YenHubs-workflow.
-Rama raíz: codex/proportional-workflow. La reparación visual ya está aceptada.
+Rama de trabajo: codex/proportional-workflow. Código integrado en main.
+La reparación visual y el cierre de integración están aceptados.
 
 ## Prioridad vigente del 12 de septiembre: terminar los pendientes
 
@@ -19,26 +20,31 @@ El alcance es la generación local, las pruebas restantes y la integración Git.
   realmente observada, cinco escritores a cero y lock conservado. El fallo
   antiguo no se reproduce en esta ejecución aislada. El diagnóstico separa
   inyección y seguridad; no se cambia ningún límite del monitor productivo.
-- [ ] Congelar las correcciones y ejecutar `./scripts/verify-project.sh --full`
+- [x] Congelar las correcciones y ejecutar `./scripts/verify-project.sh --full`
   con la caché privada ya existente. Reutilizar únicamente recibos actuales,
   refrescar avisos caducados y revalidar las secciones invalidadas por estos cambios.
-  El cierre incluye Spoke, Reticulum, recovery, H5 y el finalize de las 15 secciones.
-- [ ] Integrar Cloud en master y después la raíz en main, sin reescribir historia,
-  tras releer refs remotas y verificar punteros. Hubs master ya contiene `4b11be4b`,
-  cuyo árbol coincide con la imagen visual aceptada.
+  Las 15 secciones y finalize pasan sobre raíz `ab80aea`: 900 comprobaciones
+  de recuperación y 178 adicionales de H5. Exit 0 a las 03:10:33 UTC del día 13.
+- [x] Integrar Cloud en master y después la raíz en main, sin reescribir historia,
+  tras releer refs remotas y verificar punteros: Cloud `2077675`, raíz `ab80aea`.
+  Hubs master contiene `4b11be4b`, cuyo árbol coincide con la imagen visual aceptada.
+
+No quedan pendientes funcionales de este encargo. No se ha repetido el despliegue
+ni se ha creado un nuevo respaldo productivo. La verificación de recuperación
+es local con fixtures, no una certificación nueva de restauración productiva.
+Este cierre documental no cambia los ejecutables ni los submódulos validados.
 
 La ejecución integrada antigua terminó con exit 1 en Spoke el 10 de septiembre;
 static, security, HCCE, bot-orchestrator, Dialog, Photomnemonic y Coturn pasaron.
 El diagnóstico antiguo 40262 también terminó: 898 PASS y un caso fallido, sin
 certificar el candidato integrado. Ninguna de esas ejecuciones sigue activa;
 se conservan sus logs y no se relanzan sin cambios ni se copian sus recibos.
-La automatización está pausada hasta que exista una ejecución nueva comprobada.
-La continuación preparada es
+La automatización está pausada. La ejecución nueva también está terminada:
 `~/.yenhubs-private/proportional-workflow-20260912/verify-pending.sh`;
-`post-ready.exit` vale 0 y los archivos `final.commit`, `final.phase`,
-`final.log`, `final.exit` y `final.finished` identifican la nueva ejecución
-completa cuando arranque. Detenerse al primer fallo, conservar diagnóstico y
-corregir solo su causa antes de reintentar. Ningún recibo se copia ni se fabrica.
+`post-ready.exit` y `final.exit` valen 0. `final.commit`, `final.phase`,
+`final.log` y `final.finished` conservan la evidencia del candidato aceptado.
+La integración se retomó manualmente el día 13 al comprobar ese resultado.
+No relanzar la recuperación ni recuperar el backlog histórico por este cierre.
 
 ## Antecedentes: cierre visual y flujo proporcional del 10 de septiembre
 
@@ -78,11 +84,11 @@ de la prueba de recuperación ya activa (PID 40262) ni lanzar otro respaldo.
   Error exacto: `HCCE_TARGET_PROFILE must be unset or exactly one audited legacy
   cold-rebind profile`. Corregido y verificado con autorización el 12 de septiembre,
   sin apply ni backup; no afecta al despliegue privado ya verificado.
-- [ ] Cierre completo de integración, reanudado en la prioridad vigente superior.
+- [x] Cierre completo de integración, terminado en la prioridad vigente superior.
   Los merges no reescritos de base
   están resueltos; Hubs `4b11be4b` ya está en master remoto y conserva exactamente
   el árbol de la imagen aceptada (`a93ac2c18ddfd8dd49e09da938a680cf742c7c5d`).
-  Cloud `2077675` sigue en rama publicada, sin avanzar master todavía.
+  Cloud `2077675` ya está en master desde el cierre del 13 de septiembre.
   El comprobador del candidato integrado conservó cuatro recibos y ejecutó
   siete secciones más antes del fallo de Spoke. La reanudación actual usa
   `--full` con esa caché aislada y decide vigencia por contenido, no por esta lista.

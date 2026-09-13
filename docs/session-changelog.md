@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-09-13 (validación completa e integración de los pendientes)
+
+- Driver final sobre raíz `ab80aea88a73e579dc32d90b0ff9535d38e412d0`
+  terminó con exit 0 a las 03:10:33 UTC. Las 15 secciones de `--full` y
+  `--finalize` pasan con recibos actuales, sin copiar ni fabricar evidencia.
+- Spoke y Reticulum pasan; recuperación local: 900 comprobaciones; H5 adicional:
+  178. Se conservaron las secciones no invalidadas y se refrescaron las necesarias.
+- El seguimiento estaba pausado y la integración se retomó tras la consulta del
+  propietario. Cloud master avanzado sin force a `2077675d0b7df1f9eebe1fa6ee99050bad2a01c6`;
+  después raíz main a `ab80aea`. Ambos valores remotos releídos. Hubs master ya
+  contiene `4b11be4bcea0bc3071fdbc0e0bc005f2c84733f6`; los gitlinks coinciden.
+- Sin nuevo backup, apply, despliegue, cambios de datos ni intervención en Blender
+  o en la sala aceptada. Este registro solo actualiza documentación de cierre.
+
 ## 2026-09-12 (corregir los pendientes del cierre)
 
 - Autorización del propietario para terminar los pendientes. Trabajo en
