@@ -2,6 +2,15 @@
 
 ## Estado y contrato
 
+Entrega en curso (16-09-2026): Inicio `VJopCY3`, cinco bots con movilidad baja
+y chat privado. El Admin conserva exactamente los identificadores bigint de
+Reticulum, evitando que el inventario se bloquee por redondeo de JavaScript.
+La transición desde `cold-rebind-legacy-active-v1` usa el perfil independiente
+`yenhubs-cold-rebind-runner-cutover-v1`: checkpoint conjunto, preservación de
+credenciales, manifiesto exacto y comprobación bajo Lease. No equivale a una
+rotación AUD-065. La aceptación pública de bots/IA sigue pendiente hasta ver
+spawn, movimiento y una respuesta real en el navegador.
+
 La arquitectura candidata usa Node `ghost` como único runner productivo y
 autenticado. Chromium se conserva solo como diagnóstico browser legacy/local
 sin `--runner`: el renderer no recibe `BOT_RUNNER_ACCESS_KEY`, no puede autenticarse
