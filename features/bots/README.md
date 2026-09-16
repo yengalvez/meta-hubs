@@ -11,6 +11,14 @@ credenciales, manifiesto exacto y comprobación bajo Lease. No equivale a una
 rotación AUD-065. La aceptación pública de bots/IA sigue pendiente hasta ver
 spawn, movimiento y una respuesta real en el navegador.
 
+El primer arranque reveló que los elementos de `v1/PodList` del API raw no
+incluyen TypeMeta. Cloud `59422e4` y el verificador raíz restauran únicamente
+`apiVersion/kind` desde ese envelope exacto; rechazan tipos explícitos
+conflictivos y conservan todos los controles de cada Pod. Las pruebas del
+manager usan ahora la forma raw real. El arreglo no cambia claves ni contratos
+de Reticulum/ghost. No confundir el enriquecimiento de `kubectl get -o json`
+con los bytes entregados directamente por Kubernetes.
+
 La arquitectura candidata usa Node `ghost` como único runner productivo y
 autenticado. Chromium se conserva solo como diagnóstico browser legacy/local
 sin `--runner`: el renderer no recibe `BOT_RUNNER_ACCESS_KEY`, no puede autenticarse

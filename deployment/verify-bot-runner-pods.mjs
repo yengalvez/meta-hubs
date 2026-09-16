@@ -399,7 +399,12 @@ function verifyPod(pod, context) {
 function verifySnapshot(payload, context) {
   if (!object(payload) || payload.apiVersion !== "v1" || payload.kind !== "PodList" ||
       !Array.isArray(payload.items)) reject("pod_list");
-  const verified = payload.items.map(pod => verifyPod(pod, context));
+  // Typed Kubernetes LIST entries omit TypeMeta. Explicit conflicting fields
+  // remain authoritative and are rejected by the unchanged per-Pod verifier.
+  const verified = payload.items.map(pod => {
+    if (!object(pod)) reject("pod");
+    return verifyPod({ apiVersion: "v1", kind: "Pod", ...pod }, context);
+  });
   if (new Set(verified.map(item => item.name)).size !== verified.length ||
       new Set(verified.map(item => item.uid)).size !== verified.length ||
       new Set(verified.map(item => item.publicId)).size !== verified.length) reject("pod_list_duplicate");

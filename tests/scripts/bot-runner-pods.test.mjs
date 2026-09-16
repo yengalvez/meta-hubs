@@ -162,6 +162,13 @@ const base = {
 };
 
 assert.equal(verifyRunnerPodInputs(base), true);
+const rawTypedLists = structuredClone(base);
+for (const snapshot of [rawTypedLists.podsBefore, rawTypedLists.podsAfter]) {
+  delete snapshot.items[0].apiVersion;
+  delete snapshot.items[0].kind;
+}
+assert.equal(verifyRunnerPodInputs(rawTypedLists), true);
+assert.equal(Object.hasOwn(rawTypedLists.podsBefore.items[0], "kind"), false);
 const containerdImageId = structuredClone(base);
 for (const snapshot of [containerdImageId.podsBefore, containerdImageId.podsAfter]) {
   snapshot.items[0].status.containerStatuses[0].imageID = `containerd://sha256:${"a".repeat(64)}`;
@@ -174,6 +181,10 @@ function rejected(mutator) {
   assert.throws(() => verifyRunnerPodInputs(candidate));
 }
 
+rejected(value => { value.podsBefore.items[0].kind = "Secret"; });
+rejected(value => { value.podsBefore.items[0].apiVersion = "v2"; });
+rejected(value => { value.podsBefore.kind = "List"; });
+rejected(value => { value.podsBefore.apiVersion = "v2"; });
 rejected(value => { value.podsBefore.items[0].metadata.labels["yenhubs.org/room-key"] = "0".repeat(20); });
 rejected(value => { value.podsBefore.items[0].metadata.labels["yenhubs.org/runner-protocol"] = "legacy"; });
 rejected(value => { delete value.podsBefore.items[0].metadata.labels["yenhubs.org/runner-protocol"]; });
@@ -295,7 +306,7 @@ rejected(value => { value.health.runner_pods = 2; });
 rejected(value => { value.readiness.expected_hubs = [`room-${"0".repeat(24)}`]; });
 rejected(value => { value.podsAfter.items.push(structuredClone(value.podsAfter.items[0])); });
 
-process.stdout.write("Bot runner Pod verifier: 45/45 passed\n");
+process.stdout.write("Bot runner Pod verifier: checks passed, including raw typed lists\n");
 
 const runnerNamespace = deploymentConfiguration.runnerNamespace;
 const durableRoot = fs.mkdtempSync(path.join(os.tmpdir(), "yenhubs-durable-runner-watch."));
