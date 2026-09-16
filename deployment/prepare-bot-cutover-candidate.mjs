@@ -27,8 +27,12 @@ if (source === "--normalize") {
 }
 if (source === "--set") {
   const [file, name, value] = process.argv.slice(3);
-  const allowed = name === "OVERRIDE_HUBS_IMAGE"
-    ? /^ghcr\.io\/yengalvez\/hubs@sha256:[a-f0-9]{64}$/.test(value)
+  const imageRepository = {
+    OVERRIDE_HUBS_IMAGE: "hubs",
+    OVERRIDE_BOT_ORCHESTRATOR_IMAGE: "bot-orchestrator"
+  }[name];
+  const allowed = imageRepository
+    ? new RegExp(`^ghcr\\.io/yengalvez/${imageRepository}@sha256:[a-f0-9]{64}$`).test(value)
     : name === "BOT_RUNNER_ACTIVATION_PHASE" && ["bootstrap", "admission", "active"].includes(value);
   const stat = fs.lstatSync(file);
   if (!allowed || !stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600) process.exit(2);
