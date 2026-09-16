@@ -19,6 +19,13 @@ manager usan ahora la forma raw real. El arreglo no cambia claves ni contratos
 de Reticulum/ghost. No confundir el enriquecimiento de `kubectl get -o json`
 con los bytes entregados directamente por Kubernetes.
 
+El siguiente arranque detectó un DELETE de intent aceptado pero todavía visible
+en GET/LIST con `deletionTimestamp`. Cloud `1ef3add` admite ese estado solo para
+observar/limpiar intents exactos: nunca autoriza CAS/POST desde una reserva en
+terminación y nunca acepta un fence terminando. El runner confirmado continúa
+vivo, el intent sigue contando hasta ausencia comprobada, y un armed ambiguo
+sigue necesitando fence. DELETE de unarmed conserva precondiciones UID+RV.
+
 La arquitectura candidata usa Node `ghost` como único runner productivo y
 autenticado. Chromium se conserva solo como diagnóstico browser legacy/local
 sin `--runner`: el renderer no recibe `BOT_RUNNER_ACCESS_KEY`, no puede autenticarse
