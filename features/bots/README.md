@@ -26,6 +26,12 @@ terminación y nunca acepta un fence terminando. El runner confirmado continúa
 vivo, el intent sigue contando hasta ausencia comprobada, y un armed ambiguo
 sigue necesitando fence. DELETE de unarmed conserva precondiciones UID+RV.
 
+Cloud `7dbdac1` corrige el contrato entre el manager y el cliente de control:
+el runner aislado acepta el FQDN exacto del servicio en el namespace padre,
+además del nombre corto local. Servicio, puerto, namespace DNS y ausencia de
+sufijos se validan estrictamente; prueba cruzada con el Pod real generado.
+Solo cambia la imagen runner; parent y web conservan sus digests aceptados.
+
 La arquitectura candidata usa Node `ghost` como único runner productivo y
 autenticado. Chromium se conserva solo como diagnóstico browser legacy/local
 sin `--runner`: el renderer no recibe `BOT_RUNNER_ACCESS_KEY`, no puede autenticarse

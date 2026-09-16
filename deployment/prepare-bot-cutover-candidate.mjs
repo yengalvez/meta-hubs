@@ -29,7 +29,8 @@ if (source === "--set") {
   const [file, name, value] = process.argv.slice(3);
   const imageRepository = {
     OVERRIDE_HUBS_IMAGE: "hubs",
-    OVERRIDE_BOT_ORCHESTRATOR_IMAGE: "bot-orchestrator"
+    OVERRIDE_BOT_ORCHESTRATOR_IMAGE: "bot-orchestrator",
+    OVERRIDE_BOT_RUNNER_IMAGE: "bot-runner"
   }[name];
   const allowed = imageRepository
     ? new RegExp(`^ghcr\\.io/yengalvez/${imageRepository}@sha256:[a-f0-9]{64}$`).test(value)
