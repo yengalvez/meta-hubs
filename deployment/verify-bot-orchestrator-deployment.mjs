@@ -281,6 +281,14 @@ function verifyServiceAccountMount(mount, volumeName, code) {
 }
 
 function verifyContainer(container, configuration, code, serviceAccountVolumeName = null) {
+  const expectedEnv = expectedEnvironment(configuration);
+  // Kubernetes omits value:"" in serialized EnvVars. Only reconstruct that
+  // documented zero value for an otherwise exact name-only literal entry.
+  const actualEnv = Array.isArray(container?.env) ? container.env.map(entry => {
+    const expected = expectedEnv.find(item => item.name === entry?.name);
+    return expected?.value === "" && exactKeys(entry, ["name"])
+      ? { ...entry, value: "" } : entry;
+  }) : container?.env;
   allowedKeys(
     container,
     [
@@ -301,7 +309,7 @@ function verifyContainer(container, configuration, code, serviceAccountVolumeNam
     !Array.isArray(container.ports) || container.ports.length !== 1 ||
     !Array.isArray(container.volumeMounts) ||
     container.volumeMounts.length !== (serviceAccountVolumeName === null ? 1 : 2) ||
-    !exactJson(container.env, expectedEnvironment(configuration))
+    !exactJson(actualEnv, expectedEnv)
   ) reject(code);
   optionalDefault(container, "terminationMessagePath", "/dev/termination-log", code);
   optionalDefault(container, "terminationMessagePolicy", "File", code);
@@ -367,11 +375,14 @@ function extractDeployment(payload, namespace) {
       (payload.apiVersion === "v1" && payload.kind === "List")) &&
     Array.isArray(payload.items)
   ) {
-    const matches = payload.items.filter(item =>
-      item?.apiVersion === "apps/v1" && item?.kind === "Deployment" &&
+    const items = payload.apiVersion === "apps/v1" && payload.kind === "DeploymentList"
+      ? payload.items.map(item => object(item) ? { apiVersion: "apps/v1", kind: "Deployment", ...item } : item)
+      : payload.items;
+    const matches = items.filter(item =>
       item?.metadata?.namespace === namespace && item?.metadata?.name === "bot-orchestrator"
     );
-    if (matches.length === 1) return matches[0];
+    if (matches.length === 1 && matches[0].apiVersion === "apps/v1" &&
+        matches[0].kind === "Deployment") return matches[0];
   }
   reject("deployment_selection");
 }
@@ -391,7 +402,8 @@ export function verifyBotOrchestratorDeployment(payload, configuration) {
     annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] !== "true" ||
     annotations["yenhubs.org/runner-activation-phase"] !== configuration.activationPhase ||
     annotations["yenhubs.org/bot-runner-recovery-phase"] !== configuration.recoveryPhase ||
-    annotations["yenhubs.org/bot-runner-recovery-epoch"] !== configuration.recoveryEpoch
+    annotations["yenhubs.org/bot-runner-recovery-epoch"] !== configuration.recoveryEpoch ||
+    annotations["yenhubs.org/runner-fence-protocol"] !== "intent-fence-v1"
   ) {
     reject("deployment_metadata");
   }
@@ -400,6 +412,7 @@ export function verifyBotOrchestratorDeployment(payload, configuration) {
     "yenhubs.org/runner-activation-phase",
     "yenhubs.org/bot-runner-recovery-phase",
     "yenhubs.org/bot-runner-recovery-epoch",
+    "yenhubs.org/runner-fence-protocol",
     "deployment.kubernetes.io/revision",
     "kubectl.kubernetes.io/last-applied-configuration"
   ]);
@@ -446,18 +459,21 @@ export function verifyBotOrchestratorDeployment(payload, configuration) {
   const templateAnnotations = spec.template.metadata.annotations;
   const checksumAnnotation = "yenhubs.org/bot-orchestrator-access-key-checksum";
   const recoveryEpochAnnotation = "yenhubs.org/bot-runner-recovery-epoch";
+  const fenceProtocolAnnotation = "yenhubs.org/runner-fence-protocol";
   const restartedAtAnnotation = "kubectl.kubernetes.io/restartedAt";
   if (
     !exactJson(spec.template.metadata.labels, { app: "bot-orchestrator" }) ||
     !object(templateAnnotations) ||
     Object.keys(templateAnnotations).some(name =>
-      name !== checksumAnnotation && name !== recoveryEpochAnnotation && name !== restartedAtAnnotation
+      name !== checksumAnnotation && name !== recoveryEpochAnnotation &&
+      name !== fenceProtocolAnnotation && name !== restartedAtAnnotation
     ) ||
     templateAnnotations[checksumAnnotation] !== crypto
       .createHash("sha256")
       .update(configuration.accessKey)
       .digest("hex") ||
-    templateAnnotations[recoveryEpochAnnotation] !== configuration.recoveryEpoch
+    templateAnnotations[recoveryEpochAnnotation] !== configuration.recoveryEpoch ||
+    templateAnnotations[fenceProtocolAnnotation] !== "intent-fence-v1"
   ) reject("pod_template");
   if (Object.hasOwn(templateAnnotations, restartedAtAnnotation)) {
     const restartedAt = templateAnnotations[restartedAtAnnotation];

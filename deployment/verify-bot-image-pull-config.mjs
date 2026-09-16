@@ -799,8 +799,10 @@ export function verifyBotDeploymentChecksums({
   if (!exactAnnotationKeysWithOptionalRestart(retAnnotations, retExpectedKeys) ||
       !exactAnnotationKeysWithOptionalRestart(parentAnnotations, [
         "yenhubs.org/bot-orchestrator-access-key-checksum",
-        "yenhubs.org/bot-runner-recovery-epoch"
+        "yenhubs.org/bot-runner-recovery-epoch",
+        "yenhubs.org/runner-fence-protocol"
       ]) ||
+      parentAnnotations["yenhubs.org/runner-fence-protocol"] !== "intent-fence-v1" ||
       retAnnotations["yenhubs.org/bot-access-key-checksum"] !== checksum(botKey) ||
       retAnnotations["yenhubs.org/bot-runner-access-key-checksum"] !== checksum(runnerKey) ||
       retAnnotations["yenhubs.org/bot-orchestrator-access-key-checksum"] !== checksum(orchestratorKey) ||

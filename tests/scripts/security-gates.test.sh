@@ -130,7 +130,7 @@ else
   fail_test "profile-specific bot health contract"
 fi
 
-sitting_capabilities_good='{"waypoint_reservation":{"protocol":2,"snapshot_state_version":"strictly_greater_than_events","state_version":"monotonic_safe_integer"}}'
+sitting_capabilities_good='{"bot_config_approval":{"protocol":1,"legacy_default":"quarantined","runtime_match":"exact_jsonb"},"waypoint_reservation":{"protocol":2,"snapshot_state_version":"strictly_greater_than_events","state_version":"monotonic_safe_integer"}}'
 sitting_capabilities_extra='{"unexpected":true,"waypoint_reservation":{"protocol":2,"snapshot_state_version":"strictly_greater_than_events","state_version":"monotonic_safe_integer"}}'
 if reactivation_legacy_reticulum_health_is_acceptable ok &&
   ! reactivation_legacy_reticulum_health_is_acceptable '' &&
@@ -260,7 +260,7 @@ deployments_good="$(jq -cn \
     item("pgbouncer";[{name:"pgbouncer",image:image("pgbouncer")}]),
     item("pgbouncer-t";[{name:"pgbouncer-t",image:image("pgbouncer")}]),
     item("photomnemonic";[{name:"photomnemonic",image:image("photomnemonic")}]),
-    item("pgsql";[{name:"pgsql",image:image("postgres")}]),
+    item("pgsql";[{name:"postgresql",image:image("postgres")}]),
     item("reticulum";[{name:"postgrest",image:image("postgrest")},{name:"reticulum",image:$reticulum}]),
     item("spoke";[{name:"spoke",image:image("spoke")}])
   ]}
@@ -886,6 +886,33 @@ if ! grep -Fq '"create serviceaccounts/token"' "$live_gate_path" ||
   fail_test "live RBAC gate must deny escalation and mutation for both identities in both namespaces"
 fi
 pass_test "live RBAC callsite covers mutation, escalation, impersonation and both namespace directions"
+
+if (
+  # Source only the pure CLI adapter; never execute the live script in this test.
+  # shellcheck disable=SC1090
+  source <(sed -n '/^bot_auth_can_i_matches()/,/^}/p' "$live_gate_path")
+  # Called indirectly by the sourced adapter.
+  # shellcheck disable=SC2329
+  recovery_kubectl() {
+    case "$*" in
+      'auth can-i get pods -n hcce-bot-runners --as=system:serviceaccount:hcce:bot-orchestrator')
+        printf 'yes\n'; return 0 ;;
+      'auth can-i get pods --subresource=log -n hcce-bot-runners --as=system:serviceaccount:hcce:bot-orchestrator' | \
+      'auth can-i create pods --subresource=exec -n hcce-bot-runners --as=system:serviceaccount:hcce:bot-orchestrator' | \
+      'auth can-i create serviceaccounts --subresource=token -n hcce-bot-runners --as=system:serviceaccount:hcce:bot-orchestrator')
+        printf 'no\n'; return 1 ;;
+      *) return 17 ;;
+    esac
+  }
+  bot_auth_can_i_matches hcce bot-orchestrator hcce-bot-runners get pods yes &&
+    bot_auth_can_i_matches hcce bot-orchestrator hcce-bot-runners get pods/log no &&
+    bot_auth_can_i_matches hcce bot-orchestrator hcce-bot-runners create pods/exec no &&
+    bot_auth_can_i_matches hcce bot-orchestrator hcce-bot-runners create serviceaccounts/token no
+); then
+  pass_test "live RBAC probes use real subresources, never Pods named log or exec"
+else
+  fail_test "live RBAC subresource CLI contract"
+fi
 
 preflight_bin="$temp_root/preflight-bin"
 mkdir -p "$preflight_bin"

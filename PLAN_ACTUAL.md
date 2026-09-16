@@ -1,10 +1,360 @@
-# PLAN ACTUAL — Creador de avatares dentro de YenHubs
-Actualizado: 13 de septiembre de 2026.
+# PLAN ACTUAL — Bots, IA y configurador públicos
+Actualizado: 16 de septiembre de 2026. Plan v6, actualización productiva autorizada.
 Workspace actual: /Users/Shared/Gits/YenHubs-workflow.
-Rama de trabajo: codex/proportional-workflow. Código integrado en main.
-La reparación visual y el cierre de integración están aceptados.
+Rama de entrega: codex/bots-ai-cutover, desde el cierre aceptado `c7d4820`.
+Respaldo desde checkout limpio `/Users/Shared/Gits/YenHubs-demo-release`.
 
-## Prioridad vigente del 12 de septiembre: terminar los pendientes
+## Prioridad actual y autorización v6
+
+El propietario autoriza ahora ejecutar toda la actualización necesaria, la copia
+previa y la parada temporal para publicar cuanto antes bots, IA y el configurador
+de avatares existente. Pide pruebas básicas suficientes y minimizar esperas de
+GitHub, sin auditorías generales ni repetir evidencia válida. Esta autorización
+resuelve el bloqueo de v5; sus restricciones históricas de no desplegar ya no
+son instrucciones vigentes para el sistema de bots.
+
+Resultado: cinco bots de Inicio (`VJopCY3`) visibles y con movimiento suave,
+respuesta privada real de IA, configurador público que abre, modifica y guarda
+un avatar de prueba y lo muestra en sala, controles esenciales sin regresión.
+No contratar recursos adicionales ni activar otras salas. Los cambios internos
+indispensables del despliegue deben permanecer dentro del clúster existente.
+Conservar la versión pública del configurador salvo defecto demostrado; no
+arrastrar ropa/tutorial local sin validar. No actualizar upstream ni rebajar
+autenticación, aprobaciones o protección de secretos.
+
+## Cierre funcional vigente — 16/09, 14:45 Madrid
+
+Publicado y aceptado en navegador público frío: cinco bots con movimiento,
+dos respuestas privadas reales de IA, configurador que guarda/selecciona y
+viste el avatar creado, cámara, marcha y asiento. Verificador live sesión 66453
+terminado exit 0: **0 fallos y 0 avisos**. Fuentes Hubs `b223694c`, Cloud
+`4a0885a` y sus gitlinks ya integrados en las ramas base. No queda despliegue
+ni construcción en cola para esta entrega.
+
+Se incumplió la hora de la demo de las 12:00. Las dos consultas IA iniciales
+agotaron el límite proveedor de 4 s, mientras dos posteriores respondieron;
+es un límite explícito, no una garantía de disponibilidad perfecta. Voz real
+entre equipos y entrada del cliente siguen sin comprobar. Ropa/tutorial local
+no se han publicado por arrastre. El historial siguiente no reabre esos pasos.
+
+- [x] Confirmar autorización y crear el Goal nuevo, sin presupuesto inventado.
+- [x] Resolver el candidato mínimo compatible antes de iniciar downtime.
+  Par de bots construido desde Cloud `2077675`; Admin desde Hubs `b223694c`.
+- [x] Preparar configuración y manifiestos por la vía guardada; corregir solo
+  defectos que bloqueen esta entrega. Revisar una vez el límite productivo.
+- [x] Validar los componentes afectados y reutilizar evidencia vigente de
+  entradas idénticas. Construir únicamente imágenes que realmente cambien.
+- [x] Crear checkpoint DB+storage, desplegar y verificar salud; no iniciar la
+  parada hasta disponer de candidato y vía de reanudación coherentes.
+- [x] Aprobar solo Inicio; readback público exacto y duradero confirmado.
+- [x] Probar cinco bots, desplazamiento y respuesta IA.
+  Navegador público frío: cinco modelos reales, sin placeholders, posiciones
+  X/Z cambiando autónomamente y observación visual. Chat privado real de bot-3:
+  «17 por 23 es 391» y explicación de utilidad de una sala virtual. Las dos
+  primeras consultas agotaron los 4 s del proveedor; las dos posteriores
+  respondieron. No ocultar este límite ni prometer disponibilidad perfecta.
+- [x] Probar configurador, guardar avatar de prueba y comprobarlo en sala;
+  verificar controles de demo y audio real entre equipos si hay participación.
+  Configurador ya probado públicamente: nuevo privado `N8YfWrp`, nombre
+  «Demo cliente 16 septiembre», americana/corbata y pantalón traje, listado en
+  Mis avatares, selección y confirmación reales, visible en tercera persona.
+  APP/AFRAME/sceneLoaded/entered true y cero errores JS capturados. Micrófono
+  finalmente silenciado y verificado; voz entre equipos no probada.
+  Tras recuperar la sala a las 12:21: recarga/entrada nueva, mismo avatar,
+  desplazamiento real con teclado (posición 3.85/2 a 2.55/2.07), Sentarse
+  cambia a Levantarse y vuelta, asiento liberado. No simular movimiento por JS.
+- [x] Integrar cambios, registrar límites verdaderos y cerrar el Goal solo con
+  aceptación pública, no por PASS de pruebas aisladas.
+
+Estado: checkpoint conjunto `20260916-103151` publicado y sesión 9913 terminada
+con exit 0, Lease/liberación completos y 12/12 servicios reanudados. Incluye
+361 tablas, 100 migraciones, 19 salas y 52 pares de archivos completos.
+Recibo de cutover actual emitido tras revalidar copia conjunta, baseline vivo
+sin diferencias y preservación de credenciales. Bootstrap guardado completado
+(sesión 15597 exit 0). Admisión completada con prueba de denegación PASS
+(sesión 54777 exit 0). Activación completada, sesión 6360 exit 0, todos los
+Deployments Ready. El Admin público ya muestra el inventario exacto de dos
+salas sin error de contrato. Se acaba de enviar la aprobación exacta de Inicio
+(5/baja/chat sí, fingerprint `v1:d3f1b47f9cb3bd485a20346cf9be5a4c22f7d4973229a873e6d27f5dcfc11d79`);
+readback exacto confirmado; falta comprobar bots/IA. XesSAqd sigue excluida. No modificar
+los bytes bootstrap.
+
+Incidencia encontrada al aprobar Inicio: el orquestador entra en CrashLoop al
+leer el primer intent. Causa reproducida con GET raw: `v1/PodList.items` omite
+TypeMeta; `kubectl get -o json` lo añade y ocultaba el fallo. Corrección Cloud
+`59422e4`: derivar solo apiVersion/kind del envelope exacto, rechazar tipos
+explícitos conflictivos y conservar la validación por-Pod. 156 tests bots y
+156 tests apply pasan; FakeApi ahora reproduce listas raw. Revisión dirigida
+sin bypass material; fixtures negativos actualizados conservando sus asserts.
+Construir y aplicar únicamente la corrección indispensable. No dar bots/IA por
+aceptados; web/configurador continúan funcionando. No repetir el checkpoint.
+Build correctivo `35079811053` PASS (37 s), parent `a9d7e37c…`; se conserva
+runner `3bba970e…` porque todos sus inputs Docker/COPY son idénticos a `2077675`.
+Manifiestos `*-podlist.yaml` (68 recursos) válidos. El diff activo cambia solo
+Deployment parent y su política de imagen exacta: requiere bootstrap/admission/
+active; no forzar active-reapply ni alterar la política manualmente. El diff
+bootstrap previo es denegado por la política de imagen anterior, condición que
+el driver resuelve preparando primero la nueva política. `npm run apply`
+bootstrap-podlist terminado con exit 0, sesión 75611. Admisión y posterior
+activación correctivas: sesión 74122 terminó exit 1 (`deployments_ready_timeout`).
+Originales bootstrap/journal intactos.
+Fuente Cloud `59422e4` y root `ef4ece3` integrados en las ramas base. El
+verificador live también acepta TypeMeta ausente solo en listas `v1/PodList`
+verificadas, conservando el rechazo de tipos explícitos conflictivos.
+Segundo fallo real reproducido: DELETE de intent aceptado seguido de GET con
+deletionTimestamp/grace 0 disparaba fatal y reiniciaba el parent después de
+crear el runner. Cloud `1ef3add` diferencia observación de terminación de
+autorización; no arma intents terminando, no repite DELETE, conserva identidad
+y espera ausencia; un armed ambiguo sigue requiriendo fence. Pruebas completas
+de bots y apply PASS y revisión dirigida sin hallazgos materiales. Build
+`35083840545` terminado correctamente. La refence automática del fallo también
+paró Reticulum, pgbouncers y Coturn; recuperación normal con bots apagados
+terminada (bootstrap-podlist, sesión 44185 exit 0). Sala recuperada a las 12:21:
+HTTP 200 y nueva entrada real al escenario con micrófono silenciado. Se pidió
+autorización opcional para reapertura directa;
+sin respuesta, se recuperó por la vía guardada. No se llegó con bots/IA a las 12:00.
+Nuevo parent `aa29b4cd…`, runner conservado `3bba970e…` (todos sus inputs
+Docker idénticos a `2077675`). Manifiestos `*-intent.yaml` verificados: solo
+cambian parent y su política de imagen. Root `2b929bf` integrado en main.
+Secuencia correctiva bootstrap/admission/active completada, sesión 66819 exit 0.
+Parent estable 1/1. El runner sale antes de conectar: el manager genera la URL
+FQDN entre namespaces, pero el cliente solo aceptaba el nombre corto. Defecto
+reproducido con el entorno del Pod generado, corregido con validación estricta
+de servicio/namespace/puerto y pruebas negativas; 162 tests bots PASS. Publicar
+solo nuevo runner y conservar parent/web. Bots/IA siguen pendientes; web arriba.
+Build `35087352618` PASS, runner `c57f0a90…`, fuente Cloud `7dbdac1` y raíz
+`d44fde0` integradas. Manifiestos separados `*-control.yaml`, 68 recursos;
+diff limitado a runner env del parent y las dos políticas exactas. La denegación
+previa por política antigua queda resuelta por bootstrap guardado, sin bypass.
+Secuencia sesión 14798 terminada exit 0, parent estable y runner arranca. Nueva sesión pública
+tab 6: APP/AFRAME/scene/entered true, avatar `N8YfWrp`, mute, cero errores JS.
+Siguiente bloqueo probado por Hubble: HTTPS público se traduce a HAProxy
+`hcce/haproxy:4443` y la egress del runner lo rechaza. Cloud `d6c6b16` y raíz
+`8dc1883` integran solo el permiso TCP/4443 a app=haproxy del namespace padre;
+destinos privados restantes siguen denegados. Suites generator/apply PASS,
+manifiestos `*-network.yaml` verificados, imágenes idénticas. Se solicitó
+autorización opcional para aplicar solo esa regla generada y evitar repetir las
+tres fases; sin respuesta no hay autorización para esa excepción. El camino
+completo sigue autorizado. Bots/IA no aceptados.
+Sin respuesta a la excepción, secuencia normal `*-network.yaml` iniciada en
+sesión 97295. No hay otras operaciones productivas activas. No iniciar otro
+apply ni modificar estos archivos mientras esa sesión siga viva.
+Sesión 97295 terminó exit 0. La red queda reparada: logs reales prueban join
+autenticado, 8 avatares publicados, navmesh 350 triángulos/11 grupos y 8 puntos
+de patrulla. Otro fallo reproducido: primer runtime válido cambia lifecycle a
+running antes de la sonda Kube Ready, y watchdog mata el runner a los 4–5 s por
+runner_pod_not_ready. Arreglo: historial monotónico de Pod Ready y solo la
+gracia inicial ya existente, conservando readiness cerrada y fallos posteriores
+inmediatos. 164 pruebas bots PASS. Nueva imagen parent en construcción; runner
+`c57f0a90…` y resto de imágenes se conservan. Bots/IA aún no aceptados.
+Valores canónicos del workspace preparados en deployment/input-values.local.yaml
+(0600/ignorado), copia del active-network; actualizar el parent al aceptar el
+nuevo candidato. No modificar los valores de otros checkouts.
+Cloud `4a0885a`, raíz `36efe32`, build `35092716117` PASS. Parent correctivo
+`10fd0c90…`; runner `c57f0a90…` conservado por igualdad de todos sus inputs.
+Manifiestos `*-ready.yaml` verificados; diff solo parent y su política de imagen.
+Denegación previa exacta de la política antigua confirmada; vía bootstrap normal.
+Nueva secuencia de despliegue en sesión 35168; no operaciones concurrentes.
+Actualización vigente, 16/09 14:39 Madrid: sesión 35168 terminada exit 0;
+parent y runner estables, /ready HTTP 200, cinco bots autenticados/ACK/navmesh.
+Publicación funcional comprobada en navegador frío, incluido avatar `N8YfWrp`.
+No se llegó a la demo de las 12:00; no presentar esta entrega como puntual.
+El primer verificador live falló por contratos root desactualizados, no por
+imágenes distintas: postgresql, anotación de fence, patch CAS autorizado,
+capabilities de aprobación, TypeMeta/managedFields raw y EnvVar vacío omitido.
+Se ajusta solo el verificador local a los contratos exactos del generador;
+inventario completo con 12 fences inertes validados, sin intents pendientes,
+sin ignorar Pods desconocidos ni relajar aislamiento/digests/autenticación.
+Regresiones de contratos y 59 pruebas de seguridad PASS. La sonda RBAC heredada
+confundía pods/log con un Pod llamado log; corregida con --subresource explícito,
+sin modificar permisos. Verificación live final sesión 66453: 0 fallos/0 avisos,
+exit 0. No hay apply ni build nuevos en curso.
+Carpeta privada:
+`~/.yenhubs-private/bots-ai-20260916-candidate`.
+
+Evidencia del 16: build pareado Actions `35068906151` terminado, parent
+`03aa3dc5…`, runner `3bba970e…`, fuente Cloud `2077675`. Admin reparado sin
+cambios de ropa: Hubs `b223694c`, 174 pruebas verdes, imagen `ae66ee5d…`
+en Actions `35072017456`. Run previo `35071950138` cancelado porque se
+despachó antes de que el hook aceptara el commit; no usarlo como candidato.
+Baseline privado regenerado, 44 recursos y `kubectl diff` cero. Target
+bootstrap de 68 recursos pasa generador; preserva claves existentes, añade
+dominios de autenticación separados y actualiza solo bots/cliente.
+Perfil nuevo `yenhubs-cold-rebind-runner-cutover-v1` separado del histórico
+AUD-065; no inventar recibos de rotación. 156 pruebas apply verdes también tras
+el refuerzo dirigido de diff bajo Lease. Revisión dirigida cerrada y hallazgo
+de checkpoint resuelto reutilizando su validador completo y acotando fecha.
+Cloud `587c1da` y Hubs `b223694c` ya integrados en sus ramas base; root local
+`6f1339e` fija ambos. Productor y preparación en `fb09cb6`.
+
+## Antecedente v5: evidencia de la preparación del 15 de septiembre
+
+El usuario autoriza reactivar y probar los cinco bots con movimiento suave y
+chat IA únicamente en la sala pública `VJopCY3` (Inicio), dejar la demo lista y
+perseguirlo como Goal. La petición cambia la prioridad: el trabajo local de
+ropa/tutorial descrito en el plan v4 queda pausado y preservado, no aceptado ni
+publicado por este objetivo. Demo confirmada para el 16 de septiembre de 2026
+a las 12:00 (Europe/Madrid); el cliente entrará desde su propio ordenador, además
+de la sesión del propietario. Verificar entrada de un segundo participante y
+audio real entre ambos donde los accesos y permisos disponibles lo permitan.
+
+Resultado observable: entrada pública correcta, cinco bots visibles con
+movimiento real, respuesta real de IA en su panel privado, controles esenciales
+comprobados y recorrido/enlace entregados con límites veraces. Audio entre dos
+participantes si los accesos y permisos disponibles permiten probarlo; no llamar
+audio validado a enumerar dispositivos o ver una conexión WebRTC.
+
+- [x] Comprobar publicación y contenido sin cambios: cliente `69a4553d`,
+  entrada real con canal joined, APP/A-Frame/escena cargados y cero errores JS
+  observados; 12/12 servicios disponibles y cuatro certificados Ready.
+- [x] Identificar bots: Inicio conserva candidato 5/low/chat true, pero está
+  quarantined por `legacy_migration` desde 2026-08-30. Servicio IA configurado
+  con gpt-5-nano, cero salas/bots activos. No se ha activado todavía.
+- [x] Identificar recorrido: un escenario propio (`f6VKtim`), tres salas que lo
+  referencian, navmesh, ocho puntos de patrulla y dos asientos. Ningún portal
+  publicado a otros niveles; los demás registros de sala no aportan otro mapa.
+- [x] Verificar compatibilidad: negativa. Reticulum `256c292d…` (fuente
+  `4ead2a6`) exige autenticación y ACK v2 que el orquestador `325c5c10…`
+  (fuente `5a82de5`) no implementa. Una aprobación no puede arrancar sus bots.
+- [ ] Obtener autorización para la actualización coordinada adicional del
+  sistema de bots y el checkpoint con parada previa. No iniciar esos efectos
+  bajo la autorización anterior limitada a reactivar el candidato existente.
+- [ ] Aprobar exclusivamente el candidato exacto de Inicio por la vía normal;
+  comprobar lectura posterior, aparición de cinco bots y desplazamiento real.
+- [x] Dos conexiones simultáneas al sitio publicado: ambas joined/entered,
+  Personas (2), avatar remoto renderizado. Mismo navegador y cuenta, con
+  `allow_multi=1`; NO equivale a dos equipos físicos ni a un invitado anónimo.
+- [x] Tercera persona y regreso a primera persona (modo 0); panel normal
+  visible, sin errores JS capturados. El botón Sentarse informa correctamente
+  de que no hay asiento a menos de 2 m en el spawn. No se afirma pose sentada
+  ni marcha validada en esta sesión; las pulsaciones breves no desplazaron el rig.
+- [ ] Comprobar conversación IA real sin datos privados ni contenido público;
+  completar controles de demo y audio real entre equipos. Micrófonos de las
+  dos sesiones de prueba permanecieron silenciados; no se probó voz remota.
+- [x] Salir de ambas sesiones y cerrar las tres pestañas temporales. Readback
+  de la portada: Inicio con cero participantes; vista normal restablecida.
+- [x] Preparar guía breve y mensaje de invitación sin enviar:
+  `docs/demo-cliente-2026-09-16.md`. Distingue el recorrido propuesto de la
+  aceptación pendiente y no anuncia bots/IA como disponibles.
+- [ ] Entregar recorrido/límites finales tras desbloquear bots. Marcar el
+  Goal completo solo cuando la evidencia cubra el resultado autorizado.
+
+Límites: no activar `XesSAqd`, crear recursos/suscripciones, desplegar candidatos
+locales no aceptados, cambiar escenas, credenciales ni otros checkouts. Si la
+activación requiere modernizar la topología o un despliegue material distinto,
+explicar y pedir esa autoridad antes de hacerlo. No eludir aprobaciones ni
+escribir directamente flags de DB para sortear los contratos. Las pruebas largas
+de recuperación no sustituyen esta prueba funcional ni se relanzan por defecto.
+
+Bloqueo confirmado y revisado una sola vez de forma independiente: el runner
+antiguo envía una clave estática; Reticulum exige token por generación y lease.
+Además difieren la cabecera del orquestador y el ACK con revisión/operación.
+Esperar, reiniciar o aprobar por otra vía no resuelve esa incompatibilidad.
+Admin muestra «Reticulum devolvió un contrato de aprobación inesperado. Las
+acciones quedan bloqueadas». La causa concreta de ese mensaje no se ha probado;
+no confundirla con el desacuerdo de protocolos ya confirmado en fuentes exactas.
+
+Reanudación: pedir autoridad para alinear orquestador/ghost runner/configuración
+con Reticulum mediante las vías aprobadas, conservando otros espacios y sin
+contratar recursos adicionales. Evaluar el candidato mínimo antes de cualquier
+parada. No rebajar autenticación, saltar aprobaciones ni restaurar un backend
+anterior. No hay checkpoint de esta demo iniciado ni mutación productiva hecha.
+Goal bloqueado, no completado: la misma autorización adicional sigue sin
+respuesta durante tres turnos consecutivos afectados. Se agotó el trabajo
+independiente útil (comprobaciones de sala y guía), sin ampliar la intervención.
+No hay operación productiva en espera ni prueba larga en marcha en este objetivo.
+Para reanudar hace falta la autorización explícita solicitada; después se evalúa
+el candidato coordinado antes del checkpoint, despliegue y aceptación pública.
+
+## Plan v4 preservado y pausado: avatares y presentación visual
+
+El usuario pide comprobar que ropa, rig y animaciones se ven naturales, explicar
+la causa de las penetraciones anteriores, y revisar/corregir el tutorial que vio
+descuadrado y la presentación general. Usar Hubs local real; conservar el diseño
+existente y corregir defectos, sin un rediseño de marca ni ampliar el vestuario.
+
+- [x] Reproducir tutorial, entrada, controles y creador en escritorio y móvil;
+  corregir solapamientos, recortes, contraste y espaciado que se comprueben.
+- [ ] Inspeccionar ambos modelos compuestos y sus contratos, y probar ropa y
+  poses en la aplicación. Separar errores de material, ajuste, pesos, animación
+  y cámara; no alterar activos correctos por dudas genéricas.
+- [ ] Una revisión independiente de fuentes, arreglos focales y comprobación
+  visual final. Registrar qué está probado en local y qué no se ha publicado.
+
+Evidencia actual: tutorial real a 320x640, 390x844 y 720x360 CSS; navegación,
+teclas legibles, panel dentro de pantalla y contenido largo desplazable. Creador
+1422x800, 390x844 y 320x640, sin overflow horizontal; controles/créditos alcanzables
+y pie Guardar visible. La revisión independiente de fuentes ya terminó; no repetirla.
+
+Ropa sigue en verificación: se reprodujo que una normal de pliegue interior
+empujaba el polo hacia dentro/abajo. La corrección inicial pasó contratos pero
+el visor real reveló bolsillos atravesando los triángulos, no solo los vértices.
+La continuidad en reposo pasa 0/5712 muestras y el foco completo pasa 100 tests,
+pero la sala real revela muslos atravesando el polo al sentarse en ambos cuerpos.
+Se añade regresión con skinning/matrices reales y se corrige esa deformación;
+no convertir tests de reposo PASS en aceptación visual. Evidencia y método:
+`docs/avatar-visual-2026-09-14.md`. Rama Hubs: `codex/avatar-visual-polish`.
+
+Decisión de método: la subdivisión estática no elimina la penetración sentada;
+dar más peso al muslo mejora sentado pero empeora caminar, por lo que se descarta
+ese compromiso. Se permite una corrección del bajo dependiente de flexión,
+calibrada en copia al cargar y aplicada mediante pesos baratos, sin colisiones/BVH
+por frame, sin cambiar animaciones/rig/red y sin ocultar pantalón o cuerpo. La
+pose sentada final ya presenta mejora visible en ambos cuerpos y se restablece al
+levantarse. El residual exterior real de marcha permite reutilizar la misma
+corrección con el clip real de caminar; conservar marcha idéntica fue una
+restricción técnica provisional, no una preferencia del usuario. Exigir reposo
+natural, marcha y transición sentado/de pie sin los cruces reproducidos, copias
+local/headless aisladas, coste de carga acotado y comprobación visual final.
+
+Límites: no despliegue, recuperación, backups, infraestructura, credenciales,
+guardados de escenas/avatares remotos ni cambios en otros checkouts. Blender solo
+en diagnósticos y copias nuevas; no sobrescribir sesiones del propietario.
+Las herramientas de desarrollo/CI de ayer permanecen intactas y su publicación
+sigue pendiente; no convertir ese pendiente en una condición para esta revisión.
+
+## Cierre local del 13 de septiembre: modificar y probar sin esperas
+
+El usuario quiere un sistema práctico para iterar rápido y no tener que elegir
+su arquitectura. La reparación visual anterior permanece aceptada. Este bloque
+prepara el cliente REAL de Hubs desde el Mac, no un visor sustitutivo, y separa
+las pruebas largas de recuperación de cambios documentales o solo del cliente.
+
+- [x] Arrancar el cliente real con recarga local mediante un comando reproducible.
+  Comprobar la aplicación y una sala existente en navegador interno; distinguir
+  claramente cliente local de servicios remotos. Sin crear salas ni guardar datos.
+- [x] Preparar la selección de pruebas largas en GitHub: documentación ordinaria
+  y gitlink del cliente no las requieren; servidor, recuperación, tipos/rutas
+  desconocidos y ejecución manual conservan el circuito completo.
+  Mantener controles de secretos y comprobaciones cortas. Pruebas focales y una
+  revisión independiente del límite de selección, sin una auditoría general.
+- [x] Documentar el comando, límites y evidencia de uso real; comprobar recarga
+  y controles afectados. No repetir recuperación por esta vista previa.
+
+Resultado: `node scripts/dev-hubs.cjs` sirve el cliente real en loopback.
+Sala `dCTfKVK` renderizada en modo Mirar, APP/A-Frame/escena inicializados y
+sin errores JS en la carga final. Cambio canario con recompilación y recarga
+automáticas observado en menos de 30 s; canario revertido. 26 pruebas focales
+y Actionlint PASS. Límites HTTP del puente: 200/403/403/404 según el caso.
+Detalles y límites de aceptación: `docs/local-development.md`.
+
+Publicación pendiente y separada: el selector CI no está activado en main.
+Su primera integración conserva la ejecución completa al faltar el selector
+en la base de confianza. No esperar a esa publicación para usar el cliente
+local ni convertirla en una nueva orden de recuperación o despliegue.
+
+No desplegar, crear infraestructura, hacer backups/restores, modificar escenas,
+credenciales, Blender ni otros checkouts. El backend existente puede atender las
+conexiones de prueba; no se cambian sus servicios ni configuración. No se promete
+un entorno servidor totalmente offline ni tiempos fijos de compilación inicial.
+Solo este plan coordina el bloque. El trabajador CI posee su workflow, selector y
+tests; el coordinador posee el lanzador local, documentos e integración.
+
+## Cierre anterior aceptado
+
+La reparación visual y el cierre de integración están aceptados en `c7d4820`.
+
+## Antecedente del 12 de septiembre: terminar los pendientes
 
 El propietario autoriza corregir todos los pendientes del cierre. No se reabre
 el resultado visual, no se repite el despliegue y no se inicia otro respaldo.

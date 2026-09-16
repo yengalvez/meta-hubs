@@ -1,5 +1,139 @@
 # Session Changelog
 
+## 2026-09-16 (bots/IA/configurador; publicación y aceptación funcional)
+
+- Secuencia final 35168 exit 0. Hubs/Admin `ae66ee5d…`, parent `10fd0c90…`
+  (Cloud `4a0885a`, Actions `35092716117`), runner `c57f0a90…`. Runner y parent
+  estables; /ready HTTP 200 con 5/5, autenticación, ACK, navmesh y configuración.
+- Hubble localizó egress denegada al HAProxy privado: Cloud `d6c6b16` permite
+  solo TCP/4443 al app=haproxy del namespace padre. Sin recursos nuevos, sin
+  ampliar otros destinos privados, aplicado por secuencia guardada normal.
+- Watchdog mataba el runner antes de la primera observación Kube Ready. Cloud
+  `4a0885a` conserva la gracia inicial acotada sin abrir readiness ni dar otra
+  gracia a fallos posteriores. Regresión reproducida y 164 tests bots PASS.
+- Navegador público frío: cinco modelos reales y desplazamiento autónomo X/Z;
+  chat privado de bot-3 responde a aritmética y utilidad de la sala. Las dos
+  consultas iniciales agotaron el límite proveedor de 4 s; dos posteriores
+  respondieron. No se modificaron timeouts/modelo ni se oculta este límite.
+- Verificador root sincronizado con contratos ya desplegados: postgresql,
+  protocolo fence obligatorio, patch CAS solo parent→runners, capabilities de
+  aprobación exactas, TypeMeta derivado solo de listas tipadas, managedFields
+  de servidor y omisión de EnvVar vacío. Doce fences inertes se validan y
+  comparan, no se ignoran; intents pendientes bloquean aceptación. Regresiones
+  de contratos y 59 pruebas de seguridad PASS. La sonda RBAC distingue ahora
+  subrecursos reales de Pods llamados log/exec; no cambian permisos productivos.
+- Verificador live final sesión 66453 exit 0, 0 fallos/0 avisos (14:45 Madrid).
+  Entrada pública fría y pruebas funcionales aceptadas; sin nuevos recursos.
+  Micrófono silenciado, navegador sin errores JS y pestaña pública disponible.
+  Voz entre equipos/entrada cliente no comprobadas; ropa/tutorial local aparte.
+
+- Autorizados rollout coordinado, checkpoint y parada; Goal v6 activo.
+  Inicio es la única sala que se activará. Ropa/tutorial local conservados.
+- Causa Admin confirmada live: actor bigint mayor de 2^53 rechazado por el
+  parser. Hubs `b223694c` conserva los dígitos exactos, sin debilitar las
+  validaciones de cantidades/fingerprints. 174 tests; imagen `ae66ee5d…`
+  construida en Actions `35072017456`; integrada en master.
+- Pareja oficial de bots, fuente `2077675`: parent `03aa3dc5…` y runner
+  `3bba970e…`, Actions `35068906151`. No se repiten builds de esos bytes.
+- Cloud `587c1da` integra perfil de cutover separado para el baseline actual,
+  sin fingir recibo AUD-065. 156 tests apply verdes; revisión dirigida pide
+  reafirmar diff bajo Lease y reutilizar el verificador completo del checkpoint.
+  Ambos refuerzos implementados; fechas inválidas/futuras rechazadas.
+- El primer checkpoint con efectos, desde `YenHubs-demo-release` limpio,
+  falló por dependencia yaml ausente durante evidencia de quiescencia. Se
+  instaló el lockfile de CE sin scripts y se dejó terminar la reanudación
+  guardada; no sustituirla por escalados manuales ni relanzar mientras viva.
+  Un segundo checkpoint conjunto `20260916-103151` terminó exit 0, 12/12
+  servicios reanudados, 361 tablas, 100 migraciones, 19 salas y 52 pares de
+  medios íntegros. No se repite para las correcciones de este rollout.
+- Admin publicado y aprobación exacta de Inicio confirmada. Configurador
+  público probado creando/guardando/seleccionando `N8YfWrp` («Demo cliente 16
+  septiembre»), traje visible en tercera persona y cero errores JS capturados.
+- Dos defectos de arranque del parent quedaron reproducidos: TypeMeta ausente
+  en PodList raw (Cloud `59422e4`, build `35079811053`) y GET transitorio de
+  intent tras DELETE (Cloud `1ef3add`, build `35083840545`). El segundo conserva
+  el contrato de autorización/fence y añade regresiones de terminación/CAS.
+  Tests de bots y apply PASS, revisión dirigida sin hallazgos materiales.
+- La activación de `59422e4` falló `deployments_ready_timeout`; su refence
+  también dejó Reticulum/pgbouncers/Coturn en 0. Reapertura guardada con bots
+  apagados completada, sesión 44185 exit 0. Sala recuperada a las 12:21 con
+  entrada nueva real, movimiento con teclado, sentarse/levantarse y avatar
+  guardado visible. Voz entre equipos no probada. Bots/IA no llegaron a las 12:00.
+- Secuencia de parent `aa29b4cd…` terminada, sesión 66819 exit 0, parent 1/1.
+  El runner sale antes de conectar: rechazaba el FQDN que emite el manager.
+  Cloud `7dbdac1` corrige solo ese contrato y diagnósticos sin secretos;
+  162 tests bots PASS, incluyendo la regresión cruzada y URLs negativas.
+  Build runner `35087352618` iniciado; aceptación bots/IA todavía pendiente.
+
+## 2026-09-15 (preparación de demo pública; bloqueo de bots localizado)
+
+- Goal autorizado: Inicio `VJopCY3`, cinco bots/low/chat IA; demo el 16 a las
+  12:00 Europe/Madrid con entrada del cliente desde su equipo. Plan actual v5;
+  revisión local de ropa/tutorial preservada y pausada.
+- Lecturas live: 12/12 Deployments disponibles, cuatro certificados Ready,
+  cliente `69a4553d`; un escenario propio `f6VKtim`, navmesh y ocho puntos de
+  patrulla. Candidato de Inicio en cuarentena por `legacy_migration`; cero bots
+  activos, IA configurada pero sin respuesta funcional probada.
+- Una revisión independiente y la lectura de fuentes históricas confirmaron
+  incompatibilidad entre Reticulum `256c292d…`/Cloud `4ead2a6` y orquestador
+  `325c5c10…`/Cloud `5a82de5`: autenticación runner/token-generación/lease,
+  cabecera interna y ACK v2. No se puede corregir esperando ni aprobando solo
+  la configuración. Admin además bloquea su inventario por contrato inesperado;
+  la causa concreta de ese mensaje queda sin atribución live.
+- Navegador interno público: dos conexiones joined/entered simultáneas,
+  Personas (2), avatar remoto renderizado, tercera persona y regreso a modo 0,
+  cero errores JS capturados. Ambas usan la misma cuenta/ordenador. No se probó
+  audio remoto ni se aceptó movimiento/sentado mediante esta prueba limitada.
+- Sesiones silenciadas, salida normal, portada con cero participantes y tres
+  pestañas temporales cerradas. No hubo aprobación, checkpoint, deploy, cambio
+  DB/config/escena, recursos nuevos ni gasto contratado. Se pide nueva autoridad
+  para una actualización coordinada y su parada de respaldo; Goal incompleto.
+
+## 2026-09-14 (presentación visual y ropa, revisión local en curso)
+
+- Trabajo aislado en `YenHubs-workflow`, cliente `codex/avatar-visual-polish`
+  desde `4b11be4b`; lanzador local del día 13 conservado. Sin despliegue,
+  recuperación, respaldo, creación de recursos ni guardados de avatar/escena.
+- Tutorial corregido y recorrido completo en español: tarjeta, espaciado,
+  teclas de reserva cuando falta el mapa del navegador, controles accesibles y
+  contenido desplazable. Verificado en 1422×800, 320×640, 390×844 y 720×360 CSS.
+- Creador con vista previa mayor, campos y tonos ordenados, etiquetas/cierre
+  accesibles y Guardar alcanzable al desplazar en 320/390 px. No se pulsó Guardar.
+- Blender inspecciona dos conjuntos compuestos en copias privadas: pesos finitos,
+  normalizados y sin vértices sin influencia. No se alteran archivos originales.
+- La nueva regresión de ropa real detecta que una normal interior de cintura
+  empujaba la prenda hacia dentro/abajo. Primer candidato con margen exterior,
+  continuidad y 0/5712 muestras expuestas en reposo pasa 100 pruebas focales,
+  pero falla aceptación sentada real en ambos cuerpos. No se acepta por esos PASS.
+- Se añade skinning real y detección triángulo-triángulo en poses; reparación
+  aún en curso. Detalles, restricciones y método en `avatar-visual-2026-09-14.md`.
+  Una revisión independiente de fuentes ya realizada; no iniciar otra general.
+
+## 2026-09-13 (circuito local rápido con Hubs real)
+
+- Rama `codex/fast-local-hubs` desde raíz `c7d4820`, en `YenHubs-workflow`.
+  Sin modificar gitlinks, otros checkouts, escenas, Blender ni producción.
+- Lanzador `node scripts/dev-hubs.cjs`: webpack real de Hubs en loopback,
+  configuración pública analizada sin eval, puente a un único origen HTTPS,
+  rechazo cross-site y aislamiento de cookies. No requiere login administrativo
+  ni modificar CORS del servidor. No es un backend totalmente local/offline.
+- Sala real `dCTfKVK` en modo Mirar, APP/world/A-Frame/escena cargados, siete
+  scripts locales y cero errores JS en la carga final. Canary de código visto
+  mediante recarga automática en menos de 30 s, sin push/build/deploy; revertido.
+- 26 pruebas focales PASS y Actionlint PASS. API por el puente 200; dos casos
+  cross-site 403; proxy arbitrario 404. No se han pedido permisos de micrófono
+  ni guardado contenido remoto; no se certifican audio ni nueva aceptación de
+  avatares/multiusuario con esta prueba del circuito.
+- CI preparado para omitir únicamente recuperación/AUD-065/PostgreSQL largos
+  en cambios documentales ordinarios o solo del gitlink cliente. Controles
+  cortos conservados. Servidor/infraestructura/unknown/manual siguen completos.
+  Revisión independiente detectó clasificador controlado por candidato y fallo
+  del job con salida falsa: ambos corregidos con código base de confianza y
+  requisito de job exitoso, con regresiones. No hay auditoría general adicional.
+- Selector CI aún no publicado/activado en main; su primera integración
+  requiere el circuito completo. No bloquea la vista previa local ya funcional.
+  No se han lanzado backups, restauraciones, despliegues ni recuperación larga.
+
 ## 2026-09-13 (validación completa e integración de los pendientes)
 
 - Driver final sobre raíz `ab80aea88a73e579dc32d90b0ff9535d38e412d0`

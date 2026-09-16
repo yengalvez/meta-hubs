@@ -378,7 +378,8 @@ reactivation_sitting_capabilities_are_acceptable() {
   [[ -n "$payload" ]] || return 1
   jq -e '
     type == "object" and
-    (keys == ["waypoint_reservation"]) and
+    (keys == ["bot_config_approval", "waypoint_reservation"]) and
+    .bot_config_approval == {protocol:1, legacy_default:"quarantined", runtime_match:"exact_jsonb"} and
     (.waypoint_reservation | type == "object") and
     ((.waypoint_reservation | keys) ==
       ["protocol", "snapshot_state_version", "state_version"]) and
@@ -396,7 +397,7 @@ reactivation_deployments_are_acceptable() {
   local expected_images_json="$5"
   local runner_image="${6:-}"
   local profile="${7:-durable-active}"
-  local postgres_container=pgsql
+  local postgres_container=postgresql
   [[ -n "$payload" ]] || return 1
   [[ "$profile" == durable-active ||
      "$profile" == cold-rebind-legacy-absent-v1 ]] || return 2

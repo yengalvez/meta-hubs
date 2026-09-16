@@ -2,14 +2,22 @@
 
 ## Estado y contrato
 
-Entrega en curso (16-09-2026): Inicio `VJopCY3`, cinco bots con movilidad baja
+Entrega funcional pública (16-09-2026): Inicio `VJopCY3`, cinco bots con movilidad baja
 y chat privado. El Admin conserva exactamente los identificadores bigint de
 Reticulum, evitando que el inventario se bloquee por redondeo de JavaScript.
 La transición desde `cold-rebind-legacy-active-v1` usa el perfil independiente
 `yenhubs-cold-rebind-runner-cutover-v1`: checkpoint conjunto, preservación de
 credenciales, manifiesto exacto y comprobación bajo Lease. No equivale a una
-rotación AUD-065. La aceptación pública de bots/IA sigue pendiente hasta ver
-spawn, movimiento y una respuesta real en el navegador.
+rotación AUD-065. Se han observado cinco modelos reales, desplazamiento
+autónomo y dos respuestas privadas reales de IA en navegador público frío.
+Dos consultas iniciales agotaron el límite proveedor de 4 s: existe ese límite
+de disponibilidad, no se promete respuesta perfecta ni se amplían timeouts.
+Verificación live final del 16/09: cero fallos y cero avisos técnicos.
+
+El verificador live incluye los guards exactos del protocolo intent-fence-v1
+en el inventario completo, sin tratarlos como procesos de renderizado. Exige
+identidades estables, ningún intent pendiente, contadores de salud coherentes
+y todos los controles de identidad/HMAC/digest/aislamiento de los runners.
 
 El primer arranque reveló que los elementos de `v1/PodList` del API raw no
 incluyen TypeMeta. Cloud `59422e4` y el verificador raíz restauran únicamente

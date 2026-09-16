@@ -117,7 +117,14 @@ bot_auth_can_i_matches() {
   local resource="$5"
   local expected="$6"
   local answer status
-  if answer="$(recovery_kubectl auth can-i "$verb" "$resource" -n "$target_namespace" \
+  local resource_args=("$resource")
+  # kubectl interprets pods/log as a Pod named "log", not the log subresource.
+  # Ask about the real subresource so a legitimate get-pods grant is not
+  # mistaken for access to logs, exec, attach or token issuance.
+  if [[ "$resource" == */* ]]; then
+    resource_args=("${resource%%/*}" "--subresource=${resource#*/}")
+  fi
+  if answer="$(recovery_kubectl auth can-i "$verb" "${resource_args[@]}" -n "$target_namespace" \
        --as="system:serviceaccount:$principal_namespace:$service_account" 2>/dev/null)"; then
     status=0
   else
@@ -192,10 +199,7 @@ if ! reactivation_image_override_is_exact hubs "$hubs_image" ||
        "$reactivation_profile" "$bot_runner_image"; then
   fail "Los overrides core no usan repositorios confiables y digests exactos"
 fi
-pgsql_container=pgsql
-if [[ "$reactivation_profile" == cold-rebind-legacy-absent-v1 ]]; then
-  pgsql_container=postgresql
-fi
+pgsql_container=postgresql
 expected_images_json="$(jq -cn \
   --arg bot "$bot_image" \
   --arg coturn "$(yaml_value OVERRIDE_COTURN_IMAGE)" \
@@ -345,7 +349,7 @@ if [[ "$reactivation_profile" == durable-active ]]; then
   fi
 
   bot_rbac_exact=true
-  for allowed_rule in "create pods" "delete pods" "get pods" "list pods"; do
+  for allowed_rule in "create pods" "delete pods" "get pods" "list pods" "patch pods"; do
     read -r allowed_verb allowed_resource <<<"$allowed_rule"
     if ! bot_auth_can_i_matches "$NAMESPACE" bot-orchestrator "$RUNNER_NAMESPACE" \
       "$allowed_verb" "$allowed_resource" yes; then
@@ -353,7 +357,7 @@ if [[ "$reactivation_profile" == durable-active ]]; then
     fi
   done
   dangerous_denied_rules=(
-  "watch pods" "patch pods" "update pods" "deletecollection pods"
+  "watch pods" "update pods" "deletecollection pods"
   "get pods/log" "create pods/exec" "create pods/attach" "create pods/portforward"
   "create pods/eviction" "update pods/ephemeralcontainers" "patch pods/ephemeralcontainers"
   "get secrets" "list secrets" "watch secrets" "create secrets" "update secrets"
@@ -385,7 +389,7 @@ if [[ "$reactivation_profile" == durable-active ]]; then
     <<<"$principal_target"
   for denied_rule in "${dangerous_denied_rules[@]}"; do
     read -r denied_verb denied_resource <<<"$denied_rule"
-    # The parent's only runner-namespace grant is the four allowlisted Pod
+    # The parent's only runner-namespace grant is the five allowlisted Pod
     # verbs checked above. Every item in this matrix remains denied.
     if ! bot_auth_can_i_matches "$principal_namespace" "$service_account" \
       "$target_namespace" "$denied_verb" "$denied_resource" no; then
@@ -393,7 +397,7 @@ if [[ "$reactivation_profile" == durable-active ]]; then
     fi
   done
   if [[ "$target_kind" != parent-runner ]]; then
-    for denied_rule in "create pods" "delete pods" "get pods" "list pods"; do
+    for denied_rule in "create pods" "delete pods" "get pods" "list pods" "patch pods"; do
       read -r denied_verb denied_resource <<<"$denied_rule"
       if ! bot_auth_can_i_matches "$principal_namespace" "$service_account" \
         "$target_namespace" "$denied_verb" "$denied_resource" no; then
@@ -470,8 +474,7 @@ fi
 if [[ "$reactivation_profile" == cold-rebind-legacy-absent-v1 ]]; then
   pass "Bot orchestrator process-local ya fue validado por el contrato legacy exacto"
 elif [[ -n "$bot_orchestrator_deployment_file" ]] &&
-   jq -e '[.items[] | select(.metadata.name == "bot-orchestrator")] |
-     select(length == 1) | .[0]' <<<"$deployments_json" >"$bot_orchestrator_deployment_file" &&
+   printf '%s' "$deployments_json" >"$bot_orchestrator_deployment_file" &&
    node "$SCRIPT_DIR/verify-bot-orchestrator-deployment.mjs" \
      --values "$VALUES_FILE" \
      --namespace "$NAMESPACE" \

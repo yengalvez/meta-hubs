@@ -115,6 +115,7 @@ export function fixtureDeployment() {
         "yenhubs.org/runner-activation-phase": deploymentConfiguration.activationPhase,
         "yenhubs.org/bot-runner-recovery-phase": deploymentConfiguration.recoveryPhase,
         "yenhubs.org/bot-runner-recovery-epoch": deploymentConfiguration.recoveryEpoch,
+        "yenhubs.org/runner-fence-protocol": "intent-fence-v1",
         "deployment.kubernetes.io/revision": "1"
       }
     },
@@ -136,6 +137,7 @@ export function fixtureDeployment() {
               .update(deploymentConfiguration.accessKey)
               .digest("hex"),
             "yenhubs.org/bot-runner-recovery-epoch": deploymentConfiguration.recoveryEpoch,
+            "yenhubs.org/runner-fence-protocol": "intent-fence-v1",
             "kubectl.kubernetes.io/restartedAt": "2026-07-18T06:00:00+02:00"
           }
         },

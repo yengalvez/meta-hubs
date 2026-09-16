@@ -25,7 +25,10 @@ import {
 const require = createRequire(import.meta.url);
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const hubsCloudRoot = process.env.YENHUBS_HUBS_CLOUD_ROOT || `${root}/hubs-cloud`;
-const { KubernetesRunnerManager } = require(
+const {
+  KubernetesRunnerManager, guardPodDocumentForIdentity,
+  GUARD_CAPACITY_WARNING_THRESHOLD, MAX_GUARD_PODS, MAX_GUARD_START_COUNT, MIN_GUARD_FENCE_RESERVE
+} = require(
   `${hubsCloudRoot}/community-edition/services/bot-orchestrator/kubernetes-runner-manager.js`
 );
 const { createRunnerGenerationToken } = require(
@@ -131,20 +134,26 @@ const publicId = `room-${crypto
 const health = {
   runner_pods: 1,
   active_hubs: [publicId],
-  runner_bots: { [publicId]: {} }
+  runner_bots: { [publicId]: {} },
+  runner_guard_capacity: {
+    observed: true, intents: 0, fences: 0, total: 0, warning: false,
+    warning_threshold: GUARD_CAPACITY_WARNING_THRESHOLD, start_limit: MAX_GUARD_START_COUNT,
+    reserve: MIN_GUARD_FENCE_RESERVE, quota: MAX_GUARD_PODS
+  }
 };
 const readiness = {
   configured_room_count: 1,
   expected_hubs: [publicId],
   process_hubs: [publicId],
   active_hubs: [publicId],
-  runner_bots: { [publicId]: {} }
+  runner_bots: { [publicId]: {} },
+  runner_guard_capacity: structuredClone(health.runner_guard_capacity)
 };
 const base = {
   deployment: fixtureDeployment(),
   parent,
-  podsBefore: { apiVersion: "v1", kind: "PodList", items: [pod] },
-  podsAfter: { apiVersion: "v1", kind: "PodList", items: [structuredClone(pod)] },
+  podsBefore: { apiVersion: "v1", kind: "PodList", metadata: {resourceVersion:"1000"}, items: [pod] },
+  podsAfter: { apiVersion: "v1", kind: "PodList", metadata: {resourceVersion:"1001"}, items: [structuredClone(pod)] },
   health,
   readiness,
   key,
@@ -169,11 +178,55 @@ for (const snapshot of [rawTypedLists.podsBefore, rawTypedLists.podsAfter]) {
 }
 assert.equal(verifyRunnerPodInputs(rawTypedLists), true);
 assert.equal(Object.hasOwn(rawTypedLists.podsBefore.items[0], "kind"), false);
+const rawManagedFields = structuredClone(rawTypedLists);
+for (const snapshot of [rawManagedFields.podsBefore, rawManagedFields.podsAfter]) {
+  snapshot.items[0].metadata.managedFields = [{ manager: "kubelet", operation: "Update", apiVersion: "v1", fieldsType: "FieldsV1", fieldsV1: {} }];
+}
+assert.equal(verifyRunnerPodInputs(rawManagedFields), true);
 const containerdImageId = structuredClone(base);
 for (const snapshot of [containerdImageId.podsBefore, containerdImageId.podsAfter]) {
   snapshot.items[0].status.containerStatuses[0].imageID = `containerd://sha256:${"a".repeat(64)}`;
 }
 assert.equal(verifyRunnerPodInputs(containerdImageId), true);
+
+const withFences = structuredClone(base);
+for (let index = 0; index < 12; index += 1) {
+  const oldGeneration = `${(index + 2).toString(16).padStart(8, "0")}-1111-4111-8111-111111111111`;
+  const guard = guardPodDocumentForIdentity(manager.identity(hubSid, oldGeneration), "fence");
+  guard.metadata.uid = `fence-uid-${index}`;
+  guard.metadata.resourceVersion = `${2000 + index}`;
+  guard.status = { phase: "Pending" };
+  withFences.podsBefore.items.push(guard);
+  withFences.podsAfter.items.push(structuredClone(guard));
+}
+for (const probe of [withFences.health, withFences.readiness]) {
+  probe.runner_guard_capacity.fences = 12;
+  probe.runner_guard_capacity.total = 12;
+}
+assert.equal(verifyRunnerPodInputs(withFences), true);
+for (const mutate of [
+  value => { value.podsBefore.items[1].metadata.deletionTimestamp = "2033-05-18T03:34:00Z"; },
+  value => { value.podsBefore.items[1].spec.schedulerName = "default-scheduler"; },
+  value => { value.podsBefore.items[1].metadata.labels.app = "unknown"; },
+  value => { value.podsBefore.items[1].metadata.uid = value.podsBefore.items[0].metadata.uid; },
+  value => { value.podsBefore.items.push(structuredClone(value.podsBefore.items[1])); },
+  value => { value.podsBefore.metadata.continue = "next-page"; },
+  value => { value.podsBefore.metadata.remainingItemCount = 1; },
+  value => { value.podsAfter.items[1].metadata.uid = "replaced-fence"; },
+  value => { value.health.runner_guard_capacity.fences = 11; },
+  value => { delete value.readiness.runner_guard_capacity; },
+  value => {
+    const intent = guardPodDocumentForIdentity(manager.identity(hubSid, generation), "intent");
+    intent.metadata.uid = "intent-uid";
+    intent.metadata.resourceVersion = "3000";
+    intent.status = { phase: "Pending" };
+    value.podsBefore.items.push(intent);
+  }
+]) {
+  const candidate = structuredClone(withFences);
+  mutate(candidate);
+  assert.throws(() => verifyRunnerPodInputs(candidate));
+}
 
 function rejected(mutator) {
   const candidate = structuredClone(base);
@@ -182,6 +235,7 @@ function rejected(mutator) {
 }
 
 rejected(value => { value.podsBefore.items[0].kind = "Secret"; });
+rejected(value => { value.podsBefore.items[0].metadata.managedFields = {}; });
 rejected(value => { value.podsBefore.items[0].apiVersion = "v2"; });
 rejected(value => { value.podsBefore.kind = "List"; });
 rejected(value => { value.podsBefore.apiVersion = "v2"; });

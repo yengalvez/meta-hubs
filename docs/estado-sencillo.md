@@ -1,8 +1,70 @@
 # Estado sencillo de YenHubs
 
-Ultima actualización: **13 de septiembre de 2026**
+Ultima actualización: **16 de septiembre de 2026**
 
-## Trabajo actual: creador de avatares
+## Prioridad: demo del 16 de septiembre a las 12:00
+
+**Publicado y probado funcionalmente, 16/09 por la tarde:** la sala pública
+[Inicio](https://meta-hubs.org/VJopCY3/inicio) muestra cinco bots con sus modelos
+reales y movimiento autónomo. El chat privado ha contestado dos preguntas
+reales de IA. El configurador ha creado, guardado, seleccionado y mostrado en
+sala el avatar «Demo cliente 16 septiembre», con americana y pantalón de traje.
+También se han probado caminar, tercera persona, sentarse y levantarse.
+
+No se llegó con bots/IA a la demo de las 12:00. Hubo varios fallos de integración
+del servicio de bots, ya corregidos, y una interrupción recuperada a las 12:21.
+No era simplemente una cola de GitHub. La sala tiene un escenario propio, sin
+conexiones publicadas a otros niveles. No se han contratado recursos adicionales.
+
+Límite observado: las dos primeras preguntas de IA agotaron el plazo de 4 s;
+las dos siguientes respondieron correctamente. Si vuelve a ocurrir, la interfaz
+muestra «no disponible» y permite reintentar; no se garantiza una respuesta a
+cada consulta ni se ha ampliado el timeout del servidor en esta entrega.
+La comprobación técnica final ha terminado con **cero fallos y cero avisos**.
+La entrega funcional está cerrada; no hay otro despliegue ni build en cola.
+
+Dos sesiones han entrado simultáneamente y se ha visto el avatar remoto; ambas
+han salido correctamente. Es una prueba desde el mismo ordenador y cuenta,
+no desde el equipo del cliente. Falta comprobar voz real entre ambos equipos.
+Las correcciones locales de ropa/tutorial siguen separadas de la web publicada.
+Está preparada la [guía breve de la demo](demo-cliente-2026-09-16.md), con el
+enlace, el recorrido y la prueba de voz entre ambos equipos. No se ha enviado
+ninguna invitación ni creado citas automáticamente.
+
+## Trabajo local de ropa y presentación visual, pausado
+
+El tutorial y el creador tienen una corrección local de distribución y
+accesibilidad. Se han comprobado ventanas normales, estrechas y bajas. Las teclas
+del tutorial ya no muestran UNDEFINED cuando el navegador no identifica el teclado.
+
+La revisión de ropa encontró un fallo adicional de nuestro ajuste: podía seguir
+una cara interior del pantalón y empujar el polo hacia dentro. La comprobación
+visual posterior permitió corregir los bolsillos asomando en reposo, pero la
+prueba de sentarse revela aún muslos atravesando el polo en ambos cuerpos. Ese
+caso sigue en reparación y no está aceptado todavía. Los pesos inspeccionados no
+presentan vértices sin peso ni valores inválidos; eso no garantiza que dos prendas
+no se crucen al doblarse.
+
+Nada de esta revisión se ha publicado en DigitalOcean. No se han repetido
+recuperaciones, respaldos ni pruebas largas de GitHub.
+
+## Circuito local disponible desde el 13 de septiembre
+
+Ya funciona Hubs real desde el Mac, con la sala 3D visible y recarga automática
+al modificar código. No es un visor distinto. Las salas y sus servicios siguen
+en DigitalOcean, sin cambios de configuración ni nuevos recursos.
+
+El comando es `node scripts/dev-hubs.cjs` desde `YenHubs-workflow`. La
+[guía de desarrollo local](local-development.md) incluye la sala y los límites.
+Se comprobó una edición reflejada automáticamente en menos de 30 segundos;
+no hubo publicación ni espera de GitHub para verla. No es un tiempo garantizado
+para toda compilación.
+
+La selección de pruebas largas de GitHub está preparada y probada en la rama
+local, pero aún no está activada en main. Esto no impide usar ya el circuito
+local. La publicación a DigitalOcean sigue siendo un paso separado.
+
+## Cierre anterior del 13 de septiembre (antecedente, no aceptación de la revisión nueva)
 
 Las correcciones de ropa, manos, asiento y cámara ya están desplegadas. La sala
 pasa la comprobación del servicio con cero fallos y cero avisos. Dos conexiones

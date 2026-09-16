@@ -12,6 +12,19 @@ import {
 
 const base = fixtureDeployment();
 assert.equal(verifyBotOrchestratorDeployment(base, deploymentConfiguration).name, "bot-orchestrator");
+const rawDeployment = structuredClone(base);
+delete rawDeployment.apiVersion;
+delete rawDeployment.kind;
+const rawList = { apiVersion: "apps/v1", kind: "DeploymentList", items: [rawDeployment] };
+assert.equal(verifyBotOrchestratorDeployment(rawList, deploymentConfiguration).name, "bot-orchestrator");
+assert.throws(() => verifyBotOrchestratorDeployment(rawDeployment, deploymentConfiguration));
+assert.throws(() => verifyBotOrchestratorDeployment({ ...rawList, items: [rawDeployment, rawDeployment] }, deploymentConfiguration));
+assert.throws(() => verifyBotOrchestratorDeployment({ ...rawList, items: [rawDeployment, { ...rawDeployment, kind: "Pod" }] }, deploymentConfiguration));
+assert.throws(() => verifyBotOrchestratorDeployment({ ...rawList, items: [{ ...rawDeployment, kind: "Pod" }] }, deploymentConfiguration));
+assert.throws(() => verifyBotOrchestratorDeployment({ ...rawList, apiVersion: "v1", kind: "List" }, deploymentConfiguration));
+const omittedEmptyEnv = structuredClone(base);
+delete omittedEmptyEnv.spec.template.spec.containers[0].env.find(e => e.name === "RUNNER_BACKEND_CANARY_HUBS").value;
+assert.equal(verifyBotOrchestratorDeployment(omittedEmptyEnv, deploymentConfiguration).name, "bot-orchestrator");
 assert.equal(
   verifyBotOrchestratorDeployment(omitKubernetesDefaults(base), deploymentConfiguration).name,
   "bot-orchestrator"
@@ -67,5 +80,10 @@ rejected(value => {
   ).value = "http://bot-orchestrator:5001";
 });
 rejected(value => { value.spec.replicas = 0; });
+rejected(value => { delete value.spec.template.spec.containers[0].env.find(e => e.name === "OPENAI_MODEL").value; });
+rejected(value => { delete value.metadata.annotations["yenhubs.org/runner-fence-protocol"]; });
+rejected(value => { value.metadata.annotations["yenhubs.org/runner-fence-protocol"] = "other"; });
+rejected(value => { delete value.spec.template.metadata.annotations["yenhubs.org/runner-fence-protocol"]; });
+rejected(value => { value.spec.template.metadata.annotations["yenhubs.org/runner-fence-protocol"] = "other"; });
 
-process.stdout.write("Bot orchestrator Deployment verifier: 18/18 passed\n");
+process.stdout.write("Bot orchestrator Deployment verifier: checks passed\n");

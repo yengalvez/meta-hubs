@@ -7,12 +7,22 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { isDeepStrictEqual } from "node:util";
 import {
+  BotOrchestratorContractError,
   readBotOrchestratorConfiguration,
   verifyBotOrchestratorDeployment,
   verifyBotOrchestratorParentPod
 } from "./verify-bot-orchestrator-deployment.mjs";
+
+const require = createRequire(import.meta.url);
+const { completeRunnerNamespaceInventory } = require(
+  "../hubs-cloud/community-edition/apply/runner-guard-reconciliation.js"
+);
+const {
+  GUARD_CAPACITY_WARNING_THRESHOLD, MAX_GUARD_PODS, MAX_GUARD_START_COUNT, MIN_GUARD_FENCE_RESERVE
+} = require("../hubs-cloud/community-edition/services/bot-orchestrator/kubernetes-runner-manager.js");
 
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const TOKEN_VERSION = "v1";
@@ -235,7 +245,10 @@ function verifyPod(pod, context) {
   const { key, runnerImage, hubDomain, parent, nowSeconds } = context;
   if (
     !object(pod) || pod.apiVersion !== "v1" || pod.kind !== "Pod" ||
-    !exactKeys(pod.metadata, SERVER_POD_METADATA_KEYS) ||
+    !exactKeys(pod.metadata, Object.hasOwn(pod.metadata || {}, "managedFields")
+      ? [...SERVER_POD_METADATA_KEYS, "managedFields"] : SERVER_POD_METADATA_KEYS) ||
+    (Object.hasOwn(pod.metadata || {}, "managedFields") &&
+      (!Array.isArray(pod.metadata.managedFields) || !pod.metadata.managedFields.every(object))) ||
     pod.metadata?.namespace !== parent.runnerNamespace ||
     typeof pod.metadata?.name !== "string" || !pod.metadata.name ||
     typeof pod.metadata?.uid !== "string" ||
@@ -399,16 +412,28 @@ function verifyPod(pod, context) {
 function verifySnapshot(payload, context) {
   if (!object(payload) || payload.apiVersion !== "v1" || payload.kind !== "PodList" ||
       !Array.isArray(payload.items)) reject("pod_list");
-  // Typed Kubernetes LIST entries omit TypeMeta. Explicit conflicting fields
-  // remain authoritative and are rejected by the unchanged per-Pod verifier.
-  const verified = payload.items.map(pod => {
-    if (!object(pod)) reject("pod");
-    return verifyPod({ apiVersion: "v1", kind: "Pod", ...pod }, context);
-  });
+  if (new Set(payload.items.map(item => item?.metadata?.name)).size !== payload.items.length ||
+      new Set(payload.items.map(item => item?.metadata?.uid)).size !== payload.items.length) {
+    reject("pod_list_duplicate");
+  }
+  let inventory;
+  try { inventory = completeRunnerNamespaceInventory(payload); }
+  catch { reject("pod_namespace_contract"); }
+  // Every object is validated above, including permanent inert fences. A
+  // pending intent is not a stable final acceptance snapshot.
+  if (inventory.intents.size !== 0 || inventory.fences.size >= GUARD_CAPACITY_WARNING_THRESHOLD) {
+    reject("pod_guard_not_stable");
+  }
+  const verified = [...inventory.runners.values()].map(entry => verifyPod(entry.pod, context));
   if (new Set(verified.map(item => item.name)).size !== verified.length ||
       new Set(verified.map(item => item.uid)).size !== verified.length ||
       new Set(verified.map(item => item.publicId)).size !== verified.length) reject("pod_list_duplicate");
-  return verified;
+  return {
+    runners: verified,
+    fences: [...inventory.fences.values()].map(entry =>
+      `${entry.pod.metadata.name}\0${entry.pod.metadata.uid}`
+    ).sort()
+  };
 }
 
 export function verifyRunnerPodInputs({
@@ -475,10 +500,18 @@ export function verifyRunnerPodInputs({
   const context = { key, runnerImage, hubDomain, parent: parentIdentity, nowSeconds };
   const before = verifySnapshot(podsBefore, context);
   const after = verifySnapshot(podsAfter, context);
-  const beforeIdentity = before.map(item => `${item.name}\0${item.uid}`).sort();
-  const afterIdentity = after.map(item => `${item.name}\0${item.uid}`).sort();
-  const podPublicIds = before.map(item => item.publicId).sort();
-  if (before.length !== expected.length ||
+  const beforeIdentity = before.runners.map(item => `${item.name}\0${item.uid}`).sort();
+  const afterIdentity = after.runners.map(item => `${item.name}\0${item.uid}`).sort();
+  const podPublicIds = before.runners.map(item => item.publicId).sort();
+  const expectedGuards = {
+    observed: true, intents: 0, fences: before.fences.length, total: before.fences.length,
+    warning: false, warning_threshold: GUARD_CAPACITY_WARNING_THRESHOLD,
+    start_limit: MAX_GUARD_START_COUNT, reserve: MIN_GUARD_FENCE_RESERVE, quota: MAX_GUARD_PODS
+  };
+  if (!exactJson(before.fences, after.fences) ||
+      !exactJson(health?.runner_guard_capacity, expectedGuards) ||
+      !exactJson(readiness?.runner_guard_capacity, expectedGuards)) reject("pod_guard_snapshot");
+  if (before.runners.length !== expected.length ||
       beforeIdentity.join("\n") !== afterIdentity.join("\n") ||
       podPublicIds.join("\0") !== expected.join("\0")) reject("pod_snapshot_set");
   return true;
@@ -533,7 +566,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === fs.realpathSync(proces
   try {
     main();
   } catch (error) {
-    const code = error instanceof ContractError ? error.code : "unexpected";
+    const code = error instanceof ContractError || error instanceof BotOrchestratorContractError
+      ? error.code : "unexpected";
     process.stderr.write(`Bot runner Pod contract failed: ${code}.\n`);
     process.exit(1);
   }

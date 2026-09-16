@@ -121,7 +121,8 @@ const deployments = { items: [
     metadata: { name: "bot-orchestrator", namespace: "hcce" },
     spec: { template: { metadata: { annotations: {
       "yenhubs.org/bot-orchestrator-access-key-checksum": digest(keys.orchestratorKey),
-      "yenhubs.org/bot-runner-recovery-epoch": keys.recoveryEpoch
+      "yenhubs.org/bot-runner-recovery-epoch": keys.recoveryEpoch,
+      "yenhubs.org/runner-fence-protocol": "intent-fence-v1"
     } } } }
   }
 ] };
@@ -147,6 +148,12 @@ parentWithMasterChecksum.items[1].spec.template.metadata.annotations[
   "yenhubs.org/bot-runner-access-key-checksum"
 ] = digest(keys.runnerKey);
 assert.throws(() => verifyBotDeploymentChecksums({ deployments: parentWithMasterChecksum, ...keys }));
+for (const protocol of [undefined, "other"]) {
+  const candidate = structuredClone(deployments);
+  if (protocol === undefined) delete candidate.items[1].spec.template.metadata.annotations["yenhubs.org/runner-fence-protocol"];
+  else candidate.items[1].spec.template.metadata.annotations["yenhubs.org/runner-fence-protocol"] = protocol;
+  assert.throws(() => verifyBotDeploymentChecksums({ deployments: candidate, ...keys }));
+}
 
 const manifestBody = JSON.stringify({ schemaVersion: 2, mediaType: "fixture" });
 const registryCalls = [];
@@ -613,4 +620,4 @@ globalThis.fetch = async url => {
   fs.rmSync(privateRoot, { recursive: true, force: true });
 }
 
-process.stdout.write("Bot image pull/checksum verifier: 44/44 passed\n");
+process.stdout.write("Bot image pull/checksum verifier: checks passed\n");
