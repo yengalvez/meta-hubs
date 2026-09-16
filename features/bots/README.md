@@ -261,7 +261,11 @@ runner gestionado, prueba el conjunto vacío y después abre el transporte. La
 reconciliación periódica elimina de forma fail-closed Pods desconocidos,
 caducados, terminales o con owner/contrato distinto. Las dos NetworkPolicies
 del namespace runner aplican default-deny y autorizan únicamente el egress
-necesario hacia kube-dns, el control-plane padre y TCP/443 público.
+necesario hacia kube-dns, el control-plane padre, TCP/443 público y únicamente
+TCP/4443 al Pod `app=haproxy` del namespace padre. La última regla conserva la
+conexión TLS a la web pública cuando el LoadBalancer traduce 443 a su backend
+interno antes de aplicar egress. Hubble confirmó el rechazo exacto antes del
+arreglo; no se habilitan otros destinos privados ni puertos adicionales.
 
 El token de generación v1 preautoriza únicamente sala, UUID de generación,
 holder/UID del Pod padre y caducidad. No contiene lease ni epoch y no sustituye
