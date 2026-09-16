@@ -32,6 +32,12 @@ además del nombre corto local. Servicio, puerto, namespace DNS y ausencia de
 sufijos se validan estrictamente; prueba cruzada con el Pod real generado.
 Solo cambia la imagen runner; parent y web conservan sus digests aceptados.
 
+El watchdog distingue la primera observación de Pod Ready de una pérdida
+posterior de readiness. Un estado autenticado puede adelantarse a la sonda de
+kubelet: se conserva solo el plazo inicial ya acotado, sin anunciar `/ready`
+ni reiniciar antes de tiempo. Una vez observado Ready, una pérdida posterior
+no obtiene otra ventana. Desconexiones y estados caducados siguen cerrándose.
+
 La arquitectura candidata usa Node `ghost` como único runner productivo y
 autenticado. Chromium se conserva solo como diagnóstico browser legacy/local
 sin `--runner`: el renderer no recibe `BOT_RUNNER_ACCESS_KEY`, no puede autenticarse
