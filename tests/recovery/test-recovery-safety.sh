@@ -4464,6 +4464,34 @@ if [[ "$joined" == "get --raw /apis/coordination.k8s.io/v1/namespaces/hcce/lease
 fi
 if [[ "$joined" == get\ --raw\ *\?*fieldSelector=metadata.name%3D* ]]; then
   raw_path="${3:-}"
+  if [[ "$raw_path" != *"watch=true"* ]]; then
+    # Match the real API: named LISTs carry a fresh collection cursor and
+    # their items may omit TypeMeta. This is not a WATCH/BOOKMARK response.
+    control_list_collection="${raw_path%%\?*}"
+    control_list_name="${raw_path##*fieldSelector=metadata.name%3D}"
+    case "$control_list_collection/$control_list_name" in
+      /api/v1/namespaces/hcce|/api/v1/namespaces/hcce-bot-runners)
+        control_list_api=v1; control_list_kind=Namespace ;;
+      /apis/admissionregistration.k8s.io/v1/validatingadmissionpolicies/recovery-operation-pod-fence.yenhubs.org)
+        control_list_api=admissionregistration.k8s.io/v1
+        control_list_kind=ValidatingAdmissionPolicy ;;
+      /apis/admissionregistration.k8s.io/v1/validatingadmissionpolicybindings/recovery-operation-pod-fence.yenhubs.org)
+        control_list_api=admissionregistration.k8s.io/v1
+        control_list_kind=ValidatingAdmissionPolicyBinding ;;
+      /api/v1/namespaces/hcce/configmaps/yenhubs-recovery-operation-lock)
+        control_list_api=v1; control_list_kind=ConfigMap ;;
+      /apis/coordination.k8s.io/v1/namespaces/hcce/leases/yenhubs-operation-serialization)
+        control_list_api=coordination.k8s.io/v1; control_list_kind=Lease ;;
+      *) exit 91 ;;
+    esac
+    control_list_object="$("$0" --context fixture-context --request-timeout=45s \
+      get --raw "$control_list_collection/$control_list_name")" || exit 1
+    jq -c --arg api "$control_list_api" --arg kind "${control_list_kind}List" \
+      '{apiVersion:$api,kind:$kind,
+        metadata:{resourceVersion:("collection-" + .metadata.resourceVersion)},
+        items:[del(.apiVersion,.kind)]}' <<<"$control_list_object"
+    exit 0
+  fi
   case "$raw_path" in
     /api/v1/namespaces\?*hcce-bot-runners*) control_watch_rv=namespace-rv-runner ;;
     /api/v1/namespaces\?*) control_watch_rv=namespace-rv-hcce ;;
