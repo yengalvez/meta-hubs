@@ -103,6 +103,8 @@ cloud	community-edition/services/photomnemonic/package-lock.json
 cloud	community-edition/services/reticulum/mix.exs
 cloud	community-edition/services/reticulum/mix.lock
 cloud	community-edition/services/reticulum/scripts/verify-cowlib-security-contract.sh
+cloud	community-edition/services/reticulum/scripts/cowlib-osv-fixed-boundary.jq
+cloud	community-edition/services/reticulum/scripts/cowlib-osv-fixed-boundary.test.mjs
 INPUTS
       ;;
     static)
@@ -492,6 +494,7 @@ write_pass_receipt() {
 
 run_advisories() {
   local directory
+  node --test "$ROOT_DIR/hubs-cloud/community-edition/services/reticulum/scripts/cowlib-osv-fixed-boundary.test.mjs"
   for directory in \
     "$ROOT_DIR/hubs" \
     "$ROOT_DIR/hubs/admin" \
