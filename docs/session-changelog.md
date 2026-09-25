@@ -1628,3 +1628,9 @@ de esos defectos ni activado el Goal mediante esta actualización documental.
   repositorios limpios. Static ejecutó sus comprobaciones sin hallar secretos,
   pero rechazó el recibo porque el candidato cambió durante la ejecución;
   no se considera PASS. Congelar archivos antes de emitir el recibo definitivo.
+# 2026-09-25 — Candidato de avatares
+
+Se aísla el cliente b805d96d3 y el catálogo de33avatares, conservando los siete
+IDs existentes y los GLB originales. Build oficial36164500021 y comparación
+live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
+(IA pendiente). Fuente y pruebas: DOC/avatar-release-2026-09-25.md.

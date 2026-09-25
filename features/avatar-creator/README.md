@@ -1,5 +1,15 @@
 # Integrated avatar creator
 
+## Selector simplificado de avatares (2026-09-22, candidato local)
+
+El selector muestra únicamente `Crear con Avaturn` y `Subir GLB` como acciones
+de creación. Las dos tarjetas se agrupan y centran; Avaturn tiene un icono
+propio. La opción del creador MakeHuman y la tarjeta independiente `Guía GLB`
+se retiran del selector, sin borrar el código ni los avatares ya guardados. Al
+abrir `Subir GLB`, la guía y sus requisitos aparecen desplegables junto al
+campo de archivo. La subida sigue siendo privada y requiere iniciar sesión.
+Este cambio es solo de cliente y no altera el contrato de almacenamiento.
+
 ## Clothing and hands corrective candidate (2026-09-08, local acceptance)
 
 Creator-only runtime fitting transfers lower outer-garment hem weights from the

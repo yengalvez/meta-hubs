@@ -1,0 +1,208 @@
+{
+  "version": 1,
+  "reviewed": "2026-09-25",
+  "source_dirs": [
+    "/Users/yengalvez/Downloads/AvatarsRPM",
+    "/Users/yengalvez/Desktop/T/UNIE/Avatars"
+  ],
+  "entries": [
+    {
+      "stem": "Bata",
+      "name": "Bata blanca · gafas",
+      "category": "Sanitario",
+      "existing_listing": "84PKFaQ"
+    },
+    {
+      "stem": "Bata2",
+      "name": "Bata blanca · pelo rubio",
+      "category": "Sanitario",
+      "existing_listing": "y_GoczU"
+    },
+    {
+      "stem": "CamisaNegra",
+      "name": "Camisa oscura · gafas",
+      "category": "Formal",
+      "existing_listing": "x0h-wd0"
+    },
+    {
+      "stem": "CamisaNegra2",
+      "name": "Camisa oscura · pelo largo",
+      "category": "Formal",
+      "existing_listing": "f8zTm-g"
+    },
+    {
+      "stem": "CamisaVaqueros",
+      "name": "Camisa clara y vaqueros · barba",
+      "category": "Casual",
+      "existing_listing": "mKOnfC8"
+    },
+    {
+      "stem": "CamisaVaqueros2",
+      "name": "Camisa clara y vaqueros · gafas",
+      "category": "Casual",
+      "existing_listing": "t_zomhE"
+    },
+    {
+      "stem": "Camiseta",
+      "name": "Camiseta blanca · barba",
+      "category": "Casual",
+      "existing_listing": "3LVfOJj"
+    },
+    {
+      "stem": "Camiseta2",
+      "name": "Camiseta blanca · gafas",
+      "category": "Casual",
+      "existing_listing": null
+    },
+    {
+      "stem": "Jersey",
+      "name": "Jersey gris · barba",
+      "category": "Casual",
+      "existing_listing": null
+    },
+    {
+      "stem": "Jersey2",
+      "name": "Jersey gris · pelo rubio",
+      "category": "Casual",
+      "existing_listing": null
+    },
+    {
+      "stem": "JerseyNegro",
+      "name": "Jersey negro · pelo corto",
+      "category": "Casual",
+      "existing_listing": null
+    },
+    {
+      "stem": "JerseyNegro2",
+      "name": "Jersey negro · rapado",
+      "category": "Casual",
+      "existing_listing": null
+    },
+    {
+      "stem": "Sudadera",
+      "name": "Sudadera gris · pelo castaño",
+      "category": "Casual",
+      "existing_listing": null
+    },
+    {
+      "stem": "Sudadera2",
+      "name": "Sudadera gris · rapado",
+      "category": "Casual",
+      "existing_listing": null
+    },
+    {
+      "stem": "Traje",
+      "name": "Traje y corbata · pelo oscuro",
+      "category": "Formal",
+      "existing_listing": null
+    },
+    {
+      "stem": "Traje2",
+      "name": "Traje y corbata · pelo rubio",
+      "category": "Formal",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wbata",
+      "name": "Bata blanca · media melena",
+      "category": "Sanitario",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wbata2",
+      "name": "Bata blanca · coleta",
+      "category": "Sanitario",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wcamisa",
+      "name": "Blusa azul · moño",
+      "category": "Formal",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wcamisa2",
+      "name": "Blusa azul · coleta",
+      "category": "Formal",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wcamisanegra",
+      "name": "Blusa negra · rizos",
+      "category": "Formal",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wcamisanegra2",
+      "name": "Blusa negra · pelo corto",
+      "category": "Formal",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wcasual",
+      "name": "Sudadera naranja · pelo oscuro",
+      "category": "Casual",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wcasual2",
+      "name": "Sudadera naranja · pelo rubio",
+      "category": "Casual",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wsport",
+      "name": "Sudadera gris · corte pixie",
+      "category": "Deportivo",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wsport2",
+      "name": "Sudadera gris · melena rubia",
+      "category": "Deportivo",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wstyle",
+      "name": "Gabardina y botas · pelo corto",
+      "category": "Casual",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wstyle2",
+      "name": "Gabardina y botas · rizos",
+      "category": "Casual",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wtraje",
+      "name": "Traje azul · media melena",
+      "category": "Formal",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wtraje2",
+      "name": "Traje azul · coleta",
+      "category": "Formal",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wvestido",
+      "name": "Vestido rosa · pelo corto",
+      "category": "Elegante",
+      "existing_listing": null
+    },
+    {
+      "stem": "Wvestido2",
+      "name": "Vestido rosa · melena rubia",
+      "category": "Elegante",
+      "existing_listing": null
+    },
+    {
+      "stem": "chica",
+      "name": "Blusa negra · moño",
+      "category": "Formal",
+      "existing_listing": null
+    }
+  ]
+}

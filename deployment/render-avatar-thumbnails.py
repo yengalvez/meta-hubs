@@ -32,10 +32,16 @@ def clear_scene():
 
 def scene_bounds():
     corners = []
+    graph = bpy.context.evaluated_depsgraph_get()
     for obj in bpy.context.scene.objects:
-        if obj.type != "MESH":
+        # glTF's hidden bone-widget Icosphere is not part of the avatar.
+        if obj.type != "MESH" or obj.hide_render or not obj.visible_get():
             continue
-        corners.extend(obj.matrix_world @ Vector(corner) for corner in obj.bound_box)
+        evaluated = obj.evaluated_get(graph)
+        mesh = evaluated.to_mesh()
+        used = {i for polygon in mesh.polygons for i in polygon.vertices}
+        corners.extend(evaluated.matrix_world @ mesh.vertices[i].co for i in used)
+        evaluated.to_mesh_clear()
 
     if not corners:
         raise RuntimeError("GLB has no renderable mesh")

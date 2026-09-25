@@ -3,6 +3,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const GLB_MAGIC = 0x46546c67;
 const JSON_CHUNK = 0x4e4f534a;
@@ -62,7 +63,7 @@ function avatarTags(gltf) {
   return [...(fullbody ? ["fullbody"] : []), ...(rpm ? ["rpm"] : [])];
 }
 
-function splitGlb(buffer) {
+export function splitGlb(buffer) {
   if (buffer.readUInt32LE(0) !== GLB_MAGIC || buffer.readUInt32LE(4) !== 2) {
     throw new Error("Only GLB v2 files are supported");
   }
@@ -264,7 +265,7 @@ async function main() {
   console.log(`Import manifest: ${manifestPath}`);
 }
 
-main().catch(error => {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) main().catch(error => {
   console.error(error.message);
   process.exit(1);
 });
