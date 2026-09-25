@@ -987,7 +987,8 @@ checkpoint_runner_mode_from_values() {
 
 checkpoint_require_runner_mode_exact() {
   recovery_require_checkpoint_runner_mode_exact \
-    "$VALUES_SOURCE_FILE" "$1" "$CHECKPOINT_PROCESS_LOCAL_STRATEGY_SCOPE"
+    "$VALUES_SOURCE_FILE" "$1" "$CHECKPOINT_PROCESS_LOCAL_STRATEGY_SCOPE" \
+    "$CHECKPOINT_OPERATION_FENCE_ACTIVE_IDENTITY"
 }
 
 cleanup_runner_monitor() {

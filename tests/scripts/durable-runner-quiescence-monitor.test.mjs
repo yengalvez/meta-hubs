@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { guardPodDocumentForIdentity } from "../../hubs-cloud/community-edition/services/bot-orchestrator/kubernetes-runner-manager.js";
 import {
+  controlResourceFromList,
   normalizeCompleteParentList,
   podInitialWatchRawPath,
   podWatchRawPath,
@@ -91,6 +92,15 @@ const baseline = {
   fences: [baselineRecord],
   sha256: ""
 };
+test("fresh named control LIST accepts old object RV and omitted item TypeMeta", () => {
+  const descriptor={key:"parent_namespace",name:"hcce"};
+  const item={metadata:{name:"hcce",uid:"same-uid",resourceVersion:"old-object-rv"}};
+  const list={apiVersion:"v1",kind:"NamespaceList",metadata:{resourceVersion:"fresh-list-rv"},items:[item]};
+  assert.deepEqual(controlResourceFromList(list,descriptor),{...item,apiVersion:"v1",kind:"Namespace"});
+  for(const mutate of [x=>x.metadata.continue="next",x=>x.items=[],x=>x.items.push(item),x=>x.items[0].metadata.name="other",x=>x.kind="PodList",x=>x.items[0].kind="Pod"]){
+    const bad=structuredClone(list);mutate(bad);assert.throws(()=>controlResourceFromList(bad,descriptor));
+  }
+});
 baseline.sha256 = crypto.createHash("sha256").update(baseline.canonical).digest("hex");
 
 function clone(value) {
@@ -559,7 +569,8 @@ if (!isWatch && isPodCollection) {
 }
 
 if (!isWatch) {
-  const key = controlKey();
+  const selectedName = (url.searchParams.get("fieldSelector") || "").replace("metadata.name=", "");
+  const key = controlKey(selectedName);
   if (!key) process.exit(41);
   let resource = controls[key];
   if (key === "lease" && ["lease-renew", "lease-unobserved"].includes(process.env.STUB_MODE)) {
@@ -571,7 +582,11 @@ if (!isWatch) {
     fs.appendFileSync(process.env.STUB_LEASE_GET_COUNT_PATH, "get\\n");
     if (count >= 1) resource = renewedLease;
   }
-  process.stdout.write(JSON.stringify(resource));
+  process.stdout.write(JSON.stringify(selectedName ? {
+    apiVersion:resource.apiVersion,kind:resource.kind+"List",
+    metadata:{resourceVersion:"fresh-control-list-rv"},items:[process.env.STUB_MODE === "old-control-rv" ?
+      Object.fromEntries(Object.entries(resource).filter(([key]) => !["apiVersion","kind"].includes(key))) : resource]
+  } : resource));
   process.exit(0);
 }
 
@@ -710,6 +725,11 @@ if (!key) process.exit(42);
 const controlWatchIndex = nextInvocation(
   process.env.STUB_CONTROL_WATCH_COUNT_PREFIX + "-" + key
 );
+if (process.env.STUB_MODE === "old-control-rv" && controlWatchIndex === 1 &&
+    url.searchParams.get("resourceVersion") !== "fresh-control-list-rv") {
+  process.stdout.write(JSON.stringify({type:"ERROR",object:{apiVersion:"v1",kind:"Status",code:410,metadata:{}}})+"\\n");
+  process.exit(0);
+}
 const terminalDriftKeys = {
   "terminal-binding-drift": "binding",
   "terminal-lock-drift": "operationLock",
@@ -761,7 +781,7 @@ if (fixedMutationKeys[process.env.STUB_MODE] === key) {
   process.exit(0);
 }
 if (["lease-renew", "lease-holder-flip", "lease-stale-renew"].includes(process.env.STUB_MODE) &&
-    key === "lease" && url.searchParams.get("resourceVersion") === controls.lease.metadata.resourceVersion) {
+    key === "lease" && [controls.lease.metadata.resourceVersion,"fresh-control-list-rv"].includes(url.searchParams.get("resourceVersion"))) {
   const changed = JSON.parse(JSON.stringify(renewedLease));
   if (process.env.STUB_MODE === "lease-holder-flip") {
     changed.spec.holderIdentity = "root-recovery:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -1015,6 +1035,16 @@ test("CLI publishes ready/progress/final without API payloads and honors safe st
     /^[a-f0-9]{64}:[1-9][0-9]*\n$/u);
   assert.equal(fs.readFileSync(fixture.finalPath, "utf8"),
     `complete:${positiveCapability}\n`);
+});
+
+test("CLI starts from fresh LIST frontier when immutable object history expired", async t => {
+  const fixture=runMonitorFixture("old-control-rv",{operationOwner:"checkpoint-backup"});
+  t.after(()=>cleanupFixture(fixture));
+  await waitFor(()=>fs.readFileSync(fixture.readyPath,"utf8").startsWith("ready:"));
+  fs.writeFileSync(fixture.stopPath,"stop\n",{mode:0o600});
+  const result=await fixture.closed;
+  assert.equal(result.code,0);assert.equal(result.stderr,"");
+  assert.equal(fs.readFileSync(fixture.failurePath,"utf8"),"");
 });
 
 test("CLI fails closed when the retained Pod cursor expires with 410", async t => {

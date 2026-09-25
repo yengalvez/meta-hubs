@@ -1045,15 +1045,22 @@ async function readControlResources(
   { initialize = false, requireObserved = false, rememberTargets = false } = {}
 ) {
   const texts = await Promise.all(state.descriptors.map(descriptor =>
-    kubectlCapture(kubectl, context, descriptor.getPath, MAX_CONTROL_OBJECT_BYTES)
+    kubectlCapture(kubectl, context, initialize
+      ? `${descriptor.collectionPath}?fieldSelector=${encodeURIComponent(`metadata.name=${descriptor.name}`)}`
+      : descriptor.getPath, MAX_CONTROL_OBJECT_BYTES)
   ));
   texts.forEach((text, index) => {
     const descriptor = state.descriptors[index];
-    const resource = parseJson(text, `control_${descriptor.key}_json`);
+    const response = parseJson(text, `control_${descriptor.key}_json`);
+    const resource = initialize ? controlResourceFromList(response, descriptor) : response;
     validateControlResource(resource, descriptor, state.baseline);
-    if (initialize && descriptor.mutable) {
-      descriptor.cursor = resource.metadata.resourceVersion;
-      descriptor.seenResourceVersions.add(descriptor.cursor);
+    if (initialize) {
+      // An unchanged object's RV may predate etcd compaction by weeks. Bind
+      // its exact immutable identity as before, but WATCH from the fresh,
+      // consistent collection snapshot containing that object. Never use a
+      // relist to heal a 410 after this evidence window has started.
+      descriptor.cursor = response.metadata.resourceVersion;
+      if (descriptor.mutable) descriptor.seenResourceVersions.add(resource.metadata.resourceVersion);
     } else if (descriptor.mutable) {
       const resourceVersion = resource.metadata.resourceVersion;
       if (rememberTargets) descriptor.requiredResourceVersion = resourceVersion;
@@ -1069,6 +1076,27 @@ async function readControlResources(
   if (state.descriptors.some(descriptor => !validResourceVersion(descriptor.cursor))) {
     fail("control_cursor_initialization");
   }
+}
+
+function controlResourceFromList(value, descriptor) {
+  const types = {
+    parent_namespace: ["v1", "Namespace"], runner_namespace: ["v1", "Namespace"],
+    recovery_policy: ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicy"],
+    recovery_binding: ["admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicyBinding"],
+    operation_lock: ["v1", "ConfigMap"], operation_lease: ["coordination.k8s.io/v1", "Lease"]
+  };
+  const [apiVersion, kind] = types[descriptor.key] || [];
+  if (!object(value) || !object(value.metadata) || !validResourceVersion(value.metadata.resourceVersion) ||
+      (value.metadata.continue !== undefined && value.metadata.continue !== "") ||
+      (value.metadata.remainingItemCount !== undefined && value.metadata.remainingItemCount !== 0) ||
+      !Array.isArray(value.items) || value.items.length !== 1 ||
+      value.items[0]?.metadata?.name !== descriptor.name || !apiVersion ||
+      value.apiVersion !== apiVersion || value.kind !== `${kind}List` ||
+      (value.items[0].apiVersion !== undefined && value.items[0].apiVersion !== apiVersion) ||
+      (value.items[0].kind !== undefined && value.items[0].kind !== kind)) {
+    fail("control_initial_list_contract");
+  }
+  return { ...value.items[0], apiVersion, kind };
 }
 
 function validateControlWatchStream(text, descriptor, controlBaseline) {
@@ -1607,6 +1635,7 @@ async function runCli() {
 }
 
 export {
+  controlResourceFromList,
   captureRound,
   normalizeCompleteParentList,
   podInitialWatchRawPath,

@@ -4173,7 +4173,7 @@ recovery_require_live_runner_recovery_phase() {
 }
 
 recovery_require_live_runner_active_control_plane_exact() {
-  local values_path="$1" output
+  local values_path="$1" output active_fence_identity="${2:-}"
   # The direct-file guard deliberately rejects '..'. Construct trusted
   # project-relative defaults without traversal, retaining every child path
   # component so a symlink inside hubs-cloud is still rejected by that guard.
@@ -4221,6 +4221,12 @@ recovery_require_live_runner_active_control_plane_exact() {
   # consumer annotations to be active makes an inert restore-fence manifest
   # ineligible even if that fenced control plane is otherwise internally exact.
   recovery_require_live_runner_recovery_phase active || return 1
+  if [[ -n "$active_fence_identity" ]]; then
+    [[ "${RECOVERY_OPERATION_OWNER:-}" == checkpoint-backup ]] || return 1
+    recovery_require_operation_serialization || return 1
+    recovery_require_operation_lock || return 1
+    recovery_require_recovery_operation_fence_state active "$active_fence_identity" || return 1
+  fi
   if ! HCCE_INPUT_VALUES_PATH="$values_path" \
     HCCE_MANIFEST_PATH="$manifest_path" \
       command node "$manifest_verifier" >/dev/null; then
@@ -4230,6 +4236,7 @@ recovery_require_live_runner_active_control_plane_exact() {
   if ! output="$({
     HCCE_INPUT_VALUES_PATH="$values_path" \
     HCCE_MANIFEST_PATH="$manifest_path" \
+    HCCE_CHECKPOINT_ACTIVE_FENCE_IDENTITY="$active_fence_identity" \
     KUBECTL_CONTEXT="$EXPECTED_KUBE_CONTEXT" \
       command node "$verifier"
   })"; then
@@ -4240,6 +4247,11 @@ recovery_require_live_runner_active_control_plane_exact() {
     printf 'The active runner control-plane verifier returned an unexpected result.\n' >&2
     return 1
   }
+  if [[ -n "$active_fence_identity" ]]; then
+    recovery_require_operation_serialization || return 1
+    recovery_require_operation_lock || return 1
+    recovery_require_recovery_operation_fence_state active "$active_fence_identity" || return 1
+  fi
 }
 
 # Checkpoint creation must work both before and after the isolated runner
@@ -4655,6 +4667,7 @@ recovery_checkpoint_runner_mode_candidate() {
 recovery_require_checkpoint_runner_mode_exact() {
   local values_path="$1" expected_mode="${2:-}" candidate_mode
   local process_local_scope="${3:-strict-recreate}"
+  local active_fence_identity="${4:-}"
   [[ -z "$expected_mode" || "$expected_mode" == process-local ||
      "$expected_mode" == kubernetes-pod ]] || return 2
   [[ "$process_local_scope" == strict-recreate ||
@@ -4686,7 +4699,7 @@ recovery_require_checkpoint_runner_mode_exact() {
       # Any isolated-runner signal selects this branch.  A partial bootstrap,
       # admission, restore-fence or drifted setup must fail here and must never
       # fall back to the legacy authorization path.
-      recovery_require_live_runner_active_control_plane_exact "$values_path" || return 1
+      recovery_require_live_runner_active_control_plane_exact "$values_path" "$active_fence_identity" || return 1
       ;;
     *)
       return 1
