@@ -932,6 +932,12 @@ function withoutKubectlBookkeeping(resource) {
 
 function parentResourceMatchesExpected(live, expected) {
   const projected = withoutKubectlBookkeeping(live);
+  // Kubernetes serializes an empty Role as rules:null (or omits it).
+  // Canonicalize only that zero-permission case, matching the live verifier.
+  if (projected?.kind === "Role" && expected?.kind === "Role" &&
+      Array.isArray(expected.rules) && expected.rules.length === 0 && projected.rules == null) {
+    projected.rules = [];
+  }
   const expectedTopLevel = new Set(Object.keys(expected || {}));
   const unexpectedTopLevel = Object.keys(projected || {}).filter(key => !expectedTopLevel.has(key));
   const allowedEmptyServiceAccountField = key =>

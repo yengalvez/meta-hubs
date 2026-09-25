@@ -2198,6 +2198,32 @@ test("durable evidence rejects stale policy status and terminating parent resour
   );
 });
 
+test("durable checkpoint accepts Kubernetes null or omitted zero-permission parent Role rules", () => {
+  for (const rules of [null, undefined]) {
+    const live = durableLive();
+    live.manifest.expected_parent_resources.role.rules = [];
+    if (rules === undefined) delete live.parent_resources.role.rules;
+    else live.parent_resources.role.rules = rules;
+    const evidence = buildCheckpointEvidenceCore(live, inputs(live.manifest));
+    assert.equal(evidence.admission.parent_resources.state, "present");
+    assert.equal(live.parent_resources.role.rules, rules);
+  }
+});
+
+test("empty parent Role normalization never accepts permission drift or malformed rules", () => {
+  for (const rules of ["", {}, [{ apiGroups: ["*"], resources: ["*"], verbs: ["*"] }]]) {
+    const live = durableLive();
+    live.manifest.expected_parent_resources.role.rules = [];
+    live.parent_resources.role.rules = rules;
+    assert.throws(() => buildCheckpointEvidenceCore(live, inputs(live.manifest)),
+      /durable_parent_resource_not_exact|durable_control_plane_manifest_drift/);
+  }
+  const live = durableLive();
+  live.parent_resources.role.rules = null;
+  assert.throws(() => buildCheckpointEvidenceCore(live, inputs(live.manifest)),
+    /durable_parent_resource_not_exact|durable_control_plane_manifest_drift/);
+});
+
 test("legacy classification rejects every partial AUD078 residue", () => {
   for (const mutate of [
     live => { live.parent_resources.role = { kind: "Role" }; },
