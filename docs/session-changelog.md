@@ -1,5 +1,13 @@
 # Session Changelog
 
+## 2026-09-25 — prerequisite for RPM catalogue checkpoint
+- The durable checkpoint's live control-plane guard rejected its own verifier
+  defaults because they contained `..`. Construct defaults from the known
+  project root without traversal, preserving rejection of symlinks and all
+  operator-provided unsafe paths. No Kubernetes policy or production code changed.
+- Focused path regression, ShellCheck and the real read-only control-plane gate
+  pass. This isolated repair is not a full project release or production rollout.
+
 ## 2026-09-16 (bots/IA/configurador; publicación y aceptación funcional)
 
 - Secuencia final 35168 exit 0. Hubs/Admin `ae66ee5d…`, parent `10fd0c90…`

@@ -4171,9 +4171,13 @@ recovery_require_live_runner_recovery_phase() {
 
 recovery_require_live_runner_active_control_plane_exact() {
   local values_path="$1" output
-  local verifier="$RECOVERY_SAFETY_DIR/../../hubs-cloud/community-edition/apply/verify-live-runner-control-plane.js"
-  local manifest_verifier="$RECOVERY_SAFETY_DIR/../../hubs-cloud/community-edition/generate_script/verify-generated-manifest.js"
-  local manifest_path="${HCCE_MANIFEST_PATH:-$RECOVERY_SAFETY_DIR/../../hubs-cloud/community-edition/hcce.yaml}"
+  # The direct-file guard deliberately rejects '..'. Construct trusted
+  # project-relative defaults without traversal, retaining every child path
+  # component so a symlink inside hubs-cloud is still rejected by that guard.
+  local cloud_root="${RECOVERY_SAFETY_DIR%/deployment/lib}/hubs-cloud/community-edition"
+  local verifier="$cloud_root/apply/verify-live-runner-control-plane.js"
+  local manifest_verifier="$cloud_root/generate_script/verify-generated-manifest.js"
+  local manifest_path="${HCCE_MANIFEST_PATH:-$cloud_root/hcce.yaml}"
 
   if [[ -n "${YENHUBS_RECOVERY_RUNNER_CONTROL_PLANE_VERIFIER:-}" ]]; then
     recovery_require_local_fixture_attestation || {
