@@ -19433,10 +19433,18 @@ jq '(.deployments[] | select(.name == "pgsql") | .containers[0].name) = "postgre
   "$KUBERNETES_RUNNER_INVENTORY" >"$KUBERNETES_WRONG_PGSQL_INVENTORY"
 if bash -c 'source "$1"; recovery_deployment_inventory_is_acceptable "$2" hcce fixture-uid' _ \
   "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$KUBERNETES_WRONG_PGSQL_INVENTORY"; then
-  fail 'Kubernetes runner inventory rejects historical pgsql/postgresql fallback' \
-    'mixed Kubernetes inventory accepted'
+  pass 'Kubernetes runner inventory preserves the deployed pgsql/postgresql name'
 else
-  pass 'Kubernetes runner inventory rejects historical pgsql/postgresql fallback'
+  fail 'Kubernetes runner inventory preserves the deployed pgsql/postgresql name' \
+    'supported PostgreSQL container name rejected'
+fi
+jq '(.deployments[] | select(.name == "pgsql") | .containers[0].name) = "postgresql-other"' \
+  "$KUBERNETES_RUNNER_INVENTORY" >"$KUBERNETES_WRONG_PGSQL_INVENTORY"
+if bash -c 'source "$1"; recovery_deployment_inventory_is_acceptable "$2" hcce fixture-uid' _ \
+  "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$KUBERNETES_WRONG_PGSQL_INVENTORY"; then
+  fail 'Kubernetes runner inventory rejects unknown PostgreSQL names' 'unknown name accepted'
+else
+  pass 'Kubernetes runner inventory rejects unknown PostgreSQL names'
 fi
 MISSING_RUNNER_CONTROL_RESOURCE="$TMP_DIR/deployment-images-kubernetes-runner-missing-resource.json"
 jq '.bot_runner_runtime.control_plane.namespaced_resources |= map(select(.name != "bot-runner-egress"))' \

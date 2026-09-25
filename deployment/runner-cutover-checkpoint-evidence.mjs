@@ -2925,7 +2925,11 @@ function trustedDeploymentInventoryFailure(deployments, mode, expectedParentUid)
   if (!isDeepStrictEqual([...byName.keys()].sort(), [...EXPECTED_DEPLOYMENTS].sort())) {
     return "deployment_names";
   }
-  const postgresPair = mode === "process-local" ? "pgsql/postgresql" : "pgsql/pgsql";
+  const postgresContainers = byName.get("pgsql").containers;
+  if (postgresContainers.length !== 1 ||
+      !["pgsql", "postgresql"].includes(postgresContainers[0].name)) return "container_pairs";
+  const postgresPair = mode === "process-local"
+    ? "pgsql/postgresql" : `pgsql/${postgresContainers[0].name}`;
   const expectedPairs = [...EXPECTED_CONTAINER_PAIRS, postgresPair].sort();
   const parent = byName.get("bot-orchestrator");
   if (!isDeepStrictEqual(pairs.sort(), expectedPairs)) return "container_pairs";

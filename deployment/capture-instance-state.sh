@@ -123,7 +123,19 @@ checkpoint_runner_mode="$(
 }
 case "$checkpoint_runner_mode" in
   process-local) postgres_pair='pgsql/postgresql' ;;
-  kubernetes-pod) postgres_pair='pgsql/pgsql' ;;
+  kubernetes-pod)
+    # The runner cutover does not rename PostgreSQL. Bind the exact single
+    # allowlisted container present in this capture, then validate its digest.
+    postgres_pair="$(jq -er '
+      [.items[] | select(.metadata.name == "pgsql")] |
+      select(length == 1) | .[0].spec.template.spec.containers |
+      select(length == 1) | .[0].name |
+      select(. == "pgsql" or . == "postgresql") | "pgsql/" + .
+    ' <<<"$deployments_json")" || {
+      printf 'PostgreSQL must have exactly one allowlisted container.\n' >&2
+      exit 1
+    }
+    ;;
   *)
     printf 'The live checkpoint runner boundary has an invalid mode.\n' >&2
     exit 1
@@ -158,11 +170,10 @@ EXPECTED_IMAGES_JSON="$(jq -cn \
     "spoke/spoke": $spoke
   } + {($postgres_pair):$postgres}
 ')"
-# The deployment generator uses pgsql/pgsql after AUD-075. The accepted
-# historical process-local boundary used the same trusted PostgreSQL image
-# under pgsql/postgresql; normalize only this pair for repository validation.
+# Both accepted PostgreSQL container spellings use the same image contract.
+# Normalize only the temporary image-map validation, never captured identity.
 TRUSTED_EXPECTED_IMAGES_JSON="$EXPECTED_IMAGES_JSON"
-if [[ "$checkpoint_runner_mode" == process-local ]]; then
+if [[ "$postgres_pair" == pgsql/postgresql ]]; then
   TRUSTED_EXPECTED_IMAGES_JSON="$(jq -c '
     with_entries(if .key == "pgsql/postgresql"
       then .key = "pgsql/pgsql" else . end)

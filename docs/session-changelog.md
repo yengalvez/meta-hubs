@@ -1,6 +1,13 @@
 # Session Changelog
 
 ## 2026-09-25 — prerequisite for RPM catalogue checkpoint
+- Owner authorized resolving the checkpoint compatibility blocker. Durable
+  runner mode no longer invents a PostgreSQL rename: capture binds exactly one
+  supported live name (pgsql or postgresql), preserves it in the inventory,
+  and still checks image repository/digest, identity and all control-plane data.
+  Independent read-only review found an obsolete negative fixture, corrected;
+  regression covers both names and rejects unknown names, extra containers,
+  untrusted repositories and mutable tags. No infrastructure mutation.
 - The durable checkpoint's live control-plane guard rejected its own verifier
   defaults because they contained `..`. Construct defaults from the known
   project root without traversal, preserving rejection of symlinks and all

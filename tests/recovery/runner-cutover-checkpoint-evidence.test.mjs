@@ -1353,6 +1353,35 @@ test("schema-4 inventory validation requires the complete mode-specific deployme
   }
 });
 
+test("durable inventory preserves the deployed PostgreSQL name without weakening exactness", () => {
+  const live = durableLive({ fences: [exactGuard("fence")] });
+  const evidence = envelope(buildCheckpointEvidenceCore(live, inputs(live.manifest)));
+  const inventory = deploymentInventory("kubernetes-pod", evidence);
+  inventory.deployments.find(d => d.name === "pgsql").containers[0].name = "postgresql";
+  assert.equal(validateDeploymentInventory(inventory, evidence), inventory);
+  const directory = privateDirectory();
+  const inventoryPath = writePrivate(directory, "inventory.json", JSON.stringify(inventory));
+  const bashValidate = value => {
+    fs.writeFileSync(inventoryPath, JSON.stringify(value));
+    return spawnSync("bash", ["-c", 'source deployment/lib/recovery-safety.sh; recovery_deployment_inventory_is_acceptable "$1" "$2" "$3"',
+      "test", inventoryPath, NAMESPACE, NAMESPACE_UID], { encoding: "utf8" }).status;
+  };
+  try {
+    assert.equal(bashValidate(inventory), 0);
+    for (const mutate of [
+      pg => { pg.containers[0].name = "postgresql-other"; },
+      pg => { pg.containers.push({ ...pg.containers[0], name: "pgsql" }); },
+      pg => { pg.containers[0].image = `example.org/postgres@sha256:${"a".repeat(64)}`; },
+      pg => { pg.containers[0].image = "ghcr.io/yengalvez/postgres:latest"; }
+    ]) {
+      const invalid = structuredClone(inventory);
+      mutate(invalid.deployments.find(d => d.name === "pgsql"));
+      assert.throws(() => validateDeploymentInventory(invalid, evidence), /deployment_inventory_evidence_mismatch/);
+      assert.notEqual(bashValidate(invalid), 0);
+    }
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("offline durable evidence rejects non-exact signed journal nesting and invalid issued_at", () => {
   const live = durableLive({ fences: [exactGuard("fence")] });
   const valid = envelope(buildCheckpointEvidenceCore(live, inputs(live.manifest)));
@@ -2626,7 +2655,7 @@ test("validate-evidence CLI enforces unique control-plane identities and Secret 
   }
 });
 
-test("private input requires exact 0600 file and 0700 directory modes", () => {
+test("private input requires exact 0600 file and 0700 directory modes", t => {
   const directory = privateDirectory();
   try {
     const source = writePrivate(directory, "pods.json", JSON.stringify(podList([])));
@@ -2636,10 +2665,18 @@ test("private input requires exact 0600 file and 0700 directory modes", () => {
     ]).status, 1);
     fs.chmodSync(source, 0o600);
 
-    fs.chmodSync(directory, 0o2700);
+    fs.chmodSync(directory, 0o705);
     assert.equal(runHelper([
       "classify-pods", "--pods", source, "--output", path.join(directory, "bad-dir.json")
     ]).status, 1);
+    fs.chmodSync(directory, 0o2700);
+    if ((fs.statSync(directory).mode & 0o7777) === 0o2700) {
+      assert.equal(runHelper([
+        "classify-pods", "--pods", source, "--output", path.join(directory, "bad-sgid-dir.json")
+      ]).status, 1);
+    } else {
+      t.diagnostic("Host cleared SGID on temporary directory; ordinary unsafe mode checked above");
+    }
     fs.chmodSync(directory, 0o700);
 
     const linked = path.join(directory, "pods-hardlink.json");

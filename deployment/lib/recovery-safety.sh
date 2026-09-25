@@ -3788,7 +3788,10 @@ recovery_deployment_inventory_is_acceptable() {
       (if .bot_runner_runtime.mode == "process-local"
        then ["pgsql/postgresql"]
        elif .bot_runner_runtime.mode == "kubernetes-pod"
-       then ["pgsql/pgsql"]
+       then ([.deployments[] | select(.name == "pgsql") | .containers[].name] as $pg |
+         if $pg == ["pgsql"] then ["pgsql/pgsql"]
+         elif $pg == ["postgresql"] then ["pgsql/postgresql"]
+         else ["invalid-postgres-container"] end)
        else [] end) +
       ["reticulum/postgrest", "reticulum/reticulum", "spoke/spoke"];
     def trusted_repository($pair; $image):
