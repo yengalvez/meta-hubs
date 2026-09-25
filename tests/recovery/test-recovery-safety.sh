@@ -4514,6 +4514,9 @@ if [[ "$joined" == get\ --raw\ *\?*fieldSelector=metadata.name%3D* ]]; then
         <<<"$control_watch_lease_json")"
       control_watch_cursor="${raw_path#*resourceVersion=}"
       control_watch_cursor="${control_watch_cursor%%&*}"
+      # A LIST cursor includes the already-returned object version; a real
+      # WATCH must not replay that same Lease as a new MODIFIED event.
+      control_watch_cursor="${control_watch_cursor#collection-}"
       [[ ! -e "$LEASE_FIXTURE_HANDOFF_DIR" ]] || exit 1
       mkdir "$LEASE_FIXTURE_HANDOFF_DIR" || exit 1
       if [[ "$control_watch_cursor" != "$control_watch_rv" ]]; then
