@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 import {
+  KubectlEvidenceReader,
   PAIR_DEFINITIONS,
   PARENT_RESOURCE_DEFINITIONS,
   buildCheckpointEvidenceCore,
@@ -2199,13 +2200,25 @@ test("durable evidence rejects stale policy status and terminating parent resour
 });
 
 test("durable checkpoint accepts Kubernetes null or omitted zero-permission parent Role rules", () => {
-  for (const rules of [null, undefined]) {
-    const live = durableLive();
+  for (const [rules, fenceState] of [[null, "dormant"], [undefined, "dormant"],
+    [null, "active"], [undefined, "active"]]) {
+    const live = durableLive({ recoveryOperationFenceState: fenceState });
     live.manifest.expected_parent_resources.role.rules = [];
     if (rules === undefined) delete live.parent_resources.role.rules;
     else live.parent_resources.role.rules = rules;
-    const evidence = buildCheckpointEvidenceCore(live, inputs(live.manifest));
+    const evidence = buildCheckpointEvidenceCore(live, inputs(live.manifest, fenceState));
     assert.equal(evidence.admission.parent_resources.state, "present");
+    const checkpoint = envelope(evidence);
+    assert.equal(validateEvidenceEnvelope(checkpoint), checkpoint);
+    const resumed = structuredClone(live);
+    resumed.parent_deployment.spec.replicas = 1;
+    resumed.normalized_parent_target.spec.replicas = 1;
+    const source = buildCheckpointEvidenceCore(
+      resumed,
+      historicalInputs(fenceState),
+      verificationBuildOptions(checkpoint, "active-source")
+    );
+    assert.equal(verifyHistoricalSourceCore(source, checkpoint, "active-source"), source);
     assert.equal(live.parent_resources.role.rules, rules);
   }
 });
@@ -2296,6 +2309,35 @@ test("classify-pods emits exact sorted records and rejects incomplete, duplicate
   const terminating = exactGuard("fence");
   terminating.metadata.deletionTimestamp = "2026-07-20T00:00:00Z";
   assert.throws(() => classifyRunnerPodList(podList([terminating])), /identity_invalid/);
+});
+
+test("live reader preserves the typed API PodList and its collection cursor", () => {
+  const response = podList([exactGuard("fence")], "live-list-cursor");
+  delete response.items[0].apiVersion;
+  delete response.items[0].kind;
+  const reader = new KubectlEvidenceReader(CONTEXT, NAMESPACE);
+  reader.optional = () => ({});
+  reader.required = () => ({});
+  const calls = [];
+  reader.run = (args, options) => {
+    calls.push({ args, options });
+    return response;
+  };
+  const snapshot = reader.collect();
+  assert.deepEqual(calls, [{
+    args: ["get", "--raw", `/api/v1/namespaces/${RUNNER_NAMESPACE}/pods`],
+    options: { code: "read_runner_pods_failed" }
+  }]);
+  assert.equal(snapshot.runner_pods, response);
+  const classified = classifyRunnerPodList(snapshot.runner_pods);
+  assert.equal(classified.list_resource_version, "live-list-cursor");
+  assert.equal(classified.fences.length, 1);
+  assert.equal(Object.hasOwn(response.items[0], "kind"), false);
+  assert.throws(() => classifyRunnerPodList({ ...response, kind: "List" }), /runner_pod_list_invalid/);
+  assert.throws(() => classifyRunnerPodList({ ...response, metadata: { resourceVersion: "" } }), /runner_pod_list_incomplete/);
+  assert.throws(() => classifyRunnerPodList({ ...response,
+    metadata: { ...response.metadata, continue: "next-page" }
+  }), /runner_pod_list_incomplete/);
 });
 
 test("next-action preserves fences and emits one deterministic causal action", () => {

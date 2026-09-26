@@ -6974,12 +6974,22 @@ EOF
 
 recovery_renew_operation_serialization() {
   local lease_json now transitions renewed
-  lease_json="$(recovery_kubectl get lease "$RECOVERY_SERIALIZATION_LEASE_NAME" \
-    -n "$NAMESPACE" -o json)" || return 1
+  # A renewal must fit inside the 40-second mutation-freshness window, not
+  # merely the 120-second Lease duration. Include the previous replace latency
+  # (renewTime is stamped before sending it): API budgets + maximum sleep are
+  # 3 + 30 + 3 + 3 = 39 seconds (29 at the default 20-second cadence). This is
+  # a request budget, not a wall-clock guarantee for kubectl or local work;
+  # the exact freshness checks still fail closed. Keep the generic recovery
+  # timeout unchanged; a failed/ambiguous renewal is terminal, never retried.
+  if ! lease_json="$(recovery_kubectl get lease "$RECOVERY_SERIALIZATION_LEASE_NAME" \
+      -n "$NAMESPACE" -o json --request-timeout=3s 2>/dev/null)"; then
+    printf 'Serialization Lease renewal failed: stage=read.\n' >&2
+    return 1
+  fi
   recovery_owned_serialization_lease_json_is_exact "$lease_json" || return 1
   now="$(recovery_rfc3339_now)" || return 1
   transitions="$(jq -er '.spec.leaseTransitions' <<<"$lease_json")" || return 1
-  renewed="$(jq -cn --argjson live "$lease_json" \
+  if ! renewed="$(jq -cn --argjson live "$lease_json" \
     --arg holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" --arg now "$now" \
     --argjson transitions "$transitions" '
     {apiVersion:"coordination.k8s.io/v1",kind:"Lease",
@@ -6989,7 +6999,12 @@ recovery_renew_operation_serialization() {
       spec:{holderIdentity:$holder,leaseDurationSeconds:120,
         acquireTime:$live.spec.acquireTime,renewTime:$now,
         leaseTransitions:$transitions}}
-  ' | recovery_kubectl replace -f - -o json)" || return 1
+  ' | recovery_kubectl replace -f - -o json --request-timeout=3s 2>/dev/null)"; then
+    # A write may have committed before its response was lost. The heartbeat
+    # must revoke its local authority even if a later read could look healthy.
+    printf 'Serialization Lease renewal failed: stage=replace.\n' >&2
+    return 1
+  fi
   recovery_owned_serialization_lease_json_is_exact "$renewed"
 }
 
@@ -7779,6 +7794,16 @@ recovery_transition_recovery_operation_fence() {
     printf 'Recovery operation fence compare-and-swap did not preserve UID and advance resourceVersion.\n' >&2
     return 1
   }
+  if [[ "$target_state" == active ]]; then
+    # The exact CAS response proves our activation committed, not that its
+    # admission probes are ready. Keep that receipt before any fallible
+    # confirmation so rollback can revalidate it under the same Lease/lock.
+    # Do not infer it from a later read after a lost/invalid replace response.
+    # Success still requires every confirmation and propagation probe below.
+    after_identity="$(recovery_operation_fence_identity_json \
+      active "$before_policy" "$replaced")" || return 1
+    printf -v "$output_variable" '%s' "$after_identity"
+  fi
   recovery_require_operation_serialization || return 1
   recovery_require_operation_lock || return 1
   after_policy="$(recovery_kubectl get validatingadmissionpolicy \

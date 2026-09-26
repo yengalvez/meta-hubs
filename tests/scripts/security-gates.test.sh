@@ -99,6 +99,17 @@ fi
 
 bot_health_good='{"ok":true,"runner_backend_default":"ghost","runner_backend_canary_room_count":0,"ghost_navigation_mode":"navmesh_preferred","ghost_navigation_require_navmesh":true,"llm_enabled":true,"model":"gpt-5-nano","max_bots_per_room":10,"max_active_rooms":5}'
 bot_health_bad='{"ok":true,"runner_backend_default":"ghost","runner_backend_canary_room_count":0,"ghost_navigation_mode":"navmesh_preferred","ghost_navigation_require_navmesh":false,"llm_enabled":true,"model":"gpt-5-nano","max_bots_per_room":10,"max_active_rooms":5}'
+bot_health_modules_on="$(jq -c '.model="gpt-6-luna" | .reasoning_effort="high" | .llm_status="configured_not_probed"' <<<"$bot_health_good")"
+bot_health_modules_off="$(jq -c '.llm_enabled=false | .llm_status="disabled"' <<<"$bot_health_modules_on")"
+if reactivation_bot_health_matches_profile "$bot_health_modules_on" durable-active true modules-v1 &&
+   reactivation_bot_health_matches_profile "$bot_health_modules_off" durable-active false modules-v1 &&
+   ! reactivation_bot_health_matches_profile "$bot_health_modules_off" durable-active true modules-v1 &&
+   ! reactivation_bot_health_matches_profile "$bot_health_modules_on" durable-active false modules-v1 &&
+   ! reactivation_bot_health_matches_profile "$bot_health_good" durable-active true modules-v1; then
+  pass_test "module health binds Luna High and AI OFF/ON without probing the provider"
+else
+  fail_test "module-specific health contract"
+fi
 if reactivation_bot_health_is_acceptable "$bot_health_good" &&
   ! reactivation_bot_health_is_acceptable "$bot_health_bad" &&
   ! reactivation_bot_health_is_acceptable "${bot_health_good/\"llm_enabled\":true/\"llm_enabled\":false}" &&

@@ -58,7 +58,7 @@ function pinnedImage(valueKey) {
   }`;
 }
 
-function baselineValues({ encodedPullConfig = pullConfig() } = {}) {
+function baselineValues({ encodedPullConfig = pullConfig(), productModules } = {}) {
   const password = `New_Db_Password_${"z".repeat(48)}`;
   const values = {
     Namespace: "hcce",
@@ -92,6 +92,7 @@ function baselineValues({ encodedPullConfig = pullConfig() } = {}) {
   };
   for (const pair of profile.image_pairs) values[pair.value_key] = pinnedImage(pair.value_key);
   values.OVERRIDE_BOT_RUNNER_IMAGE = RUNNER_IMAGE;
+  if (productModules) values.PRODUCT_MODULES = productModules;
   return values;
 }
 
@@ -99,7 +100,13 @@ function sourceBytes(values, lineEnding = "\n") {
   const lines = ["---", "# rotated canonical baseline fixture"];
   for (const [name, value] of Object.entries(values)
     .sort(([left], [right]) => left.localeCompare(right))) {
-    lines.push(`${name}: ${JSON.stringify(value)}`);
+    if (name === "PRODUCT_MODULES") {
+      lines.push("PRODUCT_MODULES:", ...Object.entries(value).map(
+        ([key, setting]) => `  ${key}: ${JSON.stringify(setting)}`
+      ));
+    } else {
+      lines.push(`${name}: ${JSON.stringify(value)}`);
+    }
   }
   return Buffer.from(`${lines.join(lineEnding)}${lineEnding}`, "utf8");
 }
@@ -327,6 +334,57 @@ test("create publishes a separate private candidate and leaves the rotated basel
     }`;
     assert.equal(exposed.includes(NEW_TOKEN), false);
     provenanceCalls[0].configBytes.fill(0);
+  } finally {
+    cleanup(input.root);
+  }
+});
+
+test("candidate creation and verification preserve the exact PRODUCT_MODULES block", async () => {
+  for (const productModules of [
+    { schema_version: 1, bots: false, ai: false, avaturn: false },
+    { schema_version: 1, bots: true, ai: true, avaturn: true,
+      avaturn_creator_url: "https://fixture.avaturn.dev/" }
+  ]) {
+    const input = fixture({ productModules, lineEnding: "\r\n" });
+    try {
+      const sourceBlock = input.bytes.toString("utf8")
+        .match(/^PRODUCT_MODULES:\r\n(?:  [^\r\n]+\r\n)+/mu)[0];
+      assert.equal(await manageProcessLocalCandidateValues(invocation(
+        input, "create", "bootstrap", fakeSecurityRunner([]), fakeRegistryFetch()
+      )), "aud065_candidate_values_created");
+      assert.equal(await manageProcessLocalCandidateValues(invocation(
+        input, "verify", "bootstrap", fakeSecurityRunner([]), fakeRegistryFetch()
+      )), "aud065_candidate_values_verified");
+      const candidateBytes = fs.readFileSync(input.candidatePath);
+      assert.equal(candidateBytes.toString("utf8").includes(sourceBlock), true);
+      assert.deepEqual(fs.readFileSync(input.canonicalPath), input.bytes);
+      assert.deepEqual(
+        parseLocalValuesSource(candidateBytes.toString("utf8")).get("PRODUCT_MODULES"),
+        parseLocalValuesSource(input.bytes.toString("utf8")).get("PRODUCT_MODULES")
+      );
+    } finally {
+      cleanup(input.root);
+    }
+  }
+});
+
+test("candidate verification rejects PRODUCT_MODULES drift and even equivalent text changes", async () => {
+  const input = fixture({
+    productModules: { schema_version: 1, bots: false, ai: false, avaturn: false }
+  });
+  try {
+    await manageProcessLocalCandidateValues(invocation(
+      input, "create", "bootstrap", fakeSecurityRunner([]), fakeRegistryFetch()
+    ));
+    const original = fs.readFileSync(input.candidatePath, "utf8");
+    fs.writeFileSync(input.candidatePath, original.replace("  bots: false", "  bots: true"), { mode: 0o600 });
+    await expectCode(() => manageProcessLocalCandidateValues(invocation(
+      input, "verify", "bootstrap", fakeSecurityRunner([]), fakeRegistryFetch()
+    )), "candidate_unauthorized_change");
+    fs.writeFileSync(input.candidatePath, original.replace("  bots: false", "  bots: false # changed"), { mode: 0o600 });
+    await expectCode(() => manageProcessLocalCandidateValues(invocation(
+      input, "verify", "bootstrap", fakeSecurityRunner([]), fakeRegistryFetch()
+    )), "candidate_source_structure_changed");
   } finally {
     cleanup(input.root);
   }

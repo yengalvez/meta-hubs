@@ -155,6 +155,74 @@ verify_final_runner_profile_snapshot() {
     --readiness "$runner_readiness_file"
 }
 
+verify_product_modules_snapshot() {
+  local namespace_json="$1" deployments="$2" modules="$3"
+  jq -en --argjson ns "$namespace_json" --argjson deps "$deployments" --argjson modules "$modules" '
+    def annotations_match($annotations):
+      $annotations["yenhubs.com/product-modules-schema"] == "1" and
+      all(["bots", "ai", "avaturn"][]; . as $key |
+        $annotations["yenhubs.com/product-" + $key] == ($modules[$key] | tostring));
+    annotations_match($ns.metadata.annotations) and
+    ([ $deps.items[] | select(.metadata.name == "reticulum" or .metadata.name == "bot-orchestrator") ] | length == 2) and
+    all($deps.items[] | select(.metadata.name == "reticulum" or .metadata.name == "bot-orchestrator");
+      . as $deployment |
+      annotations_match(.metadata.annotations) and annotations_match(.spec.template.metadata.annotations) and
+      ([.spec.template.spec.containers[] | select(.name == $deployment.metadata.name)] | length == 1) and
+      all(.spec.template.spec.containers[] | select(.name == $deployment.metadata.name);
+        . as $container |
+        ((.envFrom // []) | length == 0) and
+        all(["bots", "ai", "avaturn"][]; . as $key |
+          [$container.env[] | select(.name == ("YENHUBS_" + ($key | ascii_upcase) + "_ENABLED"))] ==
+          [{name:("YENHUBS_" + ($key | ascii_upcase) + "_ENABLED"),value:($modules[$key] | tostring)}]) and
+        (if $modules.ai then true else [.env[] | select(.name == "OPENAI_API_KEY")] == [] end) and
+        (if .name == "reticulum" then
+          [.env[] | select(.name == "YENHUBS_AVATURN_CREATOR_URL")] ==
+          [{name:"YENHUBS_AVATURN_CREATOR_URL",value:$modules.avaturn_creator_url}]
+         else true end)))
+  ' >/dev/null
+}
+
+verify_base_runtime_snapshot() {
+  local deployments="$1" parent_pods="$2" runner_pods="$3" replica_sets="$4"
+  jq -cn --argjson deployments "$deployments" --argjson parent "$parent_pods" \
+    --argjson runner "$runner_pods" --argjson replicasets "$replica_sets" \
+    '{deployments:$deployments,parent:$parent,runner:$runner,replicasets:$replicasets}' |
+    node -e '
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const root = process.argv[1], namespace = process.argv[2];
+      const {parentIsQuiesced,productBotReplicaSetsAreStopped} = require(path.join(root,"apply/runner-activation.js"));
+      const {forbiddenPod} = require(path.join(root,"apply/pod-quiescence-watch.js"));
+      const {completeRunnerNamespaceInventory,requireCompletePodList} = require(path.join(root,"apply/runner-guard-reconciliation.js"));
+      try {
+        const data = JSON.parse(fs.readFileSync(0,"utf8"));
+        const parents = data.deployments.items.filter(d => d.metadata.name === "bot-orchestrator");
+        const parentPods = requireCompletePodList(data.parent);
+        const inventory = completeRunnerNamespaceInventory(data.runner);
+        if (parents.length !== 1 || !parentIsQuiesced(parents[0],data.parent,data.replicasets,parents[0].metadata.uid) ||
+            !productBotReplicaSetsAreStopped(data.replicasets,namespace) ||
+            parentPods.items.some(p => forbiddenPod(namespace,namespace,p)) ||
+            inventory.runners.size !== 0 || inventory.intents.size !== 0) process.exit(1);
+      } catch (_) { process.exit(1); }
+    ' "$SCRIPT_DIR/../hubs-cloud/community-edition" "$NAMESPACE"
+}
+
+verify_base_runtime_live() {
+  local parents runners replica_sets current_deployments current_namespace
+  parents="$(recovery_kubectl_get_namespaced_list pods "$NAMESPACE")" || return 1
+  replica_sets="$(recovery_kubectl_get_namespaced_list replicasets "$NAMESPACE")" || return 1
+  current_deployments="$(recovery_kubectl_get_namespaced_list deployments "$NAMESPACE")" || return 1
+  current_namespace="$(recovery_kubectl get namespace "$NAMESPACE" -o json)" || return 1
+  verify_product_modules_snapshot "$current_namespace" "$current_deployments" "$product_modules_json" || return 1
+  if [[ "$reactivation_profile" == cold-rebind-legacy-absent-v1 ]]; then
+    recovery_require_no_managed_bot_runner_pods || return 1
+    runners='{"apiVersion":"v1","kind":"PodList","metadata":{"resourceVersion":"legacy-absent"},"items":[]}'
+  else
+    runners="$(recovery_kubectl_get_namespaced_list pods "$RUNNER_NAMESPACE")" || return 1
+  fi
+  verify_base_runtime_snapshot "$current_deployments" "$parents" "$runners" "$replica_sets"
+}
+
 printf 'YenHubs live reactivation verification\n\n'
 
 for command_name in kubectl jq node curl dig gzip tar; do
@@ -183,6 +251,17 @@ if ! reactivation_profile="$(reactivation_target_profile \
   exit 1
 fi
 pass "Perfil live exacto: $reactivation_profile"
+if ! product_modules_json="$(node "$SCRIPT_DIR/parse-local-values.mjs" "$VALUES_FILE" --get-product-modules)"; then
+  fail "El contrato PRODUCT_MODULES no es valido"
+  exit 1
+fi
+bots_enabled="$(jq -er '.bots | tostring' <<<"$product_modules_json")"
+ai_enabled="$(jq -er '.ai | tostring' <<<"$product_modules_json")"
+product_health_contract="modules-v1"
+product_modules_explicit=false
+if node "$SCRIPT_DIR/parse-local-values.mjs" "$VALUES_FILE" --keys | grep -qx 'PRODUCT_MODULES=configured'; then
+  product_modules_explicit=true
+fi
 if ! domain="$(yaml_value HUB_DOMAIN)" || [[ -z "$domain" ]]; then
   fail "HUB_DOMAIN no esta configurado"
   printf '\nSummary: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
@@ -288,12 +367,33 @@ if ! deployments_json="$(
   deployments_json='{"items":[]}'
 fi
 
+product_contract_historical=false
+if ! product_namespace_json="$(recovery_kubectl get namespace "$NAMESPACE" -o json)"; then
+  fail "No se pudo leer el Namespace para verificar PRODUCT_MODULES"
+elif [[ "$product_modules_explicit" == false ]] && jq -e '
+  [.metadata.annotations // {} | keys[] | select(startswith("yenhubs.com/product-"))] | length == 0
+' >/dev/null <<<"$product_namespace_json"; then
+  # A historical restore without a module marker keeps the old ON contract.
+  # Missing markers must never be used as evidence of BASE/OFF.
+  product_contract_historical=true
+  bots_enabled=true
+  ai_enabled=true
+  product_health_contract=historical
+fi
+
 if reactivation_deployments_are_acceptable "$deployments_json" \
   "$hubs_image" "$reticulum_image" "$bot_image" "$expected_images_json" \
-  "$bot_runner_image" "$reactivation_profile"; then
+  "$bot_runner_image" "$reactivation_profile" "$bots_enabled"; then
   pass "Los 13 pares Deployment/contenedor coinciden con el perfil candidato"
 else
   fail "Inventario live, digests o procedencia no coinciden con el candidato exacto"
+fi
+if [[ "$product_contract_historical" == true ]]; then
+  pass "Contrato historico sin PRODUCT_MODULES: se mantienen requisitos ON, no acredita BASE/OFF"
+elif verify_product_modules_snapshot "$product_namespace_json" "$deployments_json" "$product_modules_json"; then
+  pass "Namespace, Reticulum y orquestador vinculan capacidades exactas; IA OFF sin credencial montada en env"
+else
+  fail "Las capacidades live, su URL o las credenciales IA no coinciden con PRODUCT_MODULES"
 fi
 reticulum_deployment_uid=""
 reticulum_deployment_json="$(jq -ce \
@@ -766,7 +866,14 @@ else
 fi
 
 printf '\nGhost runner\n'
-if printf '%s' "$deployments_json" | jq -e '
+if [[ "$bots_enabled" == false ]]; then
+  if verify_base_runtime_live; then
+    pass "BASE sin ejecutores: parent replicas=0, sin pods padre/runners/intents; guards durables conservados"
+    pass "No se solicitan health/readiness de bots ni llamadas de chat o proveedor IA en BASE"
+  else
+    fail "Bots OFF conserva ejecutores, intents o un inventario incompleto/no verificable"
+  fi
+elif printf '%s' "$deployments_json" | jq -e '
   [.items[] | select(.metadata.name == "bot-orchestrator") |
     select(.spec.replicas == 1 and (.status.readyReplicas // 0) == 1)] | length == 1
 ' >/dev/null; then
@@ -842,7 +949,7 @@ if printf '%s' "$deployments_json" | jq -e '
       if reactivation_capture_output health_candidate curl -fsS --connect-timeout 1 --max-time 1 \
         "http://127.0.0.1:$forwarded_port/health" &&
          reactivation_bot_health_matches_profile \
-           "$health_candidate" "$reactivation_profile"; then
+           "$health_candidate" "$reactivation_profile" "$ai_enabled" "$product_health_contract"; then
         health="$health_candidate"
       else
         health=""
@@ -865,8 +972,8 @@ if printf '%s' "$deployments_json" | jq -e '
       health=""; readiness=""
     fi
     if reactivation_bot_health_matches_profile \
-         "$health" "$reactivation_profile"; then
-      pass "Orchestrator live confirma ghost/navmesh/modelo y limites"
+         "$health" "$reactivation_profile" "$ai_enabled" "$product_health_contract"; then
+      pass "Orchestrator confirma ghost/navmesh/modelo y limites; configuracion IA coincide, proveedor no probado"
     else
       fail "El endpoint /health no confirma el contrato auditado"
     fi

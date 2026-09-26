@@ -303,16 +303,23 @@ reactivation_verify_sha256_manifest() {
 
 reactivation_bot_health_is_acceptable() {
   local payload="${1:-}"
+  local ai_enabled="${2:-true}" contract="${3:-historical}"
   [[ -n "$payload" ]] || return 1
-  jq -e '
+  [[ "$ai_enabled" == true || "$ai_enabled" == false ]] || return 2
+  [[ "$contract" == historical || "$contract" == modules-v1 ]] || return 2
+  [[ "$contract" != historical || "$ai_enabled" == true ]] || return 2
+  jq -e --argjson ai "$ai_enabled" --arg contract "$contract" '
     type == "object" and
     .ok == true and
     .runner_backend_default == "ghost" and
     (.runner_backend_canary_room_count | type == "number" and floor == . and . == 0) and
     .ghost_navigation_mode == "navmesh_preferred" and
     .ghost_navigation_require_navmesh == true and
-    .llm_enabled == true and
-    .model == "gpt-5-nano" and
+    .llm_enabled == $ai and
+    (if $contract == "historical" then .model == "gpt-5-nano" else
+      .model == "gpt-6-luna" and .reasoning_effort == "high" and
+      .llm_status == (if $ai then "configured_not_probed" else "disabled" end)
+     end) and
     .max_bots_per_room == 10 and
     (.max_active_rooms >= 1 and .max_active_rooms <= 10)
   ' >/dev/null 2>&1 <<<"$payload"
@@ -360,9 +367,16 @@ reactivation_legacy_reticulum_health_is_acceptable() {
 reactivation_bot_health_matches_profile() {
   local payload="${1:-}"
   local profile="${2:-durable-active}"
+  local ai_enabled="${3:-true}" contract="${4:-historical}"
+  if [[ "$contract" == modules-v1 ]]; then
+    [[ "$profile" == durable-active || "$profile" == cold-rebind-legacy-absent-v1 ]] || return 2
+    reactivation_bot_health_is_acceptable "$payload" "$ai_enabled" "$contract"
+    return
+  fi
+  [[ "$contract" == historical && "$ai_enabled" == true ]] || return 2
   case "$profile" in
     durable-active)
-      reactivation_bot_health_is_acceptable "$payload"
+      reactivation_bot_health_is_acceptable "$payload" "$ai_enabled" "$contract"
       ;;
     cold-rebind-legacy-absent-v1)
       reactivation_legacy_bot_health_is_acceptable "$payload"
@@ -397,10 +411,12 @@ reactivation_deployments_are_acceptable() {
   local expected_images_json="$5"
   local runner_image="${6:-}"
   local profile="${7:-durable-active}"
+  local bots_enabled="${8:-true}"
   local postgres_container=postgresql
   [[ -n "$payload" ]] || return 1
   [[ "$profile" == durable-active ||
      "$profile" == cold-rebind-legacy-absent-v1 ]] || return 2
+  [[ "$bots_enabled" == true || "$bots_enabled" == false ]] || return 2
   if [[ "$profile" == cold-rebind-legacy-absent-v1 ]]; then
     postgres_container=postgresql
   fi
@@ -412,6 +428,7 @@ reactivation_deployments_are_acceptable() {
     --arg bot "$bot_image" \
     --arg runner "$runner_image" \
     --arg profile "$profile" \
+    --argjson bots_enabled "$bots_enabled" \
     --arg postgres_container "$postgres_container" \
     --argjson expected_images "$expected_images_json" '
     def expected_deployments:
@@ -438,14 +455,21 @@ reactivation_deployments_are_acceptable() {
     all(.items[];
       ((.spec.template.spec.initContainers // []) | length) == 0 and
       ((.spec.template.spec.ephemeralContainers // []) | length) == 0 and
-      (.spec.replicas | type == "number" and floor == . and . > 0) and
+      (if .metadata.name == "bot-orchestrator" and ($bots_enabled | not) then
+        .metadata.annotations["yenhubs.com/product-modules-schema"] == "1" and
+        .metadata.annotations["yenhubs.com/product-bots"] == "false" and
+        .spec.template.metadata.annotations["yenhubs.com/product-bots"] == "false" and
+        .spec.replicas == 0 and (.status.replicas // 0) == 0 and
+        (.status.updatedReplicas // 0) == 0 and (.status.availableReplicas // 0) == 0
+       else (.spec.replicas | type == "number" and floor == . and . > 0) end) and
       (.status.readyReplicas // 0) == .spec.replicas and
       all(.spec.template.spec.containers[];
         .image | type == "string" and test("@sha256:[a-fA-F0-9]{64}$"))) and
     ([.items[] as $deployment
       | $deployment.spec.template.spec.containers[]
       | .image == $expected_images[$deployment.metadata.name + "/" + .name]] | all) and
-    ([.items[] | select(.metadata.name == "bot-orchestrator") | .spec.replicas] == [1]) and
+    ([.items[] | select(.metadata.name == "bot-orchestrator") | .spec.replicas] ==
+      [if $bots_enabled then 1 else 0 end]) and
     ([.items[] | select(.metadata.name == "reticulum") | .spec.replicas] == [1]) and
     ([.items[] | select(.metadata.name == "reticulum") | .spec.strategy] ==
       [{type:"Recreate"}]) and

@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+import { parseLocalValuesFile } from "./parse-local-values.mjs";
 
 const require = createRequire(import.meta.url);
 const VALUES_PARSER = fileURLToPath(new URL("./parse-local-values.mjs", import.meta.url));
@@ -22,12 +23,15 @@ const {
   BOT_ORCHESTRATOR_RUNTIME_ENV,
   BOT_ORCHESTRATOR_SECURITY_CONTEXT
 } = require(GENERATOR_CONTRACT);
+const {
+  MODULE_ENV, PRODUCT_MODULE_ANNOTATIONS, normalizeProductModules, productModulesFromAnnotations
+} = require("../hubs-cloud/community-edition/generate_script/product-modules.js");
 
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const RUNNER_NAMESPACE = "hcce-bot-runners";
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const STATIC_ENVIRONMENT = Object.freeze({
-  OPENAI_MODEL: "gpt-5-nano",
+  OPENAI_MODEL: "gpt-6-luna",
   OPENAI_TOTAL_BUDGET_MS: "4000",
   ...BOT_ORCHESTRATOR_RUNTIME_ENV,
   GHOST_NAVIGATION_RECOVERY_RESTART_MS: "30000",
@@ -154,7 +158,15 @@ function readValue(valuesPath, key) {
 }
 
 export function readBotOrchestratorConfiguration(valuesPath, namespace, runnerNamespace) {
+  let modules;
+  try {
+    modules = JSON.parse(execFileSync(process.execPath, [VALUES_PARSER, valuesPath, "--get-product-modules"], {
+      encoding: "utf8", maxBuffer: 8192, stdio: ["ignore", "pipe", "ignore"]
+    }));
+  } catch (_) { reject("product_modules_configuration"); }
   return {
+    modules,
+    modulesExplicit: parseLocalValuesFile(valuesPath).has("PRODUCT_MODULES"),
     namespace,
     runnerNamespace,
     botImage: readValue(valuesPath, "OVERRIDE_BOT_ORCHESTRATOR_IMAGE"),
@@ -170,6 +182,8 @@ export function readBotOrchestratorConfiguration(valuesPath, namespace, runnerNa
 }
 
 function verifyConfiguration(configuration) {
+  try { normalizeProductModules(configuration?.modules); }
+  catch (_) { reject("product_modules_configuration"); }
   if (
     !object(configuration) ||
     typeof configuration.namespace !== "string" ||
@@ -192,8 +206,10 @@ function verifyConfiguration(configuration) {
 }
 
 function expectedEnvironment(configuration) {
+  const modules = normalizeProductModules(configuration.modules);
   const literals = {
     ...STATIC_ENVIRONMENT,
+    ...(configuration.legacyModules ? { OPENAI_MODEL: "gpt-5-nano" } : {}),
     BOT_RUNNER_IMAGE: configuration.runnerImage,
     BOT_RUNNER_RECOVERY_EPOCH: configuration.recoveryEpoch,
     RUNNER_POD_NAMESPACE: configuration.runnerNamespace,
@@ -201,9 +217,13 @@ function expectedEnvironment(configuration) {
       `http://bot-orchestrator.${configuration.namespace}.svc.cluster.local:5001`,
     HUBS_BASE_URL: `https://${configuration.hubDomain}`,
     MAX_ACTIVE_ROOMS: configuration.maxActiveRooms,
-    MAX_BOTS_PER_ROOM: configuration.maxBotsPerRoom
+    MAX_BOTS_PER_ROOM: configuration.maxBotsPerRoom,
+    ...Object.fromEntries(Object.entries(MODULE_ENV).map(([key, name]) => [name, String(modules[key])]))
   };
-  return BOT_ORCHESTRATOR_ALLOWED_ENV_NAMES.map(name => {
+  return BOT_ORCHESTRATOR_ALLOWED_ENV_NAMES.filter(name =>
+    (modules.ai || name !== "OPENAI_API_KEY") &&
+    (!configuration.legacyModules || !Object.values(MODULE_ENV).includes(name))
+  ).map(name => {
     if (Object.hasOwn(SECRET_ENVIRONMENT, name)) {
       return {
         name,
@@ -309,7 +329,8 @@ function verifyContainer(container, configuration, code, serviceAccountVolumeNam
     !Array.isArray(container.ports) || container.ports.length !== 1 ||
     !Array.isArray(container.volumeMounts) ||
     container.volumeMounts.length !== (serviceAccountVolumeName === null ? 1 : 2) ||
-    !exactJson(actualEnv, expectedEnv)
+    !exactJson(actualEnv?.slice().sort((a, b) => String(a?.name).localeCompare(String(b?.name))),
+      expectedEnv.slice().sort((a, b) => a.name.localeCompare(b.name)))
   ) reject(code);
   optionalDefault(container, "terminationMessagePath", "/dev/termination-log", code);
   optionalDefault(container, "terminationMessagePolicy", "File", code);
@@ -390,6 +411,13 @@ function extractDeployment(payload, namespace) {
 export function verifyBotOrchestratorDeployment(payload, configuration) {
   verifyConfiguration(configuration);
   const deployment = extractDeployment(payload, configuration.namespace);
+  const legacyModules = configuration.modulesExplicit === false &&
+    !Object.keys(deployment.metadata?.annotations || {}).some(key => key.startsWith("yenhubs.com/product-"));
+  configuration = {
+    ...configuration,
+    legacyModules,
+    ...(legacyModules ? { modules: { schema_version: 1, bots: true, ai: true, avaturn: false } } : {})
+  };
   if (
     deployment.metadata?.name !== "bot-orchestrator" ||
     deployment.metadata?.namespace !== configuration.namespace ||
@@ -397,6 +425,17 @@ export function verifyBotOrchestratorDeployment(payload, configuration) {
     deployment.metadata?.deletionTimestamp != null
   ) reject("deployment_metadata");
   const annotations = deployment.metadata?.annotations;
+  const modules = normalizeProductModules(configuration.modules);
+  const moduleAnnotations = legacyModules ? {} : Object.fromEntries(Object.entries(PRODUCT_MODULE_ANNOTATIONS)
+    .map(([key, name]) => [name, String(modules[key])]));
+  if (!legacyModules) {
+    try { productModulesFromAnnotations(annotations); }
+    catch (_) { reject("product_modules_annotations"); }
+  } else if (Object.keys(deployment.spec?.template?.metadata?.annotations || {})
+    .some(key => key.startsWith("yenhubs.com/product-"))) reject("product_modules_annotations");
+  if (Object.entries(moduleAnnotations).some(([name, value]) => annotations[name] !== value)) {
+    reject("product_modules_annotations");
+  }
   if (
     !object(annotations) ||
     annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] !== "true" ||
@@ -408,6 +447,7 @@ export function verifyBotOrchestratorDeployment(payload, configuration) {
     reject("deployment_metadata");
   }
   const allowedMetadataAnnotations = new Set([
+    ...Object.values(PRODUCT_MODULE_ANNOTATIONS),
     "cluster-autoscaler.kubernetes.io/safe-to-evict",
     "yenhubs.org/runner-activation-phase",
     "yenhubs.org/bot-runner-recovery-phase",
@@ -436,7 +476,7 @@ export function verifyBotOrchestratorDeployment(payload, configuration) {
   }
 
   const spec = deployment.spec;
-  const expectedReplicas = configuration.recoveryPhase === "restore-fence" ||
+  const expectedReplicas = !modules.bots || configuration.recoveryPhase === "restore-fence" ||
     configuration.activationPhase === "bootstrap" ? 0 : 1;
   allowedKeys(
     spec,
@@ -466,8 +506,10 @@ export function verifyBotOrchestratorDeployment(payload, configuration) {
     !object(templateAnnotations) ||
     Object.keys(templateAnnotations).some(name =>
       name !== checksumAnnotation && name !== recoveryEpochAnnotation &&
-      name !== fenceProtocolAnnotation && name !== restartedAtAnnotation
+      name !== fenceProtocolAnnotation && name !== restartedAtAnnotation &&
+      !Object.values(PRODUCT_MODULE_ANNOTATIONS).includes(name)
     ) ||
+    Object.entries(moduleAnnotations).some(([name, value]) => templateAnnotations[name] !== value) ||
     templateAnnotations[checksumAnnotation] !== crypto
       .createHash("sha256")
       .update(configuration.accessKey)

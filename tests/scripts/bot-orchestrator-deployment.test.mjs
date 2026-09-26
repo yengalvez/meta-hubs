@@ -87,3 +87,29 @@ rejected(value => { delete value.spec.template.metadata.annotations["yenhubs.org
 rejected(value => { value.spec.template.metadata.annotations["yenhubs.org/runner-fence-protocol"] = "other"; });
 
 process.stdout.write("Bot orchestrator Deployment verifier: checks passed\n");
+
+const baseOff = fixtureDeployment();
+const offConfiguration = {...deploymentConfiguration,modules:{schema_version:1,bots:false,ai:false,avaturn:false}};
+baseOff.spec.replicas=0;
+for (const metadata of [baseOff.metadata,baseOff.spec.template.metadata]) {
+  metadata.annotations["yenhubs.com/product-bots"]="false";
+  metadata.annotations["yenhubs.com/product-ai"]="false";
+}
+baseOff.spec.template.spec.containers[0].env=baseOff.spec.template.spec.containers[0].env
+  .filter(e=>e.name!=="OPENAI_API_KEY").map(e=>["YENHUBS_BOTS_ENABLED","YENHUBS_AI_ENABLED"].includes(e.name)?{name:e.name,value:"false"}:e);
+assert.equal(verifyBotOrchestratorDeployment(baseOff,offConfiguration).name,"bot-orchestrator");
+for(const mutate of [
+  d=>d.spec.replicas=1,
+  d=>d.spec.template.spec.containers[0].env.push({name:"OPENAI_API_KEY",valueFrom:{secretKeyRef:{name:"configs",key:"OPENAI_API_KEY"}}}),
+  d=>d.spec.template.spec.containers[0].env.find(e=>e.name==="YENHUBS_BOTS_ENABLED").value=false,
+  d=>delete d.metadata.annotations["yenhubs.com/product-bots"]
+]) {const d=structuredClone(baseOff);mutate(d);assert.throws(()=>verifyBotOrchestratorDeployment(d,offConfiguration));}
+const historical=fixtureDeployment();
+for(const metadata of [historical.metadata,historical.spec.template.metadata])
+  for(const key of Object.keys(metadata.annotations)) if(key.startsWith("yenhubs.com/product-")) delete metadata.annotations[key];
+historical.spec.template.spec.containers[0].env=historical.spec.template.spec.containers[0].env.filter(e=>!e.name.startsWith("YENHUBS_"));
+historical.spec.template.spec.containers[0].env.find(e=>e.name==="OPENAI_MODEL").value="gpt-5-nano";
+assert.equal(verifyBotOrchestratorDeployment(historical,{...deploymentConfiguration,modulesExplicit:false}).name,"bot-orchestrator");
+assert.throws(()=>verifyBotOrchestratorDeployment(historical,{...deploymentConfiguration,modulesExplicit:true}));
+historical.spec.replicas=0;
+assert.throws(()=>verifyBotOrchestratorDeployment(historical,{...deploymentConfiguration,modulesExplicit:false}));

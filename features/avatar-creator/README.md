@@ -1,5 +1,29 @@
 # Integrated avatar creator
 
+## Hardened optional creator and catalogue (2026-09-26, implementation candidate)
+
+Installation availability follows [product modules](../product-modules/README.md):
+Avaturn OFF does not load its SDK, while manual GLB and the 33 base avatars remain.
+The standard provider login is preserved. Messages are filtered by exact origin
+and iframe window before the pinned SDK dispatcher; export fetch rejects redirects,
+has a deadline and aborts stale work. Next/save are single-flight, successful save
+is terminal, and downstream GLB/rig/preview failure permits a new export.
+
+Preview resize preserves deliberate controls and relative zoom; loading resources
+are owned per request and disposed on replacement, stale completion or unmount.
+Texture edits while the initial environment is pending are reconciled before ready.
+The first six catalogue tiles load eagerly, later tiles use native lazy loading;
+approved card proportions, PNGs and GLBs are unchanged. This is not measured GPU
+or network acceptance and does not change the accepted avatar rig calibration.
+
+Catalogue publishing uses a destination-bound joint checkpoint, fresh before the
+first durable mutation intent, a write-ahead journal and exact readback after
+ambiguous responses. Existing avatar renames require the new Reticulum conditional
+update capabilities (timestamp plus previous fields); deploy that compatible
+backend first. The seven listing IDs remain fixed. See
+[importer contract](../../DOC/rpm-catalog-importer-safety-2026-09-26.md).
+No catalogue upload or production acceptance is implied by this candidate.
+
 ## Selector simplificado de avatares (2026-09-22, candidato local)
 
 El selector muestra únicamente `Crear con Avaturn` y `Subir GLB` como acciones

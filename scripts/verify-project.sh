@@ -550,6 +550,10 @@ run_security() {
   (cd "$ROOT_DIR/hubs-cloud/community-edition/services/bot-orchestrator" && npm ci --ignore-scripts --no-audit)
   node --test "$ROOT_DIR/tests/recovery/runner-cutover-checkpoint-evidence.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/durable-runner-quiescence-monitor.test.mjs"
+  node --test "$ROOT_DIR/tests/scripts/checkpoint-activation-receipt.test.mjs"
+  node --test "$ROOT_DIR/tests/scripts/checkpoint-transport-failure.test.mjs"
+  node --test "$ROOT_DIR/tests/scripts/rpm-catalog.test.mjs" "$ROOT_DIR/tests/scripts/rpm-catalog-checkpoint.test.mjs"
+  node --test "$ROOT_DIR/tests/scripts/product-modules-parser.test.mjs" "$ROOT_DIR/tests/scripts/product-modules-live.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/prepare-staging-values.test.mjs"
   bash "$ROOT_DIR/tests/scripts/verify-project-sections.test.sh"
   "$ROOT_DIR/tests/scripts/security-gates.test.sh"

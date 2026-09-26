@@ -150,6 +150,8 @@ const readiness = {
   runner_guard_capacity: structuredClone(health.runner_guard_capacity)
 };
 const base = {
+  modules: deploymentConfiguration.modules,
+  modulesExplicit: true,
   deployment: fixtureDeployment(),
   parent,
   podsBefore: { apiVersion: "v1", kind: "PodList", metadata: {resourceVersion:"1000"}, items: [pod] },
@@ -171,6 +173,7 @@ const base = {
 };
 
 assert.equal(verifyRunnerPodInputs(base), true);
+assert.throws(() => verifyRunnerPodInputs({...base, modules:{schema_version:1,bots:false,ai:false,avaturn:false}}));
 const rawTypedLists = structuredClone(base);
 for (const snapshot of [rawTypedLists.podsBefore, rawTypedLists.podsAfter]) {
   delete snapshot.items[0].apiVersion;

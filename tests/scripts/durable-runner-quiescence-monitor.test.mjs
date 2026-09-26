@@ -573,14 +573,15 @@ if (!isWatch) {
   const key = controlKey(selectedName);
   if (!key) process.exit(41);
   let resource = controls[key];
-  if (key === "lease" && ["lease-renew", "lease-unobserved"].includes(process.env.STUB_MODE)) {
+  if (key === "lease" && (["lease-renew", "lease-unobserved"].includes(process.env.STUB_MODE) ||
+      process.env.STUB_MODE.startsWith("lease-gap-"))) {
     let count = 0;
     try {
       const text = fs.readFileSync(process.env.STUB_LEASE_GET_COUNT_PATH, "utf8").trim();
       count = text ? text.split("\\n").length : 0;
     } catch {}
     fs.appendFileSync(process.env.STUB_LEASE_GET_COUNT_PATH, "get\\n");
-    if (count >= 1) resource = renewedLease;
+    if (count >= (process.env.STUB_MODE.startsWith("lease-gap-") ? 2 : 1)) resource = renewedLease;
   }
   process.stdout.write(JSON.stringify(selectedName ? {
     apiVersion:resource.apiVersion,kind:resource.kind+"List",
@@ -611,6 +612,12 @@ if (isPodCollection) {
       " " + raw + "\\n"
   );
   const isInitialStream = url.searchParams.get("sendInitialEvents") === "true";
+  if (isRunner && ((watchIndex === 1 && process.env.STUB_MODE === "initial-eof") ||
+      (watchIndex === 2 && process.env.STUB_MODE === "successor-eof") ||
+      (watchIndex === 3 && process.env.STUB_MODE === "after-ready-eof"))) {
+    process.stderr.write("Unable to connect to the server: EOF private-payload-sentinel");
+    process.exit(1);
+  }
   process.on("SIGTERM", () => {
     if (isRunner && watchIndex === 2 &&
         process.env.STUB_MODE === "runner-event-on-final-drain") {
@@ -725,6 +732,23 @@ if (!key) process.exit(42);
 const controlWatchIndex = nextInvocation(
   process.env.STUB_CONTROL_WATCH_COUNT_PREFIX + "-" + key
 );
+if (key === "lease" && controlWatchIndex === 2 && process.env.STUB_MODE.startsWith("lease-gap-")) {
+  // The GET sees the renewal after the first Watch closes. Catch-up must
+  // replay from that Watch's cursor, never from the newer GET resourceVersion.
+  if (url.searchParams.get("resourceVersion") !== "lease-bookmark-rv") process.exit(43);
+  if (process.env.STUB_MODE === "lease-gap-expired") {
+    process.stdout.write(JSON.stringify({type:"ERROR",object:{apiVersion:"v1",kind:"Status",code:410,metadata:{}}})+"\\n");
+    process.exit(0);
+  }
+  if (process.env.STUB_MODE === "lease-gap-holder-flip") {
+    const changed = JSON.parse(JSON.stringify(renewedLease));
+    changed.spec.holderIdentity = "root-recovery:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    process.stdout.write(JSON.stringify({type:"MODIFIED",object:changed})+"\\n");
+  }
+  if (process.env.STUB_MODE !== "lease-gap-unobserved") {
+    process.stdout.write(JSON.stringify({type:"MODIFIED",object:renewedLease})+"\\n");
+  }
+}
 if (process.env.STUB_MODE === "old-control-rv" && controlWatchIndex === 1 &&
     url.searchParams.get("resourceVersion") !== "fresh-control-list-rv") {
   process.stdout.write(JSON.stringify({type:"ERROR",object:{apiVersion:"v1",kind:"Status",code:410,metadata:{}}})+"\\n");
@@ -824,6 +848,7 @@ exec "$@"
       ...process.env,
       KUBECTL_BIN: kubectlPath,
       YENHUBS_RECOVERY_TEST_MODE: "local-fixture",
+      ...(options.diagnostics ? { YENHUBS_WATCH_TEST_DEBUG: "1" } : {}),
       STUB_MODE: mode,
       STUB_STOP_PATH: stopPath,
       STUB_DESCENDANT_PATH: descendantPath,
@@ -1068,6 +1093,24 @@ for (const mode of ["initial-hang", "initial-no-boundary"]) {
   });
 }
 
+for (const mode of ["initial-eof", "successor-eof", "after-ready-eof"]) {
+  test(`CLI rejects transport loss without replacing the causal frontier: ${mode}`, async t => {
+    const fixture = runMonitorFixture(mode, { diagnostics: true });
+    t.after(() => cleanupFixture(fixture));
+    const result = await fixture.closed;
+    assert.notEqual(result.code, 0);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "durable_runner_monitor_error:pod_watch_kubectl_failed\n");
+    assert.equal(fs.readFileSync(fixture.failurePath, "utf8"), "durable_runner_monitor_failed\n");
+    assert.equal(fs.readFileSync(fixture.finalPath, "utf8"), "");
+    const ready = fs.readFileSync(fixture.readyPath, "utf8");
+    if (mode === "after-ready-eof") assert.match(ready, /^ready:/u);
+    else assert.equal(ready, "");
+    const starts = fs.readFileSync(fixture.runnerWatchCountPath, "utf8").trim().split("\n");
+    assert.equal(starts.length, { "initial-eof": 1, "successor-eof": 2, "after-ready-eof": 3 }[mode]);
+  });
+}
+
 test("CLI treats numeric-shaped Kubernetes resourceVersions as opaque", async t => {
   const fixture = runMonitorFixture("opaque-numeric-rv");
   t.after(() => cleanupFixture(fixture));
@@ -1217,7 +1260,20 @@ test("CLI accepts only causally observed Lease renewals and retains the next cur
     /^complete:(?:[a-f0-9]{64}:){3}[a-f0-9]{64}\n$/u);
 });
 
-for (const mode of ["lease-holder-flip", "lease-stale-renew", "lease-unobserved"]) {
+test("CLI replays a legitimate Lease renewal arriving between Watch close and terminal GET", async t => {
+  const fixture = runMonitorFixture("lease-gap-renew");
+  t.after(() => cleanupFixture(fixture));
+  await waitFor(() => fs.readFileSync(fixture.readyPath, "utf8").startsWith("ready:"));
+  fs.writeFileSync(fixture.stopPath, "stop\n", { mode: 0o600 });
+  const result = await fixture.closed;
+  assert.deepEqual({ code: result.code, signal: result.signal }, { code: 0, signal: null });
+  assert.equal(result.stderr, "");
+  assert.equal(fs.readFileSync(fixture.failurePath, "utf8"), "");
+  assert.match(fs.readFileSync(fixture.finalPath, "utf8"), /^complete:/u);
+});
+
+for (const mode of ["lease-holder-flip", "lease-stale-renew", "lease-unobserved",
+  "lease-gap-holder-flip", "lease-gap-unobserved", "lease-gap-expired"]) {
   test(`CLI rejects unsafe or non-causal Lease evidence: ${mode}`, async t => {
     const fixture = runMonitorFixture(mode);
     t.after(() => cleanupFixture(fixture));

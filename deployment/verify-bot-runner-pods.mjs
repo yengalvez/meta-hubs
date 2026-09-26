@@ -437,6 +437,8 @@ function verifySnapshot(payload, context) {
 }
 
 export function verifyRunnerPodInputs({
+  modules,
+  modulesExplicit,
   deployment,
   parent,
   podsBefore,
@@ -471,6 +473,8 @@ export function verifyRunnerPodInputs({
       !Number.isSafeInteger(nowSeconds)) reject("configuration");
 
   const deploymentContract = verifyBotOrchestratorDeployment(deployment, {
+    modules,
+    modulesExplicit,
     namespace,
     runnerNamespace,
     botImage,
@@ -542,6 +546,8 @@ function main() {
     args.get("--runner-namespace")
   );
   verifyRunnerPodInputs({
+    modules: configuration.modules,
+    modulesExplicit: configuration.modulesExplicit,
     deployment: readJson(args.get("--deployment"), "deployment_json"),
     parent: readJson(args.get("--parent"), "parent_json"),
     podsBefore: readJson(args.get("--pods-before"), "pods_before_json"),

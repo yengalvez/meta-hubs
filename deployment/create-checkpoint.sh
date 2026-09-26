@@ -193,6 +193,11 @@ checkpoint_failure_context_is_safe() {
     checksum-manifest:commit|checksum-manifest:permissions|\
     quiescence:fence-create|quiescence:fence-probe|\
     quiescence:writers|quiescence:serialization|quiescence:monitor-health|\
+    quiescence:parent-stop|quiescence:runner-drain|quiescence:runner-boundary|\
+    quiescence:writers-stop|quiescence:writers-absent|quiescence:pvc-absence|\
+    quiescence:operation-fence-activate|quiescence:operation-fence-verify|\
+    quiescence:writer-monitor-start|quiescence:writer-monitor-health|\
+    quiescence:durable-monitor-start|quiescence:durable-monitor-health|\
     quiescence:evidence-capture|quiescence:evidence-contract|\
     quiescence:evidence-metadata|quiescence:evidence-live|\
     database-backup:stream|database-backup:serialization|\
@@ -1476,6 +1481,7 @@ quiesce_writers() {
   # reconciles exact causal identities into permanent fences and records one
   # stable fence inventory for every later synchronous quiescence gate.
   index=3
+  checkpoint_set_failure_context quiescence parent-stop
   if [[ "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
     rolling_scale_result="$(
       recovery_scale_process_local_freeze_parent_replicas_exact \
@@ -1507,6 +1513,7 @@ quiesce_writers() {
   fi
   recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
     "${CONSUMERS[$index]}" 0 || return 1
+  checkpoint_set_failure_context quiescence runner-drain
   if [[ "$CHECKPOINT_RUNNER_MODE" == kubernetes-pod ]]; then
     recovery_reconcile_durable_runner_namespace || return 1
     recovery_require_no_legacy_parent_runner_pods || return 1
@@ -1515,14 +1522,17 @@ quiesce_writers() {
     recovery_wait_for_no_managed_bot_runner_pods 180s || return 1
   fi
   start_runner_monitor
+  checkpoint_set_failure_context quiescence runner-boundary
   require_checkpoint_runner_absence_stable || return 1
 
+  checkpoint_set_failure_context quiescence writers-stop
   for index in "${remaining_order[@]}"; do
     DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
       "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
       "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" "${ORIGINAL_REPLICAS[$index]}" 0 \
       "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" || return 1
   done
+  checkpoint_set_failure_context quiescence writers-absent
   for index in "${!CONSUMERS[@]}"; do
     recovery_require_operation_lock || return 1
     recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
@@ -1535,14 +1545,17 @@ quiesce_writers() {
   else
     recovery_require_no_managed_bot_runner_pods || return 1
   fi
+  checkpoint_set_failure_context quiescence pvc-absence
   recovery_require_exact_pvc_consumers ret-pvc || return 1
   if [[ "$CHECKPOINT_RUNNER_MODE" == kubernetes-pod ]]; then
     [[ -n "$RUNNER_DURABLE_FENCE_INVENTORY" ]] || return 1
     [[ "$(recovery_capture_durable_quiescence)" == \
        "$RUNNER_DURABLE_FENCE_INVENTORY" ]] || return 1
     recovery_require_recovery_operation_fence_state dormant || return 1
+    checkpoint_set_failure_context quiescence operation-fence-activate
     recovery_activate_recovery_operation_fence \
       CHECKPOINT_OPERATION_FENCE_ACTIVE_IDENTITY || return 1
+    checkpoint_set_failure_context quiescence operation-fence-verify
     recovery_require_recovery_operation_fence_state active \
       "$CHECKPOINT_OPERATION_FENCE_ACTIVE_IDENTITY" || return 1
   fi
@@ -1553,13 +1566,17 @@ quiesce_writers() {
     # window. From here until its verified stop, LIST+watch coverage proves that
     # none of the five fixed consumers or their ReplicaSets/Pods can execute an
     # unobserved 0 -> 1 -> 0 writer excursion.
+    checkpoint_set_failure_context quiescence writer-monitor-start
     start_checkpoint_writer_monitor || return 1
+    checkpoint_set_failure_context quiescence writer-monitor-health
     require_checkpoint_writer_monitor_healthy || return 1
   fi
   if [[ "$CHECKPOINT_RUNNER_MODE" == kubernetes-pod ]]; then
     # The durable runner monitor pins the schema-3 writer baseline, which in
     # turn pins this exact active admission-fence identity.
+    checkpoint_set_failure_context quiescence durable-monitor-start
     start_checkpoint_durable_monitor || return 1
+    checkpoint_set_failure_context quiescence durable-monitor-health
     require_checkpoint_durable_monitor_healthy || return 1
   fi
 }
@@ -2035,18 +2052,33 @@ resume_writers() {
   WRITERS_MUTATED=0
 }
 
+checkpoint_report_resume_failure() {
+  local attempt="$1" status="$2"
+  local stage="$CHECKPOINT_FAILURE_STAGE" code="$CHECKPOINT_FAILURE_CODE"
+  [[ "$attempt" =~ ^[12]$ && "$status" =~ ^[0-9]{1,3}$ ]] || return 2
+  if ! checkpoint_failure_context_is_safe "$stage" "$code"; then
+    stage=pre-publication
+    code=unclassified
+  fi
+  printf 'Checkpoint resume failure: attempt=%s stage=%s code=%s status=%s.\n' \
+    "$attempt" "$stage" "$code" "$status" >&2
+}
+
 resume_writers_with_single_reentry() {
   local first_status=0
   if resume_writers; then
     return 0
   else
     first_status=$?
+    checkpoint_report_resume_failure 1 "$first_status"
   fi
   # One bounded second pass resolves only durable ambiguous cuts (terminal
   # monitor JOINED state, scale-down RV rebinding or exact resume receipts).
   # Unsafe drift remains unchanged and fails again with the global lock held.
   if resume_writers; then
     return 0
+  else
+    checkpoint_report_resume_failure 2 "$?"
   fi
   return "$first_status"
 }

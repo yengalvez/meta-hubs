@@ -16,6 +16,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import { parseLocalValuesSource } from "./parse-local-values.mjs";
 import {
@@ -359,9 +360,12 @@ export function validateProcessLocalValuesSourceTransition({ oldBytes, newBytes 
     }
   }
   for (const name of oldValues.keys()) {
-    if (!contract.authorizedChanges.has(name) &&
-        !safeStringEqual(oldValues.get(name), newValues.get(name))) {
-      fail("unauthorized_source_value_changed");
+    if (!contract.authorizedChanges.has(name)) {
+      // The parser already normalizes this one closed, non-secret mapping.
+      const unchanged = name === "PRODUCT_MODULES"
+        ? isDeepStrictEqual(oldValues.get(name), newValues.get(name))
+        : safeStringEqual(oldValues.get(name), newValues.get(name));
+      if (!unchanged) fail("unauthorized_source_value_changed");
     }
   }
   requireInternalDomains(oldValues, "old_internal_credential_contract_invalid");

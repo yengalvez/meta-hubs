@@ -11,6 +11,7 @@ const {
 } = require(`${root}/hubs-cloud/community-edition/generate_script/verify-manifest-contracts.js`);
 
 export const deploymentConfiguration = Object.freeze({
+  modules: { schema_version: 1, bots: true, ai: true, avaturn: false },
   namespace: "hcce",
   runnerNamespace: "hcce-bot-runners",
   botImage: `ghcr.io/yengalvez/bot-orchestrator@sha256:${"b".repeat(64)}`,
@@ -25,7 +26,10 @@ export const deploymentConfiguration = Object.freeze({
 });
 
 const literalEnvironment = Object.freeze({
-  OPENAI_MODEL: "gpt-5-nano",
+  YENHUBS_BOTS_ENABLED: "true",
+  YENHUBS_AI_ENABLED: "true",
+  YENHUBS_AVATURN_ENABLED: "false",
+  OPENAI_MODEL: "gpt-6-luna",
   OPENAI_TOTAL_BUDGET_MS: "4000",
   ...BOT_ORCHESTRATOR_RUNTIME_ENV,
   BOT_RUNNER_IMAGE: deploymentConfiguration.runnerImage,
@@ -111,6 +115,10 @@ export function fixtureDeployment() {
       namespace: deploymentConfiguration.namespace,
       uid: "bot-orchestrator-deployment-uid",
       annotations: {
+        "yenhubs.com/product-modules-schema": "1",
+        "yenhubs.com/product-bots": "true",
+        "yenhubs.com/product-ai": "true",
+        "yenhubs.com/product-avaturn": "false",
         "cluster-autoscaler.kubernetes.io/safe-to-evict": "true",
         "yenhubs.org/runner-activation-phase": deploymentConfiguration.activationPhase,
         "yenhubs.org/bot-runner-recovery-phase": deploymentConfiguration.recoveryPhase,
@@ -132,6 +140,10 @@ export function fixtureDeployment() {
           creationTimestamp: null,
           labels: { app: "bot-orchestrator" },
           annotations: {
+            "yenhubs.com/product-modules-schema": "1",
+            "yenhubs.com/product-bots": "true",
+            "yenhubs.com/product-ai": "true",
+            "yenhubs.com/product-avaturn": "false",
             "yenhubs.org/bot-orchestrator-access-key-checksum": crypto
               .createHash("sha256")
               .update(deploymentConfiguration.accessKey)

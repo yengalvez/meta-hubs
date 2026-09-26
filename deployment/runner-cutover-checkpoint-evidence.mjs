@@ -962,6 +962,12 @@ function parentResourceMatchesExpected(live, expected) {
 
 function normalizedControlPlaneContract(resource) {
   const normalized = structuredClone(resource);
+  // Match the zero-permission representation already accepted by the exact
+  // resource check. Otherwise the envelope hashes null differently from [].
+  if (normalized.apiVersion === "rbac.authorization.k8s.io/v1" &&
+      normalized.kind === "Role" && normalized.rules == null) {
+    normalized.rules = [];
+  }
   delete normalized.status;
   for (const field of [
     "creationTimestamp",
@@ -1441,7 +1447,9 @@ function sourceParentResourceContract(live, definition) {
       contract.imagePullSecrets = projected.imagePullSecrets;
     }
   } else if (definition.key === "role") {
-    contract.rules = projected.rules;
+    // Historical source checks must use the same canonical empty Role hash.
+    // Nonempty or malformed rules remain unchanged and must match the checkpoint.
+    contract.rules = projected.rules ?? [];
   } else if (definition.key === "role_binding") {
     contract.roleRef = projected.roleRef;
     contract.subjects = projected.subjects;
@@ -3144,11 +3152,13 @@ export class KubectlEvidenceReader {
       admission,
       parent_resources: parentResources,
       parent_deployment: parentDeployment,
+      // kubectl's printer turns a typed PodList into a generic List and drops
+      // the collection cursor. Read the API envelope; keep validation strict.
       runner_pods: runnerNamespace === null
         ? null
-        : this.required(
-            ["-n", RUNNER_NAMESPACE, "get", "pods"],
-            "read_runner_pods_failed"
+        : this.run(
+            ["get", "--raw", `/api/v1/namespaces/${RUNNER_NAMESPACE}/pods`],
+            { code: "read_runner_pods_failed" }
           ),
       normalized_parent_target: null
     };

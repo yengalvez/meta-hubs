@@ -1777,6 +1777,10 @@ if [[ "${1:-}" == "--request-timeout=45s" ||
       "${1:-}" == "--request-timeout=4s" ||
       "${1:-}" == "--request-timeout=5s" ||
       "${1:-}" == "--request-timeout=3600s" ]]; then shift; else exit 89; fi
+if [[ "${!#}" == --request-timeout=3s ]]; then
+  request_timeout=--request-timeout=3s
+  set -- "${@:1:$(($# - 1))}"
+fi
 joined="$*"
 LEASE_FIXTURE_LOCK_DIR="$STUB_STATE_DIR/serialization-lease-fixture-lock"
 LEASE_FIXTURE_HANDOFF_DIR="$STUB_STATE_DIR/serialization-lease-watch-handoff.$PPID"
@@ -1969,6 +1973,13 @@ if [[ "$joined" == "get namespace hcce-bot-runners -o json" ]]; then
 fi
 if [[ "$joined" == \
       "get validatingadmissionpolicy recovery-operation-pod-fence.yenhubs.org -o json" ]]; then
+  if [[ "${STUB_MODE:-}" == checkpoint-active-fence-read-failure &&
+        -f "$STUB_STATE_DIR/recovery-operation-fence-binding-state" &&
+        "$(cat "$STUB_STATE_DIR/recovery-operation-fence-binding-state")" == active &&
+        ! -e "$STUB_STATE_DIR/checkpoint-active-fence-read-failed" ]]; then
+    : >"$STUB_STATE_DIR/checkpoint-active-fence-read-failed"
+    exit 1
+  fi
   : >"$STUB_STATE_DIR/recovery-operation-fence-policy-queried"
   fence_count_file="$STUB_STATE_DIR/recovery-operation-fence-policy-count-${STUB_MODE:-default}"
   fence_count=0
@@ -6951,6 +6962,7 @@ reset_stub() {
     "$STUB_STATE_DIR/recovery-operation-fence-binding-replace-payload.json" \
     "$STUB_STATE_DIR/recovery-operation-fence-parent-namespace-queried" \
     "$STUB_STATE_DIR/recovery-operation-fence-runner-namespace-queried" \
+    "$STUB_STATE_DIR/checkpoint-active-fence-read-failed" \
     "$STUB_STATE_DIR/checkpoint-quiesce-bot-lost-response" \
     "$STUB_STATE_DIR/checkpoint-quiesce-reticulum-lost-response" \
     "$STUB_STATE_DIR/checkpoint-resume-lost-response" \
@@ -7449,6 +7461,74 @@ run_durable_reconciled_profile_checkpoint_test() {
   fi
 }
 
+run_checkpoint_active_fence_read_failure_test() {
+  local output="$1"
+  reset_stub
+  seed_recovery_operation_fence_binding_state dormant
+  expect_failure 'post-CAS read failure rejects the backup with an exact diagnostic' \
+    'Checkpoint failure: stage=quiescence code=operation-fence-activate' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_FIXTURE" STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
+    STUB_RUNNER_NAMESPACE=present STUB_RUNNER_POD_PROFILE=fence-stable \
+    STUB_MODE=checkpoint-active-fence-read-failure \
+    STUB_MONITOR_WATCH_PACE=1 RECOVERY_STREAM_POLL_SECONDS=1 \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" "$output"
+  if [[ -e "$STUB_STATE_DIR/checkpoint-active-fence-read-failed" &&
+        ! -e "$STUB_STATE_DIR/restore-lock.yaml" &&
+        "$LAST_OUTPUT" == *'every writer was restored to its exact pre-snapshot scale'* ]] &&
+     checkpoint_all_writers_at 1 &&
+     recovery_operation_fence_binding_state_is dormant \
+       recovery-operation-fence-binding-rv-3 &&
+     [[ "$(cat "$STUB_STATE_DIR/recovery-operation-fence-binding-replace-count")" == 2 ]] &&
+     ! grep -Eq 'pg_dump|tar -C /storage' "$KUBECTL_LOG" &&
+     [[ ! -e "$output/SHA256SUMS" ]]; then
+    pass 'confirmed activation rolls back all writers without capturing or publishing a backup'
+  else
+    fail 'post-CAS read failure exact rollback' "$LAST_OUTPUT"
+  fi
+}
+
+run_checkpoint_evidence_capture_failure_test() {
+  local output="$1" fake_bin="$TMP_DIR/evidence-failure-bin" real_node
+  real_node="$(command -v node)"
+  mkdir -p "$fake_bin"
+  cat >"$fake_bin/node" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == */runner-cutover-checkpoint-evidence.mjs && "${2:-}" == capture ]]; then
+  : >"$STUB_STATE_DIR/checkpoint-evidence-capture-failed"
+  printf 'runner_cutover_checkpoint_evidence_failed:checkpoint_evidence_durable_invalid\n' >&2
+  exit 1
+fi
+exec "$STUB_REAL_NODE" "$@"
+STUB
+  chmod 700 "$fake_bin/node"
+  reset_stub
+  seed_recovery_operation_fence_binding_state dormant
+  expect_failure 'evidence capture failure occurs after the monitored zero boundary' \
+    'Checkpoint failure: stage=quiescence code=evidence-capture' \
+    env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    VALUES_FILE="$VALUES_FIXTURE" STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
+    STUB_RUNNER_NAMESPACE=present STUB_RUNNER_POD_PROFILE=fence-stable \
+    STUB_MONITOR_WATCH_PACE=1 RECOVERY_STREAM_POLL_SECONDS=1 \
+    PATH="$fake_bin:$PATH" STUB_REAL_NODE="$real_node" \
+    "$ROOT_DIR/deployment/create-checkpoint.sh" "$output"
+  if [[ -e "$STUB_STATE_DIR/checkpoint-evidence-capture-failed" &&
+        ! -e "$STUB_STATE_DIR/restore-lock.yaml" &&
+        "$LAST_OUTPUT" == *'every writer was restored to its exact pre-snapshot scale'* ]] &&
+     checkpoint_all_writers_at 1 &&
+     recovery_operation_fence_binding_state_is dormant \
+       recovery-operation-fence-binding-rv-3 &&
+     ! grep -Eq 'pg_dump|tar -C /storage' "$KUBECTL_LOG" &&
+     [[ ! -e "$output/SHA256SUMS" ]]; then
+    pass 'evidence failure rolls back all writers and fence without publishing data'
+  else
+    fail 'evidence capture failure exact rollback' "$LAST_OUTPUT"
+  fi
+}
+
 run_durable_runner_profile_checkpoint_tests() {
   local output_root="$1" profile output
   local evidence_hmac fixture_secret manifest_body_sentinel
@@ -7504,6 +7584,10 @@ run_durable_runner_profile_checkpoint_tests() {
       'sensitive fixture content reached command output or kubectl logs'
   fi
 
+  if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-durable &&
+        "${YENHUBS_RECOVERY_TEST_CASE:-}" == stable ]]; then
+    return
+  fi
   for profile in runner intent; do
     run_durable_reconciled_profile_checkpoint_test "$output_root" "$profile"
     if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-durable &&
@@ -16957,11 +17041,19 @@ fi
 
 if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-durable ]]; then
   case "${YENHUBS_RECOVERY_TEST_CASE:-}" in
+    evidence-capture-failure)
+      run_checkpoint_evidence_capture_failure_test \
+        "$TMP_DIR/checkpoint-evidence-capture-failure"
+      ;;
+    activation-read-failure)
+      run_checkpoint_active_fence_read_failure_test \
+        "$TMP_DIR/checkpoint-active-fence-read-failure"
+      ;;
     runner|intent)
       run_durable_reconciled_profile_checkpoint_test \
         "$TMP_DIR/checkpoint-durable-focus" "$YENHUBS_RECOVERY_TEST_CASE"
       ;;
-    stable-runner)
+    stable|stable-runner)
       run_durable_runner_profile_checkpoint_tests \
         "$TMP_DIR/checkpoint-durable-focus"
       ;;
@@ -19866,6 +19958,7 @@ else
 fi
 run_checkpoint_local_input_preflight_tests "$CREATE_PARENT/local-input-preflight"
 run_checkpoint_input_snapshot_test "$CREATE_PARENT/local-input-mutation"
+run_checkpoint_active_fence_read_failure_test "$CREATE_PARENT/active-fence-read-failure"
 run_durable_runner_profile_checkpoint_tests "$CREATE_PARENT/durable-runner-profiles"
 run_checkpoint_finalization_diagnostic_tests "$CREATE_PARENT/finalization-diagnostics"
 run_checkpoint_dormant_fence_aba_tests "$CREATE_PARENT/dormant-fence-aba"

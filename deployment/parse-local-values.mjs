@@ -2,13 +2,17 @@
 
 // Strict parser for the intentionally small top-level scalar subset used by
 // deployment/input-values.local.yaml. It never evaluates YAML tags, anchors
-// or nested structures. The sole block exception is the exact historical
-// `PERMS_KEY: |` layout, normalized to escaped newlines. Diagnostics never
-// include values.
+// or arbitrary nested structures. The only blocks are the exact historical
+// `PERMS_KEY: |` layout (normalized to escaped newlines) and the closed,
+// non-secret PRODUCT_MODULES contract. Diagnostics never include values.
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { normalizeProductModules } = require("../hubs-cloud/community-edition/generate_script/product-modules.js");
 
 const LEGACY_PERMS_BLOCK_HEADER = "PERMS_KEY: |";
 const MAX_LEGACY_PERMS_BLOCK_LINES = 128;
@@ -155,6 +159,34 @@ export function parseLocalValuesSource(source) {
     if (!match) fail(lineNumber, "expected one top-level KEY: scalar entry");
     const [, key, rawValue = ""] = match;
     if (values.has(key)) fail(lineNumber, "duplicate key");
+    if (key === "PRODUCT_MODULES") {
+      if (rawValue.trim() !== "") fail(lineNumber, "PRODUCT_MODULES requires a closed mapping block");
+      const modules = {};
+      while (index + 1 < lines.length && /^  [a-z_]+:/u.test(lines[index + 1].body)) {
+        index += 1;
+        const entry = lines[index].body.match(/^  (schema_version|bots|ai|avaturn|avaturn_creator_url):[ \t]+(.*)$/u);
+        if (!entry || Object.hasOwn(modules, entry[1])) fail(index + 1, "invalid or duplicate product module field");
+        const [, name, raw] = entry;
+        if (name === "avaturn_creator_url") {
+          const trimmed = raw.trimStart();
+          modules[name] = trimmed.startsWith('"') ? parseQuoted(trimmed, '"', index + 1)
+            : trimmed.startsWith("'") ? parseQuoted(trimmed, "'", index + 1) : parsePlain(trimmed, index + 1);
+          if (/[\u0000-\u001f\u007f]/u.test(modules[name])) fail(index + 1, "control character is not allowed");
+        } else {
+          const value = parsePlain(raw, index + 1);
+          if (name === "schema_version") {
+            if (value !== "1") fail(index + 1, "invalid product module schema");
+            modules[name] = 1;
+          } else {
+            if (!["true", "false"].includes(value)) fail(index + 1, "product module flags require literal booleans");
+            modules[name] = value === "true";
+          }
+        }
+      }
+      try { values.set(key, normalizeProductModules(modules)); }
+      catch (_) { fail(lineNumber, "invalid product module contract"); }
+      continue;
+    }
     if (line === LEGACY_PERMS_BLOCK_HEADER) {
       const block = parseLegacyPermsBlockLines(lines, index);
       values.set(key, block.value);
@@ -193,8 +225,8 @@ function printParseError(error) {
 
 function main() {
   const [filePath, operation = "--validate", argument] = process.argv.slice(2);
-  if (!filePath || !["--validate", "--get", "--keys"].includes(operation)) {
-    process.stderr.write("Usage: parse-local-values.mjs FILE [--validate | --get KEY | --keys]\n");
+  if (!filePath || !["--validate", "--get", "--keys", "--get-product-modules"].includes(operation)) {
+    process.stderr.write("Usage: parse-local-values.mjs FILE [--validate | --get KEY | --keys | --get-product-modules]\n");
     process.exitCode = 64;
     return;
   }
@@ -212,7 +244,14 @@ function main() {
     return;
   }
   if (operation === "--get") {
+    if (argument === "PRODUCT_MODULES") {
+      process.stderr.write("PRODUCT_MODULES is not a scalar; use --get-product-modules.\n");
+      process.exitCode = 2;
+      return;
+    }
     process.stdout.write(values.get(argument) ?? "");
+  } else if (operation === "--get-product-modules") {
+    process.stdout.write(JSON.stringify(normalizeProductModules(values.get("PRODUCT_MODULES"))));
   } else if (operation === "--keys") {
     const result = [...values.entries()]
       .sort(([left], [right]) => left.localeCompare(right))

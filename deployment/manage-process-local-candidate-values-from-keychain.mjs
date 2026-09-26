@@ -11,6 +11,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import { parseLocalValuesSource } from "./parse-local-values.mjs";
 import {
@@ -409,9 +410,12 @@ function validateCandidate({
       }
     }
     for (const key of baselineValues.keys()) {
-      if (!AUTHORIZED_KEYS.includes(key) &&
-          !safeStringEqual(baselineValues.get(key), candidateValues.get(key))) {
-        fail("candidate_unauthorized_change");
+      if (!AUTHORIZED_KEYS.includes(key)) {
+        // The parser already normalizes this one closed, non-secret mapping.
+        const unchanged = key === "PRODUCT_MODULES"
+          ? isDeepStrictEqual(baselineValues.get(key), candidateValues.get(key))
+          : safeStringEqual(baselineValues.get(key), candidateValues.get(key));
+        if (!unchanged) fail("candidate_unauthorized_change");
       }
     }
     baselineNormalized = normalizedAuthorizedSource(

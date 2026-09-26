@@ -13,6 +13,18 @@ ADM_EMAIL: "admin@your-domain.com"
 # --- Namespace (don't change unless you know what you're doing) ---
 Namespace: "hcce"
 
+# --- Product modules (installation ceiling, not user-controlled) ---
+# BASE includes avatars, sitting and third person. Omitted modules default OFF.
+# Migrate existing live installations explicitly; do not apply defaults to them.
+PRODUCT_MODULES:
+  schema_version: 1
+  bots: false
+  ai: false
+  avaturn: false
+  avaturn_creator_url: ""
+# AI requires bots. Avaturn requires your https://<project>.avaturn.dev origin.
+# Never use demo.avaturn.dev for a delivered product. See features/product-modules/README.md.
+
 # --- Docker images ---
 # Base images come from mozillareality/ by default.
 # hubsfoundation/ images are the newer official ones (CE 2.0.0).

@@ -1,5 +1,37 @@
 # Session Changelog
 
+## 2026-09-26 — product-module and avatar corrective candidate
+
+- Owner authorized implementing the audit fixes in isolated
+  `output/product-fixes-20260926`, leaving the prior release checkout and online
+  deployment unchanged. Six writer lanes plus independent scoped reviews.
+- Versioned installation capabilities for bots, AI and Avaturn, independent of
+  the retained base features. BASE has no dedicated executors; runtime flags only
+  reduce installed capabilities. Guarded apply rejects unsafe ON→OFF transitions.
+- Reticulum prevents stale/concurrent AI delivery, supports historical room
+  cleanup without starting bot services, and exposes conditional avatar updates.
+  Orchestrator cancels/revalidates pending work and distinguishes OFF from broken
+  readiness. Requested API contract is GPT-6 Luna / high, preserving safety and
+  existing 4-second/320-token bounds; no paid provider call was performed.
+- Avaturn iframe origin/window checks, timeouts/abort, Next/save single-flight and
+  downstream retry; preview resize/resource ownership; lazy later thumbnails.
+  No approved avatar asset or scene was altered.
+- Importer binds fresh destination checkpoint before first durable write intent,
+  reconciles lost replies and detects concurrency. Independent review identified
+  and led to regression fixes for generated slugs, parent associations and the
+  pre-intent checkpoint-age gap.
+- Selective backup fixes preserve activation CAS receipts for rollback, bound
+  Lease renewal requests within the mutation-freshness budget and classify watch
+  failure correctly. A lost transport remains fail-closed; this is not evidence
+  that the historical external EOF is eliminated or that a new backup is valid.
+- Real read-only avatar landing check in the internal browser loaded Bata at
+  desktop and 390px widths. Fixed a null-logo image and React-element alt found
+  there; no login, selection, upload or other production write was performed.
+- Integrated local suites at this record: Hubs 244,
+  Reticulum 482 tests plus 5 properties (3 excluded), Hubs CE apply 201,
+  generator 39, orchestrator 185. No production rollout,
+  full-release acceptance, provider login, two-user voice or hardware VR claimed.
+
 ## 2026-09-25 — prerequisite for RPM catalogue checkpoint
 - Owner authorized resolving the checkpoint compatibility blocker. Durable
   runner mode no longer invents a PostgreSQL rename: capture binds exactly one

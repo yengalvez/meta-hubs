@@ -40,6 +40,7 @@ const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
 const MAX_CONTROL_BASELINE_BYTES = 2 * 1024 * 1024;
 const MAX_CONTROL_OBJECT_BYTES = 2 * 1024 * 1024;
 const WATCH_TIMEOUT_SECONDS = 2;
+const MAX_CONTROL_CATCHUP_ROUNDS = 3;
 const POD_WATCH_SESSION_TIMEOUT_SECONDS = 30;
 const MINIMUM_WATCH_WINDOW_MS = 1_500;
 const POD_WATCH_HANDSHAKE_DEADLINE_MS = 7_000;
@@ -763,6 +764,13 @@ function spawnPodWatchSession(
       consumePodWatchLines(session, { terminal: true });
       session.closed = true;
       session.exit = { code, signal };
+      // An unsuccessful kubectl process may never have received the initial
+      // boundary (e.g. transport EOF). Preserve that distinction from a clean
+      // stream with missing evidence. Both are terminal: never relist or
+      // reconnect across an unproved watch boundary.
+      if (!session.intentionalClose && !session.error && (code !== 0 || signal)) {
+        recordPodWatchError(session, codedError("pod_watch_kubectl_failed"));
+      }
       if (session.initial.required && !session.initial.complete && !session.error) {
         recordPodWatchError(session, codedError("pod_watch_initial_boundary_missing"));
       }
@@ -1042,7 +1050,7 @@ async function readControlResources(
   kubectl,
   context,
   state,
-  { initialize = false, requireObserved = false, rememberTargets = false } = {}
+  { initialize = false, rememberTargets = false } = {}
 ) {
   const texts = await Promise.all(state.descriptors.map(descriptor =>
     kubectlCapture(kubectl, context, initialize
@@ -1064,13 +1072,6 @@ async function readControlResources(
     } else if (descriptor.mutable) {
       const resourceVersion = resource.metadata.resourceVersion;
       if (rememberTargets) descriptor.requiredResourceVersion = resourceVersion;
-      if (requireObserved && !descriptor.seenResourceVersions.has(resourceVersion)) {
-        // A Lease renewal is the sole permitted control mutation. A terminal
-        // GET may only attest an object version already consumed by this
-        // monitor's causal watch; otherwise a holder flip-and-restore could
-        // hide in the interval between the watch close and the GET.
-        fail("control_operation_lease_unobserved_resource_version");
-      }
     }
   });
   if (state.descriptors.some(descriptor => !validResourceVersion(descriptor.cursor))) {
@@ -1340,10 +1341,20 @@ async function captureControlRound(kubectl, context, controlState) {
   await readControlResources(kubectl, context, controlState, {
     rememberTargets: true
   });
-  await captureControlWatches(kubectl, context, controlState);
-  await readControlResources(kubectl, context, controlState, {
-    requireObserved: true
-  });
+  for (let round = 0; round < MAX_CONTROL_CATCHUP_ROUNDS; round += 1) {
+    await captureControlWatches(kubectl, context, controlState);
+    await readControlResources(kubectl, context, controlState, {
+      rememberTargets: true
+    });
+    if (controlState.descriptors.every(descriptor => !descriptor.mutable ||
+        descriptor.seenResourceVersions.has(descriptor.requiredResourceVersion))) return;
+    // A legitimate heartbeat can commit after Watch closes but before GET.
+    // Pin the new target and replay from the retained Watch cursor, never from
+    // that GET's RV or a relist. The next Watch must observe the exact target
+    // and validate every intervening event (including holder flip-and-restore).
+    // Bound retries: missing events, 410 and persistent churn remain failures.
+  }
+  fail("control_operation_lease_unobserved_resource_version");
 }
 
 async function captureRound(kubectl, context, podState, controlState) {

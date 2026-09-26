@@ -139,6 +139,10 @@ function yamlBytes(values, comment = "", {
       const physicalLines = value.split("\\n");
       if (physicalLines.at(-1) === "") physicalLines.pop();
       lines.push("PERMS_KEY: |", ...physicalLines.map(line => `  ${line}`));
+    } else if (name === "PRODUCT_MODULES") {
+      lines.push("PRODUCT_MODULES:", ...Object.entries(value).map(
+        ([key, setting]) => `  ${key}: ${JSON.stringify(setting)}`
+      ));
     } else {
       lines.push(`${name}: ${JSON.stringify(value)}`);
     }
@@ -1021,6 +1025,49 @@ test("only the allowlisted rotation and derived keys may change", () => {
   expectCode(() => validateProcessLocalValuesSourceTransition({
     oldBytes: yamlBytes(oldValues),
     newBytes: yamlBytes(added)
+  }), "source_keyset_changed");
+});
+
+test("source transition accepts unchanged normalized PRODUCT_MODULES and does not alter source bytes", () => {
+  const modules = {
+    schema_version: 1, bots: true, ai: true, avaturn: true,
+    avaturn_creator_url: "https://fixture.avaturn.dev/"
+  };
+  const oldBytes = yamlBytes({ ...sourceValues("old"), PRODUCT_MODULES: modules });
+  const newBytes = yamlBytes({
+    ...sourceValues("new"),
+    PRODUCT_MODULES: {
+      avaturn_creator_url: "https://fixture.avaturn.dev", avaturn: true,
+      ai: true, bots: true, schema_version: 1
+    }
+  });
+  const oldCopy = Buffer.from(oldBytes);
+  const newCopy = Buffer.from(newBytes);
+  assert.equal(validateProcessLocalValuesSourceTransition({ oldBytes, newBytes }),
+    PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.transitionVerified);
+  assert.deepEqual(oldBytes, oldCopy);
+  assert.deepEqual(newBytes, newCopy);
+});
+
+test("source transition rejects PRODUCT_MODULES capability drift and removal", () => {
+  const modules = { schema_version: 1, bots: false, ai: false, avaturn: false };
+  const oldBytes = yamlBytes({ ...sourceValues("old"), PRODUCT_MODULES: modules });
+  assert.equal(validateProcessLocalValuesSourceTransition({
+    oldBytes,
+    newBytes: yamlBytes({ ...sourceValues("new"), PRODUCT_MODULES: modules })
+  }), PROCESS_LOCAL_SOURCE_TRANSITION_TOKENS.transitionVerified);
+  for (const changed of [
+    { ...modules, bots: true },
+    { ...modules, avaturn: true, avaturn_creator_url: "https://fixture.avaturn.dev" }
+  ]) {
+    expectCode(() => validateProcessLocalValuesSourceTransition({
+      oldBytes,
+      newBytes: yamlBytes({ ...sourceValues("new"), PRODUCT_MODULES: changed })
+    }), "unauthorized_source_value_changed");
+  }
+  expectCode(() => validateProcessLocalValuesSourceTransition({
+    oldBytes,
+    newBytes: yamlBytes(sourceValues("new"))
   }), "source_keyset_changed");
 });
 
