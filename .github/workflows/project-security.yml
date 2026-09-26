@@ -176,6 +176,7 @@ jobs:
         run: |
           node --test tests/recovery/runner-cutover-checkpoint-evidence.test.mjs
           node --test tests/scripts/durable-runner-quiescence-monitor.test.mjs
+          node --test tests/scripts/recovery-kubectl-fixture-contract.test.mjs tests/scripts/stream-prelaunch-alignment.test.mjs
           bash tests/scripts/security-gates.test.sh
           bash tests/recovery/test-recovery-safety.sh
           bash scripts/test-aud065.sh

@@ -33,7 +33,22 @@ The tool uses canonical helper/Lease/fence validators and UID/resourceVersion pr
 
 ## Verification and rollback
 
+Before the local kubectl child is allowed through its private gate, a purely
+temporal guard misalignment may be realigned under the original startup
+deadline. Affected monitors must publish a new causal counter increment and
+pass another complete audit. This does not extend the ten-second freshness
+budget, cancellation reserve or startup deadline. Identity/hash/read failures,
+failure markers, counter regression and Lease failure remain fatal. Once the
+gate opens, and during post-stream acceptance, stale guards still fail closed;
+this is not a retry of a destructive operation or an interrupted backup.
+
+Safe stream diagnostics include only guard index/counter and monotonic
+age/observation numbers. The historic F `guard-stale:0` did not include enough
+evidence to distinguish real stalled progress from serial observation cost.
+The deterministic regression demonstrates the latter mechanism, not the
+confirmed cause of that historic failure. Focused tests are wired into both
+the local security section and the existing CI workflow.
+
 Focused regressions cover capture-before-pause, source permissions/durability, EOF on reads/watch/CAS, expired or competing Leases, lost mutation responses, helper cleanup, interrupted recovery/reentry, foreign PVC consumers and original zero replicas. Run the real checkpoint shell entrypoint with the isolated recovery fixtures from a clean committed tree as well; unit adapters alone do not cover this hook.
 
 Relevant files: `deployment/create-checkpoint.sh`, `checkpoint-recovery-receipt.mjs`, `lib/recovery-safety.sh`, writer/quiescence watchers and Cloud `apply/recover-avatar-checkpoint.js`. No manual RBAC patch, generated-manifest edit, raw apply, image hotpatch or secret output is allowed. Reverting tooling before an operation is safe; during an incident keep the source/receipt/journal pinned until its state is reconciled. This runbook does not authorize discarding an uncertain receipt.
-

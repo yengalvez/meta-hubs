@@ -1,5 +1,18 @@
 # Session Changelog
 
+## 2026-09-26 — bounded prelaunch guard realignment
+
+- A pure temporal stale observation may request a new causal monitor increment
+  only while the child gate remains closed, under the original startup deadline.
+  Full audits, freshness/cancellation budgets, fatal error handling and runtime/
+  post-stream fail-close remain intact. Added numeric-only failure diagnostics.
+- Added deterministic tests using the actual Bash functions; wired them and the
+  recovery fixture parser regressions into local security and existing CI.
+- The unchanged baseline checkpoint entrypoint passed48/48 in a local fixture
+  after an earlier stream-boundary failure. F's full had14/15 sections pass and
+  failed only recovery; neither failure has a confirmed environmental cause.
+  No new production checkpoint, image, catalog import or rollout occurred.
+
 ## 2026-09-26 — checkpoint transport-loss recovery candidate
 
 - Separate abort-only service recovery from acceptance of the interrupted backup.

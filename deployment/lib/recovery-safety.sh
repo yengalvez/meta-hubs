@@ -1594,6 +1594,8 @@ recovery_kubectl_stream_supervised() {
     local supervised_stream_lease_failure_detail=""
     local supervised_stream_guard_remaining_milliseconds_value=""
     local supervised_stream_guard_remaining_index=""
+    local supervised_stream_guard_failure_kind=""
+    local stream_is_gated=0
     local guard_cancel_reserve_milliseconds=2000
     local -a guard_last_progress=() guard_last_progress_milliseconds=()
     local -a guard_last_observation_milliseconds=()
@@ -1649,12 +1651,42 @@ recovery_kubectl_stream_supervised() {
     refresh_supervised_stream_guards_for_launch() {
       local requested_launch_budget_milliseconds="${1:-}"
       local all_refresh_guards_fresh
+      local continuity_diagnostic_before=""
       local launch_alignment_started_milliseconds
       local launch_alignment_deadline_milliseconds
       local launch_budget_required_milliseconds
       local -a refresh_baseline_progress=()
       local -a refresh_baseline_observation_milliseconds=()
       local -a refresh_advanced=()
+      record_guard_refresh_timeout() {
+        local timeout_index="$supervised_stream_guard_remaining_index"
+        stream_record_diagnostic "guard-refresh-timeout:$timeout_index:${supervised_stream_guard_remaining_milliseconds_value}:counter:${guard_last_progress[$timeout_index]}:age-ms:$((current_milliseconds - guard_last_progress_milliseconds[timeout_index])):observation-ms:${guard_last_observation_milliseconds[$timeout_index]}"
+      }
+      realign_temporally_stale_prelaunch_guards() {
+        local stale_index found_stale=0
+        # This exception belongs only to the unopened child gate. In
+        # particular, the post-stream refresh must retain its old fail-close
+        # behavior. Neither an error nor a regressed counter reaches here.
+        [[ "$stream_is_gated" == 1 && "$stream_diagnostic_stage" == refresh &&
+           -z "$requested_launch_budget_milliseconds" ]] || return 1
+        recovery_process_identity_is_live "$stream_pid" "$stream_start_identity" || return 1
+        recovery_process_identity_is_live "$caller_pid" "$caller_start_identity" || return 1
+        current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+        ((current_milliseconds < launch_alignment_deadline_milliseconds)) || return 1
+        for stale_index in "${!guard_pids[@]}"; do
+          if ((current_milliseconds - guard_last_progress_milliseconds[stale_index] >=
+            guard_maximum_stale_seconds[stale_index] * 1000)); then
+            # Require a NEW counter after this observation, followed by a
+            # complete audit on the next round. Never redate old progress or
+            # extend the original alignment deadline.
+            refresh_baseline_progress[stale_index]="${guard_last_progress[$stale_index]}"
+            refresh_baseline_observation_milliseconds[stale_index]="${guard_last_observation_milliseconds[$stale_index]}"
+            refresh_advanced[stale_index]=0
+            found_stale=1
+          fi
+        done
+        [[ "$found_stale" == 1 ]]
+      }
       launch_alignment_started_milliseconds="$(
         recovery_monotonic_milliseconds
       )" || return 1
@@ -1722,7 +1754,7 @@ recovery_kubectl_stream_supervised() {
         current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
         if ((current_milliseconds >= launch_alignment_deadline_milliseconds)); then
           supervised_stream_guard_remaining_milliseconds >/dev/null || return 1
-          stream_record_diagnostic "guard-refresh-timeout:${supervised_stream_guard_remaining_index}:${supervised_stream_guard_remaining_milliseconds_value}"
+          record_guard_refresh_timeout
           return 1
         fi
         for index in "${!guard_pids[@]}"; do
@@ -1752,7 +1784,7 @@ recovery_kubectl_stream_supervised() {
         current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
         if ((current_milliseconds >= launch_alignment_deadline_milliseconds)); then
           supervised_stream_guard_remaining_milliseconds >/dev/null || return 1
-          stream_record_diagnostic "guard-refresh-timeout:${supervised_stream_guard_remaining_index}:${supervised_stream_guard_remaining_milliseconds_value}"
+          record_guard_refresh_timeout
           return 1
         fi
         all_refresh_guards_fresh=true
@@ -1763,7 +1795,12 @@ recovery_kubectl_stream_supervised() {
               refresh_deadline_seconds * 1000)) || return 1
           elif ((current_milliseconds - guard_last_progress_milliseconds[index] >=
             guard_maximum_stale_seconds[index] * 1000)); then
-            return 1
+            if ! realign_temporally_stale_prelaunch_guards; then
+              stream_record_diagnostic "guard-stale:$index:counter:${guard_last_progress[$index]}:age-ms:$((current_milliseconds - guard_last_progress_milliseconds[index])):observation-ms:${guard_last_observation_milliseconds[$index]}"
+              return 1
+            fi
+            all_refresh_guards_fresh=false
+            break
           fi
         done
         if [[ "$all_refresh_guards_fresh" == true ]]; then
@@ -1779,11 +1816,17 @@ recovery_kubectl_stream_supervised() {
               stream_record_diagnostic caller-identity
               return 1
             fi
-            supervised_stream_guards_are_continuously_healthy || return 1
+            continuity_diagnostic_before="$stream_diagnostic_detail"
+            if ! supervised_stream_guards_are_continuously_healthy; then
+              [[ "$supervised_stream_guard_failure_kind" == stale ]] &&
+                realign_temporally_stale_prelaunch_guards || return 1
+              stream_diagnostic_detail="$continuity_diagnostic_before"
+              continue
+            fi
           fi
           supervised_stream_guard_remaining_milliseconds >/dev/null || return 1
           if ((current_milliseconds >= launch_alignment_deadline_milliseconds)); then
-            stream_record_diagnostic "guard-refresh-timeout:${supervised_stream_guard_remaining_index}:${supervised_stream_guard_remaining_milliseconds_value}"
+            record_guard_refresh_timeout
             return 1
           fi
           remaining_milliseconds="$supervised_stream_guard_remaining_milliseconds_value"
@@ -1797,10 +1840,16 @@ recovery_kubectl_stream_supervised() {
                 stream_record_diagnostic "${supervised_stream_lease_failure_detail:-lease-budget}"
                 return 1
               fi
-              supervised_stream_guards_are_continuously_healthy || return 1
+              continuity_diagnostic_before="$stream_diagnostic_detail"
+              if ! supervised_stream_guards_are_continuously_healthy; then
+                [[ "$supervised_stream_guard_failure_kind" == stale ]] &&
+                  realign_temporally_stale_prelaunch_guards || return 1
+                stream_diagnostic_detail="$continuity_diagnostic_before"
+                continue
+              fi
               supervised_stream_guard_remaining_milliseconds >/dev/null || return 1
               if ((current_milliseconds >= launch_alignment_deadline_milliseconds)); then
-                stream_record_diagnostic "guard-refresh-timeout:${supervised_stream_guard_remaining_index}:${supervised_stream_guard_remaining_milliseconds_value}"
+                record_guard_refresh_timeout
                 return 1
               fi
               remaining_milliseconds="$supervised_stream_guard_remaining_milliseconds_value"
@@ -1877,6 +1926,9 @@ recovery_kubectl_stream_supervised() {
     }
     supervised_stream_guards_are_continuously_healthy() {
       local guard_failure_detail=""
+      # Explicit classification is consumed only by the gated prelaunch
+      # caller. All other callers still fail immediately on any nonzero exit.
+      supervised_stream_guard_failure_kind=error
       # A complete immutable authority/baseline audit accepts each capability
       # before launch. During the stream, the monitor's authority-bound counter
       # is its causal attestation that another complete live sweep passed.
@@ -1933,10 +1985,12 @@ recovery_kubectl_stream_supervised() {
       for index in "${!guard_pids[@]}"; do
         if ((current_milliseconds - guard_last_progress_milliseconds[index] >=
           guard_maximum_stale_seconds[index] * 1000)); then
-          stream_record_diagnostic "guard-stale:$index"
+          supervised_stream_guard_failure_kind=stale
+          stream_record_diagnostic "guard-stale:$index:counter:${guard_last_progress[$index]}:age-ms:$((current_milliseconds - guard_last_progress_milliseconds[index])):observation-ms:${guard_last_observation_milliseconds[$index]}"
           return 1
         fi
       done
+      supervised_stream_guard_failure_kind=""
     }
     supervised_stream_guard_remaining_milliseconds() {
       local minimum_remaining="" minimum_index="" guard_deadline
@@ -2122,6 +2176,7 @@ os.execvp(sys.argv[3], sys.argv[3:])
     # setup, so that setup time cannot consume the destructive freshness
     # window. Cleanup revokes the gated child on every alignment failure.
     stream_diagnostic_stage=refresh
+    stream_is_gated=1
     if ! refresh_supervised_stream_guards_for_launch; then
       supervised_stream_cleanup
       return 1
@@ -2156,6 +2211,7 @@ os.execvp(sys.argv[3], sys.argv[3:])
       supervised_stream_cleanup
       return 1
     fi
+    stream_is_gated=0
     printf 'go\n' >"$stream_gate" || {
       supervised_stream_cleanup
       return 1
