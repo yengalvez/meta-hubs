@@ -468,8 +468,8 @@ Edit `hubs-cloud/community-edition/input-values.yaml` with your real values:
 - `DASHBOARD_ACCESS_KEY` - Reticulum administrative-route key
 - all four internal credentials must be distinct random strings of at least 32 characters; rotate them only in the
   ignored local values and then regenerate/apply the manifest
-- `OPENAI_API_KEY` - API key used by bot-orchestrator for LLM chat (model defaults to `gpt-5-nano`)
-- `OPENAI_TOTAL_BUDGET_MS` - fixed to `4000` by the generator; input moderation, model and output moderation share it
+- `OPENAI_API_KEY` - API key used by bot-orchestrator for LLM chat (`gpt-6-luna` with high reasoning in the current generated profile)
+- `OPENAI_TOTAL_BUDGET_MS` - fixed to `15000` by the generator; input moderation, model and output moderation share it. Reticulum allows 18 seconds for chat but retains a 5-second timeout for runtime control messages.
 - `GHOST_NAVIGATION_MODE` - keep `navmesh_preferred` in production
 - `GHOST_NAVIGATION_REQUIRE_NAVMESH` - keep `true`; collider/direct modes are legacy diagnostics, not readiness
 - `GHOST_NAVMESH_MAX_TRIANGLES` - navmesh parser cap, default `50000`

@@ -30,7 +30,7 @@ const literalEnvironment = Object.freeze({
   YENHUBS_AI_ENABLED: "true",
   YENHUBS_AVATURN_ENABLED: "false",
   OPENAI_MODEL: "gpt-6-luna",
-  OPENAI_TOTAL_BUDGET_MS: "4000",
+  OPENAI_TOTAL_BUDGET_MS: "15000",
   ...BOT_ORCHESTRATOR_RUNTIME_ENV,
   BOT_RUNNER_IMAGE: deploymentConfiguration.runnerImage,
   BOT_RUNNER_RECOVERY_EPOCH: deploymentConfiguration.recoveryEpoch,

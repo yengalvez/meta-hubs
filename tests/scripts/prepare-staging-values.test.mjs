@@ -12,6 +12,20 @@ const root = path.resolve(import.meta.dirname, "../..");
 const preparer = path.join(root, "deployment/prepare-staging-values.mjs");
 const sourceTemplatePath = path.join(root, "hubs-cloud/community-edition/input-values.ci.yaml");
 
+function fixtureValuesYaml(values) {
+  return Object.entries(values).flatMap(([key, value]) => {
+    if (key === "PRODUCT_MODULES") {
+      return [
+        "PRODUCT_MODULES:",
+        ...Object.entries(value).map(([field, entry]) =>
+          `  ${field}: ${field === "avaturn_creator_url" ? JSON.stringify(entry) : String(entry)}`
+        )
+      ];
+    }
+    return [`${key}: ${JSON.stringify(String(value))}`];
+  }).join("\n") + "\n";
+}
+
 test("staging values materialize one concrete percent-encoded database URI", () => {
   const directory = fs.mkdtempSync("/private/tmp/yenhubs-staging-values-");
   const sharedPath = path.join(directory, "shared.yaml");
@@ -35,7 +49,7 @@ test("staging values materialize one concrete percent-encoded database URI", () 
   template.PERMS_KEY = "test-placeholder";
   fs.writeFileSync(
     templatePath,
-    Object.entries(template).map(([key, value]) => `${key}: ${JSON.stringify(String(value))}`).join("\n") + "\n"
+    fixtureValuesYaml(template)
   );
   const images = {
     reticulum: template.OVERRIDE_RETICULUM_IMAGE,
@@ -160,9 +174,7 @@ test("production generations preserve secrets and change only the approved legac
   delete source.BOT_RUNNER_RECOVERY_EPOCH;
   fs.writeFileSync(
     sourcePath,
-    Object.entries(source)
-      .map(([key, value]) => `${key}: ${JSON.stringify(String(value))}`)
-      .join("\n") + "\n",
+    fixtureValuesYaml(source),
     { mode: 0o600 }
   );
 
