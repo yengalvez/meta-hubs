@@ -1666,3 +1666,17 @@ Se aísla el cliente b805d96d3 y el catálogo de33avatares, conservando los siet
 IDs existentes y los GLB originales. Build oficial36164500021 y comparación
 live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
 (IA pendiente). Fuente y pruebas: DOC/avatar-release-2026-09-25.md.
+
+# 2026-09-26 — Producto modular y plazo de IA
+
+- Candidato aislado F para BASE, bots opcionales, IA opcional y creador Avaturn
+  opcional; el catálogo aprobado de 33 GLB/miniaturas conserva siete IDs.
+- El perfil de IA generado usa `gpt-6-luna/high`, un único límite de proveedor
+  de 15 s y 18 s para el chat Reticulum; STOP/config siguen en 5 s. Una
+  secuencia sintética real de moderación, modelo y moderación pasó en 5371 ms;
+  no sustituye el chat live en sala ni mide su latencia habitual.
+- Dos fixtures antiguos se adaptan a `PRODUCT_MODULES` cerrado y a bots
+  instalados explícitamente. Validación full definitiva, copia conjunta,
+  imágenes oficiales e integración/publicación siguen pendientes. La copia v6
+  no es válida por EOF de Kubernetes durante almacenamiento; no se ha pausado
+  producción ni importado el catálogo en este candidato.

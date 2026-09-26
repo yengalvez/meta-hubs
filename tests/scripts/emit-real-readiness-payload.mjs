@@ -18,6 +18,8 @@ process.env.BOT_RUNNER_ACCESS_KEY = "root-contract-test-runner-key-32-chars";
 process.env.BOT_ORCHESTRATOR_ACCESS_KEY = "root-contract-test-orchestrator-key-32-chars";
 process.env.OPENAI_API_KEY = "";
 process.env.RUNNER_AUTOSTART = "false";
+process.env.YENHUBS_BOTS_ENABLED = "true";
+process.env.YENHUBS_AI_ENABLED = "false";
 
 const require = createRequire(import.meta.url);
 const originalLog = console.log;
@@ -48,7 +50,10 @@ try {
     fetchImpl: async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ hubs: [{ hub_sid: hubSid, runtime_revision: 1, bots }] })
+      json: async () => ({
+        capabilities: { bots_enabled: true, ai_enabled: false },
+        hubs: [{ hub_sid: hubSid, runtime_revision: 1, bots }]
+      })
     })
   });
 
