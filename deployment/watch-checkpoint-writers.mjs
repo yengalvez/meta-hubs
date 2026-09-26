@@ -11,6 +11,7 @@ import fs from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
 
 const MAX_LIST_BYTES = 16 * 1024 * 1024;
 const MAX_EVENT_BYTES = 4 * 1024 * 1024;
@@ -396,7 +397,7 @@ function validateConsumerContract(text, expectedDigest, namespace) {
       typeof consumer.uid !== "string" || !consumer.uid ||
       typeof consumer.initial_resource_version !== "string" ||
       !consumer.initial_resource_version ||
-      !Number.isInteger(consumer.original_replicas) || consumer.original_replicas <= 0 ||
+      !Number.isInteger(consumer.original_replicas) || consumer.original_replicas < 0 ||
       typeof consumer.selector !== "string" ||
       !/^[A-Za-z0-9._-]+$/.test(consumer.selector) ||
       typeof consumer.fingerprint !== "string" ||
@@ -3165,6 +3166,14 @@ function boundary(values) {
   process.stdout.write(`${JSON.stringify({ stop: true, boundaries: current.boundaries })}\n`);
 }
 
+// Recovery shares these exact, side-effect-free ownership/template validators.
+// Importing them must not enter the monitor CLI or create a child process.
+export {
+  controllerOwner, podTemplateFingerprint, podAdmissionFingerprint,
+  validatePodEnvelope, validateReplicaSetEnvelope, validateReplicaSetShape
+};
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 let parsed;
 try {
   parsed = exactArguments(process.argv.slice(2));
@@ -3196,4 +3205,5 @@ try {
     } catch {}
   }
   process.exitCode = 1;
+}
 }

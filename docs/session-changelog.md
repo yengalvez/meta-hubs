@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-09-26 — checkpoint transport-loss recovery candidate
+
+- Separate abort-only service recovery from acceptance of the interrupted backup.
+  Persist a private receipt before pause, preserve original zero replicas and
+  reconcile lost API responses through the same durable journal and exact CAS.
+- Keep canonical Lease, helper, manifest and control-plane guards. The older live
+  deployment needs a baseline-compatible source, not the new product generator.
+- Review exposed reentry PVC consumers, token argument transport, parent-directory
+  durability and canonical runner namespace gaps; fixes and focused verification
+  are tracked by the primary plan. No production invocation or success claimed.
+- Operator scope, commands and exclusions are in
+  `features/checkpoint-eof-recovery/README.md`. Initial partial pause is explicitly
+  unsupported; an interrupted backup is never promoted to a valid checkpoint.
+
 ## 2026-09-26 — product-module and avatar corrective candidate
 
 - Owner authorized implementing the audit fixes in isolated

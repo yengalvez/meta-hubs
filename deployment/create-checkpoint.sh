@@ -1389,6 +1389,25 @@ release_serialization_if_owned() {
   SERIALIZATION_LEASE_OWNED=0
 }
 
+persist_checkpoint_abort_receipt() {
+  [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 &&
+     "$CHECKPOINT_FORMAT" == legacy ]] || return 0
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  EXPECTED_KUBE_CONTEXT="$EXPECTED_KUBE_CONTEXT" NAMESPACE="$NAMESPACE" \
+    RECOVERY_NAMESPACE_UID="$RECOVERY_NAMESPACE_UID" RECOVERY_PVC_UID="$RECOVERY_PVC_UID" \
+    RECOVERY_OPERATION_ID="$RECOVERY_OPERATION_ID" RECOVERY_CHECKPOINT_STAMP="$TIMESTAMP" \
+    RECOVERY_OPERATION_LOCK_UID="$RECOVERY_OPERATION_LOCK_UID" \
+    RECOVERY_OPERATION_LOCK_RESOURCE_VERSION="$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION" \
+    RECOVERY_CONSUMER_CONTRACT_JSON="$RECOVERY_CONSUMER_CONTRACT_JSON" \
+    CHECKPOINT_VALUES_SNAPSHOT="$CHECKPOINT_VALUES_SNAPSHOT" \
+    CHECKPOINT_MANIFEST_SNAPSHOT="$CHECKPOINT_MANIFEST_SNAPSHOT" \
+    CHECKPOINT_CUTOVER_KEY_SNAPSHOT="$CHECKPOINT_CUTOVER_KEY_SNAPSHOT" \
+    CHECKPOINT_RECOVERY_INVENTORY="$OUTPUT_DIR/deployment-images.json" \
+    node "$SCRIPT_DIR/checkpoint-recovery-receipt.mjs" \
+      "${FINAL_OUTPUT_DIR}.abort-recovery"
+}
+
 capture_consumer_contracts() {
   local deployment contract uid resource_version replicas selector fingerprint
   local receipt_absent_resource_version
@@ -1396,8 +1415,8 @@ capture_consumer_contracts() {
   for deployment in "${CONSUMERS[@]}"; do
     contract="$(recovery_capture_deployment_contract "$deployment")" || return 1
     IFS=$'\t' read -r uid resource_version replicas selector fingerprint <<<"$contract"
-    [[ "$replicas" =~ ^[0-9]+$ && "$replicas" -gt 0 ]] || {
-      printf 'Every checkpoint writer must be running before capture: %s.\n' "$deployment" >&2
+    [[ "$replicas" =~ ^[0-9]+$ ]] || {
+      printf 'Every checkpoint writer must have an explicit nonnegative scale: %s.\n' "$deployment" >&2
       return 1
     }
     receipt_absent_resource_version="$(
@@ -1472,6 +1491,24 @@ require_checkpoint_post_watch_absence_stable() {
   done
 }
 
+checkpoint_require_original_zero_writer() {
+  local index="$1" observed
+  [[ "${ORIGINAL_REPLICAS[$index]}" == 0 ]] || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  observed="$(recovery_capture_checkpoint_resume_receipt_absent_contract \
+    "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" 0 \
+    "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" || return 1
+  [[ "$observed" == "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" ]] || return 1
+  recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
+    "deployment/${CONSUMERS[$index]}" 180s || return 1
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  [[ "$(recovery_capture_checkpoint_resume_receipt_absent_contract \
+    "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" 0 \
+    "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" == "$observed" ]]
+}
+
 quiesce_writers() {
   local index rolling_scale_result rolling_zero_contract rolling_generation
   local -a remaining_order=(0 1 2 4)
@@ -1482,7 +1519,9 @@ quiesce_writers() {
   # stable fence inventory for every later synchronous quiescence gate.
   index=3
   checkpoint_set_failure_context quiescence parent-stop
-  if [[ "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+  if [[ "${ORIGINAL_REPLICAS[$index]}" == 0 ]]; then
+    checkpoint_require_original_zero_writer "$index" || return 1
+  elif [[ "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
     rolling_scale_result="$(
       recovery_scale_process_local_freeze_parent_replicas_exact \
         "$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT" \
@@ -1527,6 +1566,10 @@ quiesce_writers() {
 
   checkpoint_set_failure_context quiescence writers-stop
   for index in "${remaining_order[@]}"; do
+    if [[ "${ORIGINAL_REPLICAS[$index]}" == 0 ]]; then
+      checkpoint_require_original_zero_writer "$index" || return 1
+      continue
+    fi
     DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
       "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
       "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" "${ORIGINAL_REPLICAS[$index]}" 0 \
@@ -1605,7 +1648,7 @@ prepare_runner_monitor_for_resume() {
   [[ "$uid" == "${DEPLOYMENT_UIDS[$index]}" &&
      "$selector" == "${DEPLOYMENT_SELECTORS[$index]}" &&
      "$fingerprint" == "${DEPLOYMENT_FINGERPRINTS[$index]}" ]] || return 1
-  if [[ "$replicas" == "${ORIGINAL_REPLICAS[$index]}" ]]; then
+  if [[ "$replicas" == "${ORIGINAL_REPLICAS[$index]}" && "$replicas" != 0 ]]; then
     # No checkpoint writer after the parent can have been scaled before the
     # watcher starts. If every captured writer is still at its original
     # resourceVersion and exact contract, there is no downtime mutation to
@@ -1657,6 +1700,9 @@ adopt_committed_bot_parent_resume_before_monitor() {
      "$selector" == "${DEPLOYMENT_SELECTORS[$index]}" &&
      "$fingerprint" == "${DEPLOYMENT_FINGERPRINTS[$index]}" ]] || return 1
   [[ "$replicas" == "${ORIGINAL_REPLICAS[$index]}" ]] || return 0
+  # Original zero is not evidence of a committed parent resume. It never
+  # receives a resume receipt and must remain quiescent through normal guards.
+  [[ "${ORIGINAL_REPLICAS[$index]}" != 0 ]] || return 0
 
   # The parent is restored last. Its exact operation receipt therefore proves
   # that the controlled resume CAS was accepted only after the other four
@@ -1957,6 +2003,12 @@ resume_writers() {
     checkpoint_set_failure_context resume writer-contract
     contract="$(recovery_capture_deployment_contract "$deployment")" || return 1
     IFS=$'\t' read -r uid resource_version replicas selector fingerprint <<<"$contract"
+    if [[ "${ORIGINAL_REPLICAS[$index]}" == 0 ]]; then
+      checkpoint_require_original_zero_writer "$index" || return 1
+      DEPLOYMENT_RESUME_STARTED[index]=1
+      DEPLOYMENT_RESUME_RECEIPT_CLEARED[index]=1
+      continue
+    fi
     if [[ "$replicas" == 0 ]]; then
       [[ "$resource_version" == "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" ]] || {
         printf 'Writer changed after the terminal checkpoint watch boundary: %s.\n' \
@@ -2463,6 +2515,11 @@ CHECKPOINT_RUNNER_GENERATION="$(jq -er '
   printf 'Captured runner mode does not match the pre-downtime authorization.\n' >&2
   exit 1
 }
+
+# Persist before the first writer pause. Cleanup owns only its temporary
+# snapshots, never this sibling directory. A failed copy remains invalid;
+# this receipt authorizes only a separately supervised abort-only recovery.
+persist_checkpoint_abort_receipt
 
 if checkpoint_uses_freeze_admission_fence; then
   checkpoint_set_failure_context quiescence fence-create

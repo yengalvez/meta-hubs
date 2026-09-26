@@ -1771,6 +1771,7 @@ if [[ "${1:-}" == "--request-timeout=45s" ||
       "${1:-}" == "--request-timeout=75s" ||
       "${1:-}" == "--request-timeout=35s" ||
       "${1:-}" == "--request-timeout=30s" ||
+      "${1:-}" == "--request-timeout=20s" ||
       "${1:-}" == "--request-timeout=1s" ||
       "${1:-}" == "--request-timeout=2s" ||
       "${1:-}" == "--request-timeout=3s" ||
@@ -1780,6 +1781,19 @@ if [[ "${1:-}" == "--request-timeout=45s" ||
 if [[ "${!#}" == --request-timeout=3s ]]; then
   request_timeout=--request-timeout=3s
   set -- "${@:1:$(($# - 1))}"
+fi
+# The private receipt uses equivalent namespace-prefix GETs, with cm as the
+# standard alias. Normalize only its exact read forms, never broaden writes.
+if [[ "$request_timeout" == "--request-timeout=20s" &&
+      "$#" == 7 && "${1:-}" == "-n" && "${2:-}" == hcce &&
+      "${3:-}" == get && "${6:-}" == "-o" && "${7:-}" == json ]]; then
+  resource="$4"
+  case "$resource" in
+    lease|deployment) ;;
+    cm) resource=configmap ;;
+    *) exit 89 ;;
+  esac
+  set -- get "$resource" "$5" -n hcce -o json
 fi
 joined="$*"
 LEASE_FIXTURE_LOCK_DIR="$STUB_STATE_DIR/serialization-lease-fixture-lock"

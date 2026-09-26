@@ -6787,7 +6787,7 @@ recovery_consumer_contract_is_acceptable() {
       (keys | sort) == ["fingerprint", "initial_resource_version", "name", "original_replicas", "selector", "uid"] and
       (.uid | type == "string" and length > 0) and
       (.initial_resource_version | type == "string" and length > 0) and
-      (.original_replicas | type == "number" and floor == . and . > 0) and
+      (.original_replicas | type == "number" and floor == . and . >= 0) and
       (.selector | type == "string" and test("^[A-Za-z0-9._-]+$")) and
       (.fingerprint | type == "string" and test("^[A-Za-z0-9+/]+={0,2}$")))
   ' >/dev/null 2>&1 <<<"$contract_json"
@@ -8292,7 +8292,7 @@ recovery_storage_helper_pod_is_exact() {
     --arg role "$role" --arg image "$image" \
     --arg operation_id "$RECOVERY_OPERATION_ID" \
     --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
-    --arg operation_token "$RECOVERY_OPERATION_TOKEN" \
+    --rawfile operation_token /dev/fd/3 \
     --arg metadata_mode "$metadata_mode" \
     --argjson read_only "$read_only" '
     .apiVersion == "v1" and .kind == "Pod" and
@@ -8376,7 +8376,7 @@ recovery_storage_helper_pod_is_exact() {
     ((.spec.containers[0].securityContext.capabilities.drop // []) | sort) == ["ALL"] and
     ((.spec.containers[0].securityContext.capabilities.add // []) | length) == 0 and
     ((.spec.containers[0].securityContext.procMount // "Default") == "Default")
-  ' >/dev/null 2>&1 <<<"$pod_json"
+  ' >/dev/null 2>&1 3< <(printf '%s' "$RECOVERY_OPERATION_TOKEN") <<<"$pod_json"
 }
 
 recovery_storage_helper_network_policy_is_exact() {
@@ -8388,7 +8388,7 @@ recovery_storage_helper_network_policy_is_exact() {
     --arg name "$policy_name" --arg uid "$policy_uid" --arg namespace "$NAMESPACE" \
     --arg role "$role" --arg operation_id "$RECOVERY_OPERATION_ID" \
     --arg lock_uid "$RECOVERY_OPERATION_LOCK_UID" \
-    --arg operation_token "$RECOVERY_OPERATION_TOKEN" '
+    --rawfile operation_token /dev/fd/3 '
     .apiVersion == "networking.k8s.io/v1" and .kind == "NetworkPolicy" and
     .metadata.name == $name and .metadata.uid == $uid and
     .metadata.namespace == $namespace and
@@ -8410,7 +8410,7 @@ recovery_storage_helper_network_policy_is_exact() {
     .spec.podSelector == {matchLabels:{"yenhubs.org/operation-id":$operation_id}} and
     (.spec.policyTypes | sort) == ["Egress", "Ingress"] and
     ((.spec | has("ingress")) == (.spec | has("egress")))
-  ' >/dev/null 2>&1 <<<"$policy_json"
+  ' >/dev/null 2>&1 3< <(printf '%s' "$RECOVERY_OPERATION_TOKEN") <<<"$policy_json"
 }
 
 recovery_confirmation_value() {

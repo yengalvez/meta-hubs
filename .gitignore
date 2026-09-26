@@ -11,5 +11,7 @@ hcce.yaml
 node_modules/
 .tools/
 output/
+# Private abort-only recovery packets contain deployment inputs and key bytes.
+*.abort-recovery/
 .env
 erl_crash.dump
