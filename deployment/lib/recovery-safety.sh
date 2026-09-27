@@ -1658,6 +1658,34 @@ recovery_kubectl_stream_supervised() {
       local -a refresh_baseline_progress=()
       local -a refresh_baseline_observation_milliseconds=()
       local -a refresh_advanced=()
+      observe_gated_prelaunch_guard_progress() {
+        local sample_index sample_time sample_progress sample_previous_observation
+        # These observations grant no launch authority. While the child is
+        # still gated, keep causal counter history between expensive signed
+        # audits instead of leaving every other guard unobserved for a whole
+        # serial round. The complete audits below, final continuity check and
+        # cancellation reserve must still pass before the gate can open.
+        [[ "$stream_is_gated" == 1 && "$stream_diagnostic_stage" == refresh &&
+           -z "$requested_launch_budget_milliseconds" ]] || return 0
+        for sample_index in "${!guard_pids[@]}"; do
+          sample_previous_observation="${guard_last_observation_milliseconds[$sample_index]}"
+          sample_time="$(recovery_monotonic_milliseconds)" || return 1
+          if ! sample_progress="$(recovery_stream_guard_progress_value \
+            "${guard_progress_markers[$sample_index]}" \
+            "${guard_authority_sha256s[$sample_index]}")"; then
+            stream_record_diagnostic "guard-progress-read:$sample_index"
+            return 1
+          fi
+          if ((sample_progress < guard_last_progress[sample_index])); then
+            stream_record_diagnostic "guard-progress-regression:$sample_index"
+            return 1
+          elif ((sample_progress > guard_last_progress[sample_index])); then
+            guard_last_progress[sample_index]="$sample_progress"
+            guard_last_progress_milliseconds[sample_index]="$sample_previous_observation"
+          fi
+          guard_last_observation_milliseconds[sample_index]="$sample_time"
+        done
+      }
       record_guard_refresh_timeout() {
         local timeout_index="$supervised_stream_guard_remaining_index"
         stream_record_diagnostic "guard-refresh-timeout:$timeout_index:${supervised_stream_guard_remaining_milliseconds_value}:counter:${guard_last_progress[$timeout_index]}:age-ms:$((current_milliseconds - guard_last_progress_milliseconds[timeout_index])):observation-ms:${guard_last_observation_milliseconds[$timeout_index]}"
@@ -1719,6 +1747,7 @@ recovery_kubectl_stream_supervised() {
       # observation, so update its lower bound causally, but it does not satisfy
       # this second pre-launch sweep.
       for index in "${!guard_pids[@]}"; do
+        observe_gated_prelaunch_guard_progress || return 1
         recovery_stream_guard_process_is_healthy \
           "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
           "${guard_failure_markers[$index]}" "${guard_ready_markers[$index]}" \
@@ -1758,6 +1787,7 @@ recovery_kubectl_stream_supervised() {
           return 1
         fi
         for index in "${!guard_pids[@]}"; do
+          observe_gated_prelaunch_guard_progress || return 1
           recovery_stream_guard_process_is_healthy \
             "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
             "${guard_failure_markers[$index]}" "${guard_ready_markers[$index]}" \
@@ -1775,9 +1805,12 @@ recovery_kubectl_stream_supervised() {
           if ((current_progress > previous_progress)); then
             guard_last_progress[index]="$current_progress"
             guard_last_progress_milliseconds[index]="$previous_observation_milliseconds"
-            if ((current_progress > refresh_baseline_progress[index])); then
-              refresh_advanced[index]=1
-            fi
+          fi
+          # A bookkeeping observation may already have consumed the increment.
+          # Only this successfully audited guard can credit it to the launch
+          # round, but compare with the round baseline, not the last sample.
+          if ((current_progress > refresh_baseline_progress[index])); then
+            refresh_advanced[index]=1
           fi
           guard_last_observation_milliseconds[index]="$observation_milliseconds"
         done

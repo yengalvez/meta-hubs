@@ -42,6 +42,23 @@ failure markers, counter regression and Lease failure remain fatal. Once the
 gate opens, and during post-stream acceptance, stale guards still fail closed;
 this is not a retry of a destructive operation or an interrupted backup.
 
+While that private gate remains closed, observe every validated progress marker
+between the serial full audits. These intermediate reads grant no authority:
+only a genuine counter increment advances its causal lower bound, dated to the
+previous observation, and each guard still needs a complete signed audit before
+its increment can satisfy the launch round. A failed read or counter regression
+is fatal. The final continuity/identity/Lease checks and two-second cancellation
+reserve remain mandatory. Do not use these observations during a running stream
+or post-audit, or increase the thirty-second startup/ten-second freshness limits.
+
+The 2026-09-27 regression reproduces healthy one-second counters timing out when
+three serial audits cost two seconds each. Intermediate sampling resolves this
+modeled defect and asymmetric monitor periods without accepting stopped counters.
+It does not establish the cause of the live `guard-refresh-timeout:0` incident:
+its reported index identifies the limiting freshness budget, not necessarily a
+monitor missing an increment. The deterministic harness does not measure the
+runtime cost of marker reads; retain the focused shell entrypoint verification.
+
 Safe stream diagnostics include only guard index/counter and monotonic
 age/observation numbers. The historic F `guard-stale:0` did not include enough
 evidence to distinguish real stalled progress from serial observation cost.

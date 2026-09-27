@@ -26,6 +26,8 @@ const functions = [
 const harness = String.raw`
 set -u
 mode="$1" fault="$2" phase="$3" full_cost="$4" require_lease="$5"
+IFS=, read -r -a counter_periods <<<"@{6:-1000,1000,1000}"
+IFS=, read -r -a audit_costs <<<"@{7:-$full_cost,$full_cost,$full_cost}"
 clock=0 full_audits=0 continuity_checks=0 lease_reads=0 identity_checks=0
 stream_is_gated=1 stream_diagnostic_stage=refresh stream_diagnostic_detail=
 supervised_stream_guard_failure_kind=
@@ -43,13 +45,13 @@ guard_last_progress_milliseconds=(0 0 0) guard_last_observation_milliseconds=(0 
 recovery_monotonic_milliseconds(){ printf '%s\n' "$clock"; }
 recovery_stream_guard_process_is_healthy(){
   if [[ "$#" == 8 ]]; then
-    full_audits=$((full_audits+1)); clock=$((clock+full_cost))
+    full_audits=$((full_audits+1)); clock=$((clock+audit_costs[$1-11]))
     [[ "$fault" != audit-after-realignment || "$full_audits" -le 6 ]] || return 1
   else
     continuity_checks=$((continuity_checks+1))
     if [[ "$mode" == persistent ||
           ( "$mode" == lease-transient && "$continuity_checks" -ge 4 && "$continuity_checks" -le 6 ) ||
-          ( "$mode" != fast && "$mode" != lease-transient && "$continuity_checks" -le 3 ) ]]; then
+          ( "$mode" != fast && "$mode" != asymmetric && "$mode" != lease-transient && "$continuity_checks" -le 3 ) ]]; then
       clock=$((clock+3500))
     else clock=$((clock+100)); fi
     [[ "$fault" != process && "$fault" != failure-marker ]] || return 1
@@ -62,13 +64,21 @@ recovery_stream_guard_failure_detail(){
 }
 recovery_read_private_file_once(){ [[ "$fault" != hash ]]; }
 recovery_stream_guard_progress_value(){
+  if [[ "@{FUNCNAME[*]}" == *observe_gated_prelaunch_guard_progress* ]]; then
+    [[ "$fault" != sample-read ]] || return 1
+    if [[ "$fault" == sample-regression && "$full_audits" -ge 1 ]]; then printf '1\n'; return; fi
+  fi
   if [[ "$continuity_checks" -gt 0 ]]; then
     [[ "$fault" != read ]] || return 1
     [[ "$fault" != read-after-lease || "$lease_reads" == 0 ]] || return 1
     if [[ "$fault" == regression ]]; then printf '1\n'; return; fi
   fi
   if [[ "$mode" == stalled && "$clock" -ge 6000 ]]; then printf '7\n'
-  else printf '%s\n' "$((clock/1000+1))"; fi
+  else
+    local guard_number="@{1##*/p}"
+    if [[ "$fault" == stopped-source && "$guard_number" == 0 ]]; then printf '1\n'; return; fi
+    printf '%s\n' "$((clock/counter_periods[guard_number]+1))"
+  fi
 }
 recovery_process_identity_is_live(){
   identity_checks=$((identity_checks+1))
@@ -102,8 +112,8 @@ main(){
 main
 `.replaceAll("@{", "${");
 
-function run({ mode = "transient", fault = "none", phase = "pre", fullCost = 1000, lease = 0 } = {}) {
-  const result = spawnSync("/bin/bash", ["-c", `${functions}\n${harness}`, "fixture", mode, fault, phase, String(fullCost), String(lease)], {
+function run({ mode = "transient", fault = "none", phase = "pre", fullCost = 1000, lease = 0, periods = [1000, 1000, 1000], costs = [fullCost, fullCost, fullCost] } = {}) {
+  const result = spawnSync("/bin/bash", ["-c", `${functions}\n${harness}`, "fixture", mode, fault, phase, String(fullCost), String(lease), periods.join(","), costs.join(",")], {
     encoding: "utf8", timeout: 5000
   });
   assert.ifError(result.error);
@@ -139,14 +149,44 @@ test("unchanged healthy fast path retains a simultaneous freshness and cancellat
   assert.equal(r.reserve_status, 0);
 });
 
+for (const period of [3000, 6000, 9000]) {
+  test(`a slower source monitor (${period}ms) aligns with independently advancing parent monitors`, () => {
+    const r = run({ mode: "asymmetric", periods: [period, 1000, 1000], costs: [100, 1500, 1500] });
+    assert.equal(r.status, 0, JSON.stringify(r));
+    assert.equal(r.reserve_status, 0, JSON.stringify(r));
+    assert.ok(r.clock < 30000, JSON.stringify(r));
+  });
+}
+
+test("healthy one-second counters remain observable across a six-second signed audit round", () => {
+  const r = run({ mode: "fast", fullCost: 2000 });
+  assert.equal(r.status, 0, JSON.stringify(r));
+  assert.equal(r.reserve_status, 0, JSON.stringify(r));
+  assert.ok(r.clock < 30000, JSON.stringify(r));
+});
+
 test("stopped counters fail at the original 30-second deadline without renewed authority", () => {
   const r = run({ mode: "stalled" });
   assert.equal(r.status, 1);
   assert.ok(r.clock >= 30000 && r.clock < 33100, JSON.stringify(r));
   assert.equal(r.progress, "7,7,7");
-  assert.equal(r.bounds, "4000,5000,3000", "stalled progress was not redated");
+  assert.ok(r.bounds.split(",").map(Number).every(bound => bound < 6000), "stalled progress was not redated after it stopped");
   assert.match(r.diagnostic, /^guard-refresh-timeout:\d+:-?\d+:counter:\d+:age-ms:\d+:observation-ms:\d+$/);
 });
+
+for (const fault of ["sample-read", "sample-regression", "stopped-source"]) {
+  test(`${fault} cannot grant launch authority through intermediate observations`, () => {
+    const r = run({ mode: "fast", fullCost: 2000, fault });
+    assert.equal(r.status, 1, JSON.stringify(r));
+    if (fault === "stopped-source") {
+      assert.match(r.diagnostic, /^guard-refresh-timeout:/);
+      assert.equal(r.bounds.split(",")[0], "0", "unchanged source progress has no newer causal bound");
+    } else {
+      assert.match(r.diagnostic, /^guard-progress-(read|regression):/);
+      assert.ok(r.full_audits < 6);
+    }
+  });
+}
 
 test("persistent observation cost cannot extend startup or grant an unsafe launch", () => {
   const r = run({ mode: "persistent" });

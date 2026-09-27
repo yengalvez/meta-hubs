@@ -1707,3 +1707,16 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   imágenes oficiales e integración/publicación siguen pendientes. La copia v6
   no es válida por EOF de Kubernetes durante almacenamiento; no se ha pausado
   producción ni importado el catálogo en este candidato.
+
+# 2026-09-27 — Ventana causal de guardas previa al stream
+
+- Reproducción determinista: tres auditorías seriales de 2 s pueden agotar el
+  arranque de 30 s aunque los tres contadores avancen cada segundo. Se añaden
+  observaciones intermedias de marcadores solo con la compuerta cerrada; no
+  conceden autoridad ni cambian los límites, Lease, identidades o cancelación.
+- Pruebas focales 26/26 y revisión independiente del delta PASS. Se conserva
+  la comprobación real del entrypoint shell como aceptación separada; el harness
+  determinista no mide el coste real de las lecturas nuevas.
+- Las dos copias reales anteriores son inválidas y producción quedó recuperada;
+  este mecanismo reproducible no demuestra la causa histórica. No hubo nueva
+  copia real, cambio de imagen, importación del catálogo ni despliegue.
