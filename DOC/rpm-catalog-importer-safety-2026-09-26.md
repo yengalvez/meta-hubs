@@ -1,8 +1,26 @@
 # Importador RPM: C01/C02, contrato y verificación local
 
-Estado: candidato local; no ejecución contra producción. El manifiesto de 33
-modelos, los siete listing SID existentes y los hashes originales no se cambian.
-Los tests usan exclusivamente GLB, PNG, SQL y medios artificiales.
+Estado: publicado y verificado el 28/09/2026. El manifiesto de 33 modelos,
+los siete listing SID existentes y los hashes originales no se cambiaron.
+La prueba local sigue usando exclusivamente GLB, PNG, SQL y medios artificiales.
+
+La publicación utilizó la copia conjunta real válida
+`output/checkpoints/20260928-090510`, identidad del destino leída aparte y
+journal privado 0700/0600. El primer listing reveló tres diferencias reales
+respecto a los fixtures: el slug de un nombre con punto medio, la precisión
+de segundo de `updated_at` devuelta por PostgREST y la interpretación de
+`order` como parámetro de ordenación en filtros de nivel superior. Se corrigió
+el importador sin quitar CAS: `order` se envía dentro de un predicado `and`,
+la fecha UTC sin zona se interpreta a precisión persistida y el slug conserva
+el punto medio como hace Reticulum. Una reconciliación focal del primer PATCH
+se anotó en el journal privado; la reanudación leyó ese estado antes de seguir,
+sin reenviar a ciegas la misma escritura.
+
+`--apply` terminó exit0; `--verify` independiente confirmó los 33 modelos y
+miniaturas exactos, 34 destacados y que las entradas ajenas no cambiaron.
+Los siete SID anteriores permanecen intactos. Log de verificación:
+`/private/tmp/yenhubs-rpm-catalog-verify-20260928.log`. Esto acredita el
+catálogo, no una conversación real con IA ni Avaturn comercial.
 
 ## Puerta de respaldo
 
@@ -123,4 +141,6 @@ realista de slug en POST/PUT, múltiples renombrados, respuesta perdida y slug
 ajeno, además de interrupción antes del primer intent frente a continuación
 válida 72 horas después de haberlo persistido.
 
-La comprobación local no es aceptación live, visual ni legal del catálogo.
+La comprobación local por sí sola no es aceptación visual ni legal. En esta
+publicación se añadió readback live exacto y una inspección visual del selector
+en navegador frío; queda pendiente la decisión B2B de Avaturn.

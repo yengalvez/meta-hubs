@@ -744,9 +744,21 @@ function checksum(value) {
 function exactAnnotationKeysWithOptionalRestart(annotations, expectedKeys) {
   if (!object(annotations)) return false;
   const restartKey = "kubectl.kubernetes.io/restartedAt";
+  const productKeys = [
+    "yenhubs.com/product-modules-schema",
+    "yenhubs.com/product-bots",
+    "yenhubs.com/product-ai",
+    "yenhubs.com/product-avaturn"
+  ];
+  const hasProduct = productKeys.some(key => Object.hasOwn(annotations, key));
+  if (hasProduct && (
+    annotations[productKeys[0]] !== "1" ||
+    productKeys.slice(1).some(key => !["true", "false"].includes(annotations[key]))
+  )) return false;
+  const requiredKeys = hasProduct ? [...expectedKeys, ...productKeys] : expectedKeys;
   const actualKeys = Object.keys(annotations);
-  if (actualKeys.some(key => !expectedKeys.includes(key) && key !== restartKey) ||
-      expectedKeys.some(key => !Object.hasOwn(annotations, key))) {
+  if (actualKeys.some(key => !requiredKeys.includes(key) && key !== restartKey) ||
+      requiredKeys.some(key => !Object.hasOwn(annotations, key))) {
     return false;
   }
   if (Object.hasOwn(annotations, restartKey)) {
@@ -757,7 +769,7 @@ function exactAnnotationKeysWithOptionalRestart(annotations, expectedKeys) {
       return false;
     }
   }
-  return actualKeys.length === expectedKeys.length + (Object.hasOwn(annotations, restartKey) ? 1 : 0);
+  return actualKeys.length === requiredKeys.length + (Object.hasOwn(annotations, restartKey) ? 1 : 0);
 }
 
 export function verifyBotDeploymentChecksums({

@@ -1720,3 +1720,20 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
 - Las dos copias reales anteriores son inválidas y producción quedó recuperada;
   este mecanismo reproducible no demuestra la causa histórica. No hubo nueva
   copia real, cambio de imagen, importación del catálogo ni despliegue.
+
+# 2026-09-28 — Publicación de producto y catálogo
+
+- Copia conjunta DB+storage nueva válida antes de mutar producción: 13/13
+  hashes y 61 pares de medios. Los tres builds oficiales Hubs, Reticulum y
+  bot-orchestrator se fijaron por digest.
+- El primer apply activo abortó por deriva de control plane y refenció cinco
+  escritores. Bootstrap, admission y active se regeneraron y aplicaron en ese
+  orden mediante el guardado oficial; el active terminó exit0 y el verificador
+  live final informó cero fallos y cero avisos, con 13/13 imágenes por digest.
+- El importador publicó y volvió a leer los 33 originales y miniaturas; 34
+  destacados y siete SID existentes conservados. Los ajustes focales de slug,
+  timestamp y filtro `order` mantienen concurrencia CAS y añaden regresiones.
+- La sala y el selector se inspeccionaron en navegador frío sin errores de
+  consola. Bots visibles, pero aún falta una respuesta interactiva de IA en
+  esta sesión y el full final sobre las correcciones locales posteriores al
+  despliegue. Avaturn comercial permanece apagado.

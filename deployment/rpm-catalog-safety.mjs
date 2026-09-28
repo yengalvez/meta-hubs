@@ -45,16 +45,27 @@ export function assertRow(actual, expected, ignored = []) {
   if (!actual || !equal(omit(actual), omit(expected))) throw new Error("Concurrent modification or write readback mismatch");
 }
 function timestampValue(key, value) {
-  return ["updated_at", "inserted_at", "reviewed_at"].includes(key) && typeof value === "string" && Number.isFinite(Date.parse(value)) ? Date.parse(value) : value;
+  if (!["updated_at", "inserted_at", "reviewed_at"].includes(key) || typeof value !== "string") return value;
+  // Reticulum's PostgREST view returns UTC naive timestamps at second
+  // precision; JSON intents can carry milliseconds and a trailing Z. Compare
+  // at the persisted precision without interpreting naive UTC as local time.
+  const utc = /(?:Z|[+-]\d{2}:\d{2})$/u.test(value) ? value : `${value}Z`;
+  const parsed = Date.parse(utc);
+  return Number.isFinite(parsed) ? Math.round(parsed / 1000) * 1000 : value;
 }
 export const fieldEqual = (key, a, b) => equal(timestampValue(key, a), timestampValue(key, b));
 
-// Exact Slugger behavior for this fixed catalogue's alphabet. Do not silently
-// approximate other transliterations if the catalogue contract is expanded.
+// Reticulum's avatar update uses the name as its slug source. The deployed
+// backend preserves the middle dot used by this fixed catalogue; observed
+// live for the first conditional PUT on 2026-09-28. Fail closed for any other
+// alphabet rather than accepting an arbitrary slug on reconciliation.
 export function catalogAvatarSlug(sid, name) {
-  const source = `${sid}-${name}`;
-  if (!/^[A-Za-z0-9 _·ñÑ-]+$/.test(source)) throw new Error("Unsupported catalogue slug alphabet");
-  return source.replace(/[ñÑ]/g, "n").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  if (typeof sid !== "string" || !/^[A-Za-z0-9_-]+$/.test(sid) ||
+      typeof name !== "string" || !/^[A-Za-z0-9 _·ñÑ-]+$/.test(name)) {
+    throw new Error("Unsupported catalogue slug alphabet");
+  }
+  return name.replace(/[ñÑ]/g, "n").toLowerCase().trim()
+    .replace(/[ _]+/g, "-").replace(/^-|-$/g, "");
 }
 
 export function hasMutationIntent(journal) {

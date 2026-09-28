@@ -93,9 +93,14 @@ const patch = (table, before, body) => {
   if (!before.updated_at) throw new Error("Missing concurrency revision");
   // Include the complete snapshot, not only updated_at: some administrative
   // PostgREST writers do not advance Ecto-managed timestamps.
-  const filters = Object.entries(before).filter(([, value]) => value !== undefined).map(([key, value]) =>
+  // PostgREST reserves top-level `order` for sorting. Keep it in the complete
+  // CAS snapshot as a grouped column predicate instead of silently dropping it.
+  const filters = Object.entries(before).filter(([key, value]) => key !== "order" && value !== undefined).map(([key, value]) =>
     `${encodeURIComponent(key)}=${value === null ? "is.null" : "eq." + encodeURIComponent(typeof value === "object" ? JSON.stringify(value) : value)}`).join("&");
-  return request(`/api/postgrest/${table}?${filters}`, "PATCH", body, { prefer: "return=representation" });
+  const order = Object.hasOwn(before, "order") && before.order !== undefined
+    ? `&and=(order.${before.order === null ? "is.null" : "eq." + encodeURIComponent(before.order)})`
+    : "";
+  return request(`/api/postgrest/${table}?${filters}${order}`, "PATCH", body, { prefer: "return=representation" });
 };
 async function exact(table, query) {
   const found = await rows(table, query);

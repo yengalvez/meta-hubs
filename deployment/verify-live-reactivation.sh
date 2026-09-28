@@ -176,7 +176,8 @@ verify_product_modules_snapshot() {
           [{name:("YENHUBS_" + ($key | ascii_upcase) + "_ENABLED"),value:($modules[$key] | tostring)}]) and
         (if $modules.ai then true else [.env[] | select(.name == "OPENAI_API_KEY")] == [] end) and
         (if .name == "reticulum" then
-          [.env[] | select(.name == "YENHUBS_AVATURN_CREATOR_URL")] ==
+          [.env[] | select(.name == "YENHUBS_AVATURN_CREATOR_URL") |
+            if has("value") then . else . + {value:""} end] ==
           [{name:"YENHUBS_AVATURN_CREATOR_URL",value:$modules.avaturn_creator_url}]
          else true end)))
   ' >/dev/null

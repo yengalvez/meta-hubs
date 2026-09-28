@@ -22,6 +22,10 @@ test("BASE module snapshot matches exact input/metadata/env without secret or pr
   const ns={metadata:{annotations}};
   const good=deployments();
   assert.equal(run("verify_product_modules_snapshot",[ns,good,modules]).status,0);
+  const kubernetesDefaulted = structuredClone(good);
+  delete kubernetesDefaulted.items[0].spec.template.spec.containers[0].env.find(
+    item=>item.name==="YENHUBS_AVATURN_CREATOR_URL").value;
+  assert.equal(run("verify_product_modules_snapshot",[ns,kubernetesDefaulted,modules]).status,0);
   for(const mutate of [
     d=>d.items[0].spec.template.spec.containers[0].env.push({name:"OPENAI_API_KEY",valueFrom:{secretKeyRef:{name:"configs",key:"OPENAI_API_KEY"}}}),
     d=>d.items[0].spec.template.spec.containers[0].env[0].value=true,

@@ -127,6 +127,19 @@ const deployments = { items: [
   }
 ] };
 assert.equal(verifyBotDeploymentChecksums({ deployments, ...keys }), true);
+const productDeployments = structuredClone(deployments);
+for (const item of productDeployments.items) {
+  Object.assign(item.spec.template.metadata.annotations, {
+    "yenhubs.com/product-modules-schema": "1",
+    "yenhubs.com/product-bots": "true",
+    "yenhubs.com/product-ai": "true",
+    "yenhubs.com/product-avaturn": "false"
+  });
+}
+assert.equal(verifyBotDeploymentChecksums({ deployments: productDeployments, ...keys }), true);
+const incompleteProduct = structuredClone(productDeployments);
+delete incompleteProduct.items[0].spec.template.metadata.annotations["yenhubs.com/product-ai"];
+assert.throws(() => verifyBotDeploymentChecksums({ deployments: incompleteProduct, ...keys }));
 const restartedDeployments = structuredClone(deployments);
 for (const item of restartedDeployments.items) {
   item.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"] =

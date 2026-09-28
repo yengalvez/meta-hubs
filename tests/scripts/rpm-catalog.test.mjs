@@ -5,13 +5,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCatalog } from "../../deployment/sync-rpm-catalog.mjs";
 import { splitGlb } from "../../deployment/import-local-avatars.mjs";
-import { sha, bindCheckpoint, validateTarget, validateCatalogCheckpoint, mutation, checkpointBindingForJournal, hasMutationIntent } from "../../deployment/rpm-catalog-safety.mjs";
+import { sha, bindCheckpoint, validateTarget, validateCatalogCheckpoint, mutation, checkpointBindingForJournal, hasMutationIntent, fieldEqual } from "../../deployment/rpm-catalog-safety.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const target = { schema_version: 1, base: "https://catalog.invalid", kube_context: "fixture", namespace: "hcce", namespace_uid: "ns-1", ret_pvc_uid: "pvc-1" };
 const now = Date.parse("2026-09-26T10:00:00Z");
 const metadata = { ...target, created_at_utc: "2026-09-26T09:00:00Z", writer_quiescence: { completed_at_utc: "2026-09-26T09:05:00Z" } };
 const binding = overrides => bindCheckpoint({ metadata, target, manifestHash: "manifest", checkpointHash: "checkpoint", now, ...overrides });
+
+test("Reticulum UTC second precision accepts the persisted instant but not another second", () => {
+  assert.equal(fieldEqual("updated_at", "2026-09-28T08:46:15", "2026-09-28T08:46:14.838Z"), true);
+  assert.equal(fieldEqual("updated_at", "2026-09-28T08:46:16", "2026-09-28T08:46:14.838Z"), false);
+});
 
 test("backup target is independent, closed-schema, origin-bound; pre-state survives same-journal resume", () => {
   const receipt = binding();
@@ -80,7 +85,7 @@ function glb(index) {
 
 // This fixed catalogue uses Spanish/ASCII names. Ret.AvatarSlug always builds
 // from avatar_sid + name, via Slugger.slugify_downcase, on POST and PUT.
-const avatarSlug = (sid, name) => `${sid}-${name}`.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const avatarSlug = (_sid, name) => name.replace(/[ñÑ]/g, "n").toLowerCase().trim().replace(/[ _]+/g, "-").replace(/^-|-$/g, "");
 
 async function fixture() {
   const dir = await privateFixture();
@@ -125,8 +130,16 @@ async function fixture() {
     } else if (route.startsWith("/files/")) result = new Response(files.get(route.split("/").at(-1)));
     else if (route.startsWith("/api/postgrest/")) {
       const table = route.split("/").at(-1), data = table === "avatars" ? avatars : table === "avatar_listings" ? listings : [...owned.values()];
-      const found = data.filter(row => [...u.searchParams].every(([key, value]) => value === "is.null" ? row[key] === null : !value.startsWith("eq.") ||
-        (typeof row[key] === "object" ? JSON.stringify(row[key]) : String(row[key])) === value.slice(3)));
+      const found = data.filter(row => [...u.searchParams].every(([key, value]) => {
+        if (key === "and") {
+          const orderFilter = value.match(/^\(order\.(eq|is)\.(.*)\)$/);
+          if (!orderFilter) throw new Error("Unexpected grouped fixture filter");
+          return orderFilter[1] === "is" ? row.order === null && orderFilter[2] === "null"
+            : String(row.order) === orderFilter[2];
+        }
+        return value === "is.null" ? row[key] === null : !value.startsWith("eq.") ||
+          (typeof row[key] === "object" ? JSON.stringify(row[key]) : String(row[key])) === value.slice(3);
+      }));
       if (method === "PATCH") { for (const row of found) Object.assign(row, body); }
       else if (method === "POST") { const row = { id: String(++sequence), ...body }; data.push(row); result = json(row); }
       result ||= json(found);
@@ -242,12 +255,22 @@ test("conditional listing PATCH protects concurrent edits even without a new tim
   assert.equal(f.writes.filter(w => w.route === "/api/postgrest/avatar_listings" && w.method === "PATCH").length, 1);
 });
 
+test("reserved order column remains in the listing PATCH concurrency predicate", async () => {
+  const f = await fixture();
+  f.race((route, method, _avatars, listings) => {
+    if (route !== "/api/postgrest/avatar_listings" || method !== "PATCH") return false;
+    listings[0].order = 777; return true;
+  });
+  await assert.rejects(f.run(["Bata"]), /Concurrent modification/);
+  assert.equal(f.listings[0].order, 777);
+});
+
 test("realistic generated slugs survive multiple renames and a lost PUT response", async () => {
   const f = await fixture(); f.lose((route, method) => method === "PUT");
   await assert.rejects(f.run(["Bata", "Bata2"]), /lost response/);
-  assert.equal(f.avatars[0].slug, "avatar-0-bata-blanca-gafas");
+  assert.equal(f.avatars[0].slug, "bata-blanca-·-gafas");
   await f.run(["Bata", "Bata2"]);
-  assert.equal(f.avatars[1].slug, "avatar-1-bata-blanca-pelo-rubio");
+  assert.equal(f.avatars[1].slug, "bata-blanca-·-pelo-rubio");
   assert.equal(f.writes.filter(w => w.method === "PUT").length, 2);
 });
 
