@@ -1189,10 +1189,28 @@ recovery_stream_guard_process_is_healthy() {
   recovery_process_identity_is_live "$guard_pid" "$guard_start_identity"
 }
 
+recovery_pgsql_source_monitor_failure_code_is_exact() {
+  case "$1" in
+    serialization|cluster-identity|pvc-identity|operation-lock|backup-guard|\
+    consumer-reticulum|consumer-pgbouncer|consumer-pgbouncer-t|\
+    consumer-bot-orchestrator|consumer-coturn|parent-writer|freeze-fence|\
+    runner-quiescence|durable-authority|durable-process|durable-progress|\
+    durable-baseline|active-fence|pgsql-source|progress_publish_failed)
+      return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 recovery_stream_guard_failure_detail() {
   local failure_marker="$1" failure_value
   recovery_runner_watch_marker_is_exact "$failure_marker" || return 1
   failure_value="$(<"$failure_marker")"
+  if [[ "$failure_value" == pgsql_source_monitor_failed:* ]]; then
+    failure_value="${failure_value#pgsql_source_monitor_failed:}"
+    recovery_pgsql_source_monitor_failure_code_is_exact "$failure_value" || return 1
+    printf 'pgsql-source:%s\n' "$failure_value"
+    return 0
+  fi
   [[ "$failure_value" =~ ^checkpoint_writer_monitor_failed:([a-z][a-z0-9_-]{0,63}):([a-z][a-z0-9_-]{0,63})$ ]] ||
     return 1
   printf '%s:%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
@@ -7596,14 +7614,22 @@ recovery_operation_lock_json_is_exact() {
 
 recovery_require_operation_lock() {
   local lock_json
+  RECOVERY_OPERATION_LOCK_FAILURE_DETAIL=operation-lock
   if [[ "${RECOVERY_SERIALIZATION_LEASE_REQUIRED:-0}" == 1 ]]; then
     recovery_require_operation_serialization || {
+      RECOVERY_OPERATION_LOCK_FAILURE_DETAIL=serialization
       printf 'The deployment/recovery serialization Lease was lost.\n' >&2
       return 1
     }
   fi
-  recovery_require_cluster_identity || return 1
-  recovery_require_pvc_identity ret-pvc || return 1
+  recovery_require_cluster_identity || {
+    RECOVERY_OPERATION_LOCK_FAILURE_DETAIL=cluster-identity
+    return 1
+  }
+  recovery_require_pvc_identity ret-pvc || {
+    RECOVERY_OPERATION_LOCK_FAILURE_DETAIL=pvc-identity
+    return 1
+  }
   lock_json="$(
     recovery_kubectl get configmap "$RECOVERY_OPERATION_LOCK_NAME" \
       -n "$NAMESPACE" -o json
@@ -7615,6 +7641,7 @@ recovery_require_operation_lock() {
     printf 'The coordinated recovery lock identity or operation binding changed.\n' >&2
     return 1
   fi
+  RECOVERY_OPERATION_LOCK_FAILURE_DETAIL=""
 }
 
 # The recovery byte-stream fence is generated and validated by the Hubs CE
@@ -7782,18 +7809,32 @@ recovery_read_recovery_operation_fence_state() {
   printf '%s\n' "$identity_json"
 }
 
+# shellcheck disable=SC2034 # Fixed failure detail is read by the DB backup caller.
 recovery_require_recovery_operation_fence_state() {
   local state="$1" expected_identity="${2:-}"
+  RECOVERY_FENCE_STATE_FAILURE_DETAIL=active-fence
   [[ "$state" == dormant || "$state" == active ]] || return 2
+  RECOVERY_FENCE_STATE_FAILURE_DETAIL=serialization
   recovery_require_operation_serialization || return 1
-  recovery_require_operation_lock || return 1
+  RECOVERY_FENCE_STATE_FAILURE_DETAIL=operation-lock
+  recovery_require_operation_lock || {
+    RECOVERY_FENCE_STATE_FAILURE_DETAIL="${RECOVERY_OPERATION_LOCK_FAILURE_DETAIL:-operation-lock}"
+    return 1
+  }
+  RECOVERY_FENCE_STATE_FAILURE_DETAIL=active-fence
   recovery_read_recovery_operation_fence_state \
     "$state" "$expected_identity" >/dev/null || {
     printf 'The recovery operation admission fence is missing, deleting, drifted or changed identity.\n' >&2
     return 1
   }
+  RECOVERY_FENCE_STATE_FAILURE_DETAIL=serialization
   recovery_require_operation_serialization || return 1
-  recovery_require_operation_lock || return 1
+  RECOVERY_FENCE_STATE_FAILURE_DETAIL=operation-lock
+  recovery_require_operation_lock || {
+    RECOVERY_FENCE_STATE_FAILURE_DETAIL="${RECOVERY_OPERATION_LOCK_FAILURE_DETAIL:-operation-lock}"
+    return 1
+  }
+  RECOVERY_FENCE_STATE_FAILURE_DETAIL=""
 }
 
 recovery_operation_fence_probe_document() {
@@ -9246,18 +9287,25 @@ recovery_durable_fence_inventory_json_is_canonical() {
   [[ "$inventory_json" == "$canonical" ]]
 }
 
+# shellcheck disable=SC2034 # Fixed failure detail is read by the DB backup caller.
 recovery_require_checkpoint_runner_quiescence_exact() {
   local generation="$1" durable_baseline_path="${2:-}"
   local expected_baseline_sha256="${3:-}"
   local durable_baseline current size digest_before digest_after
+  RECOVERY_RUNNER_QUIESCENCE_FAILURE_DETAIL=serialization
   recovery_require_operation_serialization || return 1
-  recovery_require_operation_lock || return 1
+  RECOVERY_RUNNER_QUIESCENCE_FAILURE_DETAIL=operation-lock
+  recovery_require_operation_lock || {
+    RECOVERY_RUNNER_QUIESCENCE_FAILURE_DETAIL="${RECOVERY_OPERATION_LOCK_FAILURE_DETAIL:-operation-lock}"
+    return 1
+  }
+  RECOVERY_RUNNER_QUIESCENCE_FAILURE_DETAIL=runner-quiescence
   case "$generation" in
     legacy-absent)
       [[ -z "$durable_baseline_path" && -z "$expected_baseline_sha256" ]] ||
         return 1
       recovery_require_no_managed_bot_runner_pods &&
-        recovery_require_no_legacy_parent_runner_pods
+        recovery_require_no_legacy_parent_runner_pods || return 1
       ;;
     durable-v2)
       [[ "$expected_baseline_sha256" =~ ^[a-f0-9]{64}$ ]] || return 1
@@ -9285,6 +9333,7 @@ recovery_require_checkpoint_runner_quiescence_exact() {
       ;;
     *) return 2 ;;
   esac
+  RECOVERY_RUNNER_QUIESCENCE_FAILURE_DETAIL=""
 }
 
 recovery_require_durable_runner_quiescence_stable() {
@@ -11238,6 +11287,7 @@ os.execvp(sys.argv[2], sys.argv[2:])
   return 1
 }
 
+# shellcheck disable=SC2034 # Fixed failure detail is read by the DB backup caller.
 recovery_require_durable_runner_quiescence_monitor_healthy() {
   local durable_baseline_path="$1" durable_baseline_sha256="$2"
   local control_baseline_path="$3" control_baseline_sha256="$4"
@@ -11245,6 +11295,7 @@ recovery_require_durable_runner_quiescence_monitor_healthy() {
   local watcher_pid="$8" watcher_identity="$9" capability_sha256="${10}"
   local operation_owner="${11}" expected_capability expected_marker ready_value
   local authority_path authority_sha256 stop_path final_path
+  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-authority
   [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" &&
      "$capability_sha256" =~ ^[a-f0-9]{64}$ &&
      "$operation_owner" =~ ^(checkpoint-backup|checkpoint-restore)$ &&
@@ -11275,16 +11326,29 @@ recovery_require_durable_runner_quiescence_monitor_healthy() {
     "$capability_sha256" "$authority_sha256")" || return 1
   ready_value="$(<"$ready_path")"
   [[ "$ready_value" == "ready:$expected_marker" ]] || return 1
+  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-progress
   recovery_stream_guard_progress_value \
     "$progress_path" "$authority_sha256" >/dev/null || return 1
+  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-process
   recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" || return 1
+  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=serialization
   recovery_require_operation_serialization || return 1
-  recovery_require_operation_lock || return 1
+  recovery_require_operation_lock || {
+    RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL="${RECOVERY_OPERATION_LOCK_FAILURE_DETAIL:-operation-lock}"
+    return 1
+  }
+  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-baseline
   recovery_checkpoint_writer_monitor_file_is_exact \
     "$durable_baseline_path" "$durable_baseline_sha256" 1048576 || return 1
+  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=runner-quiescence
   recovery_require_checkpoint_runner_quiescence_exact \
-    durable-v2 "$durable_baseline_path" "$durable_baseline_sha256" || return 1
-  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity"
+    durable-v2 "$durable_baseline_path" "$durable_baseline_sha256" || {
+    RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL="${RECOVERY_RUNNER_QUIESCENCE_FAILURE_DETAIL:-runner-quiescence}"
+    return 1
+  }
+  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-process
+  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" || return 1
+  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=""
 }
 
 recovery_stop_durable_runner_quiescence_monitor() {

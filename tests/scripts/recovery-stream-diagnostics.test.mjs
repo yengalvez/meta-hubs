@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -74,6 +74,69 @@ test("EXIT reporter preserves the first cause and original status", () => {
   const result = run(`${fn("report_stream_diagnostic", "    ")}\nstream_diagnostic_stage=refresh\nstream_diagnostic_detail=lease-check\ntrap report_stream_diagnostic EXIT\nexit 37`);
   assert.equal(result.status, 37);
   assert.equal(result.stderr, "recovery_stream_stage:refresh\nrecovery_stream_status:37\nrecovery_stream_detail:lease-check\n");
+});
+
+function pgsqlMarkerReport(value, { mode = 0o600, link = false, first = "" } = {}) {
+  const fixture = mkdtempSync(join(tmpdir(), "yenhubs-pgsql-detail-"));
+  try {
+    const marker = join(fixture, "failure");
+    writeFileSync(marker, value, { mode: 0o600 });
+    chmodSync(marker, mode);
+    if (link) symlinkSync(marker, join(fixture, "link"));
+    return run(`${fn("recovery_runner_watch_marker_is_exact")}
+${fn("recovery_pgsql_source_monitor_failure_code_is_exact")}
+${fn("recovery_stream_guard_failure_detail")}
+${fn("stream_record_diagnostic", "    ")}
+stream_diagnostic_detail="$TEST_FIRST"
+if component="$(recovery_stream_guard_failure_detail "$TEST_MARKER")"; then
+  stream_record_diagnostic "guard-process:0:$component"
+else
+  stream_record_diagnostic guard-process:0
+fi
+recovery_report_stream_failure 1 running "$stream_diagnostic_detail"
+`, { TEST_MARKER: link ? join(fixture, "link") : marker, TEST_FIRST: first });
+  } finally {
+    rmSync(fixture, { recursive: true });
+  }
+}
+
+const pgsqlFailureCodes = [
+  "serialization", "cluster-identity", "pvc-identity", "operation-lock", "backup-guard",
+  "consumer-reticulum", "consumer-pgbouncer", "consumer-pgbouncer-t", "consumer-bot-orchestrator", "consumer-coturn",
+  "parent-writer", "freeze-fence", "runner-quiescence", "durable-authority", "durable-process", "durable-progress",
+  "durable-baseline", "active-fence", "pgsql-source", "progress_publish_failed"
+];
+for (const code of pgsqlFailureCodes) {
+  test(`the real private PGSQL marker preserves its closed component ${code} through the reporter`, () => {
+    const result = pgsqlMarkerReport(`pgsql_source_monitor_failed:${code}\n`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, `recovery_stream_stage:running\nrecovery_stream_status:1\nrecovery_stream_detail:guard-process:0:pgsql-source:${code}\n`);
+  });
+}
+for (const value of [
+  "pgsql_source_monitor_failed:unknown-secret-sentinel",
+  "pgsql_source_monitor_failed:/private/secret-sentinel",
+  "pgsql_source_monitor_failed:serialization\nsecret-sentinel",
+  "serialization"
+]) {
+  test(`the PGSQL marker rejects an unrecognized or multiline payload ${JSON.stringify(value)}`, () => {
+    const result = pgsqlMarkerReport(value);
+    assert.equal(result.status, 0);
+    assert.equal(result.stderr, "recovery_stream_stage:running\nrecovery_stream_status:1\nrecovery_stream_detail:guard-process:0\n");
+  });
+}
+for (const options of [{ mode: 0o644 }, { link: true }]) {
+  test(`the PGSQL detail parser rejects unsafe marker metadata ${JSON.stringify(options)}`, () => {
+    const result = pgsqlMarkerReport("pgsql_source_monitor_failed:serialization\n", options);
+    assert.equal(result.status, 0);
+    assert.ok(result.stderr.endsWith("recovery_stream_detail:guard-process:0\n"));
+  });
+}
+test("a later PGSQL component never overwrites the first stale guard cause", () => {
+  const result = pgsqlMarkerReport("pgsql_source_monitor_failed:serialization\n", { first: "guard-stale:0" });
+  assert.equal(result.status, 0);
+  assert.ok(result.stderr.endsWith("recovery_stream_detail:guard-stale:0\n"));
+  assert.ok(!result.stderr.includes("serialization"));
 });
 
 for (const commandStatus of [0, 1, 37, 143]) {

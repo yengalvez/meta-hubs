@@ -151,6 +151,7 @@ require_parent_freeze_fence_capability() {
 }
 
 require_parent_durable_monitor_capability() {
+  DB_PARENT_DURABLE_FAILURE_REASON=durable-authority
   [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 &&
      -n "$PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY" &&
      "$PARENT_DURABLE_MONITOR_CONTROL_BASELINE_PATH" == \
@@ -172,12 +173,21 @@ require_parent_durable_monitor_capability() {
     "$PARENT_DURABLE_MONITOR_PID" \
     "$PARENT_DURABLE_MONITOR_START_IDENTITY" \
     "$PARENT_DURABLE_MONITOR_CAPABILITY_SHA256" \
-    "$RECOVERY_OPERATION_OWNER" &&
-    recovery_stream_guard_progress_value \
-      "$PARENT_DURABLE_MONITOR_PROGRESS_PATH" \
-      "$PARENT_DURABLE_MONITOR_AUTHORITY_SHA256" >/dev/null &&
-    recovery_require_recovery_operation_fence_state active \
-      "$PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY"
+    "$RECOVERY_OPERATION_OWNER" || {
+      DB_PARENT_DURABLE_FAILURE_REASON="${RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL:-durable-authority}"
+      return 1
+    }
+  DB_PARENT_DURABLE_FAILURE_REASON=durable-progress
+  recovery_stream_guard_progress_value \
+    "$PARENT_DURABLE_MONITOR_PROGRESS_PATH" \
+    "$PARENT_DURABLE_MONITOR_AUTHORITY_SHA256" >/dev/null || return 1
+  DB_PARENT_DURABLE_FAILURE_REASON=active-fence
+  recovery_require_recovery_operation_fence_state active \
+    "$PARENT_RECOVERY_OPERATION_FENCE_ACTIVE_IDENTITY" || {
+    DB_PARENT_DURABLE_FAILURE_REASON="${RECOVERY_FENCE_STATE_FAILURE_DETAIL:-active-fence}"
+    return 1
+  }
+  DB_PARENT_DURABLE_FAILURE_REASON=""
 }
 
 if [[ "$COORDINATED" == 1 ]]; then
@@ -244,28 +254,54 @@ fi
 
 require_backup_guard() {
   local deployment
+  DB_BACKUP_GUARD_FAILURE_REASON=backup-guard
   [[ "$COORDINATED" == 1 &&
      "${RECOVERY_OPERATION_OWNER:-}" == checkpoint-backup &&
      -n "${RECOVERY_CONSUMER_CONTRACT_JSON:-}" &&
      "$CHECKPOINT_RUNNER_GENERATION" =~ ^(legacy-absent|durable-v2)$ ]] ||
     return 1
-  recovery_require_operation_lock || return 1
+  # The complete lock validator includes the current cluster, PVC and
+  # serialization Lease checks. Require that Lease explicitly: never obtain
+  # the faster sweep by allowing the lock's optional-serialization branch.
+  DB_BACKUP_GUARD_FAILURE_REASON=serialization
+  [[ "${RECOVERY_SERIALIZATION_LEASE_REQUIRED:-0}" == 1 ]] || return 1
+  DB_BACKUP_GUARD_FAILURE_REASON=operation-lock
+  recovery_require_operation_lock || {
+    DB_BACKUP_GUARD_FAILURE_REASON="${RECOVERY_OPERATION_LOCK_FAILURE_DETAIL:-operation-lock}"
+    return 1
+  }
   for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
+    DB_BACKUP_GUARD_FAILURE_REASON="consumer-$deployment"
     recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
       "$deployment" 0 || return 1
   done
   if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then
+    DB_BACKUP_GUARD_FAILURE_REASON=freeze-fence
     require_parent_freeze_fence_capability || return 1
   else
+    DB_BACKUP_GUARD_FAILURE_REASON="parent-writer"
     require_parent_writer_monitor_capability || return 1
   fi
-  recovery_require_checkpoint_runner_quiescence_exact \
-    "$CHECKPOINT_RUNNER_GENERATION" \
-    "$CHECKPOINT_DURABLE_FENCE_BASELINE_PATH" \
-    "$CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256" || return 1
   if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
-    require_parent_durable_monitor_capability
+    # This full capability validator already performs the SAME exact runner
+    # quiescence check with this baseline/hash, as well as its own lock/Lease,
+    # authority, PID, inventory and active recovery-fence validations. Keep
+    # that complete round; do not repeat its expensive live inventory first.
+    require_parent_durable_monitor_capability || {
+      DB_BACKUP_GUARD_FAILURE_REASON="${DB_PARENT_DURABLE_FAILURE_REASON:-durable-authority}"
+      return 1
+    }
+  else
+    DB_BACKUP_GUARD_FAILURE_REASON=runner-quiescence
+    recovery_require_checkpoint_runner_quiescence_exact \
+      "$CHECKPOINT_RUNNER_GENERATION" \
+      "$CHECKPOINT_DURABLE_FENCE_BASELINE_PATH" \
+      "$CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256" || {
+      DB_BACKUP_GUARD_FAILURE_REASON="${RECOVERY_RUNNER_QUIESCENCE_FAILURE_DETAIL:-runner-quiescence}"
+      return 1
+    }
   fi
+  DB_BACKUP_GUARD_FAILURE_REASON=""
 }
 
 DUMP_STREAM_GUARD_ARGS=()
@@ -300,28 +336,32 @@ require_exact_pgsql_source_now() {
     "$current_pod_json" pgsql "$PGSQL_DEPLOYMENT_UID"
 }
 
+record_pgsql_source_monitor_failure() {
+  local failure_reason="$1"
+  recovery_pgsql_source_monitor_failure_code_is_exact "$failure_reason" ||
+    failure_reason=backup-guard
+  printf 'pgsql_source_monitor_failed:%s\n' "$failure_reason" \
+    >"$DB_SOURCE_MONITOR_FAILURE"
+}
+
 monitor_exact_pgsql_source() {
   local progress=0
   while [[ ! -e "$DB_SOURCE_MONITOR_STOP" ]]; do
-    recovery_require_cluster_identity || {
-      printf 'cluster-identity\n' >"$DB_SOURCE_MONITOR_FAILURE"; return 1;
-    }
-    recovery_require_operation_serialization || {
-      printf 'serialization\n' >"$DB_SOURCE_MONITOR_FAILURE"; return 1;
-    }
-    recovery_require_operation_lock || {
-      printf 'operation-lock\n' >"$DB_SOURCE_MONITOR_FAILURE"; return 1;
-    }
+    # require_backup_guard retains these exact checks within its complete
+    # operation-lock validation. Repeating them here ages the causal progress
+    # bound before the source can publish another fully validated round.
     require_backup_guard || {
-      printf 'backup-guard\n' >"$DB_SOURCE_MONITOR_FAILURE"; return 1;
+      record_pgsql_source_monitor_failure "${DB_BACKUP_GUARD_FAILURE_REASON:-backup-guard}"
+      return 1
     }
     require_exact_pgsql_source_now || {
-      printf 'pgsql-source\n' >"$DB_SOURCE_MONITOR_FAILURE"; return 1;
+      record_pgsql_source_monitor_failure pgsql-source
+      return 1
     }
     progress=$((progress + 1))
     if ! recovery_write_stream_guard_progress \
         "$DB_SOURCE_MONITOR_PROGRESS" "$progress"; then
-      printf 'progress_publish_failed\n' >"$DB_SOURCE_MONITOR_FAILURE"
+      record_pgsql_source_monitor_failure progress_publish_failed
       return 1
     fi
     sleep "$DB_SOURCE_MONITOR_POLL_SECONDS"

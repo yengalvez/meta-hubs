@@ -79,6 +79,23 @@ Real local publishers with twelve delayed full audits cover the positive path;
 deterministic negatives cover expiry and late resumption. These are demonstrated
 tooling defects, not proof of the unrecorded cause of real checkpoint22960.
 
+The complete shell checkpoint fixture subsequently measured the local PGSQL
+source guard at seven to eight seconds per round, dominated by backup-guard
+validation. Its guard index is zero in DB streams; writer/durable are one/two
+and their observed progress remained healthy. The PGSQL round now removes only
+adjacent duplicate cluster/Lease/lock validators and the duplicate durable
+quiescence inventory; their complete equivalents remain inside its backup guard.
+The serialization Lease is explicitly mandatory. Legacy retains direct runner
+quiescence, and all five consumers, both parent capabilities, active fence and
+exact PGSQL Pod/Deployment/ReplicaSet ownership remain validated before progress.
+Regressions execute the actual Bash orchestration, check each retained family,
+reject a missing Lease requirement and suppress publication after every failed
+family. End-to-end fixture and exact full-gate acceptance remain separate.
+Nested lock/durable/quiescence/fence failures preserve their first closed
+component in the private PGSQL marker. Actual-composite regressions cover
+authorization loss only at an inner boundary; metadata and payload negatives
+cover marker-to-reporter redaction without replacing a prior stale cause.
+
 Safe stream diagnostics include only guard index/counter and monotonic
 age/observation numbers. The historic F `guard-stale:0` did not include enough
 evidence to distinguish real stalled progress from serial observation cost.

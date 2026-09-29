@@ -14,6 +14,20 @@
 - The previous real backup22960 remains invalid with an unrecorded internal
   cause; local reproductions do not establish its exact historical cause. No
   new live backup or deployment is claimed by this local change.
+- Complete simulated entrypoint exposed a seven-to-eight-second local PGSQL
+  source sweep; writer/durable parent publishers remained healthy. Removed only
+  adjacent duplicate full validations already covered inside that same round,
+  retaining its mandatory Lease, all consumer/parent/fence/runner validations
+  and exact live source ownership. Before/after actual-Bash regressions verify
+  the duplicate-quiescence fix and missing-Lease rejection; no budget increase
+  or separate progress heartbeat. End-to-end and full-gate acceptance pending.
+- Propagated fixed first-failure components through lock, durable, quiescence
+  and fence into a closed PGSQL marker/parser/reporter. Focused regressions:
+  26 PGSQL, 50 diagnostics and 44 supervisor PASS; durable-monitor suite66/66
+  PASS after resolving the isolated checkout's missing dependency via the
+  identical F Cloud dependency tree. Focused independent recheck PASS by
+  reading; no new Kubernetes calls or weakened limits. Exact candidate's
+  simulated whole checkpoint and full acceptance remain due.
 
 ## 2026-09-29 — Avaturn editor without the empty side panel
 

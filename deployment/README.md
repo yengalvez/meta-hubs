@@ -2301,12 +2301,29 @@ the gate opens, omit a full audit or change the thirty/ten/two-second budgets.
 Acceptance includes a joint freshness/continuity check after each final serial
 round, not merely separate checks of guards at different times.
 
+The PGSQL source monitor still executes the complete backup guard on EVERY
+round, followed by exact live source-Pod UID and Deployment/ReplicaSet ownership
+checks. That guard's lock validator already checks cluster/PVC identity and the
+mandatory serialization Lease; do not repeat those three validators immediately
+before it. The durable capability validator already includes the same exact
+runner/fence inventory and baseline hash check, so do not precede it with a
+second identical quiescence check. Legacy retains its direct quiescence check.
+All five live consumer validations, writer and durable capabilities, active
+fence, lock/Lease and source ownership remain inside the PGSQL round. Progress
+is published only after ALL of them pass, never by an independent heartbeat.
+This removes duplicate work, not protection, and does not enlarge 30/10/2s.
+
 Failures report allowlisted `recovery_stream_stage`, `recovery_stream_status`
 and `recovery_stream_detail` on stderr by default. The storage pipeline also
 reports numeric `storage_backup_stream_exit:supervisor=... compressor=...`;
 archive stdout remains binary-only. Preserve the first failure and exact command
 status. A failed/partial archive is never promoted, and an unchanged generic
 `archive_status=1` alone does not identify tar, transport or guard failure.
+The local DB-source marker uses `pgsql_source_monitor_failed:<closed-code>`.
+Lock, durable, quiescence and active-fence composites propagate their first
+fixed authorization component without repeating its check; the parser emits
+only the closed code, never arbitrary marker bytes. A later reason cannot
+replace an already-recorded stale guard or command failure.
 
 El fail-close del restore también tiene un único propietario: solo el driver
 principal puede volver a cercar consumidores, retener el lock o completar la
