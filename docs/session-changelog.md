@@ -1,5 +1,12 @@
 # Session Changelog
 
+## 2026-09-29 — Avaturn editor without the empty side panel
+
+- The Avaturn creator uses the full editor width on desktop and mobile. Its
+  internal preview renderer stays sized but invisible so automatic validation
+  and thumbnail capture still run. GLB uploads and ordinary avatar editing keep
+  their visible previews. No provider, save, avatar asset or server contract changed.
+
 ## 2026-09-26 — bounded prelaunch guard realignment
 
 - A pure temporal stale observation may request a new causal monitor increment

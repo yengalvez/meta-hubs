@@ -55,6 +55,12 @@ proveedor y sus puertas de licencia/privacidad están en
 
 ## Contrato
 
+El creador integrado Avaturn ocupa una sola columna, sin un visor lateral ni
+un recuadro vacío en escritorio o móvil. El renderer de YenHubs se mantiene
+oculto y con dimensiones válidas para comprobar el modelo y generar su miniatura
+durante el guardado automático. `Subir GLB` y la edición de avatares conservan
+su vista previa visible.
+
 - Formato: GLB 2.0.
 - El cliente valida que exista un skeleton upper-body compatible.
 - Preview y skeleton válidos antes de habilitar Guardar. La miniatura se genera
