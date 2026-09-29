@@ -16,7 +16,10 @@ function extract(name) {
 // counters are simulated; no files, timers, kubectl or publishers are needed.
 const functions = [
   "stream_record_diagnostic",
+  "require_reaped_stream_guard_freshness",
+  "observe_inactive_stream_guard_progress",
   "refresh_supervised_stream_guards_for_launch",
+  "supervised_stream_guards_are_healthy",
   "supervised_stream_guards_are_continuously_healthy",
   "supervised_stream_guard_remaining_milliseconds",
   "supervised_stream_require_lease_within_guard_budget",
@@ -29,7 +32,8 @@ mode="$1" fault="$2" phase="$3" full_cost="$4" require_lease="$5"
 IFS=, read -r -a counter_periods <<<"@{6:-1000,1000,1000}"
 IFS=, read -r -a audit_costs <<<"@{7:-$full_cost,$full_cost,$full_cost}"
 clock=0 full_audits=0 continuity_checks=0 lease_reads=0 identity_checks=0
-stream_is_gated=1 stream_diagnostic_stage=refresh stream_diagnostic_detail=
+stream_is_gated=1 stream_child_reaped=0 stream_diagnostic_stage=refresh stream_diagnostic_detail=
+post_stream_guard_deadline_failed=0
 supervised_stream_guard_failure_kind=
 refresh_deadline_seconds=30 guard_cancel_reserve_milliseconds=2000
 lease_authority_guard_index= poll_seconds=.1
@@ -47,6 +51,7 @@ recovery_stream_guard_process_is_healthy(){
   if [[ "$#" == 8 ]]; then
     full_audits=$((full_audits+1)); clock=$((clock+audit_costs[$1-11]))
     [[ "$fault" != audit-after-realignment || "$full_audits" -le 6 ]] || return 1
+    [[ "$fault" != full-process && "$fault" != full-authority ]] || return 1
   else
     continuity_checks=$((continuity_checks+1))
     if [[ "$mode" == persistent ||
@@ -64,7 +69,7 @@ recovery_stream_guard_failure_detail(){
 }
 recovery_read_private_file_once(){ [[ "$fault" != hash ]]; }
 recovery_stream_guard_progress_value(){
-  if [[ "@{FUNCNAME[*]}" == *observe_gated_prelaunch_guard_progress* ]]; then
+  if [[ "@{FUNCNAME[*]}" == *observe_inactive_stream_guard_progress* ]]; then
     [[ "$fault" != sample-read ]] || return 1
     if [[ "$fault" == sample-regression && "$full_audits" -ge 1 ]]; then printf '1\n'; return; fi
   fi
@@ -77,6 +82,8 @@ recovery_stream_guard_progress_value(){
   else
     local guard_number="@{1##*/p}"
     if [[ "$fault" == stopped-source && "$guard_number" == 0 ]]; then printf '1\n'; return; fi
+    if [[ "$fault" == post-resumed && "$guard_number" == 0 && "$clock" -le 12000 ]]; then printf '1\n'; return; fi
+    if [[ "$fault" == post-frozen && "$guard_number" == 0 && "$clock" -ge 9000 ]]; then printf '10\n'; return; fi
     printf '%s\n' "$((clock/counter_periods[guard_number]+1))"
   fi
 }
@@ -94,7 +101,23 @@ main(){
   case "$phase" in
     reserve-boundary) clock=8000 ;;
     reserve-above) clock=7999 ;;
-    post) stream_is_gated=0; stream_diagnostic_stage=post-audit
+    post) stream_is_gated=0; stream_child_reaped=1; stream_pid=; stream_start_identity=; stream_diagnostic_stage=post-audit
+      refresh_supervised_stream_guards_for_launch 1000 || status=$? ;;
+    post-chain) stream_is_gated=0; stream_child_reaped=1; stream_pid=; stream_start_identity=; stream_diagnostic_stage=post-audit
+      refresh_supervised_stream_guards_for_launch 1000 &&
+        supervised_stream_guards_are_healthy &&
+        supervised_stream_require_lease_within_guard_budget 0 &&
+        supervised_stream_guards_are_healthy || status=$? ;;
+    last-audit) stream_is_gated=0; stream_child_reaped=1; stream_pid=; stream_start_identity=; stream_diagnostic_stage=post-audit
+      clock=14000; guard_last_progress=(9 11 13)
+      guard_last_progress_milliseconds=(6000 8000 10000)
+      guard_last_observation_milliseconds=(8000 10000 12000)
+      supervised_stream_guards_are_healthy || status=$? ;;
+    post-unreaped|post-live-handle|post-wrong-stage)
+      stream_is_gated=0; stream_child_reaped=1; stream_diagnostic_stage=post-audit
+      [[ "$phase" != post-unreaped ]] || stream_child_reaped=0
+      [[ "$phase" != post-wrong-stage ]] || stream_diagnostic_stage=running
+      [[ "$phase" == post-live-handle ]] || { stream_pid=; stream_start_identity=; }
       refresh_supervised_stream_guards_for_launch 1000 || status=$? ;;
     running) stream_is_gated=0; stream_diagnostic_stage=running
       refresh_supervised_stream_guards_for_launch || status=$? ;;
@@ -266,10 +289,60 @@ for (const phase of ["running", "closed-flag"]) {
   });
 }
 
-test("post-stream refresh never rearms a stale guard", () => {
-  const r = run({ phase: "post", fullCost: 2000 });
-  assert.equal(r.status, 1);
+test("post-stream serial audits observe healthy progress instead of falsely rejecting the archive", () => {
+  const r = run({ phase: "post", mode: "fast", fullCost: 2000 });
+  assert.equal(r.status, 0, JSON.stringify(r));
   assert.equal(r.clock, 12000);
   assert.equal(r.full_audits, 6);
   assert.equal(r.continuity_checks, 0);
+  assert.ok(r.remaining > 2000);
+  assert.equal(r.diagnostic, "");
 });
+
+test("the ENTIRE post-stream audit and Lease chain accepts independently advancing healthy guards", () => {
+  const r = run({ phase: "post-chain", mode: "fast", fullCost: 2000, lease: 1 });
+  assert.equal(r.status, 0, JSON.stringify(r));
+  assert.equal(r.full_audits, 12, "full immutable audits remain required");
+  assert.equal(r.lease_reads, 1);
+  assert.ok(r.continuity_checks >= 6, "joint freshness is checked after both serial audit rounds");
+  assert.ok(r.remaining > 2000);
+  assert.ok(r.clock < 30000);
+});
+
+test("a guard freezing after an early observation cannot pass the final serial audit", () => {
+  const r = run({ phase: "last-audit", mode: "fast", fullCost: 2000, fault: "post-frozen" });
+  assert.equal(r.status, 1, JSON.stringify(r));
+  assert.equal(r.full_audits, 2, "reject immediately when the earlier guard expires during the second audit");
+  assert.equal(r.progress.split(",")[0], "10");
+  assert.equal(r.bounds.split(",")[0], "8000", "frozen progress is never redated");
+  assert.match(r.diagnostic, /^guard-stale:0:/);
+});
+
+test("a guard cannot regain authority by resuming after its inherited post-stream deadline", () => {
+  const r = run({ phase: "post-chain", mode: "fast", fullCost: 2000, fault: "post-resumed", lease: 1 });
+  assert.equal(r.status, 1, JSON.stringify(r));
+  assert.ok(r.clock <= 10000, "reject at expiry, before a resumed counter can erase the gap");
+  assert.equal(r.progress.split(",")[0], "1");
+  assert.equal(r.bounds.split(",")[0], "0");
+  assert.match(r.diagnostic, /^guard-stale:0:/);
+});
+
+for (const fault of ["stopped-source", "post-frozen", "sample-read", "sample-regression", "full-process", "full-authority", "process", "failure-marker", "hash", "read", "regression", "lease"]) {
+  test(`post-stream rejects ${fault} without temporal rearming`, () => {
+    const r = run({ phase: "post-chain", mode: "fast", fullCost: 2000, fault, lease: 1 });
+    assert.equal(r.status, 1, JSON.stringify(r));
+    assert.ok(r.clock < 33000, JSON.stringify(r));
+    if (fault === "stopped-source") assert.equal(r.bounds.split(",")[0], "0");
+    if (fault === "post-frozen") assert.ok(Number(r.bounds.split(",")[0]) < 9000);
+  });
+}
+
+for (const phase of ["post-unreaped", "post-live-handle", "post-wrong-stage"]) {
+  test(`${phase} cannot opt into post-stream bookkeeping`, () => {
+    const r = run({ phase, mode: "fast", fullCost: 2000 });
+    assert.equal(r.status, 1, JSON.stringify(r));
+    assert.equal(r.clock, 12000);
+    assert.equal(r.full_audits, 6);
+    assert.match(r.diagnostic, /^guard-stale:0:/);
+  });
+}

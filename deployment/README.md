@@ -2291,6 +2291,23 @@ aborts and reaps the exact isolated process group using its PID plus start
 identity. At normal closure the durable monitor must deliver an acceptable
 `FINAL` before the writer monitor may deliver its own `FINAL`.
 
+After the exact stream child is reaped and its PID/start capability retired,
+post-stream acceptance observes every guard between serial full audits. Counter
+increments retain their previous observation as the causal lower bound. All
+inherited ten-second deadlines are checked before crediting an increment and
+after costly operations; a deadline that expires is irreversibly rejected even
+if the publisher later resumes. This does not enable prelaunch realignment after
+the gate opens, omit a full audit or change the thirty/ten/two-second budgets.
+Acceptance includes a joint freshness/continuity check after each final serial
+round, not merely separate checks of guards at different times.
+
+Failures report allowlisted `recovery_stream_stage`, `recovery_stream_status`
+and `recovery_stream_detail` on stderr by default. The storage pipeline also
+reports numeric `storage_backup_stream_exit:supervisor=... compressor=...`;
+archive stdout remains binary-only. Preserve the first failure and exact command
+status. A failed/partial archive is never promoted, and an unchanged generic
+`archive_status=1` alone does not identify tar, transport or guard failure.
+
 El fail-close del restore también tiene un único propietario: solo el driver
 principal puede volver a cercar consumidores, retener el lock o completar la
 recuperación. Un error o reintento dentro de un subshell devuelve estado al

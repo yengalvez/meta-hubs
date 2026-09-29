@@ -1,5 +1,20 @@
 # Session Changelog
 
+## 2026-09-30 — local media-checkpoint supervisor repair
+
+- Reproduced false post-stream rejection under serial audit cost, missing final
+  joint freshness, and late-resumption acceptance in the initial repair delta.
+  After exact wait/reap, sample causal counters between complete audits while
+  rejecting every expired inherited deadline irreversibly. Running supervision,
+  signed full audits, the Lease and 30/10/2-second budgets remain mandatory.
+- Safe stage/status/reason diagnostics now work without an opt-in flag, retain
+  command status and distinguish supervisor/compressor failures. Added actual
+  Bash-function regressions, local child/pipeline status tests and a real-process
+  post-audit fixture. Independent focused recheck found no pending material issue.
+- The previous real backup22960 remains invalid with an unrecorded internal
+  cause; local reproductions do not establish its exact historical cause. No
+  new live backup or deployment is claimed by this local change.
+
 ## 2026-09-29 — Avaturn editor without the empty side panel
 
 - The Avaturn creator uses the full editor width on desktop and mobile. Its

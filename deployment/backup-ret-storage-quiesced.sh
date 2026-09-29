@@ -1052,9 +1052,12 @@ if recovery_kubectl_stream_guarded 3600 \
   "${LOCAL_STORAGE_STREAM_GUARD_ARGS[@]}" -- \
   exec -n "$NAMESPACE" "$HELPER_POD" -- tar -C /storage -cf - owned |
   gzip -c >"$PARTIAL_PATH"; then
-  archive_status=0
+  archive_status=0 archive_pipeline_status=("${PIPESTATUS[@]}")
 else
-  archive_status=$?
+  # Capture both pipeline components before another command erases them.
+  archive_status=$? archive_pipeline_status=("${PIPESTATUS[@]}")
+  printf 'storage_backup_stream_exit:supervisor=%s compressor=%s\n' \
+    "${archive_pipeline_status[0]}" "${archive_pipeline_status[1]}" >&2
 fi
 STORAGE_FAILURE_STAGE="stream-boundary"
 if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then

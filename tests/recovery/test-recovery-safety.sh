@@ -13328,7 +13328,7 @@ run_multi_guard_round_robin_case() (
   trap 'cleanup_stream_guard_fixture_publishers || :' EXIT INT TERM
 
   case "$case_name" in
-    round-robin-success|round-robin-startup-grace|launch-window-realign|outer-baseline-realign|refresh-deadline)
+    round-robin-success|round-robin-startup-grace|launch-window-realign|outer-baseline-realign|refresh-deadline|post-audit-healthy)
       # Every publisher starts only after its initial baseline read. The slow
       # guard leaves a deliberately bounded gap between counters 2 and 3 while
       # both fast guards continue at 0.15/0.20 seconds. A serial refresher
@@ -13337,7 +13337,11 @@ run_multi_guard_round_robin_case() (
       # fast lower bounds current. Production remains fixed at ten seconds by
       # the timing contract; only this attested fixture uses six.
       maximum_stale_seconds=10
-      if [[ "$case_name" == refresh-deadline ]]; then
+      if [[ "$case_name" == post-audit-healthy ]]; then
+        slow_interval=0.20
+        initial_deadline_seconds=30
+        require_lease=1
+      elif [[ "$case_name" == refresh-deadline ]]; then
         initial_deadline_seconds=4
         slow_interval=0.25
       elif [[ "$case_name" == outer-baseline-realign ]]; then
@@ -13437,6 +13441,22 @@ run_multi_guard_round_robin_case() (
       source "$1"
       if [[ "$REQUIRE_LEASE" == 1 ]]; then
         recovery_require_operation_serialization_stream() { return 0; }
+      fi
+      if [[ "$MULTI_GUARD_CASE" == post-audit-healthy ]]; then
+        audit_definition="$(declare -f recovery_stream_guard_process_is_healthy)"
+        audit_definition="${audit_definition/recovery_stream_guard_process_is_healthy/recovery_stream_guard_process_is_healthy_fixture_original}"
+        eval "$audit_definition"
+        unset audit_definition
+        recovery_stream_guard_process_is_healthy() {
+          # Real publishers keep advancing. Only each complete post-stream
+          # audit is delayed; running-stream supervision and limits are intact.
+          if [[ "$#" == 8 && "${stream_diagnostic_stage:-}" == post-audit &&
+                "${stream_child_reaped:-0}" == 1 ]]; then
+            sleep 2
+            printf "audited\n" >>"$GUARD_OBSERVATION_DIR/post-audits"
+          fi
+          recovery_stream_guard_process_is_healthy_fixture_original "$@"
+        }
       fi
       progress_reader_definition="$(declare -f recovery_stream_guard_progress_value)"
       progress_reader_definition="${progress_reader_definition/recovery_stream_guard_progress_value/recovery_stream_guard_progress_value_fixture_original}"
@@ -13553,6 +13573,14 @@ run_multi_guard_round_robin_case() (
   done
 
   case "$case_name" in
+    post-audit-healthy)
+      if [[ "$status" == 0 &&
+            -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
+            -s "$observation_dir/post-audits" &&
+            "$(wc -l <"$observation_dir/post-audits" | tr -d " ")" -ge 12 ]]; then
+        return 0
+      fi
+      ;;
     refresh-deadline)
       if [[ "$status" != 0 &&
             -e "$observation_dir/refresh-delayed" &&
@@ -16826,6 +16854,15 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == multi-stream-guards ]]; then
     exit 1
   fi
   printf 'Focused multi-guard stream tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == post-stream-audits ]]; then
+  expect_success \
+    'healthy independent publishers survive twelve slow complete post-stream audits' \
+    run_multi_guard_round_robin_case post-audit-healthy
+  [[ "$FAIL_COUNT" == 0 ]] || exit 1
+  printf 'Focused post-stream audit tests passed: %s.\n' "$PASS_COUNT"
   exit 0
 fi
 

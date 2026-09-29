@@ -49,7 +49,22 @@ previous observation, and each guard still needs a complete signed audit before
 its increment can satisfy the launch round. A failed read or counter regression
 is fatal. The final continuity/identity/Lease checks and two-second cancellation
 reserve remain mandatory. Do not use these observations during a running stream
-or post-audit, or increase the thirty-second startup/ten-second freshness limits.
+or increase the thirty-second startup/ten-second freshness limits.
+
+After the exact stream child has been waited/reaped and its PID/start-identity
+capability retired, post-audit may also observe all counters between expensive
+full audits. This is bookkeeping, not temporal realignment: all inherited guard
+deadlines must remain unexpired before crediting any increment and after costly
+operations. Expiry is latched irreversibly, including a publisher that stops for
+ten seconds and then resumes. Unchanged counters keep their old causal bounds.
+Each full audit remains mandatory, followed by a joint continuity/freshness
+check; a running or unreaped child cannot opt into this post-stream path.
+
+Ordinary backup failures emit a bounded, allowlisted stage/status/reason on
+stderr without enabling a diagnostic flag. Archive stdout is unchanged. A
+failed command retains its original exit status and first cause, while the
+storage pipeline records supervisor and compressor statuses separately.
+Never print command arguments, private paths or Kubernetes/marker payloads.
 
 The 2026-09-27 regression reproduces healthy one-second counters timing out when
 three serial audits cost two seconds each. Intermediate sampling resolves this
@@ -58,6 +73,11 @@ It does not establish the cause of the live `guard-refresh-timeout:0` incident:
 its reported index identifies the limiting freshness budget, not necessarily a
 monitor missing an increment. The deterministic harness does not measure the
 runtime cost of marker reads; retain the focused shell entrypoint verification.
+The 2026-09-30 post-stream regression additionally reproduces a false rejection
+with healthy publishers during serial audits and a missed final joint deadline.
+Real local publishers with twelve delayed full audits cover the positive path;
+deterministic negatives cover expiry and late resumption. These are demonstrated
+tooling defects, not proof of the unrecorded cause of real checkpoint22960.
 
 Safe stream diagnostics include only guard index/counter and monotonic
 age/observation numbers. The historic F `guard-stale:0` did not include enough

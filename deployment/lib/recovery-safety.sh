@@ -1335,6 +1335,45 @@ recovery_wait_for_stream_guard_progress_after() {
   done
 }
 
+recovery_report_stream_failure() {
+  local status="$1" stage="$2" detail="${3:-}" prefix=recovery_stream
+  [[ "$status" =~ ^[0-9]{1,3}$ ]] || return 2
+  [[ "$status" != 0 ]] || return 0
+  case "$stage" in
+    arguments|guard-baseline|launch|initialize|refresh|running|command|post-audit) ;;
+    *) stage=unknown ;;
+  esac
+  # Never emit command arguments, paths, marker contents or kubectl payloads.
+  # Only internal reasons and bounded numeric observations cross this boundary.
+  if [[ -n "$detail" ]]; then
+    case "$detail" in
+      arguments|guard-authority|guard-arguments|guard-duplicate|\
+      guard-lease-authority-duplicate|poll-interval|initial-deadline|python3|\
+      stream-identity|caller-identity|stream-timeout|command-exit|cancellation-reserve|\
+      lease-parameter|lease-authority|lease-window-read|lease-check|lease-budget|\
+      post-audit-guard-alignment|post-audit-guard|post-audit-lease) ;;
+      *)
+        if [[ ${#detail} -gt 256 ]] ||
+           [[ ! "$detail" =~ ^guard-(process|clock|progress|regression|progress-read|progress-regression|stale):[0-9]{1,4}$ &&
+              ! "$detail" =~ ^guard-process:[0-9]{1,4}:[a-z][a-z0-9_-]{0,63}:[a-z][a-z0-9_-]{0,63}$ &&
+              ! "$detail" =~ ^guard-stale:[0-9]{1,4}:[0-9]{1,18}:[0-9]{1,18}$ &&
+              ! "$detail" =~ ^guard-(stale|refresh-timeout):[0-9]{1,4}(:-?[0-9]{1,18})?:counter:[0-9]{1,18}:age-ms:-?[0-9]{1,18}:observation-ms:[0-9]{1,18}$ &&
+              ! "$detail" =~ ^lease-window:-?[0-9]{1,4}:-?[0-9]{1,18}$ ]]; then
+          detail=redacted
+        fi
+        ;;
+    esac
+  fi
+  # Keep the existing opt-in labels for callers/tests that use them. The
+  # ordinary backup path now has the same safe evidence without an env flag.
+  [[ "${RECOVERY_STREAM_DIAGNOSTIC_CONTEXT:-}" != database-restore ]] ||
+    prefix=database_restore_stream
+  printf '%s_stage:%s\n' "$prefix" "$stage" >&2
+  printf '%s_status:%s\n' "$prefix" "$status" >&2
+  [[ -z "$detail" ]] || printf '%s_detail:%s\n' "$prefix" "$detail" >&2
+  return 0
+}
+
 recovery_kubectl_stream_supervised() {
   local require_lease="$1" maximum_seconds="$2"
   shift 2
@@ -1357,12 +1396,7 @@ recovery_kubectl_stream_supervised() {
   local -a guard_fresh_advanced=()
   stream_outer_fail() {
     local status="${1:-1}" detail="${2:-$stream_outer_detail}"
-    if [[ "$status" != 0 &&
-          "${RECOVERY_STREAM_DIAGNOSTIC_CONTEXT:-}" == database-restore ]]; then
-      printf 'database_restore_stream_stage:%s\n' "$stream_outer_stage" >&2
-      [[ -n "$detail" ]] &&
-        printf 'database_restore_stream_detail:%s\n' "$detail" >&2
-    fi
+    recovery_report_stream_failure "$status" "$stream_outer_stage" "$detail" || :
     return "$status"
   }
   [[ "$require_lease" == 0 || "$require_lease" == 1 ]] || {
@@ -1595,7 +1629,8 @@ recovery_kubectl_stream_supervised() {
     local supervised_stream_guard_remaining_milliseconds_value=""
     local supervised_stream_guard_remaining_index=""
     local supervised_stream_guard_failure_kind=""
-    local stream_is_gated=0
+    local stream_is_gated=0 stream_child_reaped=0
+    local post_stream_guard_deadline_failed=0
     local guard_cancel_reserve_milliseconds=2000
     local -a guard_last_progress=() guard_last_progress_milliseconds=()
     local -a guard_last_observation_milliseconds=()
@@ -1603,19 +1638,68 @@ recovery_kubectl_stream_supervised() {
     report_stream_diagnostic() {
       stream_diagnostic_status=$?
       trap - EXIT
-      if [[ "$stream_diagnostic_status" != 0 &&
-            "${RECOVERY_STREAM_DIAGNOSTIC_CONTEXT:-}" == database-restore ]]; then
-        printf 'database_restore_stream_stage:%s\n' \
-          "$stream_diagnostic_stage" >&2
-        [[ -n "$stream_diagnostic_detail" ]] &&
-          printf 'database_restore_stream_detail:%s\n' \
-            "$stream_diagnostic_detail" >&2
-      fi
+      recovery_report_stream_failure "$stream_diagnostic_status" \
+        "$stream_diagnostic_stage" "$stream_diagnostic_detail" || :
       exit "$stream_diagnostic_status"
     }
     stream_record_diagnostic() {
       [[ -n "$stream_diagnostic_detail" ]] ||
         stream_diagnostic_detail="$1"
+    }
+    require_reaped_stream_guard_freshness() {
+      local deadline_index deadline_now
+      [[ "$stream_is_gated" == 0 && "$stream_child_reaped" == 1 &&
+         "$stream_diagnostic_stage" == post-audit &&
+         -z "$stream_pid" && -z "$stream_start_identity" ]] || return 0
+      [[ "$post_stream_guard_deadline_failed" == 0 ]] || return 1
+      deadline_now="$(recovery_monotonic_milliseconds)" || return 1
+      for deadline_index in "${!guard_pids[@]}"; do
+        if ((deadline_now - guard_last_progress_milliseconds[deadline_index] >=
+          guard_maximum_stale_seconds[deadline_index] * 1000)); then
+          # A post-stream counter may advance only while its inherited
+          # capability is still fresh. Never erase an expired interval by
+          # crediting a counter that resumes later, even after a costly audit.
+          post_stream_guard_deadline_failed=1
+          supervised_stream_guard_failure_kind=stale
+          stream_record_diagnostic "guard-stale:$deadline_index:counter:${guard_last_progress[$deadline_index]}:age-ms:$((deadline_now - guard_last_progress_milliseconds[deadline_index])):observation-ms:${guard_last_observation_milliseconds[$deadline_index]}"
+          return 1
+        fi
+      done
+    }
+    observe_inactive_stream_guard_progress() {
+      local sample_index sample_time sample_progress sample_previous_observation
+      # Counter observations do not replace full signed audits. Observe every
+      # guard BETWEEN expensive audits, but only before the child's private
+      # gate opens or after its exact wait/reap has retired the capability.
+      # This prevents the observer's serial audit cost from dating a healthy
+      # post-stream increment to a needlessly old observation of another guard.
+      [[ ( "$stream_is_gated" == 1 && "$stream_diagnostic_stage" == refresh &&
+           -z "${requested_launch_budget_milliseconds:-}" ) ||
+         ( "$stream_is_gated" == 0 && "$stream_child_reaped" == 1 &&
+           "$stream_diagnostic_stage" == post-audit &&
+           -z "$stream_pid" && -z "$stream_start_identity" ) ]] || return 0
+      require_reaped_stream_guard_freshness || return 1
+      for sample_index in "${!guard_pids[@]}"; do
+        sample_previous_observation="${guard_last_observation_milliseconds[$sample_index]}"
+        sample_time="$(recovery_monotonic_milliseconds)" || return 1
+        if ! sample_progress="$(recovery_stream_guard_progress_value \
+          "${guard_progress_markers[$sample_index]}" \
+          "${guard_authority_sha256s[$sample_index]}")"; then
+          stream_record_diagnostic "guard-progress-read:$sample_index"
+          return 1
+        fi
+        require_reaped_stream_guard_freshness || return 1
+        if ((sample_progress < guard_last_progress[sample_index])); then
+          stream_record_diagnostic "guard-progress-regression:$sample_index"
+          return 1
+        elif ((sample_progress > guard_last_progress[sample_index])); then
+          guard_last_progress[sample_index]="$sample_progress"
+          # Credit only the PREVIOUS observation as the increment's causal
+          # lower bound. An unchanged counter never receives a newer bound.
+          guard_last_progress_milliseconds[sample_index]="$sample_previous_observation"
+        fi
+        guard_last_observation_milliseconds[sample_index]="$sample_time"
+      done
     }
     trap report_stream_diagnostic EXIT
     initialize_supervised_stream_guards() {
@@ -1658,34 +1742,6 @@ recovery_kubectl_stream_supervised() {
       local -a refresh_baseline_progress=()
       local -a refresh_baseline_observation_milliseconds=()
       local -a refresh_advanced=()
-      observe_gated_prelaunch_guard_progress() {
-        local sample_index sample_time sample_progress sample_previous_observation
-        # These observations grant no launch authority. While the child is
-        # still gated, keep causal counter history between expensive signed
-        # audits instead of leaving every other guard unobserved for a whole
-        # serial round. The complete audits below, final continuity check and
-        # cancellation reserve must still pass before the gate can open.
-        [[ "$stream_is_gated" == 1 && "$stream_diagnostic_stage" == refresh &&
-           -z "$requested_launch_budget_milliseconds" ]] || return 0
-        for sample_index in "${!guard_pids[@]}"; do
-          sample_previous_observation="${guard_last_observation_milliseconds[$sample_index]}"
-          sample_time="$(recovery_monotonic_milliseconds)" || return 1
-          if ! sample_progress="$(recovery_stream_guard_progress_value \
-            "${guard_progress_markers[$sample_index]}" \
-            "${guard_authority_sha256s[$sample_index]}")"; then
-            stream_record_diagnostic "guard-progress-read:$sample_index"
-            return 1
-          fi
-          if ((sample_progress < guard_last_progress[sample_index])); then
-            stream_record_diagnostic "guard-progress-regression:$sample_index"
-            return 1
-          elif ((sample_progress > guard_last_progress[sample_index])); then
-            guard_last_progress[sample_index]="$sample_progress"
-            guard_last_progress_milliseconds[sample_index]="$sample_previous_observation"
-          fi
-          guard_last_observation_milliseconds[sample_index]="$sample_time"
-        done
-      }
       record_guard_refresh_timeout() {
         local timeout_index="$supervised_stream_guard_remaining_index"
         stream_record_diagnostic "guard-refresh-timeout:$timeout_index:${supervised_stream_guard_remaining_milliseconds_value}:counter:${guard_last_progress[$timeout_index]}:age-ms:$((current_milliseconds - guard_last_progress_milliseconds[timeout_index])):observation-ms:${guard_last_observation_milliseconds[$timeout_index]}"
@@ -1747,7 +1803,7 @@ recovery_kubectl_stream_supervised() {
       # observation, so update its lower bound causally, but it does not satisfy
       # this second pre-launch sweep.
       for index in "${!guard_pids[@]}"; do
-        observe_gated_prelaunch_guard_progress || return 1
+        observe_inactive_stream_guard_progress || return 1
         recovery_stream_guard_process_is_healthy \
           "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
           "${guard_failure_markers[$index]}" "${guard_ready_markers[$index]}" \
@@ -1755,11 +1811,13 @@ recovery_kubectl_stream_supervised() {
           "${guard_authority_paths[$index]}" \
           "${guard_authority_sha256s[$index]}" \
           "${guard_authority_kinds[$index]}" || return 1
+        require_reaped_stream_guard_freshness || return 1
         previous_observation_milliseconds="${guard_last_observation_milliseconds[$index]}"
         observation_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
         current_progress="$(recovery_stream_guard_progress_value \
           "${guard_progress_markers[$index]}" \
           "${guard_authority_sha256s[$index]}")" || return 1
+        require_reaped_stream_guard_freshness || return 1
         previous_progress="${guard_last_progress[$index]}"
         ((current_progress >= previous_progress)) || return 1
         if ((current_progress > previous_progress)); then
@@ -1780,6 +1838,7 @@ recovery_kubectl_stream_supervised() {
       # freshness budget. Every guard receives a complete signed audit in the
       # final loop round, followed by one lightweight continuity observation.
       while [[ "${#guard_pids[@]}" -gt 0 ]]; do
+        require_reaped_stream_guard_freshness || return 1
         current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
         if ((current_milliseconds >= launch_alignment_deadline_milliseconds)); then
           supervised_stream_guard_remaining_milliseconds >/dev/null || return 1
@@ -1787,7 +1846,7 @@ recovery_kubectl_stream_supervised() {
           return 1
         fi
         for index in "${!guard_pids[@]}"; do
-          observe_gated_prelaunch_guard_progress || return 1
+          observe_inactive_stream_guard_progress || return 1
           recovery_stream_guard_process_is_healthy \
             "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
             "${guard_failure_markers[$index]}" "${guard_ready_markers[$index]}" \
@@ -1795,11 +1854,13 @@ recovery_kubectl_stream_supervised() {
             "${guard_authority_paths[$index]}" \
             "${guard_authority_sha256s[$index]}" \
             "${guard_authority_kinds[$index]}" || return 1
+          require_reaped_stream_guard_freshness || return 1
           previous_observation_milliseconds="${guard_last_observation_milliseconds[$index]}"
           observation_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
           current_progress="$(recovery_stream_guard_progress_value \
             "${guard_progress_markers[$index]}" \
             "${guard_authority_sha256s[$index]}")" || return 1
+          require_reaped_stream_guard_freshness || return 1
           previous_progress="${guard_last_progress[$index]}"
           ((current_progress >= previous_progress)) || return 1
           if ((current_progress > previous_progress)); then
@@ -1914,6 +1975,7 @@ recovery_kubectl_stream_supervised() {
     supervised_stream_guards_are_healthy() {
       local guard_failure_detail=""
       for index in "${!guard_pids[@]}"; do
+        observe_inactive_stream_guard_progress || return 1
         if ! recovery_stream_guard_process_is_healthy \
           "${guard_pids[$index]}" "${guard_start_identities[$index]}" \
           "${guard_failure_markers[$index]}" "${guard_ready_markers[$index]}" \
@@ -1929,6 +1991,7 @@ recovery_kubectl_stream_supervised() {
           fi
           return 1
         fi
+        require_reaped_stream_guard_freshness || return 1
         previous_observation_milliseconds="${guard_last_observation_milliseconds[$index]}"
         observation_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
         if ! current_progress="$(recovery_stream_guard_progress_value \
@@ -1937,6 +2000,7 @@ recovery_kubectl_stream_supervised() {
           stream_record_diagnostic "guard-progress-read:$index"
           return 1
         fi
+        require_reaped_stream_guard_freshness || return 1
         previous_progress="${guard_last_progress[$index]}"
         if ((current_progress < previous_progress)); then
           stream_record_diagnostic "guard-progress-regression:$index"
@@ -1956,12 +2020,17 @@ recovery_kubectl_stream_supervised() {
           return 1
         fi
       done
+      # Auditing a later guard consumes the earlier guard's freshness window.
+      # Acceptance requires all of them fresh TOGETHER after the final audit,
+      # not merely at different points inside the serial loop above.
+      supervised_stream_guards_are_continuously_healthy
     }
     supervised_stream_guards_are_continuously_healthy() {
       local guard_failure_detail=""
       # Explicit classification is consumed only by the gated prelaunch
       # caller. All other callers still fail immediately on any nonzero exit.
       supervised_stream_guard_failure_kind=error
+      require_reaped_stream_guard_freshness || return 1
       # A complete immutable authority/baseline audit accepts each capability
       # before launch. During the stream, the monitor's authority-bound counter
       # is its causal attestation that another complete live sweep passed.
@@ -1996,6 +2065,7 @@ recovery_kubectl_stream_supervised() {
             return 1
           fi
         fi
+        require_reaped_stream_guard_freshness || return 1
         previous_observation_milliseconds="${guard_last_observation_milliseconds[$index]}"
         observation_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
         if ! current_progress="$(recovery_stream_guard_progress_value \
@@ -2004,6 +2074,7 @@ recovery_kubectl_stream_supervised() {
           stream_record_diagnostic "guard-progress-read:$index"
           return 1
         fi
+        require_reaped_stream_guard_freshness || return 1
         previous_progress="${guard_last_progress[$index]}"
         if ((current_progress < previous_progress)); then
           stream_record_diagnostic "guard-progress-regression:$index"
@@ -2014,6 +2085,7 @@ recovery_kubectl_stream_supervised() {
         fi
         guard_last_observation_milliseconds[index]="$observation_milliseconds"
       done
+      require_reaped_stream_guard_freshness || return 1
       current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
       for index in "${!guard_pids[@]}"; do
         if ((current_milliseconds - guard_last_progress_milliseconds[index] >=
@@ -2058,6 +2130,10 @@ recovery_kubectl_stream_supervised() {
         return 2
       fi
       [[ "$require_lease" == 1 ]] || return 0
+      observe_inactive_stream_guard_progress || {
+        supervised_stream_lease_failure_detail=lease-authority
+        return 1
+      }
       if [[ -n "$lease_authority_guard_index" ]]; then
         index="$lease_authority_guard_index"
         if ! recovery_stream_guard_process_is_healthy \
@@ -2070,6 +2146,10 @@ recovery_kubectl_stream_supervised() {
           supervised_stream_lease_failure_detail=lease-authority
           return 1
         fi
+        supervised_stream_guards_are_continuously_healthy || {
+          supervised_stream_lease_failure_detail=lease-authority
+          return 1
+        }
         return 0
       fi
       supervised_stream_guard_remaining_milliseconds >/dev/null || {
@@ -2105,6 +2185,7 @@ recovery_kubectl_stream_supervised() {
         supervised_stream_lease_failure_detail=lease-check
         return 1
       fi
+      require_reaped_stream_guard_freshness
     }
     supervised_stream_guard_has_cancellation_reserve() {
       [[ "${#guard_pids[@]}" != 0 ]] || return 0
@@ -2321,6 +2402,15 @@ os.execvp(sys.argv[3], sys.argv[3:])
     stream_start_identity=""
     rm -f -- "$stream_gate"
     stream_gate=""
+    stream_child_reaped=1
+    if [[ "$stream_status" != 0 ]]; then
+      # A failed command can never produce acceptable snapshot evidence. Keep
+      # its original status/cause instead of hiding it behind a later guard
+      # audit failure. The exact child/group has already been reaped above;
+      # parent checkpoint cleanup still owns rollback and monitor retirement.
+      stream_record_diagnostic command-exit
+      return "$stream_status"
+    fi
     stream_diagnostic_stage=post-audit
     if ! recovery_process_identity_is_live "$caller_pid" "$caller_start_identity"; then
       stream_record_diagnostic caller-identity
