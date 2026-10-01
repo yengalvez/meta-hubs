@@ -330,6 +330,7 @@ verification_section_harness_material() {
     reticulum)
       printf 'reticulum_db_credentials_sha256=%s\n' \
         "$(printf '%s' "$VERIFY_RETICULUM_TEST_DB_CREDENTIALS" | sha256_stream)"
+      printf 'reticulum_db_port=%s\n' "${PGPORT-5432}"
       declare -f require_command run_reticulum
       ;;
     composition) declare -f run_hcce_fixture run_composition ;;
@@ -673,6 +674,11 @@ run_spoke() {
 }
 
 run_reticulum() {
+  local test_db_port="${PGPORT-5432}"
+  if [[ ! "$test_db_port" =~ ^[1-9][0-9]{0,4}$ ]] || (( test_db_port > 65535 )); then
+    printf 'Reticulum test PostgreSQL port must be a canonical integer from 1 to 65535.\n' >&2
+    return 2
+  fi
   require_command mise
   (
     cd "$ROOT_DIR/hubs-cloud/community-edition/services/reticulum"
@@ -680,7 +686,7 @@ run_reticulum() {
     mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- env MIX_ENV=test mix format --check-formatted
     mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- env MIX_ENV=test mix compile --warnings-as-errors
     mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- \
-      env MIX_ENV=test DB_HOST=127.0.0.1 \
+      env MIX_ENV=test DB_HOST=127.0.0.1 PGPORT="$test_db_port" \
         DB_CREDENTIALS="$VERIFY_RETICULUM_TEST_DB_CREDENTIALS" mix test
   )
 }

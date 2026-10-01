@@ -1,5 +1,22 @@
 # Session Changelog
 
+## 2026-10-01 · Destino PostgreSQL propio para el gate Reticulum
+
+El puerto5432 del dueño está ocupado y no se usa/detiene. La alternativa de
+host127.0.0.2 no está asignada en macOS, startup falló y pg_ctl confirmó ausencia.
+Postgrex0.22.4 fijado ya soporta PGPORT: canary nativo a917b5 exit0, conexión
+SQL real/PID/data_directory/puerto propios y stop probado,600ms sin initdb.
+Primer oracle abortó por asumir0.22.3 en vez del lock, servidor también detenido;
+no es fallo de producto ni aceptación de cache por su versión mínima declarada.
+
+Solo driver/tests/docs root: puerto explícito/default, validación canónica,
+material de recibo Reticulum; no cambio a runtime/DB/schema/Cloud/Hubs. Rojo
+7c5fd9 falla en el binding ausente;907302/38872 exit0,29 casos normales (diez
+nuevos), aislamiento de la firma y seis rechazos antes de Mix. Syntax y
+ShellCheck finales PASS tras comentario SC2016 explicativo, sin replay29.
+No full/Reticulum completo/ciclos Kubernetes o publicación inferidos. Revisión
+primaria separada, no independiente. [Evidencia y uso](../DOC/fiabilidad-test-db-2026-10-01.md).
+
 ## 2026-10-01 — prepare exact private inputs for three isolated full cycles
 
 - A missing preparer mode is reproduced by f3feea exit1. Extend only the

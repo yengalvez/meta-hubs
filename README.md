@@ -77,6 +77,12 @@ Los dos ultimos comandos requieren el contexto de infraestructura correcto. El
 preflight exige un `BACKUP_DIR` fresco y explicito; no selecciona un backup
 "latest". No desplegar si falla.
 
+Reticulum usa solo `127.0.0.1` para su DB de tests. Para una instancia temporal
+propia, fijar `PGPORT` y `YENHUBS_RETICULUM_TEST_DB_CREDENTIALS`; el puerto se
+valida y forma parte del recibo de esa sección. El default sigue siendo5432 y
+el rol local de la plataforma. No usar ni detener una DB existente ajena para
+liberar ese puerto. [Procedimiento y evidencia](DOC/fiabilidad-test-db-2026-10-01.md).
+
 ## Backup
 
 Fijar antes `EXPECTED_KUBE_CONTEXT` y `EXPECTED_NAMESPACE_UID` como describe

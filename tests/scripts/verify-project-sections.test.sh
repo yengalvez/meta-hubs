@@ -23,6 +23,60 @@ fail_test() {
   exit 1
 }
 
+# shellcheck disable=SC2016 # Expand $1 only in the isolated Bash process.
+default_port_material="$(env -u PGPORT bash -c 'source "$1"; verification_section_harness_material reticulum' _ "$ROOT_DIR/scripts/verify-project.sh")"
+if printf '%s\n' "$default_port_material" | grep -Fxq 'reticulum_db_port=5432'; then
+  pass_test 'Reticulum receipt binds the default PostgreSQL port'
+else
+  fail_test 'Reticulum receipt binds the default PostgreSQL port'
+fi
+
+if (
+  PGPORT=65432
+  export PGPORT
+  before_ret="$(PGPORT=5432 verification_section_harness_sha256 reticulum)"
+  before_dialog="$(PGPORT=5432 verification_section_harness_sha256 dialog)"
+  after_ret="$(verification_section_harness_sha256 reticulum)"
+  after_dialog="$(verification_section_harness_sha256 dialog)"
+  [[ "$before_ret" != "$after_ret" && "$before_dialog" == "$after_dialog" ]]
+); then
+  pass_test 'a private PostgreSQL port invalidates only Reticulum harness evidence'
+else
+  fail_test 'a private PostgreSQL port invalidates only Reticulum harness evidence'
+fi
+
+for port_case in unset 65432; do
+  if (
+    if [[ "$port_case" == unset ]]; then unset PGPORT; expected_port=5432; else PGPORT="$port_case"; export PGPORT; expected_port="$port_case"; fi
+    mise() {
+      if [[ "$*" == *'mix test' ]]; then
+        [[ "$*" == *"PGPORT=$expected_port"* && "$*" == *'DB_HOST=127.0.0.1'* ]]
+      fi
+    }
+    run_reticulum
+  ); then
+    pass_test "Reticulum forwards the exact test port ($port_case)"
+  else
+    fail_test "Reticulum forwards the exact test port ($port_case)"
+  fi
+done
+
+for bad_port in '' 0 65536 05432 abc '5432 5433'; do
+  if (
+    PGPORT="$bad_port"
+    export PGPORT
+    mise() { return 97; }
+    set +e
+    run_reticulum >/dev/null 2>&1
+    result=$?
+    [[ "$result" == 2 ]]
+  ); then
+    pass_test 'invalid PostgreSQL port fails before any Mix stage'
+  else
+    fail_test 'invalid PostgreSQL port fails before any Mix stage'
+  fi
+done
+
 expected_sections=$'advisories\nstatic\nsecurity\nrecovery\nhubs\nbrowser-capacity\nh5\nhcce\nbot-orchestrator\ndialog\nphotomnemonic\ncoturn\nspoke\nreticulum\ncomposition'
 if [[ "$(printf '%s\n' "${VERIFY_FULL_SECTIONS[@]}")" == "$expected_sections" ]]; then
   pass_test 'section inventory is exact and ordered'

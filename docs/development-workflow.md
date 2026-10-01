@@ -150,6 +150,12 @@ Reglas de resolucion:
    ./scripts/verify-project.sh --finalize --evidence-dir <directorio>
    ```
 
+   El candidato final congelado exige `--full` una vez, reutilizando recibos
+   compatibles; no ejecutar antes el bloque normal duplicado. Para Reticulum,
+   el destino de tests sigue siendo loopback; `PGPORT` permite un puerto propio
+   y se liga a su evidencia. Crear/verificar/detener únicamente la instancia
+   temporal propia, no la DB existente del dueño. [Contrato](../DOC/fiabilidad-test-db-2026-10-01.md).
+
 8. Commit y push del subrepo.
 9. Construir mediante GitHub Actions.
 10. Desplegar por el flujo de `deployment/README.md`.
