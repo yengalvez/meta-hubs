@@ -1,5 +1,17 @@
 # Session Changelog
 
+## 2026-10-01 · Configuración Ecto de la DB privada de tests
+
+La sección estándar33991 falló exit1 al migrar: Ecto introduce5432 aunque el
+canary Postgrex directo use PGPORT. El sandbox bloqueó esa salida; stop propio
+true/PID25175 ausente. No consulta/pausa/diagnóstico en producción ni recibo
+aprobado. Se añade SOLO en `:test` el puerto a Repo/SessionLockRepo/session lock,
+con default y rechazo canónico iguales al driver; dev/prod/esquema intactos.
+da0b99 rojo8/8, e4012f verde8/8 Config.Reader, antes de SQL; formato/diff PASS.
+No repetir29 root sin delta ni presentar estas unidades como gate integral.
+Primera causa y siguientes gates/commit están en el plan canónico; revisión
+primaria dirigida separada, no independiente. [Caso](../DOC/fiabilidad-test-db-2026-10-01.md).
+
 ## 2026-10-01 · Destino PostgreSQL propio para el gate Reticulum
 
 El puerto5432 del dueño está ocupado y no se usa/detiene. La alternativa de

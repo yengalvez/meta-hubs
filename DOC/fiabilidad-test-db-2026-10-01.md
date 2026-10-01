@@ -6,10 +6,18 @@ existente del dueño. No es otra DB permanente, restore, perfil o backup.
 
 ## Mecanismo existente y cambio mínimo
 
-Reticulum ya fija `DB_HOST=127.0.0.1`; los dos Repos y el session lock no
-fijan puerto. Postgrex **0.22.4**, confirmado por `mix.lock`, fuente cacheada
-y app cargada, obtiene su default de `PGPORT`. No cambiar el core/config
-Reticulum, instalar PostgreSQL o añadir un runner general para este requisito.
+Reticulum ya fija `DB_HOST=127.0.0.1`. Postgrex **0.22.4**, confirmado por
+`mix.lock`, fuente cacheada y app cargada, obtiene su default de `PGPORT`
+solo si ningún caller proporciona `port`. El adapter Ecto fijado introduce
+5432 antes de Postgrex: el canary directo NO acreditaba los dos Repos.
+La sección estándar33991 reprodujo esa diferencia; el sandbox bloqueó su
+intento de conectar al5432 ajeno. Instancia propia detenida, sin consulta al
+servidor del dueño ni fallo de copia multimedia inferido.
+
+La reparación mínima añade el puerto canónico a los dos Repos y session lock
+solo en la rama `:test` de `config/runtime.exs`. Default5432/rol/host conservados;
+ramas dev/prod, esquema, plazos y permisos productivos intactos. No instalar
+PostgreSQL, cambiar la red ni añadir un runner general para este requisito.
 
 El driver root conserva ese mecanismo y default5432. Valida el puerto
 canónico1–65535 antes de Mix, lo pasa explícitamente y lo incluye en el
@@ -49,6 +57,15 @@ para probar si el comando funciona. Datos/credenciales de producción excluidos.
   invalidación Reticulum/compatibilidad Dialog, forwarding default/custom y
   seis puertos inválidos antes de Mix. Bash syntax/ShellCheck/diff finales
   PASS, sin repetir29 tras un comentario de lint. No mocks como SQL real.
+- 33991 exit1 REAL en la sección estándar: deps/formato/compile pasaron,
+  migración intentó5432 por el default Ecto; salida denegada por sandbox.
+  Summary terminalFAIL, section_exit1, stopped=true, PID propio25175 ausente;
+  scratch0700 `/private/tmp/yn-ret-full-ndUhKs`, logs0600,28.373s. No recibo
+  Reticulum aprobado ni causalidad histórica de multimedia inventada.
+- da0b99 exit2: ocho tests nuevos de `Config.Reader` fallan antes del cambio;
+  e4012f exit0:8/8 después. Default/custom se exigen en LAS TRES conexiones
+  y los seis puertos inválidos fallan al leer config, antes de abrir SQL.
+  Esto verifica configuración, no sustituye la sección completa con DB real.
 
 Revisión primaria separada, no independiente: valor cerrado antes de arithmetic,
 PGHOST no reemplaza DB_HOST explícito, credenciales no impresas, default CI
