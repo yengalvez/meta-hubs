@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 
 const MAX_LIST_BYTES = 16 * 1024 * 1024;
 const MAX_EVENT_BYTES = 4 * 1024 * 1024;
+const MAX_WATCH_STDERR_BYTES = 4096;
 const MAX_CONTRACT_BYTES = 128 * 1024;
 const MAX_BASELINE_BYTES = 2 * 1024 * 1024;
 const WATCH_TIMEOUT_SECONDS = 2;
@@ -95,6 +96,44 @@ function fail(code) {
 function diagnosticToken(value) {
   const text = String(value || "other");
   return /^[a-z][a-z0-9_-]{0,63}$/.test(text) ? text : "other";
+}
+
+function watchTransportHint(text) {
+  // Hints, never evidence or authority. Kubernetes messages may contain
+  // credentials, URLs or object bodies; retain only a closed vocabulary and
+  // never emit or persist the captured text. Unknown messages stay unknown.
+  const hints = new Set();
+  for (const line of text.split(/\r?\n/)) {
+    if (/^Unable to connect to the server:/.test(line)) {
+      if (/Client\.Timeout exceeded|net\/http:.*timeout|i\/o timeout|context deadline exceeded/.test(line)) hints.add("transport-timeout");
+      if (/^Unable to connect to the server: (?:unexpected )?EOF(?:\s|$)/.test(line)) hints.add("transport-eof");
+      if (/^Unable to connect to the server: (?:tls:|x509:)/.test(line)) hints.add("transport-tls");
+      if (/connection refused|connection reset by peer|no such host/.test(line)) hints.add("transport-connect");
+    }
+    if (/^Error from server \((?:Forbidden|Unauthorized)\):/.test(line)) hints.add("authorization");
+  }
+  return hints.size === 1 ? [...hints][0] : "other";
+}
+
+function reportWatchDiagnostic(error, write = text => process.stderr.write(text)) {
+  const value = error?.watchDiagnostic;
+  if (!value || typeof value !== "object") return;
+  const resource = ["deployments", "replicasets", "pods"].includes(value.resource)
+    ? value.resource : "other";
+  const code = Number.isInteger(value.exitCode) && value.exitCode >= 0 && value.exitCode <= 255
+    ? value.exitCode : "none";
+  const signal = ["none", "SIGTERM", "SIGKILL", "SIGINT", "SIGHUP", "SIGABRT", "SIGSEGV", "SIGPIPE"].includes(value.signal)
+    ? value.signal : "other";
+  const detail = ["other", "spawn", "deadline", "early-close", "before-stop", "stop-contract",
+    "event-invalid", "child-signal", "transport-timeout", "transport-eof", "transport-tls",
+    "transport-connect", "authorization"].includes(value.detail) ? value.detail : "other";
+  const elapsed = Number.isSafeInteger(value.elapsedMs) && value.elapsedMs >= 0 && value.elapsedMs <= 86400000
+    ? value.elapsedMs : "none";
+  write(`checkpoint_writer_watch_resource:${resource}\n` +
+    `checkpoint_writer_watch_exit:${code}\n` +
+    `checkpoint_writer_watch_signal:${signal}\n` +
+    `checkpoint_writer_watch_detail:${detail}\n` +
+    `checkpoint_writer_watch_elapsed_ms:${elapsed}\n`);
 }
 
 function object(value) {
@@ -2165,8 +2204,10 @@ async function startWatchSession(options) {
   const child = spawn(kubectl, [
     "--context", context, `--request-timeout=${requestTimeoutSeconds}s`,
     "get", "--raw", rawPath
-  ], { stdio: ["ignore", "pipe", "ignore"] });
+  ], { stdio: ["ignore", "pipe", "pipe"] });
   const startedAt = performance.now();
+  let stderrPrefix = Buffer.alloc(0);
+  let watchdogFired = false;
   let buffer = "";
   let latestVersion = resourceVersion;
   let streamError = null;
@@ -2187,6 +2228,27 @@ async function startWatchSession(options) {
     });
   });
   activeChildren.add(child);
+  child.stderr.on("data", chunk => {
+    // Always drain, including excess bytes, to avoid a blocked kubectl peer.
+    const remaining = MAX_WATCH_STDERR_BYTES - stderrPrefix.length;
+    if (remaining > 0) stderrPrefix = Buffer.concat([stderrPrefix, chunk.subarray(0, remaining)]);
+  });
+  const annotateFailure = (error, exit = {}, detail) => {
+    error.watchDiagnostic = {
+      resource, exitCode: exit.code ?? null, signal: exit.signal || "none",
+      detail: detail || (watchdogFired ? "deadline" : exit.signal ? "child-signal"
+        : watchTransportHint(stderrPrefix.toString("utf8"))),
+      elapsedMs: Math.floor(performance.now() - startedAt)
+    };
+    // No raw stderr may be attached to the error, logs or failure marker.
+    stderrPrefix = Buffer.alloc(0);
+    return error;
+  };
+  const rejectWatch = (code, exit, detail) => {
+    const error = new Error(code);
+    error.code = code;
+    throw annotateFailure(error, exit, detail);
+  };
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", chunk => {
     if (streamError) return;
@@ -2215,10 +2277,13 @@ async function startWatchSession(options) {
   });
   await spawned.catch(() => {
     activeChildren.delete(child);
-    fail("watch_spawn");
+    rejectWatch("watch_spawn", {}, "spawn");
   });
   if (!closeObserved) {
-    watchdog = setTimeout(() => child.kill("SIGKILL"), (timeoutSeconds + 8) * 1000);
+    watchdog = setTimeout(() => {
+      watchdogFired = true;
+      child.kill("SIGKILL");
+    }, (timeoutSeconds + 8) * 1000);
   }
 
   const finish = ({ intentionalStop = false } = {}) => {
@@ -2244,7 +2309,7 @@ async function startWatchSession(options) {
           streamError = error;
         }
       }
-      if (streamError) throw streamError;
+      if (streamError) throw annotateFailure(streamError, exit, "event-invalid");
       const fixtureImmediateBookmark = allowFixtureImmediateBookmark &&
         process.env.YENHUBS_RECOVERY_TEST_MODE === "local-fixture" &&
         context === "fixture-context" && sawBookmark;
@@ -2252,18 +2317,18 @@ async function startWatchSession(options) {
         ? { resourceVersion: latestVersion, needsRefresh: !sawBookmark }
         : latestVersion;
       if (stopSent) {
-        if (exit.signal !== "SIGTERM") fail("watch_stop_contract");
+        if (exit.signal !== "SIGTERM") rejectWatch("watch_stop_contract", exit, "stop-contract");
         return watchResult();
       }
       if (intentionalStop) {
-        if (!fixtureImmediateBookmark) fail("watch_not_live");
+        if (!fixtureImmediateBookmark) rejectWatch("watch_not_live", exit, "before-stop");
         return watchResult();
       }
-      if (exit.code !== 0 || exit.signal) fail("watch_terminated");
+      if (exit.code !== 0 || exit.signal) rejectWatch("watch_terminated", exit);
       if (
         performance.now() - startedAt < timeoutSeconds * 750 &&
         !fixtureImmediateBookmark
-      ) fail("watch_closed");
+      ) rejectWatch("watch_closed", exit, "early-close");
       return watchResult();
     })();
     return finalPromise;
@@ -3190,6 +3255,7 @@ try {
       ? error.code
       : "other";
     process.stderr.write(`checkpoint_writer_monitor_code:${safeCode}\n`);
+    reportWatchDiagnostic(error);
   }
   if (process.env.YENHUBS_WATCH_TEST_DEBUG === "1") {
     process.stderr.write(`checkpoint_writer_monitor_error:${String(error?.code || "failed")}\n`);

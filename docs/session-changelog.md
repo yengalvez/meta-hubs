@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-10-01 — closed Watch process diagnostics, local reliability lane
+
+- Reproduced the missing cause/resource/child-exit diagnostics with the actual
+  Watch-session function and real local peer processes: nine red assertions,
+  healthy control green. Historical DigitalOcean closure remains unattributed.
+- Bound and drain stderr in memory; only allowlisted hints, resource, child
+  status/signal and elapsed milliseconds reach diagnostics. Never persist API
+  payloads, RVs, executable paths or raw stderr. Validation errors outrank the
+  resulting termination; unknown/mixed messages stay unknown.
+- Keep exact failure codes, Watch deadlines, event guards and publication
+  rejection. No relist, retry, authority widening or production change. New
+  directed regressions are part of the existing security section; not a full
+  acceptance or a proof of safe abort recovery after every failure.
+
 ## 2026-09-30 — local media-checkpoint supervisor repair
 
 - Reproduced false post-stream rejection under serial audit cost, missing final

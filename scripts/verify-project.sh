@@ -552,6 +552,7 @@ run_security() {
   node --test "$ROOT_DIR/tests/scripts/durable-runner-quiescence-monitor.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/checkpoint-activation-receipt.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/checkpoint-transport-failure.test.mjs"
+  node --test "$ROOT_DIR/tests/scripts/checkpoint-writer-watch-exit.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/recovery-kubectl-fixture-contract.test.mjs" "$ROOT_DIR/tests/scripts/stream-prelaunch-alignment.test.mjs" "$ROOT_DIR/tests/scripts/recovery-stream-diagnostics.test.mjs" "$ROOT_DIR/tests/scripts/pgsql-source-sweep.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/rpm-catalog.test.mjs" "$ROOT_DIR/tests/scripts/rpm-catalog-checkpoint.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/product-modules-parser.test.mjs" "$ROOT_DIR/tests/scripts/product-modules-live.test.mjs"
