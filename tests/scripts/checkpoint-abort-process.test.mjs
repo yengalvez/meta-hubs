@@ -170,3 +170,25 @@ for (const kind of ["uid", "image"]) {
     assert.equal(state.writes.some(write => write.label.startsWith("resume:")), false);
   });
 }
+
+for (const [kind, expected] of [
+  ["uid", "lease_identity_changed"],
+  ["transitions", "foreign_lease_lineage"],
+  ["acquire-time", "foreign_lease_lineage"]
+]) {
+  test(`any observed Lease ${kind} drift fails closed on the same freshness observation`, async t => {
+    const f = await fixture(t);
+    // The second observation after the fence is owned and fresh, but has
+    // foreign identity/lineage. The following GET returns the original.
+    // Mixing lineage from one GET with freshness from another must not grant
+    // authority or let subsequent observations erase the observed drift.
+    f.mutate(state => { state.leaseReadFault = { after: "fence", observation: 2, kind }; });
+    const failed = await f.invoke("execute"), state = f.read("peer.json");
+    assert.ok(state.leaseReadFault.fired);
+    assert.equal(failed.code, 1); assert.equal(failed.result.code, expected);
+    assert.ok(state.lock);
+    assert.equal(state.writes.some(write => write.label.startsWith("resume:")), false);
+    assert.equal(state.writes.some(write => write.label === "delete:lock" || write.label === "lease-release"), false);
+    assert.notEqual(f.read("plan.json.journal.json").stage, "recovered-abort-only");
+  });
+}

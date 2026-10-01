@@ -1,5 +1,20 @@
 # Session Changelog
 
+## 2026-10-01 — coherent Lease freshness and lineage observations
+
+- Three red process regressions show that an owned/fresh Lease with a foreign
+  UID, transition count or acquire time could be accepted by combining two
+  GET responses. No historical DigitalOcean cause is attributed to this test.
+- Return the exact observation already validated by assertFreshForMutation,
+  and check the recovery lineage on that same object. Each later check still
+  reads anew; no authority crosses a wait or mutation. Validation predicates,
+  budgets, CAS, before/after guards and permanent authority revocation remain.
+- Directed Lease/coordinator/process tests pass 107/107. The identical healthy
+  simulated peer uses 568 serial calls rather than 701: Lease GETs 292 to 159,
+  with the same 23 Lease writes, 143 Deployment GETs and 12 other mutations.
+  This is not a DigitalOcean latency measurement or complete Goal acceptance.
+- No production change, full gate, remote build, push or base integration.
+
 ## 2026-10-01 — opt-in native local data restoration canary
 
 - Restore the already accepted historical 20260928-090510 checkpoint into

@@ -125,7 +125,22 @@ async function run() {
     if (fault?.type === "lost-ack") throw new Error("fixture_response_eof");
   };
   const leaseClient = {
-    get() { count("lease:get"); available(); return clone(state.lease); },
+    get() {
+      count("lease:get"); available();
+      const observed = clone(state.lease), fault = state.leaseReadFault;
+      if (fault && !fault.fired && state.writes.some(write => write.label === fault.after)) {
+        fault.reads = (fault.reads || 0) + 1;
+        if (fault.reads === fault.observation) {
+          fault.fired = true;
+          if (fault.kind === "uid") observed.metadata.uid = "foreign-observed-lease";
+          else if (fault.kind === "transitions") observed.spec.leaseTransitions++;
+          else if (fault.kind === "acquire-time") {
+            observed.spec.acquireTime = new Date(state.time + 1000).toISOString().replace(/(\.\d{3})Z$/u, "$1000Z");
+          } else throw new Error("unexpected_lease_read_fault");
+        }
+      }
+      return observed;
+    },
     create() { throw new Error("unexpected_lease_create"); },
     replace(document) {
       count("lease:replace"); available();
