@@ -1,5 +1,21 @@
 # Session Changelog
 
+## 2026-10-01 — actual module channel reaches the mounted chat hook
+
+- Two normal AVA cases use actual Phoenix dispatch, HubChannel and mounted
+  React hook: valid reply/action notice, plus a held reply across OFF→ON.
+  Epoch advances, old AbortSignal aborts, OFF cannot send, no old reply/notice
+  appears after ON and a new send remains valid. No product-source repair.
+- 48227 exits0,2/2;50422 exits0 with semantic-equivalent format/ESLint.
+  Separate primary review strengthens only the positive action-notice oracle;
+  77722 exits0,1/1 with final format/lint. Do not replay compatible negative or
+  three old fake-channel cases. No independent audit is claimed.
+- Private0700 scratch/logs0600, clean environment/deny-network, pinned existing
+  F dependency cache read-only after equality; no install, socket connect/join,
+  provider or live effect. Parent sendingDisabled and request transport are
+  seams, not full UIRoot, SQL→HTTP, browser, STOP or complete-cycle acceptance.
+  [Evidence](../DOC/fiabilidad-ui-canal-2026-10-01.md). Full Goal remains ACTIVE.
+
 ## 2026-10-01 — cached app config cannot advertise stale runtime ON
 
 - A new native canary reproduces the mismatch: committed AI OFF/backend event

@@ -71,6 +71,22 @@ Keep bots ON during the malformed-chat check so its dependency cannot hide an
 incorrect truthy conversion; cover absent bots separately. Do not replay the
 other accepted cases after a test-only refinement.
 
+For the distinct mounted-client boundary, the two ordinary AVA cases in
+`hubs/test/unit/react-components/use-bot-chat-request.test.js` select these
+exact titles: `actual Phoenix modules control delivers in mounted hook` and
+`actual Phoenix modules OFF aborts held reply before re-enable`. They use
+actual HubChannel/Phoenix dispatch plus the mounted hook, never connecting or
+joining the socket. The positive proves reply/action-notice delivery; the
+negative holds a synthetic reply through OFF→ON, requires abort/epoch changes,
+no old reply/notice and a valid new send. The parent sendingDisabled prop and
+request transport remain explicit seams: NOT full UIRoot/SQL→HTTP/Presence or
+browser/movement acceptance. Normal AVA already includes this file; do not
+replay the three pre-existing fake-channel tests for an unchanged boundary.
+On this verified host, the existing F Node dependency cache can resolve via
+NODE_PATH only after package/lock/Babel/shim equality; use private HOME/TMP,
+`--no-cache`, BABEL_DISABLE_CACHE=1 and OS deny-network. Do not install modules
+or create a shared node_modules symlink. See [terminal evidence and limits](../../DOC/fiabilidad-ui-canal-2026-10-01.md).
+
 ## Isolation and ownership
 
 The runner checks cache lock/config against this source, copies tracked current

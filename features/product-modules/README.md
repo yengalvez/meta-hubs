@@ -67,6 +67,16 @@ and page-config serialization to reproduce stale ON before the fix and check
 immediate OFF after it. See the candidate's [runtime recipe](../../tests/runtime/README.md).
 Browser/UI cache, complete profiles, STOP and release acceptance stay separate.
 
+The distinct normal client regressions connect actual Phoenix message dispatch
+and HubChannel capability epochs to a mounted useBotChatRequest hook. OFF
+aborts a held request; OFF→ON cannot deliver its old reply/action notice, but
+a new request still works. A positive action-notice control keeps that oracle
+live. Only test cases change; the socket never connects/joins, transport and
+parent sendingDisabled remain explicit seams. This does not prove the full
+UIRoot, SQL-to-network propagation or movement/STOP. Keep these cases when
+merging upstream changes to HubChannel or the hook's cancellation identity.
+See [local evidence](../../DOC/fiabilidad-ui-canal-2026-10-01.md).
+
 ## Provider contract
 
 AI uses the requested `gpt-6-luna` with Responses `reasoning.effort: high`, `store: false`, bounded total deadline and token output, input/output moderation, pseudonymous safety IDs and reply-only JSON schema. The model has no tools/action authority. Movement derives only from validated exact human commands and server checks. No hidden deterministic response is presented as working AI. `configured_not_probed` is configuration evidence, not a successful provider request. Actual credential access, response quality and latency require a separately recorded functional check before selling AI as accepted.
