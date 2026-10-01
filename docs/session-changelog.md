@@ -1,5 +1,26 @@
 # Session Changelog
 
+## 2026-10-01 — opt-in native local data restoration canary
+
+- Restore the already accepted historical 20260928-090510 checkpoint into
+  an owned private PostgreSQL 14.23 cluster, Unix socket only/no TCP, scrubbed
+  PG environment and private logs. Source is PostgreSQL 12.19: full SQL text
+  equality across majors is not asserted. Its strict database contract matches
+  after using en_US.UTF-8 rather than C; every row of all 347 COPY tables matches
+  as a multiset, preserving duplicate counts. All 61 blob/metadata pairs restore.
+- Three native DB/media backup/restore rounds preserve the critical inventory,
+  full same-major logical dumps and all media bytes. Truncated gzip, actually
+  absent media and actually changed metadata are rejected. Source hashes remain
+  unchanged; only the owned server is stopped and its PID absence verified.
+- Nine local canary regressions include connection isolation, nonlocal psql
+  rejection, COPY duplicate/value completeness and a red-then-green function
+  body header that must not disappear during dump comparison. Unit coverage is
+  included in security local/CI; the real-data canary remains explicit/opt-in.
+- These are data roundtrips on a historical dataset, NOT three complete
+  Kubernetes backup/deploy/rollback cycles, productive PG12 runtime acceptance,
+  cold/warm performance certification or DigitalOcean transport validation.
+  No dependency installation, public-data mutation, new full gate or rollout.
+
 ## 2026-10-01 — read-only source preparation for native restoration
 
 - Select the already accepted complete 20260928-090510 checkpoint from B,
