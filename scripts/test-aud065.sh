@@ -21,6 +21,7 @@ node "$ROOT_DIR/tests/scripts/prepare-process-local-new-values-from-keychain.tes
 node "$ROOT_DIR/tests/scripts/complete-process-local-old-values.test.mjs"
 node "$ROOT_DIR/tests/scripts/manage-process-local-candidate-values-from-keychain.test.mjs"
 node "$ROOT_DIR/tests/scripts/verify-runtime-image-build-provenance.test.mjs"
+node --test --test-concurrency=1 "$ROOT_DIR/hubs-cloud/.github/scripts/runtime-image-build-receipt.test.mjs" "$ROOT_DIR/tests/scripts/runtime-image-build-workflow.test.mjs"
 node "$ROOT_DIR/tests/scripts/with-private-docker-config.test.mjs"
 node "$ROOT_DIR/tests/scripts/prepare-process-local-rotation.test.mjs"
 node "$ROOT_DIR/tests/scripts/materialize-process-local-replacements.test.mjs"

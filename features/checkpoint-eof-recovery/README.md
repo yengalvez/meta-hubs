@@ -33,6 +33,17 @@ The tool uses canonical helper/Lease/fence validators and UID/resourceVersion pr
 
 ## Verification and rollback
 
+Representative copy/restore/deploy/rollback acceptance requires actual official
+runtime images, not the historical PAUSE service aliases. Cloud's manual
+`runtime-images-build-push.yml` produces the existing consumer's coordinated
+Reticulum/parent/runner receipt and four separate Sigstore bundles from one
+clean `master` SHA/run/attempt. Its source guard and cross-repository contract
+tests are registered in Cloud CI and root AUD-065 gates. The receipt is public
+metadata, not a checkpoint or restore authority; local unsigned fixtures prove
+only shape/wiring. A real successful hosted run, integrated-root provenance
+verification and isolated full cycles remain mandatory. No guard, checkpoint
+format, recovery deadline or runtime is changed by this producer.
+
 Before the local kubectl child is allowed through its private gate, a purely
 temporal guard misalignment may be realigned under the original startup
 deadline. Affected monitors must publish a new causal counter increment and

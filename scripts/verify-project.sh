@@ -112,6 +112,7 @@ INPUTS
       ;;
     security)
       printf 'root\t.\ncloud\tcommunity-edition\n'
+      printf 'cloud\t.github/scripts/runtime-image-build-receipt.mjs\ncloud\t.github/scripts/runtime-image-build-receipt.test.mjs\ncloud\t.github/workflows/runtime-images-build-push.yml\n'
       ;;
     recovery | h5)
       cat <<'INPUTS'
@@ -126,6 +127,9 @@ cloud	community-edition/input-values.ci.yaml
 cloud	community-edition/package.json
 cloud	community-edition/package-lock.json
 cloud	community-edition/services/bot-orchestrator/kubernetes-runner-manager.js
+cloud	.github/scripts/runtime-image-build-receipt.mjs
+cloud	.github/scripts/runtime-image-build-receipt.test.mjs
+cloud	.github/workflows/runtime-images-build-push.yml
 INPUTS
       ;;
     hubs)

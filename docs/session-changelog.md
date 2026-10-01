@@ -1,5 +1,22 @@
 # Session Changelog
 
+## 2026-10-01 — restore the missing coordinated runtime build producer
+
+- The existing exact-source provenance consumer required a Cloud workflow
+  absent locally and on remote master. A new existence regression fails
+  precisely before the local repair; no claim about historical media failures.
+- A manual single-job master/source-bound producer builds Reticulum, parent
+  and ghost runner AMD64, signs the receipt plus three OCI subjects, and emits
+  only one complete attempt-bound five-file set. Existing consumer trust,
+  recovery guard/deadline, Dockerfiles and generated contracts stay unchanged.
+- 83592 exits0,7/7 new producer/CLI/YAML/consumer-format checks. Signatures in
+  the format canary are explicitly unsigned fixtures, not hosted provenance.
+  Separate primary review adds exact producer inputs to receipt closures;
+  c62530 exits0,1/1 new closure/CI guard without replaying the seven tests.
+- No push/build/download, VM, install, production or full-cycle acceptance;
+  full/integration/real attestations and the whole Goal still remain open.
+  Evidence: [producer and limits](../DOC/fiabilidad-build-runtime-2026-10-01.md).
+
 ## 2026-10-01 — actual module channel reaches the mounted chat hook
 
 - Two normal AVA cases use actual Phoenix dispatch, HubChannel and mounted

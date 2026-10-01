@@ -719,6 +719,22 @@ files: the canonical receipt JSON, its receipt-attestation bundle, and one OCI
 bundle for each of Reticulum, parent and runner. After checkpoint1, complete OLD
 only through those five artifacts; never type or pass an image digest:
 
+The producer is Cloud `.github/workflows/runtime-images-build-push.yml`, a manual
+single-job build from the exact integrated `master` SHA. It rejects a different
+repository/id/ref/workflow SHA or dirty checkout before registry login. All three
+real Dockerfiles build `linux/amd64`; four pinned `actions/attest` steps sign the
+receipt and three OCI subjects in that same run/attempt. This is not an ARM image
+promise. Neither the two-image bot workflow nor an arbitrary custom build is an
+accepted substitute. Local producer tests do not prove a successful hosted build
+or signatures: require its real terminal success and the existing provenance
+verifier, without changing the verifier's integrated-root source trust.
+
+Download only the complete `runtime-image-build-<runId>-<runAttempt>` artifact.
+Its five names are the paths below. Preserve `receipt.json` unchanged, including
+its basename, after attestation; do not mix runs/attempts or use a partial set.
+No dispatch is permitted by merely reading this preparation recipe: first meet
+the candidate's full/integration, authority and relevant cost/target gates.
+
 ```bash
 export AUD065_BUILD_ARTIFACTS='/absolute/private/runtime-image-build'
 export AUD065_BUILD_RECEIPT="$AUD065_BUILD_ARTIFACTS/receipt.json"
