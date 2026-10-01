@@ -165,6 +165,12 @@ Reglas de resolucion:
    rechaza la sección. Cambiar el helper común invalida sus recibos: renovar
    los que indique el verificador, sin relabelar la evidencia anterior.
 
+   Exportar `BASE_ASSETS_PATH` y `RETICULUM_SERVER` para compilar Hubs/Admin.
+   Su recibo liga presencia y hash de ambos valores, sin imprimirlos. El driver
+   los aísla únicamente de `npm test`, que ejecuta Node sin los globals de
+   Webpack, y conserva sus valores para ambos builds y el entorno padre.
+   Cambiar cualquiera invalida Hubs, no los recibos de Dialog/Reticulum.
+
 8. Commit y push del subrepo.
 9. Construir mediante GitHub Actions.
 10. Desplegar por el flujo de `deployment/README.md`.

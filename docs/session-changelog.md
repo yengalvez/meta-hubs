@@ -1,5 +1,20 @@
 # Session Changelog
 
+## 2026-10-02 · Entorno de unidades Hubs separado del build
+
+39606 cerró static/advisories/Reticulum exit0 y DB propia detenida; Hubs falló
+al importar dos archivos bajo las variables de Webpack:240PASS/dos excepciones.
+78204 prueba SOLO sus seis unidades reales con las variables ausentes/red
+denegada, sin source nuevo. Delta SOLO root driver/tests/docs: dos subshells
+para unidades, los valores de ambos builds y del padre conservados; firma
+Hubs ligada a presencia/hash de ambos inputs, no a valores impresos.
+cea20a rojo2/6→715955 verde6/6;27b17c rojo2/2→64408 verde2/2, Bash3.2/5.3.
+Los controles observan llamadas/fallos y la compatibilidad Dialog/Reticulum;
+no son builds reales ni una aceptación general. Registro normal security.
+Revisión primaria dirigida separada, no independiente. Congelar y renovar
+solo lo caducado según el verificador; ningún nuevo backup, VM, push/build
+remoto, publicación o modificación productiva. [Caso](../DOC/fiabilidad-verificador-2026-10-01.md).
+
 ## 2026-10-01 · Consulta de evidencias rápida y hashes fail-closed
 
 69650 agotó120s solo al consultar recibos;67613 inventario nativo271.307s,

@@ -360,7 +360,15 @@ verification_section_harness_material() {
     static) declare -f require_command run_static ;;
     security) declare -f run_security ;;
     recovery) declare -f run_recovery ;;
-    hubs) declare -f run_hubs ;;
+    hubs)
+      printf 'hubs_base_assets_path_set=%s\n' "${BASE_ASSETS_PATH+x}"
+      printf 'hubs_base_assets_path_sha256=%s\n' \
+        "$(printf '%s' "${BASE_ASSETS_PATH-}" | sha256_stream)"
+      printf 'hubs_reticulum_server_set=%s\n' "${RETICULUM_SERVER+x}"
+      printf 'hubs_reticulum_server_sha256=%s\n' \
+        "$(printf '%s' "${RETICULUM_SERVER-}" | sha256_stream)"
+      declare -f run_hubs
+      ;;
     browser-capacity) declare -f run_browser_capacity ;;
     h5) declare -f run_h5 ;;
     hcce) declare -f run_hcce_fixture run_hcce ;;
@@ -617,6 +625,7 @@ run_security() {
   node --test "$ROOT_DIR/tests/scripts/product-modules-parser.test.mjs" "$ROOT_DIR/tests/scripts/product-modules-live.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/prepare-staging-values.test.mjs"
   bash "$ROOT_DIR/tests/scripts/verify-project-sections.test.sh"
+  node --test "$ROOT_DIR/tests/scripts/verification-hubs-build-env.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/verification-input-batch.test.mjs"
   "$ROOT_DIR/tests/scripts/security-gates.test.sh"
   "$ROOT_DIR/scripts/test-aud065.sh"
@@ -630,11 +639,19 @@ run_hubs() {
   (
     cd "$ROOT_DIR/hubs"
     npm ci
-    npm test
+    # Node unit tests do not provide Webpack's __webpack_public_path__.
+    # Preserve deployment variables for installation, builds and the caller.
+    (
+      unset BASE_ASSETS_PATH RETICULUM_SERVER
+      npm test
+    )
     npm run build
     cd admin
     npm ci --legacy-peer-deps
-    npm test
+    (
+      unset BASE_ASSETS_PATH RETICULUM_SERVER
+      npm test
+    )
     npm run build
   )
 }

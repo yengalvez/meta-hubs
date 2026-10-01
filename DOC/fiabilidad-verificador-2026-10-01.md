@@ -124,3 +124,35 @@ del marcador. La ruta failed conserva la ubicación real del log publicado.
 Son dos fixtures dirigidas del writer, no una prueba de discos defectuosos ni
 una suite repetida. Los17+38 previos se conservan; candidato/recibos finales y
 controles positivos reales tras esta guarda quedan en PLAN.
+
+## Separar tests Node y build Webpack · 02/10/2026
+
+39606 renovó static/advisories/Reticulum con exit0, pero Hubs terminó1:
+240 unidades pasaron y dos archivos murieron al importar configs.js porque
+BASE_ASSETS_PATH activo intenta asignar `__webpack_public_path__`, inexistente
+en Node. No falló otra copia multimedia ni llegó a compilar/Admin. La DB propia
+de Reticulum quedó detenida antes de empezar Hubs; producción no cambió.
+
+78204 exit0 demuestra SOLO los dos archivos implicados: seis unidades reales
+con ambas variables ausentes, red denegada y fuente d3f4989 limpia,2.433s.
+El driver conserva BASE_ASSETS_PATH/RETICULUM_SERVER en instalación, ambos
+builds y el padre; las quita únicamente en dos subshells de `npm test`.
+No se modifica configs.js, el shim, los tests Hubs ni sus oráculos.
+
+Regresión normal `verification-hubs-build-env.test.mjs`: cea20a rojo2/6;
+715955 verde6/6 en Bash3.2/5.3. Traza exacta de seis llamadas y del padre,
+ausencia/presencia, y fallos de unidad Hubs/Admin que impiden el build posterior.
+El npm de esas fixtures es un doble; no acredita compilación ni UI real.
+
+27b17c rojo2/2 también demuestra que cambiar las dos variables no cambiaba
+la firma del recibo Hubs. Ahora liga presencia y SHA256 de cada una, distingue
+unset de vacío y no imprime valores.41e49d/64408 verde2/2 acredita invalidación
+Hubs y compatibilidad Dialog/Reticulum. Los seis controles previos no se
+repitieron por este cambio exclusivo de firma. Los ocho pertenecen al gate
+security normal; no se crea otro coordinador ni se debilitan cleanup/guardas.
+
+Revisión primaria dirigida separada, no independiente: builds conservan inputs,
+solo unidades aislan Webpack, las dos fallas no son ignoradas por el caller,
+firma incluye el entorno y los otros servicios conservan su evidencia.
+Gates cortos, commit, secciones caducadas y full exacto posterior en PLAN;
+estos controles no aceptan el candidato integral ni el objetivo completo.
