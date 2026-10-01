@@ -12,7 +12,10 @@ Se rechazan explícitamente esos errores antes/después/finalize;45992 exit0,
 17 nuevas+38 previas, ShellCheck PASS.74542 inventario11.393s, ocho closures
 intactas byte-equivalentes; todos los recibos ahora pendientes correctamente.
 No heredar74742 ni aceptar dirty/full/SLO/ciclos por esa medición. Sin app/DB,
-VM, build o efecto productivo. [Método y límites](../DOC/fiabilidad-verificador-2026-10-01.md).
+VM, build o efecto productivo.40956 finalize NORMAL9ea7e29 limpio:10.978s,
+exit1 esperado/15pendientes. Dos fixtures adicionales3358be reproducen falsa
+aceptación del writer;4a497e verde2/2: log/receipt/readback deben pasar antes
+de SECTION PASS. [Método y límites](../DOC/fiabilidad-verificador-2026-10-01.md).
 
 ## 2026-10-01 · Verificación fail-closed, Bash real y sandbox solo Mix
 

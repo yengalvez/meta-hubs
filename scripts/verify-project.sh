@@ -825,10 +825,20 @@ run_recorded_section() {
   fi
   if [[ "$status" == 0 ]]; then
     pass_log="$section_dir/$input_sha.log"
-    mv "$log_path" "$pass_log"
-    write_pass_receipt "$section" "$input_sha" "$pass_log" "$started" "$finished"
-    printf 'SECTION PASS: %s\n' "$section"
-    return 0
+    if ! mv "$log_path" "$pass_log"; then
+      printf 'Cannot publish verification log for %s.\n' "$section" >&2
+      status=1
+    else
+      log_path="$pass_log"
+      if ! write_pass_receipt "$section" "$input_sha" "$pass_log" "$started" "$finished" ||
+         ! receipt_is_current "$section" "$receipt" "$input_sha"; then
+        printf 'Cannot publish exact current verification receipt for %s.\n' "$section" >&2
+        status=1
+      else
+        printf 'SECTION PASS: %s\n' "$section"
+        return 0
+      fi
+    fi
   fi
   printf 'SECTION FAIL: %s (exit %s; log %s)\n' "$section" "$status" "$log_path" >&2
   return 1

@@ -88,6 +88,7 @@ poder inspeccionar procesos. [Aceptación fail-closed](DOC/fiabilidad-verificado
 Las huellas se calculan por lotes acotados sin cambiar el material de entrada;
 un fallo de lectura impide reutilizar o emitir un recibo. La mejora de metadata
 no sustituye el `--full` final ni las comprobaciones reales de recuperación.
+`SECTION PASS` exige también releer y validar el recibo que acaba de escribirse.
 
 ## Backup
 

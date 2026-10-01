@@ -111,3 +111,16 @@ y `cache-inventory-batch`, fuente congelada y renovación posterior en PLAN.
 La mejora demostrada es SOLO consulta de evidencias local, no tiempo de
 backup/restore/deploy, preflight productivo completo, red/VM fría o tres ciclos
 aceptados. Revisión primaria dirigida separada, no independiente. Goal abierto.
+
+40956 ejecutó el finalizador NORMAL sobre9ea7e29 limpio:exit1 esperado,
+10.978s y exactamente15 pendientes. No repetir el inventario lento; el algoritmo
+no cambió los ocho hashes anteriores, pero el harness común sí cambió.
+
+En la misma frontera de publicación se reprodujeron dos retornos falsos:
+3358be rojo2/2, el writer fallaba o decía éxito con evidencia inválida y aun así
+el caller imprimía SECTION PASS.4a497e verde2/2 más ShellCheck/diff: mover el
+log, escribir el recibo y releerlo mediante el guard canónico deben pasar ANTES
+del marcador. La ruta failed conserva la ubicación real del log publicado.
+Son dos fixtures dirigidas del writer, no una prueba de discos defectuosos ni
+una suite repetida. Los17+38 previos se conservan; candidato/recibos finales y
+controles positivos reales tras esta guarda quedan en PLAN.

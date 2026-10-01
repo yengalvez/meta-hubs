@@ -260,3 +260,24 @@ for (const boundary of ["before receipt reuse", "post-run fingerprint", "finaliz
     assert.equal(result.status, 0, result.stderr);
   });
 }
+
+for (const writer of ["fails", "returns success with invalid evidence"]) {
+  test(`a receipt writer that ${writer} cannot publish SECTION PASS`, t => {
+    const directory = fixture(t);
+    mkdirSync(join(directory, "evidence"), { mode: 0o700 });
+    const result = fingerprint(directory, "bash", String.raw`
+      VERIFY_EVIDENCE_DIR="$ROOT_DIR/evidence"
+      verification_section_input_sha256() { printf '%064d\n' 0; }
+      receipt_is_current() { return 1; }
+      run_section_in_fresh_shell() { return 0; }
+      known_verification_processes_are_absent() { return 0; }
+      write_pass_receipt() {
+        if [[ "${writer}" == fails ]]; then return 97; fi
+        printf 'invalid\n' >"$ROOT_DIR/evidence/invalid"
+      }
+      if run_recorded_section dialog; then exit 98; else exit 0; fi
+    `, false);
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /SECTION PASS/);
+  });
+}
