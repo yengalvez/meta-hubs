@@ -1,5 +1,20 @@
 # Session Changelog
 
+## 2026-10-01 — measured local recovery harness and closed opt-in phase metrics
+
+- One existing durable/stable checkpoint case passes 48/48, including complete
+  publication and 13 hashes, on an unchanged clean candidate. Wall time is
+  438.777 seconds; the first 45 checks consume 15.759 seconds. Its simulated
+  API receives 12,206 calls, with 2,178 Watch requests. These are local test
+  costs, not DigitalOcean backup speed or full Goal acceptance.
+- Five red assertions show successful command capture hides phase metrics.
+  A test-only opt-in profile now emits only the closed existing checkpoint
+  timing grammar, with bounded counters and allowlisted phases/results. No
+  private output, paths, extra fields or control characters are echoed.
+- Preserve LAST_OUTPUT, regex match state, PASS/FAIL/status oracles and the
+  default quiet mode. Ten directed regressions are included in local/CI
+  security. No production code, timeout, monitor or backup input is changed.
+
 ## 2026-10-01 — Lease CAS observations and ACKs bound to durable lineage
 
 - Ten red process probes expose ignored UID drift, renewal writes after

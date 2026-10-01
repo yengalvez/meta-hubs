@@ -4,6 +4,8 @@ set -euo pipefail
 umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/recovery/lib/harness-profile.sh
+source "$ROOT_DIR/tests/recovery/lib/harness-profile.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yenhubs-recovery-tests.XXXXXX")"
 TMP_DIR="$(cd "$TMP_DIR" && pwd -P)"
 cleanup_tmp() {
@@ -44,6 +46,7 @@ fail() { FAIL_COUNT=$((FAIL_COUNT + 1)); printf 'not ok %s - %s\n%s\n' "$((PASS_
 expect_success() {
   local name="$1"; shift
   if LAST_OUTPUT="$("$@" 2>&1)"; then pass "$name"; else fail "$name" "$LAST_OUTPUT"; fi
+  recovery_test_profile_checkpoint_timing "$LAST_OUTPUT"
 }
 expect_failure() {
   local name="$1" expected="$2"; shift 2
@@ -54,6 +57,7 @@ expect_failure() {
   else
     pass "$name"
   fi
+  recovery_test_profile_checkpoint_timing "$LAST_OUTPUT"
 }
 expect_failure_status() {
   local name="$1" expected="$2" expected_status="$3" status=0
@@ -66,6 +70,7 @@ expect_failure_status() {
   else
     pass "$name"
   fi
+  recovery_test_profile_checkpoint_timing "$LAST_OUTPUT"
 }
 file_mode() {
   local mode
