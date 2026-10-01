@@ -1,5 +1,24 @@
 # Session Changelog
 
+## 2026-10-01 — prepare exact private inputs for three isolated full cycles
+
+- A missing preparer mode is reproduced by f3feea exit1. Extend only the
+  existing private file preparer: active→restore-fence creates a new canonical
+  epoch, fenced→active preserves it, every other byte stays unchanged. No
+  coordinator, guard/deadline, permission or application schema change.
+- 37947 exits0,3/3 new normal controls/refusals;94089 exits0,1/1 real offline
+  generator/verifier case in both phases. The earlier generator fixture used
+  a plain PEM outside the strict parser and was corrected to the preparer's
+  quoted representation; the parser was not relaxed.6630 exits0,1/1 distinct
+  bots-only/no-AI-key control. Compatible cases were not replayed.
+- Register the five in the existing common local/CI AUD-065 inventory, once.
+  Separate primary review is not an independent audit. Source33 GLB/PNG/7IDs
+  checked read-only; exact-source images, a real Kubernetes target and SQL
+  dataset/ownership still need acceptance before three complete cycles.
+- No build/pull, VM start/install, real checkpoint, restore/apply or production
+  mutation. Final affected gates/commit/full status remain recorded in the
+  canonical plan. [Recipe and evidence](../DOC/fiabilidad-tres-ciclos-2026-10-01.md).
+
 ## 2026-10-01 — restore the missing coordinated runtime build producer
 
 - The existing exact-source provenance consumer required a Cloud workflow

@@ -201,6 +201,57 @@ function replaceTemplateScalars(source, replacements, { appendMissing = new Set(
 }
 
 function main() {
+  if (process.argv[2] === "--transition-recovery-phase") {
+    if (process.argv.length !== 7) {
+      fail(
+        "usage: prepare-staging-values.mjs --transition-recovery-phase SOURCE OUTPUT FROM TO"
+      );
+    }
+    const [, , , sourcePath, outputPath, fromPhase, toPhase] = process.argv;
+    const allowedTransition =
+      (fromPhase === "active" && toPhase === "restore-fence") ||
+      (fromPhase === "restore-fence" && toPhase === "active");
+    if (!allowedTransition) fail("staging recovery phase transition is invalid");
+    const source = readSource(sourcePath, { privateFile: true });
+    if (source.values.get("PRODUCT_MODULES")?.bots !== true ||
+        source.values.get("BOT_RUNNER_ACTIVATION_PHASE") !== "active") {
+      fail("staging recovery phase requires an activated durable bot installation");
+    }
+    requireRepositoryDigest(
+      source.values.get("OVERRIDE_BOT_RUNNER_IMAGE"),
+      "ghcr.io/yengalvez/bot-runner",
+      "durable runner"
+    );
+    if (source.values.get("BOT_RUNNER_RECOVERY_PHASE") !== fromPhase) {
+      fail("staging recovery phase source does not match the expected phase");
+    }
+    const sourceEpoch = source.values.get("BOT_RUNNER_RECOVERY_EPOCH");
+    if (typeof sourceEpoch !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(sourceEpoch)) {
+      fail("staging recovery phase requires a canonical source epoch");
+    }
+    const targetEpoch = fromPhase === "active" ? randomUUID() : sourceEpoch;
+    if (fromPhase === "active" && targetEpoch === sourceEpoch) {
+      fail("staging recovery fence requires a distinct target epoch");
+    }
+    // File preparation is not restore authority. The coordinator and guarded
+    // apply must still bind this epoch to the checkpoint, live UIDs and journal.
+    const bytes = replaceTemplateScalars(source.source, new Map([
+      ["BOT_RUNNER_RECOVERY_PHASE", toPhase],
+      ["BOT_RUNNER_RECOVERY_EPOCH", targetEpoch]
+    ]));
+    try {
+      publishPrivateArtifact({
+        outputPath: path.resolve(outputPath),
+        bytes,
+        maximumBytes: MAX_VALUES_BYTES
+      });
+    } finally {
+      bytes.fill(0);
+    }
+    process.stdout.write(`staging_recovery_phase_${toPhase}_prepared\n`);
+    return;
+  }
   if (process.argv[2] === "--prepare-production-generations") {
     if (process.argv.length !== 8) {
       fail(

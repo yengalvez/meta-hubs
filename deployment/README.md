@@ -2199,6 +2199,20 @@ CONFIRM_LEGACY_IN_PLACE_RESTORE='<exact legacy-in-place value printed above>' \
 # A durable-v2 checkpoint instead uses one read-only preflight followed by
 # three explicit operations. Supply the private HMAC key path and the generated
 # target values/manifest on every call, including preflight.
+# The owner-private staging preparer creates these two input generations
+# without touching Kubernetes. Use a synthetic isolated source for rehearsals;
+# preparing files does not satisfy checkpoint/UID/journal/apply authority.
+node deployment/prepare-staging-values.mjs --transition-recovery-phase \
+  /private/path/to/active-values.yaml /private/path/to/restore-fence-values.yaml \
+  active restore-fence
+node deployment/prepare-staging-values.mjs --transition-recovery-phase \
+  /private/path/to/restore-fence-values.yaml /private/path/to/reactivation-values.yaml \
+  restore-fence active
+# The first changes only recovery phase and a distinct UUID v4. The second
+# preserves that target epoch. All other bytes, including image locks, modules
+# and credentials, stay unchanged. Neither output is a generated manifest.
+# Generate each manifest with the current Cloud gen-hcce/verify-hcce path; use
+# fence values for prepare/execute and reactivation values for active/finalize.
 export VALUES_FILE='/private/path/to/target-input-values.yaml'
 export HCCE_MANIFEST_PATH='/private/path/to/generated-hcce.yaml'
 export PROCESS_LOCAL_CUTOVER_KEY_PATH='/private/path/to/cutover-key'

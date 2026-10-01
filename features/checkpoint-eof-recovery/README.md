@@ -2,6 +2,24 @@
 
 Candidate dated 2026-09-26. Baselines: Hubs prod-2026-03-11 and Hubs CE 2.1.0. This changes operator-side backup/recovery tooling, not avatar bytes, application schemas or the accepted checkpoint format. Local tests are not a live recovery acceptance.
 
+## Isolated full-cycle inputs (2026-10-01)
+
+The existing staging preparer now offers only the two explicit recovery input
+transitions `active -> restore-fence -> active`. The first chooses a new
+canonical epoch; the second preserves it. It requires a private source with
+installed/activated bots and the digest-pinned official runner family, changes
+only phase/epoch bytes and uses the existing private no-clobber publisher.
+No provider key is required for bots-only. File preparation grants no restore,
+checkpoint, UID, journal, attestation or apply authority; those existing gates
+remain mandatory. Legacy/BASE sources cannot be reclassified as durable here.
+
+Five new normal regressions cover preservation/refusals/private publication,
+bots-only without AI credentials and the actual offline Cloud generator plus
+unchanged verifier in both phases. These are synthetic inputs, not cluster
+restores or official images. The separate three-cycle entry recipe is
+[recorded with limits](../../DOC/fiabilidad-tres-ciclos-2026-10-01.md); current
+order remains exclusively in the canonical active plan.
+
 ## Contract
 
 A durable-v2 checkpoint with legacy artifact format persists a private sibling directory `<OUTPUT>.abort-recovery` before stopping any writer. Its receipt records the exact cluster/Namespace/PVC, original operation and Lease, lock identity, writer identities/specifications/replica counts and hashes of private input copies. Directory permissions are 0700; private files are 0600. Retain it outside shared logs, Git, public artifacts and the accepted DB+media backup.
