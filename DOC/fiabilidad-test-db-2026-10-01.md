@@ -66,6 +66,21 @@ para probar si el comando funciona. Datos/credenciales de producción excluidos.
   e4012f exit0:8/8 después. Default/custom se exigen en LAS TRES conexiones
   y los seis puertos inválidos fallan al leer config, antes de abrir SQL.
   Esto verifica configuración, no sustituye la sección completa con DB real.
+- 14208: wrapperexit1/secciónexit2; DB y migraciones ya funcionan,5properties/
+  495tests/4fallos/3excluded. Son dos HTTP locales y dos DNS bloqueados por
+  aplicar a TODA la suite el perfil canary SOLO-PG. PID39302 detenido,
+  summary stopped=true; no cambiar producto para ocultar el error de método.
+- El entorno estándar permite loopback salvo5432 y un peer tripwire, y solo
+  remoto53 para los DNS sintéticos de la fuente fijada. SBPL no admite una IP
+  remota concreta: dc2eea falló al parsear antes de app/PG;39e7bc sí prueba
+  peer permitido1/denegado0/listeners cerrados. No se sondeó5432, no hay
+  salida HTTPS/proveedor ni claves de usuario. El helper canary no cambia.
+- 3477: wrapperexit1/testexit0; el filtro de líneas dejó SOLO los dos HTTP
+  seleccionados verdes (6total/0fallos/4excluded). Se conservan esos dos,
+  no se afirman cuatro.4108 exit0 prueba SOLO los otros dos DNS (2/2 sin
+  excluded), no repite HTTP. Ambos servidores propios detenidos, PID files
+  ausentes; logs/summary separados0600, fuente f9f8e9e limpia.
+  Son controles del entorno, no un recibo Reticulum integral aprobado.
 
 Revisión primaria separada, no independiente: valor cerrado antes de arithmetic,
 PGHOST no reemplaza DB_HOST explícito, credenciales no impresas, default CI
