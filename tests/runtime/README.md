@@ -33,6 +33,23 @@ missing/duplicated cases, skips, failures or unexpected excluded counts fail.
 The interruption oracle also requires the provider test client to receive the
 request; an early HTTP403 alone is not proof of an in-flight boundary.
 
+The separate `--chat-concurrent` canary has two NEW tests: a held synthetic
+reply delivered with the current fence, and a real concurrent SQL chat-OFF
+transaction that must finish before that reply is released. Its distinct
+`--chat-concurrent-boundaries` mode runs only four additional cases: bots OFF,
+OFF→ON, quarantine and lost presence. It does not rerun the canary, synchronous
+tests or profiles. Both modes require exact test totals, no exclusions/skips.
+
+These concurrent tests deliberately do NOT use a shared SQL sandbox transaction:
+fixtures commit to this owned disposable database, and request/transition tasks
+check out separate SQL connections. Backend PIDs must be different. A separate
+connection takes/releases the admission advisory lock while the reply is held;
+the transition completes, persisted state/revision/notification is checked,
+and the request is still pending before the release. Only then may the control
+deliver200 with the current fence, or the stale reply reject403 with its exact
+reason and no command. Tasks, gates and waits are owned/reference-bound/bounded.
+Never require this test file on the normal/default DB or a public target.
+
 ## Isolation and ownership
 
 The runner checks cache lock/config against this source, copies tracked current
@@ -77,6 +94,9 @@ surviving supervisor. Dialog has an inert test host plus tracked selector weight
 The focused chat cases prove actual controller/SQL/fence rejection and positive
 delivery with a synchronous test HTTP client. They are not concurrent sockets,
 provider replies or an abort of an outbound network request.
+The held-reply cases additionally prove concurrent, committed SQL invalidation
+across distinct connections. Their provider callback is still synthetic, not a
+real socket, transport cancellation, cached HTTP configuration or browser.
 
 It does **not** prove cached public config/UI changes, real Dialog/WebRTC,
 provider replies, complete in-flight HTTP cancellation, bot movement, STOP

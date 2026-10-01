@@ -34,6 +34,7 @@ Application.put_env(:ret, Ret.MediaResolver, [])
 
 profile = System.fetch_env!("RET_LOCAL_PROFILE")
 chat_focus = profile in ["chat-canary", "chat-boundaries"]
+chat_concurrent = profile in ["chat-concurrent", "chat-concurrent-boundaries"]
 
 profiles = %{
   "base" => [bots: false, ai: false, avaturn: false],
@@ -44,7 +45,7 @@ profiles = %{
   "bots-ai-avaturn" => [bots: true, ai: true, avaturn: true]
 }
 
-unless profile == "existing-tests" or chat_focus do
+unless profile == "existing-tests" or chat_focus or chat_concurrent do
   modules = Map.fetch!(profiles, profile)
 
   Application.put_env(
@@ -83,6 +84,11 @@ ExUnit.configure(autorun: false)
     chat_focus ->
       Code.require_file(Path.join(__DIR__, "reticulum-chat-focus.exs"))
       Ret.LocalChatFocus.configure!(profile)
+
+    chat_concurrent ->
+      Code.require_file(Path.join(__DIR__, "reticulum-chat-concurrent.exs"))
+      count = if profile == "chat-concurrent", do: 2, else: 4
+      {count, count, 0}
 
     true ->
       Code.require_file(Path.join(__DIR__, "reticulum-profiles.exs"))

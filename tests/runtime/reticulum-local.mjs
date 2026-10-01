@@ -20,6 +20,8 @@ export function runtimeCases(mode) {
     case "--profiles": return ["base", "base-avaturn", "bots", "bots-avaturn", "bots-ai", "bots-ai-avaturn"].map(profile => ({ profile, count: 1 }));
     case "--chat-canary": return [{ profile: "chat-canary", count: 2 }];
     case "--chat-boundaries": return [{ profile: "chat-boundaries", count: 5 }];
+    case "--chat-concurrent": return [{ profile: "chat-concurrent", count: 2 }];
+    case "--chat-concurrent-boundaries": return [{ profile: "chat-concurrent-boundaries", count: 4 }];
     default: reject("explicit_native_target_required");
   }
 }

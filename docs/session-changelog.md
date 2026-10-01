@@ -1,5 +1,21 @@
 # Session Changelog
 
+## 2026-10-01 — concurrent chat invalidation across committed SQL connections
+
+- Two new opt-in canary cases pass on the private native Reticulum target:
+  held positive response with the current fence and concurrent chat OFF.
+  Four distinct remaining cases pass separately: bots OFF, OFF→ON, quarantine
+  and lost presence. Neither run repeats the seven synchronous cases or profiles.
+- No shared SQL-sandbox transaction masks concurrency. Request and transition
+  tasks check out distinct PostgreSQL connections, commit real fixture/policy
+  writes, and prove the admission lock is available while the reply is held.
+  Transition completion and persisted state precede response release; stale
+  reply/command is rejected with the exact reason. Positive delivery is intact.
+- Actual backend SQL/controller/fence/PubSub, bounded reference-owned tasks and
+  synthetic reply gate; NOT network/provider cancellation, cached UI, STOP,
+  Kubernetes or final live/Goal acceptance. Both owned databases are stopped.
+  Product runtime, Hubs/Cloud, F/R/T, active images and production are unchanged.
+
 ## 2026-10-01 — exact existing chat-delivery boundaries on the private native backend
 
 - Reuse the owned private DB/network runner for two exact existing controller

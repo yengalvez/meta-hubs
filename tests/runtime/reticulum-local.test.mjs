@@ -9,6 +9,8 @@ import { networkProfile, assertPostmaster, runtimeCases } from "./reticulum-loca
 test("chat canary and remaining boundaries never rerun the accepted profiles", () => {
   assert.deepEqual(runtimeCases("--chat-canary"), [{ profile: "chat-canary", count: 2 }]);
   assert.deepEqual(runtimeCases("--chat-boundaries"), [{ profile: "chat-boundaries", count: 5 }]);
+  assert.deepEqual(runtimeCases("--chat-concurrent"), [{ profile: "chat-concurrent", count: 2 }]);
+  assert.deepEqual(runtimeCases("--chat-concurrent-boundaries"), [{ profile: "chat-concurrent-boundaries", count: 4 }]);
   assert.deepEqual(runtimeCases("--run"), [{ profile: "existing-tests", count: 5 }]);
   assert.deepEqual(runtimeCases("--profiles"), ["base", "base-avaturn", "bots", "bots-avaturn", "bots-ai", "bots-ai-avaturn"].map(profile => ({ profile, count: 1 })));
 });
