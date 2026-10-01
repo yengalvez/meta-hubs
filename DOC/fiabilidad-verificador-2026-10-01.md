@@ -60,3 +60,54 @@ interpreta la política, no secretos impresos, cleanup fuera del sandbox y
 firma de política solo Reticulum. Gates/commit, sección real renovada y full
 quedan registrados en PLAN; estos tests no acreditan Kubernetes, ciclos,
 restauración, SLO, integración en bases o cierre del Goal.
+
+## Sección real y coste de consultar evidencias
+
+74742 terminó exit0/SECTION PASS: cinco properties,495tests,0fallos/3excluded;
+summary terminalPASS/stopped=true/PID48847 ausente,39.553s total. Padre
+Bash5.3.15 fuera del sandbox, cuatro Mix confinados y DB propia65509. No tocar
+el5432 del dueño ni adoptar el recibo inseguro de18214. No equivale a full.
+
+El siguiente finalizador69650 agotó120s sin lista;0 procesos coincidentes tras
+reconciliar.67613 midió SOLO metadata nativa sobre cd0b487:271.307s para15
+secciones;14pendientes y SOLOreticulum reutilizable. Static83.165s,
+security52.445s, hcce46.895s, hubs29.585s. La causa de ese coste quedó acotada
+por25871:100 archivos Hubs reales,100 procesos Git/1775ms frente a un lote/
+25ms, hashes iguales. No repetir un test de app por el timeout del inventario.
+
+### Delta de huellas por lotes, sin caché débil
+
+Los buffers tienen como máximo128 registros. Git calcula los blobs regulares
+en un proceso por lote; no escribe objetos, no aplica filtros y no deduce un
+PASS de fechas/HEAD. Orden, etiqueta de repo, duplicados de closures solapadas,
+nombre NUL-delimitado, tipo, blob nativo SHA1/SHA256, bit ejecutable efectivo,
+missing y hash del target symlink conservados. `--` trata el nombre como literal
+incluso si empieza por guion. [Contrato oficial de Git](https://git-scm.com/docs/git-hash-object).
+
+Los dos helpers también forman parte del harness común. Se rechaza el error
+de inventario/Git/readlink y una salida de lote truncada, inválida o sobrante.
+Los callers comprueban explícitamente el resultado antes de reutilizar un
+recibo, después del cuerpo y al finalizar: un hash fallido no puede convertirse
+en recibo PASS aunque Bash esté en contexto condicional. Gitlinks/diff del
+finalizador tampoco pueden fallar y quedar ocultos por su mensaje final.
+
+- 25528 rojo:257 invocaciones en vez de3 para257 archivos.
+- 79370 exit0/12 controles iniciales; a94fce no ejecutó tests por interpolación
+  JS de la fixture shell, corregida SOLO en el oracle.
+- 005ea4 rojo3/3: un hash que retornaba97 se aceptaba en los tres callers.
+- 45992 exit0:17 nuevas pruebas normales y38 controles previos PASS,0skips;
+  ShellCheck PASS. Bash3.2/5.3, nombres especiales/binarios/filtros/symlinks,
+  missing/directorio, ignore/tracked, cierre vacío, SHA256, duplicados,
+  cambio de contenido/permisos/target, errores y binding de helpers.
+
+74542 midió las15 consultas nativas después:11.393s frente a271.307s. Las
+OCHO closures Hubs/Cloud sin cambios dieron exactamente el hash anterior.
+Root tenía el delta sin commit: es diagnóstico/equivalencia, no aceptación
+de un candidato sucio. Todos15 pendientes por cambio del harness común;
+no copiar ni promover los recibos anteriores, incluido74742, por inferencia.
+Logs y summary owner-only en `/private/tmp/yn-ret-full-ndUhKs/cache-inventory`
+y `cache-inventory-batch`, fuente congelada y renovación posterior en PLAN.
+
+La mejora demostrada es SOLO consulta de evidencias local, no tiempo de
+backup/restore/deploy, preflight productivo completo, red/VM fría o tres ciclos
+aceptados. Revisión primaria dirigida separada, no independiente. Goal abierto.

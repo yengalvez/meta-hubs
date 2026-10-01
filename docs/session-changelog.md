@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-10-01 · Consulta de evidencias rápida y hashes fail-closed
+
+69650 agotó120s solo al consultar recibos;67613 inventario nativo271.307s,
+14pendientes/Reticulum74742 reutilizable. Canary25871 sobre100 archivos reales
+demuestra coste de procesos individuales y equivalencia de Git raw en lote.
+Solo root: buffers128, mismos registros NUL/tipo/orden/duplicados/ignore/blob/
+permiso/symlink/missing; helpers ligados al harness, sin caché por fecha/HEAD.
+25528 rojo257calls→3;005ea4 reproduce tres callers que ignoraban error de hash.
+Se rechazan explícitamente esos errores antes/después/finalize;45992 exit0,
+17 nuevas+38 previas, ShellCheck PASS.74542 inventario11.393s, ocho closures
+intactas byte-equivalentes; todos los recibos ahora pendientes correctamente.
+No heredar74742 ni aceptar dirty/full/SLO/ciclos por esa medición. Sin app/DB,
+VM, build o efecto productivo. [Método y límites](../DOC/fiabilidad-verificador-2026-10-01.md).
+
 ## 2026-10-01 · Verificación fail-closed, Bash real y sandbox solo Mix
 
 18214: cuerpo Reticulum495tests+5properties verdes, pero driverexit1 y cleanup

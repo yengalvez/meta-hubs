@@ -183,31 +183,70 @@ repository_path_for_label() {
   esac
 }
 
+verification_emit_input_batch() {
+  local label="$1" repository="$2" index digest hash_output
+  local hashes=()
+  # The bounded arrays belong to verification_repository_input_material's
+  # dynamic local scope. No bytes are emitted until Git's complete batch is
+  # successful and contains exactly one native object ID per regular file.
+  if (( ${#hash_paths[@]} > 0 )); then
+    hash_output="$(git -C "$repository" hash-object --no-filters -- "${hash_paths[@]}")" || return 1
+    while IFS= read -r digest; do
+      [[ "$digest" =~ ^[0-9a-f]{40}$ || "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+      hashes[${#hashes[@]}]="$digest"
+    done <<<"$hash_output"
+    (( ${#hashes[@]} == ${#hash_paths[@]} )) || return 1
+    for (( index=0; index < ${#hash_indices[@]}; index++ )); do
+      digests[hash_indices[index]]="${hashes[index]}"
+    done
+  fi
+  for (( index=0; index < ${#files[@]}; index++ )); do
+    printf '%s\0%s\0%s\0%s\0%s\0' \
+      "$label" "${files[index]}" "${kinds[index]}" "${digests[index]}" "${executables[index]}"
+  done
+  files=(); kinds=(); digests=(); executables=(); hash_paths=(); hash_indices=()
+}
+
+verification_repository_input_material() {
+  local label="$1" repository="$2" relative="$3" file absolute index target
+  local files=() kinds=() digests=() executables=() hash_paths=() hash_indices=()
+  git -C "$repository" ls-files -co --exclude-standard -z -- "$relative" |
+    {
+      while IFS= read -r -d '' file; do
+        index=${#files[@]}
+        files[index]="$file"
+        absolute="$repository/$file"
+        if [[ -L "$absolute" ]]; then
+          kinds[index]='symlink'
+          target="$(readlink "$absolute")" || return 1
+          digests[index]="$(printf '%s' "$target" | sha256_stream)" || return 1
+          executables[index]=0
+        elif [[ -f "$absolute" ]]; then
+          kinds[index]='file'
+          digests[index]=''
+          if [[ -x "$absolute" ]]; then executables[index]=1; else executables[index]=0; fi
+          hash_paths[${#hash_paths[@]}]="$file"
+          hash_indices[${#hash_indices[@]}]="$index"
+        else
+          kinds[index]='missing'
+          digests[index]='missing'
+          executables[index]=0
+        fi
+        if (( ${#files[@]} == 128 )); then
+          verification_emit_input_batch "$label" "$repository" || return 1
+        fi
+      done
+      verification_emit_input_batch "$label" "$repository" || return 1
+    }
+}
+
 verification_section_input_sha256() {
-  local section="$1" label relative repository file absolute kind digest executable
+  local section="$1" label relative repository
   {
     while IFS=$'\t' read -r label relative; do
       [[ -n "$label" && -n "$relative" ]] || continue
-      repository="$(repository_path_for_label "$label")" || exit 2
-      git -C "$repository" ls-files -co --exclude-standard -z -- "$relative" |
-        while IFS= read -r -d '' file; do
-          absolute="$repository/$file"
-          if [[ -L "$absolute" ]]; then
-            kind='symlink'
-            digest="$(printf '%s' "$(readlink "$absolute")" | sha256_stream)"
-            executable=0
-          elif [[ -f "$absolute" ]]; then
-            kind='file'
-            digest="$(git -C "$repository" hash-object --no-filters "$file")"
-            if [[ -x "$absolute" ]]; then executable=1; else executable=0; fi
-          else
-            kind='missing'
-            digest='missing'
-            executable=0
-          fi
-          printf '%s\0%s\0%s\0%s\0%s\0' \
-            "$label" "$file" "$kind" "$digest" "$executable"
-        done
+      repository="$(repository_path_for_label "$label")" || return 2
+      verification_repository_input_material "$label" "$repository" "$relative" || return 1
     done < <(verification_section_inputs "$section")
   } | sha256_stream
 }
@@ -304,6 +343,8 @@ verification_common_harness_material() {
     verification_common_harness_material \
     verification_common_toolchain_material \
     verification_section_harness_sha256 \
+    verification_emit_input_batch \
+    verification_repository_input_material \
     verification_section_input_sha256 \
     verification_section_toolchain_sha256 \
     write_pass_receipt
@@ -576,6 +617,7 @@ run_security() {
   node --test "$ROOT_DIR/tests/scripts/product-modules-parser.test.mjs" "$ROOT_DIR/tests/scripts/product-modules-live.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/prepare-staging-values.test.mjs"
   bash "$ROOT_DIR/tests/scripts/verify-project-sections.test.sh"
+  node --test "$ROOT_DIR/tests/scripts/verification-input-batch.test.mjs"
   "$ROOT_DIR/tests/scripts/security-gates.test.sh"
   "$ROOT_DIR/scripts/test-aud065.sh"
 }
@@ -746,7 +788,10 @@ run_section_in_fresh_shell() {
 
 run_recorded_section() {
   local section="$1" input_sha receipt section_dir log_path started finished status after_sha pass_log
-  input_sha="$(verification_section_input_sha256 "$section")"
+  if ! input_sha="$(verification_section_input_sha256 "$section")"; then
+    printf 'Cannot fingerprint section inputs before %s; no receipt can be used.\n' "$section" >&2
+    return 1
+  fi
   receipt="$(section_receipt_path "$section" "$input_sha")"
   if receipt_is_current "$section" "$receipt" "$input_sha"; then
     printf '\n== %s: REUSED exact receipt ==\n' "$section"
@@ -767,11 +812,13 @@ run_recorded_section() {
   cat "$log_path"
   finished="$(date +%s)"
   if [[ "$status" == 0 ]]; then
-    after_sha="$(verification_section_input_sha256 "$section")"
-    [[ "$after_sha" == "$input_sha" ]] || {
+    if ! after_sha="$(verification_section_input_sha256 "$section")"; then
+      printf 'Cannot fingerprint section inputs after %s; no PASS receipt will be written.\n' "$section" >&2
+      status=1
+    elif [[ "$after_sha" != "$input_sha" ]]; then
       printf 'Section inputs changed while %s was running.\n' "$section" >&2
       status=1
-    }
+    fi
   fi
   if [[ "$status" == 0 ]] && ! known_verification_processes_are_absent; then
     status=1
@@ -821,7 +868,11 @@ run_section_set() {
 finalize_verification() {
   local section input_sha receipt failed=() failed_count=0
   for section in "${VERIFY_FULL_SECTIONS[@]}"; do
-    input_sha="$(verification_section_input_sha256 "$section")"
+    if ! input_sha="$(verification_section_input_sha256 "$section")"; then
+      failed+=("$section")
+      failed_count=$((failed_count + 1))
+      continue
+    fi
     receipt="$(section_receipt_path "$section" "$input_sha")"
     if ! receipt_is_current "$section" "$receipt" "$input_sha"; then
       failed+=("$section")
@@ -832,10 +883,10 @@ finalize_verification() {
     printf 'Missing, stale or invalid verification receipts: %s\n' "${failed[*]}" >&2
     return 1
   fi
-  "$ROOT_DIR/scripts/verify-gitlinks.sh" "$ROOT_DIR"
-  git -C "$ROOT_DIR" diff --check
-  git -C "$ROOT_DIR/hubs" diff --check
-  git -C "$ROOT_DIR/hubs-cloud" diff --check
+  "$ROOT_DIR/scripts/verify-gitlinks.sh" "$ROOT_DIR" || return 1
+  git -C "$ROOT_DIR" diff --check || return 1
+  git -C "$ROOT_DIR/hubs" diff --check || return 1
+  git -C "$ROOT_DIR/hubs-cloud" diff --check || return 1
   known_verification_processes_are_absent || return 1
   printf 'Project verification finalized from exact current section evidence.\n'
 }

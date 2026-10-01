@@ -160,6 +160,10 @@ Reglas de resolucion:
    El perfil opcional `YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE` se liga por hash
    y se aplica solo a Mix: no encerrar el padre que comprueba cleanup.
    El recibo liga el Bash real del padre; [regresiones](../DOC/fiabilidad-verificador-2026-10-01.md).
+   Las huellas usan lotes128 con el mismo material tipado/ordenado, no fechas ni
+   HEAD como sustitutos del contenido. Un error de huella anterior/posterior
+   rechaza la sección. Cambiar el helper común invalida sus recibos: renovar
+   los que indique el verificador, sin relabelar la evidencia anterior.
 
 8. Commit y push del subrepo.
 9. Construir mediante GitHub Actions.

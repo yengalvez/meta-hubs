@@ -85,6 +85,9 @@ el rol local de la plataforma. No usar ni detener una DB existente ajena para
 liberar ese puerto. [Procedimiento y evidencia](DOC/fiabilidad-test-db-2026-10-01.md).
 El sandbox opcional de tests confina solo Mix; el verificador padre debe
 poder inspeccionar procesos. [Aceptación fail-closed](DOC/fiabilidad-verificador-2026-10-01.md).
+Las huellas se calculan por lotes acotados sin cambiar el material de entrada;
+un fallo de lectura impide reutilizar o emitir un recibo. La mejora de metadata
+no sustituye el `--full` final ni las comprobaciones reales de recuperación.
 
 ## Backup
 
