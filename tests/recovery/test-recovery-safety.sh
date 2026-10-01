@@ -1801,6 +1801,22 @@ if [[ "$request_timeout" == "--request-timeout=20s" &&
   set -- get "$resource" "$5" -n hcce -o json
 fi
 joined="$*"
+# Read-only default Namespace responses need none of the large stateful fake
+# dispatch below. Keep the original parser/log/provenance above, read fresh
+# JSON on every call, and retain the entire old route for all fault modes,
+# Watch/LIST requests and nonexact argument shapes. This is test plumbing only.
+if [[ -z "${STUB_MODE:-}" ]]; then
+  case "$joined" in
+    "get --raw /api/v1/namespaces/hcce"|\
+      "get --raw /api/v1/namespaces/hcce-bot-runners")
+      fast_namespace="${joined##*/}"
+      jq '.metadata.labels = ((.metadata.labels // {}) +
+        {"kubernetes.io/metadata.name": .metadata.name})' \
+        "$RUNNER_EVIDENCE_LIVE_DIR/namespace-$fast_namespace.json"
+      exit 0
+      ;;
+  esac
+fi
 LEASE_FIXTURE_LOCK_DIR="$STUB_STATE_DIR/serialization-lease-fixture-lock"
 LEASE_FIXTURE_HANDOFF_DIR="$STUB_STATE_DIR/serialization-lease-watch-handoff.$PPID"
 lease_fixture_lock_try_acquire() {

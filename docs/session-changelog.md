@@ -1,5 +1,20 @@
 # Session Changelog
 
+## 2026-10-01 — fresh Namespace reads avoid the large fake dispatch
+
+- A test-only early route reads the two default Namespace JSON files afresh
+  with the existing transformation. The original parser, call log and input
+  provenance still run; every nonempty fault mode, Watch/LIST and other command
+  shape retains the complete previous dispatch. No production or guard change.
+- A red tripwire first proves the full body was evaluated. Ten regressions now
+  check early exit, exact bytes/status, freshness, malformed/missing inputs,
+  provenance and unchanged fault/Watch/LIST/timeout paths. Local/CI security
+  runs them without imposing a noisy machine-dependent timing threshold.
+- An opt-in paired benchmark checks every response in 30 alternating pairs:
+  median 17.2945ms before versus 13.0154ms after. Combined affected tests pass
+  25/25, including the benchmark. This is only a local read microbenchmark,
+  not a complete checkpoint, Kubernetes or DigitalOcean speed acceptance.
+
 ## 2026-10-01 — measured local recovery harness and closed opt-in phase metrics
 
 - One existing durable/stable checkpoint case passes 48/48, including complete

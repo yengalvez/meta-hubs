@@ -555,6 +555,7 @@ run_security() {
   node --test "$ROOT_DIR/tests/scripts/checkpoint-writer-watch-exit.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/checkpoint-abort-process.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/recovery-harness-profile.test.mjs"
+  node --test "$ROOT_DIR/tests/scripts/recovery-namespace-fast-path.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/native-checkpoint-source.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/native-checkpoint-restore.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/recovery-kubectl-fixture-contract.test.mjs" "$ROOT_DIR/tests/scripts/stream-prelaunch-alignment.test.mjs" "$ROOT_DIR/tests/scripts/recovery-stream-diagnostics.test.mjs" "$ROOT_DIR/tests/scripts/pgsql-source-sweep.test.mjs"

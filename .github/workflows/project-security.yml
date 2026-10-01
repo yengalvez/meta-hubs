@@ -179,6 +179,7 @@ jobs:
           node --test tests/scripts/checkpoint-writer-watch-exit.test.mjs
           node --test tests/scripts/checkpoint-abort-process.test.mjs
           node --test tests/scripts/recovery-harness-profile.test.mjs
+          node --test tests/scripts/recovery-namespace-fast-path.test.mjs
           node --test tests/recovery/native-checkpoint-source.test.mjs
           node --test tests/recovery/native-checkpoint-restore.test.mjs
           node --test tests/scripts/recovery-kubectl-fixture-contract.test.mjs tests/scripts/stream-prelaunch-alignment.test.mjs tests/scripts/recovery-stream-diagnostics.test.mjs tests/scripts/pgsql-source-sweep.test.mjs
