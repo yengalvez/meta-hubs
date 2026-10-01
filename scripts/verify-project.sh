@@ -559,6 +559,7 @@ run_security() {
   node --test "$ROOT_DIR/tests/recovery/native-checkpoint-source.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/native-checkpoint-restore.test.mjs"
   node --test "$ROOT_DIR/tests/runtime/reticulum-local.test.mjs"
+  node --test "$ROOT_DIR/tests/runtime/bot-transport-local.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/recovery-kubectl-fixture-contract.test.mjs" "$ROOT_DIR/tests/scripts/stream-prelaunch-alignment.test.mjs" "$ROOT_DIR/tests/scripts/recovery-stream-diagnostics.test.mjs" "$ROOT_DIR/tests/scripts/pgsql-source-sweep.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/rpm-catalog.test.mjs" "$ROOT_DIR/tests/scripts/rpm-catalog-checkpoint.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/product-modules-parser.test.mjs" "$ROOT_DIR/tests/scripts/product-modules-live.test.mjs"

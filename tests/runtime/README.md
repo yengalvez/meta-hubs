@@ -1,4 +1,4 @@
-# Native Reticulum profile sample
+# Native runtime samples (opt-in)
 
 These opt-in tests use **synthetic data**, not a checkpoint or the public DB.
 They do not create cloud resources or switch a public installation's profile.
@@ -8,6 +8,7 @@ Portable safety checks (also registered in local/CI security):
 
 ```sh
 node --test tests/runtime/reticulum-local.test.mjs
+node --test tests/runtime/bot-transport-local.test.mjs
 ```
 
 On the verified macOS host, with the existing pinned tools/cache, run from the
@@ -104,3 +105,50 @@ delivery, GLB/editor regressions, PG12 compatibility, Kubernetes restoration,
 three full copy/restore/deploy/rollback cycles or a live release. The native
 speed is not remote speed. The active Goal/plan retains all those separate
 acceptance requirements and the final exact `--full` gate.
+
+## Bot orchestrator: actual loopback HTTP cancellation
+
+This separate macOS-only runner uses existing Node22 and the current tracked
+bot-orchestrator source, not the frozen cache's application. Verify package and
+lock equality before copying its existing dependencies into an owned 0700
+scratch; no install or mutation of the cache. From the clean candidate root:
+
+```sh
+node tests/runtime/bot-transport-local.mjs --canary \
+  --cache-bot-orchestrator /Users/Shared/Gits/YenHubs/output/product-fixes-20260926/hubs-cloud/community-edition/services/bot-orchestrator
+```
+
+That canary selects only positive delivery and IA OFF while the model response
+is held. After it passes, `--boundaries` runs only four different cases: OFF
+during input moderation, OFF during output moderation, OFF→ON during the model
+request, and actual caller disconnect during the model request. Neither mode
+reruns Reticulum SQL cases or profiles; unknown/no explicit target fails before
+creating scratch, listeners or child processes. Normal CI runs only pure guards.
+
+Each case starts a fresh owned app child. Its synthetic credentials/environment
+are explicit, autostart is disabled, Reticulum's endpoint is private-test.invalid,
+and existing readiness seeding is a **fixture**, not an authenticated ghost
+runner. The actual Express route, native fetch and provider pipeline are not
+replaced. Provider and denied-peer servers listen only on owned 127.0.0.1 ports.
+The child uses sandbox-exec with outbound access to exactly the provider port;
+an actual listening denied peer must receive zero connections. No public/paid
+provider, Kubernetes, productive database or inherited user credentials.
+
+The provider holds a real HTTP response until transition/release. Before the
+transition, the API request must be pending and the held socket open. The
+positive control completes input/model/output phases with the exact reply and
+no movement action. Revocation must close the held socket with an unfinished
+response, prevent any later provider phase, and return generic503/no reply.
+OFF→ON cannot revive the old request. Caller disconnect must propagate to the
+provider's held socket and reject the caller with AbortError. These observations
+precede cleanup; a shutdown cannot supply the cancellation oracle. Product
+deadlines and authority checks are unchanged.
+
+Only owned requests, child handles, stub sockets and servers are stopped. A
+PASS requires normal child exit0 and verified closed listeners for every case.
+Stage/result markers are closed; raw diagnostics and terminal JSON remain0600
+in scratch. Reconcile exit and exact results/cleanup, not just disappearance.
+Recorded localhost milliseconds are NOT a remote latency or release SLO.
+This does not prove combined Reticulum SQL→HTTP propagation, cached UI, real
+runner STOP/movement, six Kubernetes installations, productive transport or
+the three complete backup/restore/deploy/rollback cycles of the active Goal.

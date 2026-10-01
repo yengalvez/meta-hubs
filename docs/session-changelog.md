@@ -1,5 +1,25 @@
 # Session Changelog
 
+## 2026-10-01 — actual loopback HTTP aborts in the current bot orchestrator
+
+- A separate opt-in canary passes positive delivery and IA OFF with a real
+  model response held. Four distinct remaining cases pass: OFF during input
+  and output moderation, OFF→ON, and actual caller disconnect. No SQL/profile
+  replay. Current tracked app, Express and native fetch are used unchanged;
+  provider payloads and runner readiness are explicit synthetic fixtures.
+- Before cleanup, every revocation closes the held provider socket without
+  finishing its response or starting any later phase. The API returns generic
+  503/no reply/action, or its disconnected caller gets AbortError; the positive
+  control completes three phases and returns the exact synthetic reply.
+- Fresh app children, clean synthetic environment, own loopback listeners and
+  one-port outbound confinement; a real denied peer receives zero connections.
+  All six children exit normally and own servers/sockets stop. Two terminal
+  receipts pass2/2 and4/4,3.551s and1.945s, with observed1–2ms local closes.
+- Three portable selection/network/opt-in guards are registered in local/CI
+  security. Runtime stays opt-in; no cache/dependency or product-source edits,
+  public provider, DB, Kubernetes, production, full or release acceptance.
+  SQL→HTTP integration, cached UI, STOP and complete isolated cycles remain.
+
 ## 2026-10-01 — concurrent chat invalidation across committed SQL connections
 
 - Two new opt-in canary cases pass on the private native Reticulum target:
