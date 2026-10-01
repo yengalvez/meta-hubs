@@ -39,6 +39,34 @@ Admin runtime feature flags can only reduce installed capabilities. They cannot 
 
 Canonical Admin changes use `Ret.AppConfig.set_config_value`; bypass SQL/PostgREST edits do not produce the module revision event. The client receives effective capabilities at join/rejoin and when changed. The UI explicitly says «Hablar con IA», requires an eligible nearby bot, clears history/cancels pending UI work on revoke and stops its proximity timer while unavailable. A request already accepted by the provider can run until the existing bounded deadline; OFF cannot undo usage already incurred.
 
+### Current runtime flags are not general cached configuration
+
+The API/admin JSON and page `window.APP_CONFIG` projection must not advertise a
+cached ON after a runtime OFF has committed. Reticulum retains its general
+branding/config cache, but `AppConfig.get_config(false)` overlays ONLY the
+three runtime flags from one fresh SQL query/snapshot before the existing
+installed-capability projection. Missing/non-boolean values remain OFF; AI
+still requires bots, and no SQL flag can install an omitted capability.
+`get_config(true)` already reads the source rows and keeps its existing path.
+No cache clear, TTL wait or process-local invalidation is an authority proof:
+another reader may fill the raw cache with an older snapshot after the write.
+
+Upstream baseline remains Hubs CE2.1.0. Core surface:
+`services/reticulum/lib/ret/app_config.ex`, its existing JSON/page callers and
+`test/ret/app_config_test.exs`. No persisted schema, wrapper, API field, module
+schema/generator, profile, admission/fence or provider deadline is changed.
+Expect a merge conflict if upstream changes cache/fetch/projection ordering;
+preserve the one current flag snapshot and the installation ceiling. Rollback
+uses compatible images/profile as above; a source check is not a deployment.
+
+Four normal AppConfig regressions cover late stale cache fill, bots/creator
+OFF, ON with raw OFF, missing/malformed flags and BASE. They observe exactly
+one query for the three keys while unrelated cache stays warm. A separate
+native opt-in canary uses committed synthetic SQL, authenticated API routing
+and page-config serialization to reproduce stale ON before the fix and check
+immediate OFF after it. See the candidate's [runtime recipe](../../tests/runtime/README.md).
+Browser/UI cache, complete profiles, STOP and release acceptance stay separate.
+
 ## Provider contract
 
 AI uses the requested `gpt-6-luna` with Responses `reasoning.effort: high`, `store: false`, bounded total deadline and token output, input/output moderation, pseudonymous safety IDs and reply-only JSON schema. The model has no tools/action authority. Movement derives only from validated exact human commands and server checks. No hidden deterministic response is presented as working AI. `configured_not_probed` is configuration evidence, not a successful provider request. Actual credential access, response quality and latency require a separately recorded functional check before selling AI as accepted.

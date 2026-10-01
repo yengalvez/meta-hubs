@@ -1,5 +1,31 @@
 # Session Changelog
 
+## 2026-10-01 — cached app config cannot advertise stale runtime ON
+
+- A new native canary reproduces the mismatch: committed AI OFF/backend event
+  OFF, but authenticated config API still ON from the warm raw Cachex entry.
+  The positive warm ON/general-cache control passes. No TTL sleep or cache
+  deletion disguises the defect; this is not a historical backup explanation.
+- Overlay only three runtime flags from one fresh SQL snapshot before the
+  existing installation-ceiling projection. Preserve general config cache,
+  skip-cache path, strict booleans, AI→bots dependency, schema/API/wrappers and
+  all provider/recovery guards. No new flag schema or invalidation coordinator.
+- The same committed-data canary passes2/2 after repair: authenticated API
+  routing and page serializer show immediate OFF with old raw ON still warm.
+  Four distinct normal AppConfig regressions then pass: late stale cache fill,
+  bots/creator OFF, ON with raw OFF, absent/malformed flags and BASE. Caller
+  telemetry verifies one query/exactly three keys; unrelated cache survives.
+- A separate primary review strengthened only the malformed/absent oracle:
+  bots stay ON while chat/creator contain string "true", before covering
+  absent bots. Only that modified case was rechecked:1/1,5total/4excluded,
+  exit0 and own DB stopped. This review is not an independent audit.
+- Existing owned DB/network runner, current source/pinned tools/read-only
+  dependency cache. Both accepted runs stop their owned postmasters;11.991s
+  and11.275s totals are local observations, not remote or full release SLOs.
+  Portable selection guard passes. Normal regressions stay in Reticulum's
+  ordinary suite; native fixtures remain opt-in. No browser/STOP/Kubernetes,
+  production mutation, backup, provider call or Goal completion inferred.
+
 ## 2026-10-01 — actual loopback HTTP aborts in the current bot orchestrator
 
 - A separate opt-in canary passes positive delivery and IA OFF with a real

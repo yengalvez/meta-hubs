@@ -51,6 +51,26 @@ deliver200 with the current fence, or the stale reply reject403 with its exact
 reason and no command. Tasks, gates and waits are owned/reference-bound/bounded.
 Never require this test file on the normal/default DB or a public target.
 
+For the distinct cached-configuration boundary, `--config-cache-canary` runs
+only two NEW cases: warm ON/general-cache control and immediately committed AI
+OFF with the old raw ON cache still present. They exercise authenticated API
+routing and the actual page-config serializer with skip_cache=false. Data
+commits only to this owned synthetic cluster; no TCP/browser/provider claim.
+Unknown modes fail before creating a target. It does not repeat previous chat
+cases or profiles. After the method passes, `--config-cache-boundaries` selects
+ONLY four normal tests from `test/ret/app_config_test.exs`, by exact unique
+names, requiring5total/1excluded/0skips/failures and4/4 result. The original
+shape test is not replayed. Late stale cache fill, bots/creator OFF, ON with raw
+OFF, malformed/absent flags and BASE remain distinct affected cases. Caller
+telemetry requires one SQL query with exactly the three flag keys; other cached
+config remains warm. They do not prove browser invalidation, all live profiles,
+STOP or Kubernetes, and cannot replace the final exact full gate.
+For a change only to the malformed/absent oracle, `--config-cache-types` selects
+that exact named test alone, requiring5total/4excluded/0skips/failures and1/1.
+Keep bots ON during the malformed-chat check so its dependency cannot hide an
+incorrect truthy conversion; cover absent bots separately. Do not replay the
+other accepted cases after a test-only refinement.
+
 ## Isolation and ownership
 
 The runner checks cache lock/config against this source, copies tracked current

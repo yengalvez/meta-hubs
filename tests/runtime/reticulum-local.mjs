@@ -22,6 +22,9 @@ export function runtimeCases(mode) {
     case "--chat-boundaries": return [{ profile: "chat-boundaries", count: 5 }];
     case "--chat-concurrent": return [{ profile: "chat-concurrent", count: 2 }];
     case "--chat-concurrent-boundaries": return [{ profile: "chat-concurrent-boundaries", count: 4 }];
+    case "--config-cache-canary": return [{ profile: "config-cache-canary", count: 2 }];
+    case "--config-cache-boundaries": return [{ profile: "config-cache-boundaries", count: 4 }];
+    case "--config-cache-types": return [{ profile: "config-cache-types", count: 1 }];
     default: reject("explicit_native_target_required");
   }
 }

@@ -6,6 +6,13 @@ import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { networkProfile, assertPostmaster, runtimeCases } from "./reticulum-local.mjs";
 
+test("config-cache canary selects only its positive and immediate OFF cases", () => {
+  assert.deepEqual(runtimeCases("--config-cache-canary"), [{ profile: "config-cache-canary", count: 2 }]);
+  assert.deepEqual(runtimeCases("--config-cache-boundaries"), [{ profile: "config-cache-boundaries", count: 4 }]);
+  assert.deepEqual(runtimeCases("--config-cache-types"), [{ profile: "config-cache-types", count: 1 }]);
+  assert.throws(() => runtimeCases("--config-cache"), /explicit_native_target_required/);
+});
+
 test("chat canary and remaining boundaries never rerun the accepted profiles", () => {
   assert.deepEqual(runtimeCases("--chat-canary"), [{ profile: "chat-canary", count: 2 }]);
   assert.deepEqual(runtimeCases("--chat-boundaries"), [{ profile: "chat-boundaries", count: 5 }]);

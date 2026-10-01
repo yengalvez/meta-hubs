@@ -35,6 +35,7 @@ Application.put_env(:ret, Ret.MediaResolver, [])
 profile = System.fetch_env!("RET_LOCAL_PROFILE")
 chat_focus = profile in ["chat-canary", "chat-boundaries"]
 chat_concurrent = profile in ["chat-concurrent", "chat-concurrent-boundaries"]
+config_cache = profile in ["config-cache-canary", "config-cache-boundaries", "config-cache-types"]
 
 profiles = %{
   "base" => [bots: false, ai: false, avaturn: false],
@@ -45,7 +46,7 @@ profiles = %{
   "bots-ai-avaturn" => [bots: true, ai: true, avaturn: true]
 }
 
-unless profile == "existing-tests" or chat_focus or chat_concurrent do
+unless profile == "existing-tests" or chat_focus or chat_concurrent or config_cache do
   modules = Map.fetch!(profiles, profile)
 
   Application.put_env(
@@ -89,6 +90,42 @@ ExUnit.configure(autorun: false)
       Code.require_file(Path.join(__DIR__, "reticulum-chat-concurrent.exs"))
       count = if profile == "chat-concurrent", do: 2, else: 4
       {count, count, 0}
+
+    profile == "config-cache-canary" ->
+      Code.require_file(Path.join(__DIR__, "reticulum-config-cache.exs"))
+      {2, 2, 0}
+
+    profile in ["config-cache-boundaries", "config-cache-types"] ->
+      Code.require_file("test/ret/app_config_test.exs")
+
+      names = [
+        "cached projection uses current bots and creator OFF with one fresh query",
+        "cached projection restores ON while the raw cache stays OFF",
+        "cached projection rejects absent and malformed flags",
+        "cached projection cannot install extras in BASE"
+      ]
+
+      names =
+        if profile == "config-cache-types",
+          do: ["cached projection rejects absent and malformed flags"],
+          else: names
+
+      tests = Ret.AppConfigTest.__ex_unit__().tests
+
+      selected =
+        Enum.filter(tests, fn test ->
+          Atom.to_string(test.name) in Enum.map(names, &("test " <> &1))
+        end)
+
+      unless length(selected) == length(names) and
+               Enum.all?(names, fn name ->
+                 Enum.count(selected, &(Atom.to_string(&1.name) == "test " <> name)) == 1
+               end) do
+        raise "exact config cache cases missing or duplicated"
+      end
+
+      ExUnit.configure(exclude: [:test], include: Enum.map(selected, &{:test, &1.name}))
+      {length(names), length(tests), length(tests) - length(names)}
 
     true ->
       Code.require_file(Path.join(__DIR__, "reticulum-profiles.exs"))
