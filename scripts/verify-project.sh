@@ -223,6 +223,7 @@ tool_version_or_missing() {
 verification_common_toolchain_material() {
   printf 'kernel='; uname -srm 2>/dev/null || true
   printf 'bash='; bash --version 2>/dev/null | head -n 1 || true
+  printf 'driver_bash=%s\n' "$BASH_VERSION"
   printf 'git='; git --version 2>/dev/null || true
 }
 
@@ -331,6 +332,8 @@ verification_section_harness_material() {
       printf 'reticulum_db_credentials_sha256=%s\n' \
         "$(printf '%s' "$VERIFY_RETICULUM_TEST_DB_CREDENTIALS" | sha256_stream)"
       printf 'reticulum_db_port=%s\n' "${PGPORT-5432}"
+      printf 'reticulum_test_sandbox_sha256=%s\n' \
+        "$(printf '%s' "${YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE:-}" | sha256_stream)"
       declare -f require_command run_reticulum
       ;;
     composition) declare -f run_hcce_fixture run_composition ;;
@@ -446,12 +449,15 @@ verification_process_workdir() {
 
 known_verification_processes_are_absent() {
   local matches pid command workdir
-  matches="$(ps -axo pid=,command= | awk -v self="$$" '
+  if ! matches="$(ps -axo pid=,command= | awk -v self="$$" '
     $1 != self &&
     $0 ~ /(watch-checkpoint-writers\.mjs|watch-durable-runner-quiescence\.mjs|test-recovery-safety\.sh|restore-checkpoint\.sh|create-checkpoint\.sh|watch-evidence-process\.test\.js)/ {
       print
     }
-  ')"
+  ')"; then
+    printf 'Cannot inspect verification processes; cleanup is not proven.\n' >&2
+    return 1
+  fi
   while read -r pid command; do
     [[ -n "$pid" ]] || continue
     if [[ "$command" == *"$ROOT_DIR/"* ]]; then
@@ -675,17 +681,23 @@ run_spoke() {
 
 run_reticulum() {
   local test_db_port="${PGPORT-5432}"
+  local test_sandbox_profile="${YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE:-}"
+  local test_launcher=(mise x erlang@27.3.4.14 elixir@1.18.4-otp-27)
   if [[ ! "$test_db_port" =~ ^[1-9][0-9]{0,4}$ ]] || (( test_db_port > 65535 )); then
     printf 'Reticulum test PostgreSQL port must be a canonical integer from 1 to 65535.\n' >&2
     return 2
   fi
   require_command mise
+  if [[ -n "$test_sandbox_profile" ]]; then
+    require_command sandbox-exec
+    test_launcher=(sandbox-exec -p "$test_sandbox_profile" "${test_launcher[@]}")
+  fi
   (
     cd "$ROOT_DIR/hubs-cloud/community-edition/services/reticulum"
-    mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- env MIX_ENV=test mix deps.get --only test --check-locked
-    mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- env MIX_ENV=test mix format --check-formatted
-    mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- env MIX_ENV=test mix compile --warnings-as-errors
-    mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- \
+    "${test_launcher[@]}" -- env MIX_ENV=test mix deps.get --only test --check-locked
+    "${test_launcher[@]}" -- env MIX_ENV=test mix format --check-formatted
+    "${test_launcher[@]}" -- env MIX_ENV=test mix compile --warnings-as-errors
+    "${test_launcher[@]}" -- \
       env MIX_ENV=test DB_HOST=127.0.0.1 PGPORT="$test_db_port" \
         DB_CREDENTIALS="$VERIFY_RETICULUM_TEST_DB_CREDENTIALS" mix test
   )
@@ -785,32 +797,38 @@ section_was_recorded_as_failed() {
 }
 
 run_section_set() {
-  local failed=() section
+  local failed=() section failed_count=0
   for section in "$@"; do
-    run_recorded_section "$section" || failed+=("$section")
+    if ! run_recorded_section "$section"; then
+      failed+=("$section")
+      failed_count=$((failed_count + 1))
+    fi
   done
   printf '\nVerification section summary:\n'
   for section in "$@"; do
-    if section_was_recorded_as_failed "$section" "${failed[@]}"; then
+    if (( failed_count > 0 )) && section_was_recorded_as_failed "$section" "${failed[@]}"; then
       printf '  FAIL  %s\n' "$section"
     else
       printf '  PASS  %s\n' "$section"
     fi
   done
-  if (( ${#failed[@]} > 0 )); then
+  if (( failed_count > 0 )); then
     printf 'Failed sections: %s\n' "${failed[*]}" >&2
     return 1
   fi
 }
 
 finalize_verification() {
-  local section input_sha receipt failed=()
+  local section input_sha receipt failed=() failed_count=0
   for section in "${VERIFY_FULL_SECTIONS[@]}"; do
     input_sha="$(verification_section_input_sha256 "$section")"
     receipt="$(section_receipt_path "$section" "$input_sha")"
-    receipt_is_current "$section" "$receipt" "$input_sha" || failed+=("$section")
+    if ! receipt_is_current "$section" "$receipt" "$input_sha"; then
+      failed+=("$section")
+      failed_count=$((failed_count + 1))
+    fi
   done
-  if (( ${#failed[@]} > 0 )); then
+  if (( failed_count > 0 )); then
     printf 'Missing, stale or invalid verification receipts: %s\n' "${failed[*]}" >&2
     return 1
   fi
@@ -818,7 +836,7 @@ finalize_verification() {
   git -C "$ROOT_DIR" diff --check
   git -C "$ROOT_DIR/hubs" diff --check
   git -C "$ROOT_DIR/hubs-cloud" diff --check
-  known_verification_processes_are_absent
+  known_verification_processes_are_absent || return 1
   printf 'Project verification finalized from exact current section evidence.\n'
 }
 

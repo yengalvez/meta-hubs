@@ -23,6 +23,94 @@ fail_test() {
   exit 1
 }
 
+if (ps() { return 97; }; ! known_verification_processes_are_absent >/dev/null 2>&1); then
+  pass_test 'failed process enumeration cannot prove verification cleanup'
+else
+  fail_test 'failed process enumeration cannot prove verification cleanup'
+fi
+
+if (ps() { return 0; }; known_verification_processes_are_absent); then
+  pass_test 'successful empty process enumeration proves known processes absent'
+else
+  fail_test 'successful empty process enumeration proves known processes absent'
+fi
+
+for driver_shell in "$(command -v bash)" /bin/bash; do
+  # shellcheck disable=SC2016 # Fingerprint the isolated driver, not this parent.
+  if "$driver_shell" -c 'source "$1"; material="$(verification_common_toolchain_material)"; grep -Fxq "driver_bash=$BASH_VERSION" <<<"$material"' _ "$ROOT_DIR/scripts/verify-project.sh"; then
+    pass_test 'toolchain evidence fingerprints the actual driver Bash'
+  else
+    fail_test 'toolchain evidence fingerprints the actual driver Bash'
+  fi
+done
+
+# shellcheck disable=SC2016 # All fixture functions run inside the selected Bash.
+if /bin/bash -c 'source "$1"; run_recorded_section() { return 0; }; run_section_set dialog' _ "$ROOT_DIR/scripts/verify-project.sh" >"$TEST_TMP_DIR/system-bash-summary.log" 2>&1; then
+  pass_test 'all-pass section summary works with the system Bash and nounset'
+else
+  fail_test 'all-pass section summary works with the system Bash and nounset'
+fi
+
+# shellcheck disable=SC2016 # This tests finalizer control flow, not real receipts.
+if /bin/bash -c '
+  source "$1"
+  verification_section_input_sha256() { printf fixture; }
+  section_receipt_path() { printf fixture; }
+  receipt_is_current() { return 0; }
+  known_verification_processes_are_absent() { return 0; }
+  finalize_verification
+' _ "$ROOT_DIR/scripts/verify-project.sh" >"$TEST_TMP_DIR/system-bash-finalize.log" 2>&1; then
+  pass_test 'all-pass finalizer works with the system Bash and nounset'
+else
+  fail_test 'all-pass finalizer works with the system Bash and nounset'
+fi
+
+# shellcheck disable=SC2016 # A conditional caller must not disable the guard.
+if bash -c '
+  source "$1"
+  verification_section_input_sha256() { printf fixture; }
+  section_receipt_path() { printf fixture; }
+  receipt_is_current() { return 0; }
+  known_verification_processes_are_absent() { return 1; }
+  if finalize_verification; then exit 1; else exit 0; fi
+' _ "$ROOT_DIR/scripts/verify-project.sh" >"$TEST_TMP_DIR/failed-cleanup-finalize.log" 2>&1; then
+  pass_test 'the finalizer rejects unproven cleanup even under a conditional caller'
+else
+  fail_test 'the finalizer rejects unproven cleanup even under a conditional caller'
+fi
+
+if (
+  # shellcheck disable=SC2030 # The policy is intentionally local to this fixture.
+  YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE=fixture-policy
+  export YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE
+  # shellcheck disable=SC2329 # Invoked by run_reticulum's command array.
+  sandbox-exec() {
+    [[ "$1" == -p && "$2" == fixture-policy && "$3" == mise ]] || return 97
+    printf 'launch\n' >>"$TEST_TMP_DIR/sandbox-launches.log"
+  }
+  # shellcheck disable=SC2329 # Guards unwrapped calls through the command array.
+  mise() { return 97; }
+  run_reticulum
+  [[ "$(wc -l <"$TEST_TMP_DIR/sandbox-launches.log" | tr -d ' ')" == 4 ]]
+); then
+  pass_test 'only the four Reticulum Mix stages receive the explicit sandbox policy'
+else
+  fail_test 'only the four Reticulum Mix stages receive the explicit sandbox policy'
+fi
+
+if (
+  before_ret="$(YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE='' verification_section_harness_sha256 reticulum)"
+  before_dialog="$(YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE='' verification_section_harness_sha256 dialog)"
+  # shellcheck disable=SC2031 # This independent subshell sets its own policy.
+  export YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE=fixture-policy
+  [[ "$before_ret" != "$(verification_section_harness_sha256 reticulum)" &&
+     "$before_dialog" == "$(verification_section_harness_sha256 dialog)" ]]
+); then
+  pass_test 'changing the sandbox policy invalidates only Reticulum harness evidence'
+else
+  fail_test 'changing the sandbox policy invalidates only Reticulum harness evidence'
+fi
+
 # shellcheck disable=SC2016 # Expand $1 only in the isolated Bash process.
 default_port_material="$(env -u PGPORT bash -c 'source "$1"; verification_section_harness_material reticulum' _ "$ROOT_DIR/scripts/verify-project.sh")"
 if printf '%s\n' "$default_port_material" | grep -Fxq 'reticulum_db_port=5432'; then
@@ -48,6 +136,7 @@ fi
 for port_case in unset 65432; do
   if (
     if [[ "$port_case" == unset ]]; then unset PGPORT; expected_port=5432; else PGPORT="$port_case"; export PGPORT; expected_port="$port_case"; fi
+    # shellcheck disable=SC2329 # Invoked by run_reticulum's command array.
     mise() {
       if [[ "$*" == *'mix test' ]]; then
         [[ "$*" == *"PGPORT=$expected_port"* && "$*" == *'DB_HOST=127.0.0.1'* ]]
@@ -65,6 +154,7 @@ for bad_port in '' 0 65536 05432 abc '5432 5433'; do
   if (
     PGPORT="$bad_port"
     export PGPORT
+    # shellcheck disable=SC2329 # Invoked only if pre-Mix validation regresses.
     mise() { return 97; }
     set +e
     run_reticulum >/dev/null 2>&1

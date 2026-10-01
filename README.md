@@ -83,6 +83,8 @@ valida y forma parte del recibo de esa sección; la config `:test` lo fija en
 ambos Repos y el session lock antes del default Ecto. El default sigue siendo5432 y
 el rol local de la plataforma. No usar ni detener una DB existente ajena para
 liberar ese puerto. [Procedimiento y evidencia](DOC/fiabilidad-test-db-2026-10-01.md).
+El sandbox opcional de tests confina solo Mix; el verificador padre debe
+poder inspeccionar procesos. [Aceptación fail-closed](DOC/fiabilidad-verificador-2026-10-01.md).
 
 ## Backup
 

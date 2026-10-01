@@ -1,5 +1,17 @@
 # Session Changelog
 
+## 2026-10-01 · Verificación fail-closed, Bash real y sandbox solo Mix
+
+18214: cuerpo Reticulum495tests+5properties verdes, pero driverexit1 y cleanup
+no probado: ps no ejecutable en sandbox, error ignorado dentro de condicional;
+resumen Bash3.2 cayó por array vacío mientras su huella decía el Bash del PATH.
+Se conservan logs/PID42362 detenido, NO aceptar ese recibo. Delta SOLO driver/
+tests/docs root: fail-closed explícito, arrays portables, huella del padre real
+y launcher de los cuatro Mix con política ligada solo al harness Reticulum.
+ddc9d1 rojo/21901 verde38casos normales; no relajar guardas ni heredar el full.
+El cambio COMÚN obliga a renovar los recibos que marque el verificador, sin
+borrar positivos. [Caso, método y límites](../DOC/fiabilidad-verificador-2026-10-01.md).
+
 ## 2026-10-01 · Configuración Ecto de la DB privada de tests
 
 La sección estándar33991 falló exit1 al migrar: Ecto introduce5432 aunque el

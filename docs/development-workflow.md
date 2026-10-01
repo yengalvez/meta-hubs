@@ -157,6 +157,9 @@ Reglas de resolucion:
    Repos y session lock; no se presupone el default de Postgrex bajo Ecto.
    Crear/verificar/detener únicamente la instancia
    temporal propia, no la DB existente del dueño. [Contrato](../DOC/fiabilidad-test-db-2026-10-01.md).
+   El perfil opcional `YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE` se liga por hash
+   y se aplica solo a Mix: no encerrar el padre que comprueba cleanup.
+   El recibo liga el Bash real del padre; [regresiones](../DOC/fiabilidad-verificador-2026-10-01.md).
 
 8. Commit y push del subrepo.
 9. Construir mediante GitHub Actions.
