@@ -1,5 +1,23 @@
 # Session Changelog
 
+## 2026-10-01 — abort-only OS-process reentry and coherent consumer observations
+
+- Exercise the existing Cloud recovery coordinator in distinct local Node
+  processes, with fsynced private receipts/journal and a durable simulated API
+  peer. Actual SIGKILL cuts after seven committed mutations, ACK loss, API
+  outage/return, terminal reentry and foreign UID/Lease drift are covered.
+  Readiness, control-plane verifiers and API time are simulated; this is not
+  real backup/restore, Kubernetes acceptance or a speed benchmark.
+- Two red observations exposed that the consumer check could ignore observed
+  UID/image drift by fetching and validating a different Deployment immediately
+  afterward. Validate UID/spec/scale/receipt from the same per-check observation;
+  no cached state survives another check, await or mutation. Other checks,
+  UID/RV CAS, Lease, fence, runner/consumer guards and budgets remain unchanged.
+- Directed existing/new regressions pass 92/92. On the identical healthy peer,
+  serial calls fall from 786 to 701 (Deployment GETs 228 to 143); external
+  verifiers are excluded. Do not infer real elapsed savings or five-minute
+  recovery. No production mutation, full gate, push or upstream integration.
+
 ## 2026-10-01 — closed Watch process diagnostics, local reliability lane
 
 - Reproduced the missing cause/resource/child-exit diagnostics with the actual
