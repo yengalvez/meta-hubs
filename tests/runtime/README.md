@@ -24,6 +24,15 @@ OS/BEAM starts: BASE, BASE+Avaturn, bots, bots+Avaturn, bots+IA, full.
 Do not rerun the five existing tests separately once the method is accepted.
 The profile chain stops at its first failure; no parallel server/auto-retry.
 
+For the distinct existing chat-delivery boundary, use `--chat-canary`: it runs
+only the chat-OFF-during-response case plus the positive delivery/fence control.
+After that method sample passes, `--chat-boundaries` runs only the other five
+cases (presence loss, bots OFF, module absent, OFF→ON and quarantine). Neither
+mode reruns the accepted six profiles. Selection uses exact ExUnit test names;
+missing/duplicated cases, skips, failures or unexpected excluded counts fail.
+The interruption oracle also requires the provider test client to receive the
+request; an early HTTP403 alone is not proof of an in-flight boundary.
+
 ## Isolation and ownership
 
 The runner checks cache lock/config against this source, copies tracked current
@@ -64,6 +73,10 @@ rejection under OFF, pending policy revision and dispatcher survival for STOP.
 Avaturn is independent of bots, and administrator flags cannot exceed installed
 capabilities. Each installed profile starts in a fresh VM, not an env swap in a
 surviving supervisor. Dialog has an inert test host plus tracked selector weights.
+
+The focused chat cases prove actual controller/SQL/fence rejection and positive
+delivery with a synchronous test HTTP client. They are not concurrent sockets,
+provider replies or an abort of an outbound network request.
 
 It does **not** prove cached public config/UI changes, real Dialog/WebRTC,
 provider replies, complete in-flight HTTP cancellation, bot movement, STOP

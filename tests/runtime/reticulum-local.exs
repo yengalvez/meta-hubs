@@ -33,6 +33,7 @@ Application.put_env(:ret, Ret.RoomAssigner, balancer_weights: [{600, 1}, {300, 5
 Application.put_env(:ret, Ret.MediaResolver, [])
 
 profile = System.fetch_env!("RET_LOCAL_PROFILE")
+chat_focus = profile in ["chat-canary", "chat-boundaries"]
 
 profiles = %{
   "base" => [bots: false, ai: false, avaturn: false],
@@ -43,7 +44,7 @@ profiles = %{
   "bots-ai-avaturn" => [bots: true, ai: true, avaturn: true]
 }
 
-unless profile == "existing-tests" do
+unless profile == "existing-tests" or chat_focus do
   modules = Map.fetch!(profiles, profile)
 
   Application.put_env(
@@ -72,17 +73,26 @@ File.mkdir_p!("storage/test")
 Code.require_file("test/test_helper.exs")
 ExUnit.configure(autorun: false)
 
-if profile == "existing-tests" do
-  Code.require_file("test/ret/product_modules_test.exs")
-  Code.require_file("test/ret/bot_chat_presence_test.exs")
-else
-  Code.require_file(Path.join(__DIR__, "reticulum-profiles.exs"))
-end
+{count, total, excluded} =
+  cond do
+    profile == "existing-tests" ->
+      Code.require_file("test/ret/product_modules_test.exs")
+      Code.require_file("test/ret/bot_chat_presence_test.exs")
+      {5, 5, 0}
+
+    chat_focus ->
+      Code.require_file(Path.join(__DIR__, "reticulum-chat-focus.exs"))
+      Ret.LocalChatFocus.configure!(profile)
+
+    true ->
+      Code.require_file(Path.join(__DIR__, "reticulum-profiles.exs"))
+      {1, 1, 0}
+  end
 
 result = ExUnit.run()
-count = if profile == "existing-tests", do: 5, else: 1
 
-unless result.total == count and result.failures == 0 and result.excluded == 0 do
+unless result.total == total and result.failures == 0 and result.excluded == excluded and
+         result.skipped == 0 do
   System.halt(1)
 end
 

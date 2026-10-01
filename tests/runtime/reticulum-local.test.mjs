@@ -4,7 +4,20 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
-import { networkProfile, assertPostmaster } from "./reticulum-local.mjs";
+import { networkProfile, assertPostmaster, runtimeCases } from "./reticulum-local.mjs";
+
+test("chat canary and remaining boundaries never rerun the accepted profiles", () => {
+  assert.deepEqual(runtimeCases("--chat-canary"), [{ profile: "chat-canary", count: 2 }]);
+  assert.deepEqual(runtimeCases("--chat-boundaries"), [{ profile: "chat-boundaries", count: 5 }]);
+  assert.deepEqual(runtimeCases("--run"), [{ profile: "existing-tests", count: 5 }]);
+  assert.deepEqual(runtimeCases("--profiles"), ["base", "base-avaturn", "bots", "bots-avaturn", "bots-ai", "bots-ai-avaturn"].map(profile => ({ profile, count: 1 })));
+});
+
+test("unknown, empty or broad runtime modes fail before materialization", () => {
+  for (const mode of ["--all", "--chat", "", undefined, "--profiles-extra"]) {
+    assert.throws(() => runtimeCases(mode), /explicit_native_target_required/);
+  }
+});
 
 test("network profile has only one outbound local port, not all loopback", () => {
   const profile = networkProfile(55483);

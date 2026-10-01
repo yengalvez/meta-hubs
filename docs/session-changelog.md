@@ -1,5 +1,20 @@
 # Session Changelog
 
+## 2026-10-01 — exact existing chat-delivery boundaries on the private native backend
+
+- Reuse the owned private DB/network runner for two exact existing controller
+  canary cases (chat OFF and positive delivery/fence), then only five remaining
+  boundaries: presence loss, bots OFF, installed-module removal, OFF→ON and
+  quarantine. Both opt-in runs pass, 2/2 and 5/5, without repeating six profiles.
+- ExUnit selection is exact, checked for missing/duplicate names before runs;
+  total/excluded/skipped/result counts must match. Tighten the existing five
+  interruption tests to prove the HTTP test client received the request and
+  retained the 18-second timeout. An early 403 is not an in-flight proof.
+- Actual router/SQL/policy/fence behavior and forbidden movement delivery are
+  exercised; the HTTP client remains synchronous and synthetic. No concurrent
+  network/provider abort, cached UI, Kubernetes or live acceptance is inferred.
+  Both owned postmasters stop; no production/provider/cost or data changes.
+
 ## 2026-10-01 — six native Reticulum profile boots without a public DB/provider
 
 - The existing pinned OTP27/Elixir1.18.4/PostgreSQL14 tools run current

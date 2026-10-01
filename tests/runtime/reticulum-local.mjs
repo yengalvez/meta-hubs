@@ -14,6 +14,16 @@ const source = path.join(cloud, relativeRet);
 const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
 const reject = code => { throw new Error(code); };
 
+export function runtimeCases(mode) {
+  switch (mode) {
+    case "--run": return [{ profile: "existing-tests", count: 5 }];
+    case "--profiles": return ["base", "base-avaturn", "bots", "bots-avaturn", "bots-ai", "bots-ai-avaturn"].map(profile => ({ profile, count: 1 }));
+    case "--chat-canary": return [{ profile: "chat-canary", count: 2 }];
+    case "--chat-boundaries": return [{ profile: "chat-boundaries", count: 5 }];
+    default: reject("explicit_native_target_required");
+  }
+}
+
 export function networkProfile(port) {
   if (!Number.isInteger(port) || port < 1024 || port > 65535) reject("invalid_private_port");
   // SBPL accepts localhost, not a numeric address. This exact-port rule was
@@ -37,7 +47,7 @@ export function assertPostmaster(work, data, port, epoch) {
 
 async function main() {
   const args = process.argv.slice(2);
-  const profiles = ["base", "base-avaturn", "bots", "bots-avaturn", "bots-ai", "bots-ai-avaturn"];
+  let cases;
   let work, log, env, data, pgBin, port, epoch, attempted = false, identity;
   let phase = "arguments", outcome = "FAIL", tests = 0;
   const metrics = {}, started = performance.now();
@@ -60,8 +70,9 @@ async function main() {
     return result.stdout || "";
   };
   try {
-    if (args.length !== 5 || !["--run", "--profiles"].includes(args[0]) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
+    if (args.length !== 5 || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
         process.platform !== "darwin") reject("explicit_native_target_required");
+    cases = runtimeCases(args[0]);
     pgBin = fs.realpathSync(args[2]); const cache = fs.realpathSync(args[4]);
     for (const name of ["mix.exs", "mix.lock", "config/config.exs", "config/test.exs", "config/runtime.exs"]) {
       if (sha(fs.readFileSync(path.join(source, name))) !== sha(fs.readFileSync(path.join(cache, name)))) reject("cache_source_mismatch");
@@ -121,13 +132,12 @@ async function main() {
     env.RET_LOCAL_DATA = data; env.RET_LOCAL_PORT = String(port); env.RET_LOCAL_CREDENTIAL = credential;
     const isolated = argv => run("/usr/bin/sandbox-exec", ["-p", networkProfile(port), ...argv], { cwd: application, timeout: 240000 });
     step("compile-current-reticulum-offline", () => isolated([path.join(elixir, "mix"), "compile", "--warnings-as-errors", "--no-deps-check"]));
-    for (const profile of args[0] === "--profiles" ? profiles : ["existing-tests"]) {
+    for (const { profile, count } of cases) {
       // One fresh OS/BEAM process per installation. Application env swaps in
       // a surviving supervisor would not prove that omitted children stay OFF.
       env.RET_LOCAL_PROFILE = profile;
       step(`backend-${profile}`, () => isolated([path.join(elixir, "mix"), "run", "--no-start", "--no-compile",
         path.join(root, "tests/runtime/reticulum-local.exs")]));
-      const count = profile === "existing-tests" ? 5 : 1;
       const result = fs.readFileSync(path.join(application, `local-result-${profile}.txt`), "utf8").trim();
       if (result !== `${count}/${count}`) reject("missing_exact_test_result");
       tests += count;
