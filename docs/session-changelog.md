@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-10-01 — read-only source preparation for native restoration
+
+- Select the already accepted complete 20260928-090510 checkpoint from B,
+  not any interrupted backup. Preparation verifies 13 bound hashes, the
+  existing SQL database-contract validator, exact archive paths/entry types
+  and 61 complete media pairs. SQL is 640465 bytes; compressed media
+  154789952 bytes. No source artifact, server or production state is mutated.
+- Six negative regressions reject missing explicit input, incomplete marker,
+  hash mismatch, symlink, path traversal and incomplete SQL despite matching
+  hashes. Private temporary SQL is removed; no private payload is printed.
+- PostgreSQL 14.23 tools already exist locally; no container runtime is
+  available. Native startup/restore/roundtrips remain pending and cannot
+  stand in for isolated Kubernetes deploy/rollback or the Goal acceptance.
+
 ## 2026-10-01 — abort-only OS-process reentry and coherent consumer observations
 
 - Exercise the existing Cloud recovery coordinator in distinct local Node
