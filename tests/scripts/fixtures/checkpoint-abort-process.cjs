@@ -132,6 +132,7 @@ async function run() {
         fault.reads = (fault.reads || 0) + 1;
         if (fault.reads === fault.observation) {
           fault.fired = true;
+          fault.writesAtObservation = state.writes.length;
           if (fault.kind === "uid") observed.metadata.uid = "foreign-observed-lease";
           else if (fault.kind === "transitions") observed.spec.leaseTransitions++;
           else if (fault.kind === "acquire-time") {
@@ -147,8 +148,20 @@ async function run() {
       if (document.metadata.resourceVersion !== state.lease.metadata.resourceVersion) return { conflict: true };
       const oldHolder = state.lease.spec.holderIdentity;
       state.lease = { ...clone(document), metadata: { ...document.metadata, uid: "lease-uid", resourceVersion: String(++state.rv) } };
-      wrote(!document.spec.holderIdentity ? "lease-release" : document.spec.holderIdentity !== oldHolder ? "lease-acquire" : "lease-renew");
-      return { resource: clone(state.lease) };
+      const label = !document.spec.holderIdentity ? "lease-release" : document.spec.holderIdentity !== oldHolder ? "lease-acquire" : "lease-renew";
+      wrote(label);
+      const observed = clone(state.lease), fault = state.leaseResponseFault;
+      if (fault?.label === label && !fault.fired) {
+        fault.fired = true; fault.writesAtObservation = state.writes.length;
+        if (fault.kind === "uid") observed.metadata.uid = "foreign-ack-lease";
+        else if (fault.kind === "transitions") observed.spec.leaseTransitions++;
+        else if (["acquire-time", "renew-time"].includes(fault.kind)) {
+          observed.spec[fault.kind === "acquire-time" ? "acquireTime" : "renewTime"] =
+            new Date(state.time + 1000).toISOString().replace(/(\.\d{3})Z$/u, "$1000Z");
+        }
+        else throw new Error("unexpected_lease_response_fault");
+      }
+      return { resource: observed };
     }
   };
   function kubectl(args, document, allowFailure = false) {

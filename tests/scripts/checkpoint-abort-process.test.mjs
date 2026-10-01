@@ -192,3 +192,66 @@ for (const [kind, expected] of [
     assert.notEqual(f.read("plan.json.journal.json").stage, "recovered-abort-only");
   });
 }
+
+for (const [kind, expected] of [
+  ["uid", "lease_identity_changed"],
+  ["transitions", "foreign_lease_lineage"],
+  ["acquire-time", "foreign_lease_lineage"]
+]) {
+  test(`Lease renewal rejects its own ${kind} observation before CAS, not just the earlier freshness GET`, async t => {
+    const f = await fixture(t);
+    // After the fence: guard reads #1/#2, renew freshness #3, renew GET #4.
+    // Only the CAS method's observation differs; all surrounding GETs agree.
+    f.mutate(state => { state.leaseReadFault = { after: "fence", observation: 4, kind }; });
+    const failed = await f.invoke("execute"), state = f.read("peer.json");
+    assert.ok(state.leaseReadFault.fired);
+    assert.equal(failed.code, 1); assert.equal(failed.result.code, expected);
+    assert.equal(state.writes.length, state.leaseReadFault.writesAtObservation, "no mutation follows rejected observation");
+    assert.ok(state.lock);
+    assert.equal(state.writes.some(write => write.label.startsWith("resume:")), false);
+    assert.notEqual(f.read("plan.json.journal.json").stage, "recovered-abort-only");
+  });
+}
+
+for (const [label, kind, expected] of [
+  ["lease-acquire", "uid", "lease_identity_changed"],
+  ["lease-acquire", "transitions", "foreign_lease_lineage"],
+  ["lease-renew", "uid", "lease_identity_changed"],
+  ["lease-renew", "transitions", "foreign_lease_lineage"],
+  ["lease-release", "transitions", "service_restored_lease_release_unconfirmed"]
+]) {
+  test(`Lease CAS ACK ${label}/${kind} drift stops authority and a new process reconciles the actual commit`, async t => {
+    const f = await fixture(t);
+    f.mutate(state => { state.leaseResponseFault = { label, kind }; });
+    const failed = await f.invoke("execute"), state = f.read("peer.json");
+    assert.ok(state.leaseResponseFault.fired);
+    assert.equal(failed.code, 1); assert.equal(failed.result.code, expected);
+    assert.equal(state.writes.length, state.leaseResponseFault.writesAtObservation, "no mutation after bad ACK");
+    if (label !== "lease-release") assert.ok(state.lock);
+    assert.notEqual(f.read("plan.json.journal.json").stage, "recovered-abort-only");
+    // The peer really committed the original before returning the bad ACK.
+    // A new process must verify that state, not carry over old authority.
+    f.mutate(state => { state.time += 121000; });
+    const recovered = await f.invoke("execute");
+    assert.notEqual(recovered.pid, failed.pid); assert.equal(recovered.code, 0);
+    f.recovered();
+  });
+}
+
+for (const [label, kind] of [["lease-acquire", "acquire-time"], ["lease-renew", "renew-time"]]) {
+  test(`Lease CAS timestamps ${label}/${kind} must match the requested spec before persisting a baseline`, async t => {
+    const f = await fixture(t);
+    f.mutate(state => { state.leaseResponseFault = { label, kind }; });
+    const failed = await f.invoke("execute"), state = f.read("peer.json");
+    assert.ok(state.leaseResponseFault.fired);
+    assert.equal(failed.code, 1);
+    assert.equal(state.writes.length, state.leaseResponseFault.writesAtObservation);
+    assert.ok(state.lock);
+    f.mutate(state => { state.time += 121000; });
+    const recovered = await f.invoke("execute");
+    assert.notEqual(recovered.pid, failed.pid);
+    assert.equal(recovered.code, 0, "a malformed ACK must not poison the next process's durable baseline");
+    assert.equal(failed.result.code, "lease_write_response_changed");
+    f.recovered();
+  });
+}

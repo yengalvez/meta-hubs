@@ -1,5 +1,23 @@
 # Session Changelog
 
+## 2026-10-01 — Lease CAS observations and ACKs bound to durable lineage
+
+- Ten red process probes expose ignored UID drift, renewal writes after
+  observing foreign lineage, acquisition ACKs poisoning the persisted baseline
+  and renewal/release ACK drift hidden by a later normal GET. Each first fails
+  on the specific outcome: reject before further writes and recover separately.
+- Bind each existing Lease CAS method's own GET and write response to the
+  journal lineage, plus its requested spec, before using it. Two red timestamp
+  controls expose an acquisition baseline poisoning reentry and a renewal ACK
+  falsely accepted despite not matching the request. Never persist an
+  unvalidated lastLease ACK.
+  No new API calls, coordinator, clock budget, schema or product configuration.
+- Focused probes check no mutation after the bad observation/ACK,
+  no false terminal acceptance, and a different process reconciles the actual
+  committed state exactly once. API/clock/readiness remain simulated; this
+  does not prove a historical cause or replace isolated Kubernetes acceptance.
+- No production mutation, remote build, full gate, push or base integration.
+
 ## 2026-10-01 — coherent Lease freshness and lineage observations
 
 - Three red process regressions show that an owned/fresh Lease with a foreign
