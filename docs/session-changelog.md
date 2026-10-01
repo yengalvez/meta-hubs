@@ -1,5 +1,31 @@
 # Session Changelog
 
+## 2026-10-01 — six native Reticulum profile boots without a public DB/provider
+
+- The existing pinned OTP27/Elixir1.18.4/PostgreSQL14 tools run current
+  Reticulum source in an owned private scratch. Materialize frozen dependency
+  caches without links into the candidate, compile Reticulum afresh, and load
+  the same Hex2.5.1 through its official signed/checksummed installer only in
+  private Mix home; the host's newer-OTP archive cannot load on OTP27.
+- An exact own database identity is verified before create/migrate. Runtime
+  connections are confined to that single loopback port. Mix may bind/accept
+  loopback but cannot connect to any other local port; an actual denied peer
+  receives zero connections. No provider variables, public DB, global install,
+  Kubernetes or live version changes. The owned PG server is stopped at exit.
+- A five-test existing backend sample first passes. Then six independent
+  sequential OS/BEAM processes prove actual installed child presence/absence,
+  SQL ON flags cannot install omitted modules, authenticated HubChannel ON/OFF
+  pushes, chat HTTP404 under OFF, pending policy revision invalidation and the
+  dispatcher remains alive for STOP. Six directed tests pass in 17.236s.
+- Avaturn configuration is projected from explicit uncached SQL; Dialog is
+  inert. No cold browser, cached public configuration, actual provider reply,
+  movement or completed STOP drain is certified. Complete isolated deployments,
+  rollback and final exact full/base integration remain Goal requirements.
+- Seventeen portable guard regressions cover exact network rule, invalid
+  ports, postmaster PID/data/epoch/port/socket/bind/symlink identity and opt-in.
+  Register only these pure tests in normal local/CI security; native profile
+  runs remain opt-in and macOS-only, never the normal default-DB mix alias.
+
 ## 2026-10-01 — fresh Namespace reads avoid the large fake dispatch
 
 - A test-only early route reads the two default Namespace JSON files afresh
