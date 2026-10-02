@@ -1,5 +1,40 @@
 # Session Changelog
 
+## 2026-10-02 · Diagnostic parser Bash 3.2 compatibility, no product delta
+
+Source reading shows isolated stable-absence already uses exact fixture0;
+the existing full aggregates do not assign its6h43min to that wait. While
+preparing bounded per-case diagnostics, bf1cb2/df240c reproduced the existing
+opt-in helper assigning to readonly BASH_REMATCH on actual host Bash3.2.
+Parse only inside a subshell, preserving caller matches/captured output and
+all existing assertion verdicts. New matrix covers host3.2/5.3; fixture clears
+matches with a non-matching regex, not another readonly assignment.
+39009 ended naturally1/ff8497 after syntax/ShellCheck succeeded:10 tests
+passed, new test wrongly rejected the legitimate existing pass label. Identity
+check332052 failed before any signal, so no process was cancelled. Correct
+only that fixture assertion; f68a14 exit0,11/11/0skips, both syntax parsers,
+changed-helper ShellCheck and diff PASS.
+Final target selection is platform-bound: macOS must run both actual shells,
+Linux CI uses its declared PATH Bash instead of a nonexistent Homebrew path.
+ba6d26 runs the one affected matrix again, exit0/1test/0skips; it is not a
+Linux runtime proof. Prior ten guards unchanged and compatible.
+No native recovery/full replay, app/DB/VM/copy/build or productive effect.
+Primary separated directed review,
+not independent; no full transferred to the new root bytes.
+
+## 2026-10-02 · Integrated unobserved OFF ON window terminal
+
+23513 TERMINAL0/6fd6fc; readback3094b4 proves one NEW case/0failures/skips on
+0651f4c81c3fff91e22a2bca2b03c7e158677683, Hubs2a3d7ab/Cloudcb15414 clean
+before/after. OFF and ON commit in a third SQL backend with old warm ON cache
+and provider held. The next actual HTTP snapshot sees ON;3 provider phases
+complete, yet old reply is rejected403/exact reason/no command. This is
+stale-delivery rejection, not socket cancellation or scheduler proof for an
+unobserved OFF window. Total18.923s incl setup/compile/104ms PG stop; denied
+peer0, normal actor exits/closed listeners, postmaster.pid absent, scratch0700
+/private/tmp/ynret-local-A6iQHJ/log/summary0600 retained. No replay38967,
+production/public provider/Goal/full acceptance or job left running.
+
 ## 2026-10-02 · One integrated unobserved OFF ON boundary, method prepared
 
 Preserve38967 terminal0/db7442: two native SQL/HTTP controls accepted on9b4b5a9,

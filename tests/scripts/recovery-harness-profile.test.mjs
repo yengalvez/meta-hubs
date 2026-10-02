@@ -16,7 +16,7 @@ const functions = ["pass", "fail", "expect_success", "expect_failure", "expect_f
     return definition[0];
   }).join("\n");
 
-function run(output, flag = "1", mode = "success", seedMatches = true) {
+function run(output, flag = "1", mode = "success", seedMatches = true, bash = "bash") {
   const command = mode === "success"
     ? `expect_success 'profiled command' printf '%s' "$input"`
     : mode === "failure"
@@ -24,12 +24,12 @@ function run(output, flag = "1", mode = "success", seedMatches = true) {
       : mode === "status"
         ? `expect_failure_status 'expected status' 'expected fixture failure' 13 bash -c 'printf "%s" "$1"; exit 13' _ "$input"`
         : `expect_failure_status 'expected status' 'expected fixture failure' 13 printf '%s' "$input"`;
-  const result = spawnSync("bash", ["-c", `set -euo pipefail
+  const result = spawnSync(bash, ["-c", `set -euo pipefail
 PASS_COUNT=0; FAIL_COUNT=0; LAST_OUTPUT=''
 ${existsSync(helper) ? `source '${helper}'` : ""}
 ${functions}
 input="$(cat)"
-${seedMatches ? "[[ 'original-match' =~ (original-match) ]]" : "BASH_REMATCH=()"}
+${seedMatches ? "[[ 'original-match' =~ (original-match) ]]" : "[[ '' =~ (never-matches) ]] || :"}
 ${command}
 [[ "$LAST_OUTPUT" == "$input" ]]
 ${seedMatches ? "[[ \"${BASH_REMATCH[1]}\" == 'original-match' ]]" : "[[ \"${#BASH_REMATCH[@]}\" == 0 ]]"}
@@ -104,4 +104,20 @@ test("diagnostic output does not convert an unexpected command status to PASS", 
 test("profiling also preserves an initially empty regex match array", () => {
   const result = run(timing("resume"), "1", "success", false);
   assert.ok(result.includes(`RECOVERY_TEST_PROFILE ${timing("resume")}\n`));
+});
+
+test("existing profiling preserves captures and match arrays in the declared native Bash targets", () => {
+  // The verified macOS host must prove both shells, not silently skip either.
+  // Linux CI exercises its declared PATH Bash; it has no Homebrew target.
+  const targets = process.platform === "darwin" ? ["/bin/bash", "/opt/homebrew/bin/bash"] : ["bash"];
+  for (const bash of targets) {
+    for (const mode of ["success", "failure", "status", "wrong-status"]) {
+      const result = run("expected fixture failure", "1", mode, true, bash);
+      assert.match(result, /CAPTURE_UNCHANGED=1 PASS=[01] FAIL=[01]/);
+      assert.doesNotMatch(result, /expected fixture failure/);
+    }
+    for (const flag of ["0", "", "true", "01", "2"]) {
+      assert.doesNotMatch(run("private content", flag, "success", false, bash), /RECOVERY_TEST_PROFILE|private content/);
+    }
+  }
 });
