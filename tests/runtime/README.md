@@ -255,3 +255,41 @@ socket, stopped provider work, reached the browser or was observed by the
 periodic scheduler. Those remain separate boundaries, not an invented defect
 or a zero-traffic claim. Same owned listeners/children/PG identity and cleanup;
 no product changes, broader mode, public target, provider credentials or retry.
+
+## Native reference catalog dataset (one NEW case)
+
+```sh
+node tests/runtime/reticulum-local.mjs --catalog-dataset \
+  --pg-bin /opt/homebrew/opt/postgresql@14/bin \
+  --cache-reticulum /Users/yengalvez/.codex/worktrees/reliability-20261001/YenHubs/hubs-cloud/community-edition/services/reticulum \
+  --catalog-receipts /Users/Shared/Gits/YenHubs-avaturn/output/rpm-catalog-20260925/thumbnails/render-receipts.json
+```
+
+Only a clean exact root/Hubs/Cloud is eligible; sources are checked again at
+completion. Explicit current dependency cache, existing PostgreSQL14 and the
+approved source receipts are mandatory. All66 original files, the exact
+catalog and its approved combined binding are checked without modifying them.
+No install/API/prod values or avatar sync/apply is performed. Reuse the normal
+importer's GLB split/material normalization only in private derived copies.
+Embedded model resources only;33 unique full-body models, approved720×1280
+thumbnails and seven preserved listing IDs. The26 other listing IDs follow
+the existing importer's exact hash rule. Normal short guards run with
+`node --test tests/runtime/catalog-dataset.test.mjs`, without starting PG.
+
+The existing owned native runner executes exactly one new dataset case, not
+profile or chat matrices. It uses current migrations/models, Storage's real
+encryption/promotion/fetch and committed SQL. A distinct Postgrex connection
+checks33 avatars/33 listings/99 owned pairs and their owner/file relations;
+all decrypted bytes must match their bound inputs. The real AvatarView
+projection uses loopback file URLs, not an actual browser/HTTP acceptance.
+New local keys and full SQL remain private0600 inside0700 scratch, never in
+stdout or commits. An identity-bound pg_dump is captured before the existing
+normal verified stop. Original binaries/receipts and all three sources must
+be unchanged. No automatic retry; reconcile first failure and cleanup first.
+
+The output is a **PG14 synthetic catalog seed**, not the current production
+backup or complete representative dataset: room/scene/Spoke ownership,
+major-version runtime, restore, browser, installation, signed images and the
+three Kubernetes/deploy/rollback cycles still need their own acceptance.
+Do not restore this SQL into production, use it to validate an interrupted
+backup, or substitute it for the coordinated installation/restore protocol.

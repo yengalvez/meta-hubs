@@ -6,6 +6,7 @@ import net from "node:net";
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { prepareCatalogDataset } from "./catalog-dataset.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const relativeRet = "community-edition/services/reticulum";
@@ -24,6 +25,7 @@ export function runtimeCases(mode) {
     case "--chat-concurrent-boundaries": return [{ profile: "chat-concurrent-boundaries", count: 4 }];
     case "--sql-http-canary": return [{ profile: "sql-http-canary", count: 2 }];
     case "--sql-http-reentry": return [{ profile: "sql-http-reentry", count: 1 }];
+    case "--catalog-dataset": return [{ profile: "catalog-dataset", count: 1 }];
     case "--config-cache-canary": return [{ profile: "config-cache-canary", count: 2 }];
     case "--config-cache-boundaries": return [{ profile: "config-cache-boundaries", count: 4 }];
     case "--config-cache-types": return [{ profile: "config-cache-types", count: 1 }];
@@ -58,10 +60,22 @@ async function main() {
   let work, log, env, data, pgBin, port, epoch, attempted = false, identity;
   let phase = "arguments", outcome = "FAIL", tests = 0;
   const metrics = {}, started = performance.now();
+  let catalog, catalogSourceBefore, catalogSourceAfter;
+  const catalogSourceSnapshot = () => Object.fromEntries([".", "hubs", "hubs-cloud"].map(name => {
+    const repository = path.join(root, name);
+    const read = args => {
+      const result = spawnSync("/usr/bin/git", ["-C", repository, ...args], { encoding: "utf8" });
+      if (result.error || result.signal || result.status !== 0) reject("catalog_source_read_failed");
+      return result.stdout.trim();
+    };
+    if (read(["status", "--porcelain=v1", "--untracked-files=normal"]) !== "") reject("catalog_source_not_clean");
+    return [name, read(["rev-parse", "HEAD"])];
+  }));
   const writeReceipt = () => {
     if (work) fs.writeFileSync(path.join(work, "summary.json"), JSON.stringify({
       scope: "native-synthetic-reticulum-not-kubernetes-or-production", phase,
-      outcome, tests, metrics, elapsed_ms: Math.round(performance.now() - started)
+      outcome, tests, metrics, elapsed_ms: Math.round(performance.now() - started),
+      ...(catalogSourceBefore ? { catalog_source_before: catalogSourceBefore, catalog_source_after: catalogSourceAfter } : {})
     }, null, 2) + "\n", { mode: 0o600 });
   };
   const step = (name, action) => {
@@ -78,20 +92,26 @@ async function main() {
   };
   try {
     const integrated = ["--sql-http-canary", "--sql-http-reentry"].includes(args[0]);
-    if (args.length !== (integrated ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
+    const catalogMode = args[0] === "--catalog-dataset";
+    if (args.length !== (integrated || catalogMode ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
         (integrated && args[5] !== "--cache-bot-orchestrator") ||
+        (catalogMode && args[5] !== "--catalog-receipts") ||
         process.platform !== "darwin") reject("explicit_native_target_required");
     cases = runtimeCases(args[0]);
     pgBin = fs.realpathSync(args[2]); const cache = fs.realpathSync(args[4]);
     for (const name of ["mix.exs", "mix.lock", "config/config.exs", "config/test.exs", "config/runtime.exs"]) {
       if (sha(fs.readFileSync(path.join(source, name))) !== sha(fs.readFileSync(path.join(cache, name)))) reject("cache_source_mismatch");
     }
-    for (const name of ["initdb", "pg_ctl", "psql", "postgres"]) fs.accessSync(path.join(pgBin, name), fs.constants.X_OK);
+    for (const name of ["initdb", "pg_ctl", "psql", "postgres", ...(catalogMode ? ["pg_dump"] : [])]) fs.accessSync(path.join(pgBin, name), fs.constants.X_OK);
     fs.accessSync("/usr/bin/sandbox-exec", fs.constants.X_OK);
     const erlang = "/Users/yengalvez/.local/share/mise/installs/erlang/27.3.4.14/bin";
     const elixir = "/Users/yengalvez/.local/share/mise/installs/elixir/1.18.4-otp-27/bin";
     fs.accessSync(path.join(elixir, "mix"), fs.constants.X_OK);
     work = fs.mkdtempSync("/private/tmp/ynret-local-"); fs.chmodSync(work, 0o700);
+    if (catalogMode) {
+      catalogSourceBefore = catalogSourceSnapshot();
+      catalog = step("prepare-approved-catalog-private-input", () => prepareCatalogDataset({ root, work, receiptsPath: args[6] }));
+    }
     for (const name of ["home", "socket", "mix", "hex"]) fs.mkdirSync(path.join(work, name), { mode: 0o700 });
     log = fs.openSync(path.join(work, "private.log"), "wx", 0o600);
     // No inherited DB/PG/service/password/provider variables or user Mix home.
@@ -99,6 +119,11 @@ async function main() {
       LC_ALL: "C", LANG: "C", TZ: "UTC", TMPDIR: work, MIX_ENV: "test", HEX_OFFLINE: "1",
       MIX_HOME: path.join(work, "mix"), HEX_HOME: path.join(work, "hex"),
       ERL_FLAGS: "+S 4:4", DB_HOST: "127.0.0.1", DB_CREDENTIALS: "unusable-before-local-override" };
+    let catalogPostgresVersion;
+    if (catalogMode) {
+      catalogPostgresVersion = run(path.join(pgBin, "postgres"), ["--version"], { capture: true }).trim();
+      if (!/^postgres \(PostgreSQL\) 14\./.test(catalogPostgresVersion)) reject("catalog_native_major14_required");
+    }
     const application = path.join(work, "reticulum"); fs.mkdirSync(application, { mode: 0o700 });
     step("materialize-owned-source-and-cache", () => {
       const list = run("/usr/bin/git", ["-C", cloud, "ls-files", "-z", "--", relativeRet], { capture: true }).split("\0").filter(Boolean);
@@ -139,6 +164,7 @@ async function main() {
       if (answer !== `${data}|profile_test`) reject("database_identity_mismatch");
     });
     env.RET_LOCAL_DATA = data; env.RET_LOCAL_PORT = String(port); env.RET_LOCAL_CREDENTIAL = credential;
+    if (catalog) env.RET_LOCAL_CATALOG_INPUT = catalog.input;
     const isolated = argv => run("/usr/bin/sandbox-exec", ["-p", networkProfile(port), ...argv], { cwd: application, timeout: 240000 });
     step("compile-current-reticulum-offline", () => isolated([path.join(elixir, "mix"), "compile", "--warnings-as-errors", "--no-deps-check"]));
     for (const { profile, count } of cases) {
@@ -163,6 +189,25 @@ async function main() {
       const result = fs.readFileSync(path.join(application, `local-result-${profile}.txt`), "utf8").trim();
       if (result !== `${count}/${count}`) reject("missing_exact_test_result");
       tests += count;
+    }
+    if (catalog) {
+      const captureOwnedCatalogDump = () => {
+        if (assertPostmaster(work, data, port, epoch) !== identity) reject("catalog_postmaster_identity_changed");
+        const readback = JSON.parse(fs.readFileSync(path.join(work, "catalog-readback.json"), "utf8"));
+        if (readback.models !== 33 || readback.listings !== 33 || readback.owned_pairs !== 99 || readback.preserved !== 7) reject("catalog_readback_missing");
+        const dump = run(path.join(pgBin, "pg_dump"), ["-h", path.join(work, "socket"), "-p", String(port),
+          "-U", "profile_test", "-d", "ret_test", "--no-owner", "--no-acl"], { capture: true });
+        fs.writeFileSync(path.join(work, "catalog-native.sql"), dump, { flag: "wx", mode: 0o600 });
+        // Keys remain solely in this private synthetic SQL. Never print it or
+        // advertise it as a complete checkpoint/restore or the PG12 runtime.
+        catalog.assertUnchanged(); catalogSourceAfter = catalogSourceSnapshot();
+        if (JSON.stringify(catalogSourceAfter) !== JSON.stringify(catalogSourceBefore)) reject("catalog_source_changed");
+        metrics.catalog = { models: 33, owned_pairs: 99, preserved: 7, originals: catalog.originals,
+          media_plaintext_bytes: catalog.source_bytes, sql_bytes: Buffer.byteLength(dump),
+          postgres_version: catalogPostgresVersion,
+          scope: "native-PG14-synthetic-catalog-not-backup-restore-browser-or-three-cycles" };
+      };
+      step("capture-owned-catalog-sql-and-source-identity", captureOwnedCatalogDump);
     }
     outcome = "PASS";
   } catch (error) {

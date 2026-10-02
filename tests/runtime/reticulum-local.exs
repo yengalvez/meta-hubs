@@ -37,6 +37,17 @@ chat_focus = profile in ["chat-canary", "chat-boundaries"]
 chat_concurrent = profile in ["chat-concurrent", "chat-concurrent-boundaries"]
 config_cache = profile in ["config-cache-canary", "config-cache-boundaries", "config-cache-types"]
 sql_http = profile in ["sql-http-canary", "sql-http-reentry"]
+catalog = profile == "catalog-dataset"
+
+if catalog do
+  Application.put_env(:ret, Ret.ProductModules, bots: false, ai: false, avaturn: false)
+
+  Application.put_env(
+    :ret,
+    Ret.Storage,
+    Keyword.put(Application.fetch_env!(:ret, Ret.Storage), :host, "http://127.0.0.1:4000")
+  )
+end
 
 if sql_http do
   http_port = System.fetch_env!("RET_LOCAL_HTTP_PORT") |> String.to_integer()
@@ -73,7 +84,8 @@ profiles = %{
   "bots-ai-avaturn" => [bots: true, ai: true, avaturn: true]
 }
 
-unless profile == "existing-tests" or chat_focus or chat_concurrent or config_cache or sql_http do
+unless profile == "existing-tests" or chat_focus or chat_concurrent or config_cache or sql_http or
+         catalog do
   modules = Map.fetch!(profiles, profile)
 
   Application.put_env(
@@ -125,6 +137,13 @@ ExUnit.configure(autorun: false)
       Code.require_file(Path.join(__DIR__, "reticulum-sql-http.exs"))
       count = if profile == "sql-http-reentry", do: 1, else: 2
       {count, count, 0}
+
+    catalog ->
+      # Commit only to the independently verified disposable database. Normal
+      # DataCase rollback would erase the dataset before its private dump.
+      Ecto.Adapters.SQL.Sandbox.mode(Ret.Repo, :auto)
+      Code.require_file(Path.join(__DIR__, "reticulum-catalog-dataset.exs"))
+      {1, 1, 0}
 
     profile == "config-cache-canary" ->
       Code.require_file(Path.join(__DIR__, "reticulum-config-cache.exs"))

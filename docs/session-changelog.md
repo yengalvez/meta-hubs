@@ -1,5 +1,28 @@
 # Session Changelog
 
+## 2026-10-02 · Prepare native synthetic catalog dataset, not complete cycles
+
+Extend the existing private Reticulum runner with one explicit opt-in target,
+not a new importer/coordinator or replay of profile/chat matrices. Approved
+33 GLBs/PNGs and seven listing IDs are bound before deriving private inputs;
+reuse normal GLB normalization, never modify originals. Require clean exact
+sources, current matching cache and existing PG14, no inherited credentials.
+Current models/migrations/storage crypto and a distinct SQL peer must prove
+33 avatars/33 listings/99 media pairs, owner/file bindings and decrypted hashes.
+Capture only private synthetic SQL then normal identity-checked PG stop.
+Selector2d9f20 REDabsent; initial static assertionf97d4b1/2 was incorrect about
+passing a callback to the stage, not a native failure. Correct only that
+assertion;871d39 four guards PASS.31391f six guards PASS/0skips; its host Mix
+formatter emitted a Hex compatibility error, so wrapper0 was NOT format
+acceptance.528669 used the existing Elixir formatter directly, actual0 and
+AST unchanged.65a070 whitespace check caught only an extra trailing blank;
+after removing it,6be58f/8f6546 syntax, ShellCheck, Actionlint, whitespace and
+root Gitleaks10.83MB/0leaks all exited0. Native execution is pending when
+this entry is written. No PG/runtime
+result, restore/browser/PG12/cycles/full acceptance is inferred from syntax.
+Root tests/recipe/short-guard registration only; Hubs/Cloud/product unchanged.
+Separated primary review, not independent; no VM/production/build/real backup.
+
 ## 2026-10-02 · Diagnostic parser Bash 3.2 compatibility, no product delta
 
 Source reading shows isolated stable-absence already uses exact fixture0;
