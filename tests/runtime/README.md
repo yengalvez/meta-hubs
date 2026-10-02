@@ -235,3 +235,23 @@ and the SQL cluster is disposable. This is NOT a complete browser/Presence/
 periodic-scheduler/runner STOP/movement/Kubernetes or six-edition acceptance,
 not a deployment/backup SLO or the three representative cycles. Those separate
 requirements remain in the canonical plan and the final exact full gate.
+
+### Unobserved OFF → ON window (one NEW integrated case)
+
+Use the same explicit inputs with `--sql-http-reentry` instead of
+`--sql-http-canary`. It runs exactly one NEW case/zero exclusions or skips,
+not the two accepted controls. Keep the actual provider model socket held;
+chat OFF and ON must both commit on a third SQL connection before Node's
+next snapshot. Verify persisted ON, both notifications, a changed policy
+revision and the old warm raw ON cache while the request is still pending.
+Only then call the actual authenticated HTTP sync: Node observes ON, never
+the intermediate OFF, and its provider socket must still be open. Complete
+the three real HTTP phases; Reticulum must reject the old reply with exact
+403/reason and no command even though chat is currently enabled.
+
+This proves stale-delivery rejection across SQL/HTTP when a revocation window
+is missed. It does NOT prove that the unseen revocation cancelled a provider
+socket, stopped provider work, reached the browser or was observed by the
+periodic scheduler. Those remain separate boundaries, not an invented defect
+or a zero-traffic claim. Same owned listeners/children/PG identity and cleanup;
+no product changes, broader mode, public target, provider credentials or retry.

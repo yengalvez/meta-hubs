@@ -36,7 +36,7 @@ profile = System.fetch_env!("RET_LOCAL_PROFILE")
 chat_focus = profile in ["chat-canary", "chat-boundaries"]
 chat_concurrent = profile in ["chat-concurrent", "chat-concurrent-boundaries"]
 config_cache = profile in ["config-cache-canary", "config-cache-boundaries", "config-cache-types"]
-sql_http = profile == "sql-http-canary"
+sql_http = profile in ["sql-http-canary", "sql-http-reentry"]
 
 if sql_http do
   http_port = System.fetch_env!("RET_LOCAL_HTTP_PORT") |> String.to_integer()
@@ -123,7 +123,8 @@ ExUnit.configure(autorun: false)
       # newly created disposable cluster, never on the default database.
       Ecto.Adapters.SQL.Sandbox.mode(Ret.Repo, :auto)
       Code.require_file(Path.join(__DIR__, "reticulum-sql-http.exs"))
-      {2, 2, 0}
+      count = if profile == "sql-http-reentry", do: 1, else: 2
+      {count, count, 0}
 
     profile == "config-cache-canary" ->
       Code.require_file(Path.join(__DIR__, "reticulum-config-cache.exs"))

@@ -1,4 +1,4 @@
-// ONE opt-in integrated canary on the existing owned Reticulum native runner.
+// Explicit finite integrated modes on the existing owned Reticulum runner.
 // Actual SQL/HTTPoison/Express/fetch; provider, readiness and chat-entry seams
 // remain synthetic. No provider, Kubernetes, production or SLO acceptance.
 import assert from "node:assert/strict";
@@ -96,7 +96,9 @@ function childMessages(child) {
 }
 
 export async function runSqlHttpCanary({ root, work, log, env, application, pgPort, mix, botCache }) {
-  assert.equal(env.RET_LOCAL_PROFILE, "sql-http-canary");
+  const profile = env.RET_LOCAL_PROFILE;
+  const expectedCases = { "sql-http-canary": ["positive", "chat-off"], "sql-http-reentry": ["chat-off-on"] }[profile];
+  assert.ok(expectedCases, "explicit integrated profile required");
   assert.ok(work.startsWith("/private/tmp/ynret-local-"));
   assert.equal(fs.statSync(work).mode & 0o777, 0o700);
   const began = performance.now(), results = [];
@@ -196,9 +198,9 @@ export async function runSqlHttpCanary({ root, work, log, env, application, pgPo
     beam.stdin.on("error", () => { fs.writeSync(log, "OWNED_BEAM_INPUT_CLOSED\n"); });
     const waitStage = stageQueue(beam, log), seen = new Set();
     const acknowledge = line => { assert.equal(beam.exitCode, null); beam.stdin.write(`OWNED_SQL_HTTP:${line}\n`); };
-    for (let index = 0; index < 2; index++) {
+    for (let index = 0; index < expectedCases.length; index++) {
       const setup = await waitStage("setup", null), testCase = setup.test_case;
-      assert.ok(["positive", "chat-off"].includes(testCase) && !seen.has(testCase)); seen.add(testCase);
+      assert.ok(expectedCases.includes(testCase) && !seen.has(testCase)); seen.add(testCase);
       assert.ok(/^[A-Za-z0-9_-]{1,64}$/.test(setup.hub_sid));
       assert.equal(setup.real_http_client, true); assert.equal(setup.denied, true);
       current = { calls: [], held: deferred(), closed: deferred(), response: null };
@@ -231,23 +233,36 @@ export async function runSqlHttpCanary({ root, work, log, env, application, pgPo
         elapsed = Math.round(current.closedAt - before);
         acknowledge("off-synced");
       } else {
+        if (testCase === "chat-off-on") {
+          assert.equal(transition.sql_committed_off_then_on, true);
+          assert.equal(transition.three_distinct_sql_owners, true);
+          assert.equal(transition.raw_cache_still_on, true);
+          assert.equal(transition.old_policy_revision_invalid, true);
+          // Deliberately omit an intermediate OFF snapshot. The actual next
+          // authenticated GET sees ON; only Reticulum's final fence can reject
+          // the old request. This is not a socket-cancellation/periodicity claim.
+          const restored = await sendBot("sync");
+          assert.equal(restored.authoritative, true); assert.equal(restored.count, 1);
+          assert.deepEqual(await healthModules(), { bots_enabled: true, ai_enabled: true });
+          assert.equal(current.response.writableFinished, false); assert.equal(current.socket.destroyed, false);
+        }
         current.response.writeHead(200, { "content-type": "application/json" });
         current.response.end(JSON.stringify({ status: "completed", output_text: JSON.stringify({ reply: "owned integrated reply" }) }));
         acknowledge("released");
       }
       const verified = await waitStage("verified", testCase);
-      assert.equal(verified.no_command, true); assert.equal(verified.no_old_reply, testCase === "chat-off");
-      assert.equal(verified.status, testCase === "positive" ? 200 : 502);
-      assert.deepEqual(current.calls, testCase === "positive"
-        ? ["/v1/moderations", "/v1/responses", "/v1/moderations"] : ["/v1/moderations", "/v1/responses"]);
+      assert.equal(verified.no_command, true); assert.equal(verified.no_old_reply, testCase !== "positive");
+      assert.equal(verified.status, testCase === "positive" ? 200 : testCase === "chat-off" ? 502 : 403);
+      assert.deepEqual(current.calls, testCase === "chat-off"
+        ? ["/v1/moderations", "/v1/responses"] : ["/v1/moderations", "/v1/responses", "/v1/moderations"]);
       assert.equal(deniedConnections, 0);
       results.push({ test_case: testCase, outcome: "PASS", actual_provider_phases: current.calls.length,
         ...(elapsed === undefined ? {} : { snapshot_to_socket_close_ms: elapsed, socket_unfinished_before_cleanup: true }) });
       acknowledge("verified");
     }
-    assert.deepEqual([...seen].sort(), ["chat-off", "positive"]);
+    assert.deepEqual([...seen].sort(), [...expectedCases].sort());
     assert.deepEqual(await bounded(beamExit, "owned_beam_exit_timeout", 10000), { code: 0, signal: null });
-    assert.equal(fs.readFileSync(path.join(application, "local-result-sql-http-canary.txt"), "utf8"), "2/2\n");
+    assert.equal(fs.readFileSync(path.join(application, `local-result-${profile}.txt`), "utf8"), `${expectedCases.length}/${expectedCases.length}\n`);
     await sendBot("shutdown");
     assert.deepEqual(await bounded(botExit, "owned_bot_exit_timeout"), { code: 0, signal: null });
     cleanup = true;

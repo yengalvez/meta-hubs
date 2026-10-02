@@ -1,5 +1,25 @@
 # Session Changelog
 
+## 2026-10-02 · One integrated unobserved OFF ON boundary, method prepared
+
+Preserve38967 terminal0/db7442: two native SQL/HTTP controls accepted on9b4b5a9,
+20.193s including setup/stop, actual HTTP propagation and unfinished socket
+OFF cancellation8ms FROM explicit sync, not COMMIT or periodic scheduling.
+Owned actors and PG stopped, clean source, synthetic provider/readiness/input
+seams; no full/Goal/production transfer. Do not replay those two cases.
+
+Add only opt-in --sql-http-reentry, exact one NEW case: SQL OFF then ON both
+commit before Node's next actual HTTP snapshot, old raw cache remains ON,
+provider is held throughout. Node's snapshot sees ON and socket stays open;
+after all HTTP provider phases finish, Reticulum must discard the old reply
+with exact403 and no command despite current ON. Selector beaf01 RED absent;
+3edac6 five pure guards PASS, Node syntax and formatted semantic AST same.
+Only root tests/recipe/changelog; Hubs/Cloud pins and product unchanged.
+Native acceptance not started at this entry. Unknown/duplicate modes/cases,
+wrong counts/skips, dirty/drifted source and incomplete cleanup fail closed.
+No periodic scheduler, browser, real runner/STOP, K8s, provider, copy/build or
+SLO acceptance inferred. Primary directed review separated, not independent.
+
 ## 2026-10-02 · Integrated canary first method failure, owned PG stopped
 
 10105 TERMINAL exit1/05f1c0,14.796s/zero accepted cases. Current-source compile

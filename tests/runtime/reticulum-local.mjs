@@ -23,6 +23,7 @@ export function runtimeCases(mode) {
     case "--chat-concurrent": return [{ profile: "chat-concurrent", count: 2 }];
     case "--chat-concurrent-boundaries": return [{ profile: "chat-concurrent-boundaries", count: 4 }];
     case "--sql-http-canary": return [{ profile: "sql-http-canary", count: 2 }];
+    case "--sql-http-reentry": return [{ profile: "sql-http-reentry", count: 1 }];
     case "--config-cache-canary": return [{ profile: "config-cache-canary", count: 2 }];
     case "--config-cache-boundaries": return [{ profile: "config-cache-boundaries", count: 4 }];
     case "--config-cache-types": return [{ profile: "config-cache-types", count: 1 }];
@@ -76,7 +77,7 @@ async function main() {
     return result.stdout || "";
   };
   try {
-    const integrated = args[0] === "--sql-http-canary";
+    const integrated = ["--sql-http-canary", "--sql-http-reentry"].includes(args[0]);
     if (args.length !== (integrated ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
         (integrated && args[5] !== "--cache-bot-orchestrator") ||
         process.platform !== "darwin") reject("explicit_native_target_required");
@@ -144,7 +145,7 @@ async function main() {
       // One fresh OS/BEAM process per installation. Application env swaps in
       // a surviving supervisor would not prove that omitted children stay OFF.
       env.RET_LOCAL_PROFILE = profile;
-      if (profile === "sql-http-canary") {
+      if (["sql-http-canary", "sql-http-reentry"].includes(profile)) {
         const { runSqlHttpCanary } = await import("./sql-http-local.mjs");
         phase = `backend-${profile}`; writeReceipt();
         process.stdout.write(`RET_LOCAL_STAGE:${phase}\n`);

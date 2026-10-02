@@ -9,7 +9,7 @@ defmodule Ret.LocalSqlHttpTest do
   @endpoint RetWeb.Endpoint
 
   setup do
-    assert System.fetch_env!("RET_LOCAL_PROFILE") == "sql-http-canary"
+    assert System.fetch_env!("RET_LOCAL_PROFILE") in ["sql-http-canary", "sql-http-reentry"]
     :ok = Sandbox.checkout(Repo, sandbox: false)
     config = Application.fetch_env!(:ret, AppConfig)
     Application.put_env(:ret, AppConfig, Keyword.put(config, :caching?, true))
@@ -29,13 +29,19 @@ defmodule Ret.LocalSqlHttpTest do
     {:ok, warm: warm}
   end
 
-  test("real SQL HTTP control completes a held provider reply", %{warm: warm},
-    do: run_case("positive", warm)
-  )
+  if System.fetch_env!("RET_LOCAL_PROFILE") == "sql-http-reentry" do
+    test("unobserved committed SQL OFF ON rejects an old real HTTP reply", %{warm: warm},
+      do: run_case("chat-off-on", warm)
+    )
+  else
+    test("real SQL HTTP control completes a held provider reply", %{warm: warm},
+      do: run_case("positive", warm)
+    )
 
-  test("committed SQL OFF cancels real held provider HTTP before cleanup", %{warm: warm},
-    do: run_case("chat-off", warm)
-  )
+    test("committed SQL OFF cancels real held provider HTTP before cleanup", %{warm: warm},
+      do: run_case("chat-off", warm)
+    )
+  end
 
   defp run_case(kind, warm) do
     owner = self()
@@ -151,7 +157,56 @@ defmodule Ret.LocalSqlHttpTest do
           stop_task(transition)
         end
       else
-        signal(kind, "transition", %{request_pending: true})
+        if kind == "chat-off-on" do
+          transition =
+            own_sql_task(fn ->
+              pid = sql_pid()
+              AppConfig.set_config_value("features|enable_bot_chat", false)
+
+              assert Repo.get_by!(AppConfig, key: "features|enable_bot_chat").value == %{
+                       "value" => false
+                     }
+
+              refute Ret.ProductModules.ai_enabled?()
+              AppConfig.set_config_value("features|enable_bot_chat", true)
+              {pid, Repo.get_by!(AppConfig, key: "features|enable_bot_chat").value}
+            end)
+
+          try do
+            {transition_sql, value} = Task.await(transition, 2000)
+            assert value == %{"value" => true}
+            assert length(Enum.uniq([owner_sql, request_sql, transition_sql])) == 3
+            assert Repo.get_by!(AppConfig, key: "features|enable_bot_chat").value == value
+            assert Ret.ProductModules.ai_enabled?()
+            assert BotChatPresence.revision() >= revision + 2
+            assert {:ok, ^warm} = Cachex.get(:app_config, "")
+
+            assert_receive %Phoenix.Socket.Broadcast{
+              event: "product_modules_changed",
+              payload: %{bots_enabled: true, ai_enabled: false}
+            }
+
+            assert_receive %Phoenix.Socket.Broadcast{
+              event: "product_modules_changed",
+              payload: %{bots_enabled: true, ai_enabled: true}
+            }
+
+            assert Task.yield(request, 0) == nil
+
+            signal(kind, "transition", %{
+              sql_committed_off_then_on: true,
+              three_distinct_sql_owners: true,
+              raw_cache_still_on: true,
+              old_policy_revision_invalid: true,
+              request_pending: true
+            })
+          after
+            stop_task(transition)
+          end
+        else
+          signal(kind, "transition", %{request_pending: true})
+        end
+
         handshake("released")
       end
 
@@ -160,7 +215,14 @@ defmodule Ret.LocalSqlHttpTest do
       if kind == "positive" do
         assert json_response(conn, 200) == %{"reply" => "owned integrated reply", "action" => nil}
       else
-        assert response(conn, 502) == "bot service unavailable"
+        if kind == "chat-off-on" do
+          assert response(conn, 403) == "bot chat is disabled for this room"
+          assert Ret.ProductModules.ai_enabled?()
+          assert BotChatPresence.revision() >= revision + 2
+        else
+          assert response(conn, 502) == "bot service unavailable"
+        end
+
         refute String.contains?(conn.resp_body, "owned integrated reply")
       end
 
@@ -169,7 +231,7 @@ defmodule Ret.LocalSqlHttpTest do
       signal(kind, "verified", %{
         status: conn.status,
         no_command: true,
-        no_old_reply: kind == "chat-off"
+        no_old_reply: kind != "positive"
       })
 
       handshake("verified")

@@ -9,6 +9,11 @@ test("SQL HTTP canary selects only two new integrated cases", () => {
   assert.throws(() => runtimeCases("--sql-http-all"), /explicit_native_target_required/);
 });
 
+test("SQL HTTP reentry selects only one previously unobserved OFF ON window", () => {
+  assert.deepEqual(runtimeCases("--sql-http-reentry"), [{ profile: "sql-http-reentry", count: 1 }]);
+  assert.throws(() => runtimeCases("--sql-http-reentry-all"), /explicit_native_target_required/);
+});
+
 test("integrated confinement permits exactly two owned ports and no wildcard destination", () => {
   const profile = integrationNetworkProfile([55321, 55322]);
   assert.match(profile, /\(deny network\*\)/);
@@ -27,6 +32,8 @@ test("invalid, duplicate, missing or additional destinations fail closed", () =>
 test("integrated CLI cannot default either dependency cache or start an ambiguous target", () => {
   for (const args of [["--sql-http-canary"],
     ["--sql-http-canary", "--pg-bin", "/missing", "--cache-reticulum", "/missing"],
+    ["--sql-http-reentry"],
+    ["--sql-http-reentry", "--pg-bin", "/missing", "--cache-reticulum", "/missing"],
     ["--sql-http-all", "--pg-bin", "/missing", "--cache-reticulum", "/missing", "--cache-bot-orchestrator", "/missing"]]) {
     const result = spawnSync(process.execPath, [new URL("./reticulum-local.mjs", import.meta.url).pathname, ...args], {
       env: { PATH: "/usr/bin:/bin" }, encoding: "utf8", timeout: 5000
