@@ -1,5 +1,17 @@
 # Session Changelog
 
+## 2026-10-02 · Candidato acotado de barrido multimedia
+
+Se retira solo la consulta runner inventory anterior al validador durable
+completo, que ya realiza el mismo check con mismo baseline/hash y conserva
+Lease/lock, authority/progress/PID/fence. Legacy mantiene sus dos lecturas;
+freeze su frontera real y cinco consumers. PGSQL/límites intactos. Regresión
+durable roja94c03a y pruebas fuente dirigidas; wiring de security y CI.
+La medición integral del nuevo candidato y su full final siguen pendientes;
+no se hereda el full7ae65c5 ni se atribuye este delta al fallo histórico real.
+Detalles en DOC/fiabilidad-storage-sweep-2026-10-02.md; estado solo en el PLAN
+canónico, sin crear otro plan en este checkout. Sin producción/DB/VM/build.
+
 ## 2026-10-02 · Grupo explícito solo en fixtures de permisos especiales
 
 77674 terminó security exit1/372.407s; fixture de puerto y ocho unidades Hubs

@@ -234,12 +234,17 @@ require_parent_checkpoint_guards() {
   else
     require_parent_writer_monitor_capability || return 1
   fi
-  recovery_require_checkpoint_runner_quiescence_exact \
-    "$CHECKPOINT_RUNNER_GENERATION" \
-    "$CHECKPOINT_DURABLE_FENCE_BASELINE_PATH" \
-    "$CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256" || return 1
   if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
+    # The full durable capability validator performs this same exact runner
+    # inventory check with the same baseline/hash, plus its lock/Lease,
+    # authority, progress, process identity and active-fence validations.
+    # Retain that complete round without a preceding duplicate inventory.
     require_parent_durable_monitor_capability
+  else
+    recovery_require_checkpoint_runner_quiescence_exact \
+      "$CHECKPOINT_RUNNER_GENERATION" \
+      "$CHECKPOINT_DURABLE_FENCE_BASELINE_PATH" \
+      "$CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256"
   fi
 }
 

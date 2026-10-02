@@ -184,7 +184,7 @@ jobs:
           node --test tests/recovery/native-checkpoint-restore.test.mjs
           node --test tests/runtime/reticulum-local.test.mjs
           node --test tests/runtime/bot-transport-local.test.mjs
-          node --test tests/scripts/recovery-kubectl-fixture-contract.test.mjs tests/scripts/stream-prelaunch-alignment.test.mjs tests/scripts/recovery-stream-diagnostics.test.mjs tests/scripts/pgsql-source-sweep.test.mjs
+          node --test tests/scripts/recovery-kubectl-fixture-contract.test.mjs tests/scripts/stream-prelaunch-alignment.test.mjs tests/scripts/recovery-stream-diagnostics.test.mjs tests/scripts/pgsql-source-sweep.test.mjs tests/scripts/storage-parent-sweep.test.mjs
           bash tests/scripts/security-gates.test.sh
           bash tests/recovery/test-recovery-safety.sh
           bash scripts/test-aud065.sh
