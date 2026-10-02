@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-10-02 · Fixture de puerto aislada de la política real
+
+94404 terminó exit 1 en security: el caso de puerto default heredaba el perfil
+de sandbox y escapó de su doble mise hacia Mix real. La conexión al 5432 del
+dueño quedó denegada; no hubo SQL, nueva DB, recovery ni finalizadores. Cinco
+secciones positivas conservadas, sin aceptar el candidato completo. 787c86
+reprodujo exactamente la arista con centinelas locales y sin Mix/red reales.
+Solo se corrige la fixture y su matriz de entorno; driver/producto/guardas y
+dos gitlinks intactos. 7b2ea3 y ca8fd2 pasan 40 controles normales en cada Bash
+5.3/3.2; syntax y ShellCheck PASS. Revisión primaria separada, no independiente.
+Receta en DOC/fiabilidad-verificador-2026-10-01.md; freeze y renovación nativa
+de recibos posteriores obligatorias. Ningún build/backup/VM/rollout autorizado
+por estas unidades ni Goal cerrado.
+
 ## 2026-10-02 · Entorno de unidades Hubs separado del build
 
 39606 cerró static/advisories/Reticulum exit0 y DB propia detenida; Hubs falló

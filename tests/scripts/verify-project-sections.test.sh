@@ -101,7 +101,7 @@ fi
 if (
   before_ret="$(YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE='' verification_section_harness_sha256 reticulum)"
   before_dialog="$(YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE='' verification_section_harness_sha256 dialog)"
-  # shellcheck disable=SC2031 # This independent subshell sets its own policy.
+  # shellcheck disable=SC2030,SC2031 # Independent subshell; later fixtures set their own policy.
   export YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE=fixture-policy
   [[ "$before_ret" != "$(verification_section_harness_sha256 reticulum)" &&
      "$before_dialog" == "$(verification_section_harness_sha256 dialog)" ]]
@@ -133,21 +133,39 @@ else
   fail_test 'a private PostgreSQL port invalidates only Reticulum harness evidence'
 fi
 
-for port_case in unset 65432; do
-  if (
-    if [[ "$port_case" == unset ]]; then unset PGPORT; expected_port=5432; else PGPORT="$port_case"; export PGPORT; expected_port="$port_case"; fi
-    # shellcheck disable=SC2329 # Invoked by run_reticulum's command array.
-    mise() {
-      if [[ "$*" == *'mix test' ]]; then
-        [[ "$*" == *"PGPORT=$expected_port"* && "$*" == *'DB_HOST=127.0.0.1'* ]]
+for ambient_policy_case in unset present; do
+  for port_case in unset 65432; do
+    if (
+      if [[ "$ambient_policy_case" == unset ]]; then
+        unset YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE
+      else
+        # shellcheck disable=SC2031 # This independent fixture sets its own ambient policy.
+        export YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE=unrelated-fixture-policy
       fi
-    }
-    run_reticulum
-  ); then
-    pass_test "Reticulum forwards the exact test port ($port_case)"
-  else
-    fail_test "Reticulum forwards the exact test port ($port_case)"
-  fi
+      if [[ "$port_case" == unset ]]; then unset PGPORT; expected_port=5432; else PGPORT="$port_case"; export PGPORT; expected_port="$port_case"; fi
+      # This is a command-forwarding unit, not a real Mix/sandbox invocation.
+      # An inherited sandbox launcher would escape the in-process mise stub.
+      # The separate sandbox test above covers all four wrapped stages.
+      unset YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE
+      launches="$TEST_TMP_DIR/port-$ambient_policy_case-$port_case.log"
+      : >"$launches"
+      # shellcheck disable=SC2329 # Reject an accidental external launcher.
+      sandbox-exec() { return 97; }
+      # shellcheck disable=SC2329 # Invoked by run_reticulum's command array.
+      mise() {
+        printf 'launch\n' >>"$launches"
+        if [[ "$*" == *'mix test' ]]; then
+          [[ "$*" == *"PGPORT=$expected_port"* && "$*" == *'DB_HOST=127.0.0.1'* ]]
+        fi
+      }
+      run_reticulum || exit 1
+      [[ "$(wc -l <"$launches" | tr -d ' ')" == 4 ]]
+    ); then
+      pass_test "Reticulum forwards the exact test port ($port_case; ambient policy $ambient_policy_case)"
+    else
+      fail_test "Reticulum forwards the exact test port ($port_case; ambient policy $ambient_policy_case)"
+    fi
+  done
 done
 
 for bad_port in '' 0 65536 05432 abc '5432 5433'; do

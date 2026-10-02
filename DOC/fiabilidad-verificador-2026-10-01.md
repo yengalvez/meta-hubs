@@ -156,3 +156,33 @@ solo unidades aislan Webpack, las dos fallas no son ignoradas por el caller,
 firma incluye el entorno y los otros servicios conservan su evidencia.
 Gates cortos, commit, secciones caducadas y full exacto posterior en PLAN;
 estos controles no aceptan el candidato integral ni el objetivo completo.
+
+## Aislar las fixtures de puerto de la política real · 02/10/2026
+
+La cadena 94404 terminó exit 1 en security, después de cinco secciones exit 0:
+composition, Hubs, Spoke, static y H5. H5 tardó 2.629.955 ms; su PASS funcional
+no acredita rapidez. Security falló en el caso 12 de verify-project-sections:
+la fixture de puerto heredaba YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE y lanzaba
+sandbox-exec→mise real en vez de la función mise del test. El intento de conectar
+127.0.0.1:5432 quedó denegado (:eperm); no se consultó ni detuvo la base del dueño.
+No llegó a recovery ni a los finalizadores. No es otro fallo multimedia.
+
+787c86 reprodujo la arista sin Mix, DB ni red reales: un launcher centinela
+retornó 97 en las cuatro etapas y el caso exacto quedó rojo. La reparación
+cambia SOLO la fixture: fija su entorno de puerto en un subshell, elimina la
+política ajena dentro de esa unidad y bloquea cualquier launcher inesperado.
+La matriz ejecuta puerto default/65432 con política entrante ausente/presente;
+exige cuatro llamadas observadas al doble y el argumento de puerto correcto.
+El control independiente de los cuatro Mix envueltos sigue en la suite normal.
+No se cambia run_reticulum, la política del padre, el binding del recibo ni
+ninguna guarda de producción.
+
+7b2ea3 (Bash 5.3) y ca8fd2 (Bash 3.2): exit 0, 40 controles normales por shell;
+77856a ShellCheck y cd6788 sintaxis PASS. Revisión primaria dirigida separada,
+no independiente: ausencia/presencia de política, default/puerto propio, número
+de llamadas, rechazo del launcher, validación de puertos y alcance subshell.
+No se añaden stubs al verificador real ni se altera su decisión de reutilización.
+Los recibos compatibles se conservan; tras congelar este delta hay que consultar
+el finalizador nativo y renovar solo sus secciones pendientes. El full exacto,
+los ciclos, SLO y objetivo completo siguen abiertos. No aceptar nuevos bytes
+por el PASS de H5 anterior ni iniciar DB/VM/build/backup/deploy por este subcaso.
