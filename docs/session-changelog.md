@@ -1,5 +1,17 @@
 # Session Changelog
 
+## 2026-10-02 · Correct catalog fixture's persisted-state readback
+
+Native33204 on d13ed664 TERMINAL1/0accepted,1 test/1failure,11.589s;
+private scratch `/private/tmp/ynret-local-3H9aym`, stop114ms/PG PIDfile absent.
+First cause is line33: promote returns inserted Ecto struct with state nil,
+while the tracked migration owns SQL's active default.5915cd readback
+confirms nil vs active and current Storage source returns Repo.insert's
+struct. Correct only the fixture: reload its owned row and retain the exact
+active/owner/crypto assertions. No product, schema/default or guard change;
+native retry is due only to this demonstrated fixture error, not guessed
+historical backup causation. Failed scratch retained, no SQL dump accepted.
+
 ## 2026-10-02 · Prepare native synthetic catalog dataset, not complete cycles
 
 Extend the existing private Reticulum runner with one explicit opt-in target,

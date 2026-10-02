@@ -28,7 +28,10 @@ defmodule Ret.LocalCatalogDataset do
     assert hash(bytes) == file["sha256"]
     key = SecureRandom.hex()
     {:ok, uuid} = Storage.store(%Plug.Upload{path: file["path"]}, file["content_type"], key)
-    {:ok, owned} = Storage.promote(uuid, key, nil, account)
+    {:ok, promoted} = Storage.promote(uuid, key, nil, account)
+    # Repo.insert returns the struct's nil state; the active default belongs
+    # to SQL. Require the persisted row, not an assumption about that struct.
+    owned = Repo.get!(OwnedFile, promoted.owned_file_id)
     assert owned.account_id == account.account_id
     assert owned.state == :active
     {:ok, meta, stream} = Storage.fetch(owned)
