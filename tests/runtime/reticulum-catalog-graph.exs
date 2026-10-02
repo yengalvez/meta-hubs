@@ -60,6 +60,8 @@ defmodule Ret.LocalCatalogGraph do
       })
       |> Repo.insert!()
 
+    hub = Repo.preload(hub, :created_by_account)
+
     hub =
       Hub.changeset_for_creator_assignment(hub, room_owner, hub.creator_assignment_token)
       |> Repo.update!()

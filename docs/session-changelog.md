@@ -1,5 +1,18 @@
 # Session Changelog
 
+## 2026-10-02 · Complete graph caller's persisted association preloads
+
+Graph48096/e9d8ce3 TERMINAL1/bc2ec6/fc5bd2:1failure/0accepted11.255s,
+normal stop114ms/PIDfile absent, scratch0700 `/private/tmp/ynret-local-HMNkzM`.
+First cause now graph64, same Ecto caller family for :created_by_account on
+persisted Hub. Existing native assign_creator helper explicitly preloads it.
+Review bounded to graph constructor/update calls: new structs vs persisted
+Project.scene/Hub.created_by_account; Hub.add_owner already reloads memberships
+and account-scoped Project query preloads its view associations. Add ONLY that
+Hub preload, not core/defaults/permissions/guards. One new graph execution
+after freeze is justified by this exact fix; no partial acceptance or blind
+retry, no other suite/production effects.
+
 ## 2026-10-02 · Load the graph fixture's project association before linking
 
 Graph4629/508b201 TERMINAL1/ad5965/e679f8:1case/1failure/0accepted,12.887s,
