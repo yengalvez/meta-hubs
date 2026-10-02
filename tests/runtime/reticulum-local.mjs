@@ -22,6 +22,7 @@ export function runtimeCases(mode) {
     case "--chat-boundaries": return [{ profile: "chat-boundaries", count: 5 }];
     case "--chat-concurrent": return [{ profile: "chat-concurrent", count: 2 }];
     case "--chat-concurrent-boundaries": return [{ profile: "chat-concurrent-boundaries", count: 4 }];
+    case "--sql-http-canary": return [{ profile: "sql-http-canary", count: 2 }];
     case "--config-cache-canary": return [{ profile: "config-cache-canary", count: 2 }];
     case "--config-cache-boundaries": return [{ profile: "config-cache-boundaries", count: 4 }];
     case "--config-cache-types": return [{ profile: "config-cache-types", count: 1 }];
@@ -75,7 +76,9 @@ async function main() {
     return result.stdout || "";
   };
   try {
-    if (args.length !== 5 || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
+    const integrated = args[0] === "--sql-http-canary";
+    if (args.length !== (integrated ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
+        (integrated && args[5] !== "--cache-bot-orchestrator") ||
         process.platform !== "darwin") reject("explicit_native_target_required");
     cases = runtimeCases(args[0]);
     pgBin = fs.realpathSync(args[2]); const cache = fs.realpathSync(args[4]);
@@ -141,8 +144,21 @@ async function main() {
       // One fresh OS/BEAM process per installation. Application env swaps in
       // a surviving supervisor would not prove that omitted children stay OFF.
       env.RET_LOCAL_PROFILE = profile;
-      step(`backend-${profile}`, () => isolated([path.join(elixir, "mix"), "run", "--no-start", "--no-compile",
-        path.join(root, "tests/runtime/reticulum-local.exs")]));
+      if (profile === "sql-http-canary") {
+        const { runSqlHttpCanary } = await import("./sql-http-local.mjs");
+        phase = `backend-${profile}`; writeReceipt();
+        process.stdout.write(`RET_LOCAL_STAGE:${phase}\n`);
+        const before = performance.now();
+        try {
+          metrics.sql_http = await runSqlHttpCanary({ root, work, log, env, application,
+            pgPort: port, mix: path.join(elixir, "mix"), botCache: args[6] });
+        } finally {
+          metrics[phase] = Math.round(performance.now() - before); writeReceipt();
+        }
+      } else {
+        step(`backend-${profile}`, () => isolated([path.join(elixir, "mix"), "run", "--no-start", "--no-compile",
+          path.join(root, "tests/runtime/reticulum-local.exs")]));
+      }
       const result = fs.readFileSync(path.join(application, `local-result-${profile}.txt`), "utf8").trim();
       if (result !== `${count}/${count}`) reject("missing_exact_test_result");
       tests += count;

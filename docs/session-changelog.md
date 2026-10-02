@@ -1,5 +1,22 @@
 # Session Changelog
 
+## 2026-10-02 · Integrated SQL/HTTP canary method, not product acceptance
+
+Add only an explicit two-case opt-in to the existing native Reticulum runner:
+actual owned PostgreSQL/HTTPoison→current Node Express/fetch and actual Node
+snapshot GET against Reticulum. Retain current product, limits and caches;
+synthetic provider/readiness and authenticated ConnTest input remain explicit.
+OFF must COMMIT on a distinct connection while the provider socket is held,
+propagate through actual authenticated HTTP, close it unfinished before cleanup,
+and prevent reply/command; positive must complete all phases. No replay of
+previous profiles/callback/transport tests. Pure guards wired once in local/CI
+security. Initial selector d8518a RED (mode absent);03a80f four guards/Node
+syntax PASS. Formatter first compared location metadata, then1bbfcc normalized
+all quoted metadata and preserved semantic AST; no product or authority delta.
+Native run not started/accepted at this commit; exact receipts will be recorded
+in the canonical PLAN/DOC after its single method sample. No production/VM/
+build/push/copy or full inherited from earlier bytes.
+
 ## 2026-10-02 · Candidato acotado de barrido multimedia
 
 Se retira solo la consulta runner inventory anterior al validador durable

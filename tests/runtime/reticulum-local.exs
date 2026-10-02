@@ -36,6 +36,33 @@ profile = System.fetch_env!("RET_LOCAL_PROFILE")
 chat_focus = profile in ["chat-canary", "chat-boundaries"]
 chat_concurrent = profile in ["chat-concurrent", "chat-concurrent-boundaries"]
 config_cache = profile in ["config-cache-canary", "config-cache-boundaries", "config-cache-types"]
+sql_http = profile == "sql-http-canary"
+
+if sql_http do
+  http_port = System.fetch_env!("RET_LOCAL_HTTP_PORT") |> String.to_integer()
+  bot_port = System.fetch_env!("RET_LOCAL_BOT_PORT") |> String.to_integer()
+
+  unless http_port in 1024..65535 and bot_port in 1024..65535 and
+           length(Enum.uniq([port, http_port, bot_port])) == 3,
+         do: raise("distinct owned loopback ports required")
+
+  Application.put_env(
+    :ret,
+    RetWeb.Endpoint,
+    Application.fetch_env!(:ret, RetWeb.Endpoint)
+    |> Keyword.put(:server, true)
+    |> Keyword.put(:http, ip: {127, 0, 0, 1}, port: http_port)
+  )
+
+  key = System.fetch_env!("RET_LOCAL_BOT_KEY")
+  unless byte_size(key) == 64, do: raise("owned synthetic key required")
+  Application.put_env(:ret, :bot_orchestrator_access_key, key)
+  # No test HTTP client: Ret.BotOrchestrator must select actual HTTPoison.
+  Application.put_env(:ret, Ret.BotOrchestrator,
+    endpoint: "http://127.0.0.1:#{bot_port}",
+    access_key: key
+  )
+end
 
 profiles = %{
   "base" => [bots: false, ai: false, avaturn: false],
@@ -46,7 +73,7 @@ profiles = %{
   "bots-ai-avaturn" => [bots: true, ai: true, avaturn: true]
 }
 
-unless profile == "existing-tests" or chat_focus or chat_concurrent or config_cache do
+unless profile == "existing-tests" or chat_focus or chat_concurrent or config_cache or sql_http do
   modules = Map.fetch!(profiles, profile)
 
   Application.put_env(
@@ -90,6 +117,13 @@ ExUnit.configure(autorun: false)
       Code.require_file(Path.join(__DIR__, "reticulum-chat-concurrent.exs"))
       count = if profile == "chat-concurrent", do: 2, else: 4
       {count, count, 0}
+
+    sql_http ->
+      # HTTP handlers own automatic independent connections, only in this
+      # newly created disposable cluster, never on the default database.
+      Ecto.Adapters.SQL.Sandbox.mode(Ret.Repo, :auto)
+      Code.require_file(Path.join(__DIR__, "reticulum-sql-http.exs"))
+      {2, 2, 0}
 
     profile == "config-cache-canary" ->
       Code.require_file(Path.join(__DIR__, "reticulum-config-cache.exs"))

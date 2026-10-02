@@ -188,3 +188,47 @@ Recorded localhost milliseconds are NOT a remote latency or release SLO.
 This does not prove combined Reticulum SQL→HTTP propagation, cached UI, real
 runner STOP/movement, six Kubernetes installations, productive transport or
 the three complete backup/restore/deploy/rollback cycles of the active Goal.
+
+## Integrated SQL → actual HTTP canary (two NEW cases)
+
+This opt-in mode extends the existing Reticulum runner; it does not replay
+the six profiles, synthetic callback cases or separate Node HTTP tests:
+
+```sh
+node tests/runtime/reticulum-local.mjs --sql-http-canary \
+  --pg-bin /opt/homebrew/opt/postgresql@14/bin \
+  --cache-reticulum /Users/Shared/Gits/YenHubs/output/product-fixes-20260926/hubs-cloud/community-edition/services/reticulum \
+  --cache-bot-orchestrator /Users/Shared/Gits/YenHubs/output/product-fixes-20260926/hubs-cloud/community-edition/services/bot-orchestrator
+```
+
+Run only from a clean exact candidate. Both current tracked applications are
+materialized in the existing owned scratch with matching dependency locks;
+Reticulum is freshly compiled. Product source/locks and the cache stay intact.
+The new normal security guard is `node --test tests/runtime/sql-http-local.test.mjs`.
+
+The canary joins PostgreSQL + Reticulum's real HTTPoison client + Node's actual
+Express chat route/fetch + owned synthetic provider sockets. Node refreshes
+capabilities using its actual authenticated HTTP GET against the running
+Reticulum internal endpoint, and health is observed over real HTTP. No
+callback HTTP client or direct fixture applyModuleCapabilities supplies OFF.
+The positive completes the three provider phases and delivers the exact reply
+without an action. The negative commits OFF in a third distinct SQL connection
+while the model response is genuinely held. The raw ON config cache remains
+warm. A real snapshot must propagate OFF, close the provider socket unfinished
+without output moderation, and reject delivery/command before cleanup. Each
+case's handshake is bounded and matched; unknown/duplicate/missing cases fail.
+
+BEAM outbound is limited to owned PG + Node ports; Node outbound to owned
+Reticulum + provider ports. Both processes probe a real denied listening peer,
+which must receive zero connections. No default database, provider credentials,
+global configuration, Kubernetes or public service. Verified normal child
+exits and closed listeners precede the existing postmaster identity-bound stop.
+Private logs/receipts remain0600 in0700 scratch, including actual source HEADs
+before/after; no secret contents printed. Failure is never auto-retried.
+
+Seams remain explicit: chat entry is authenticated ConnTest, ghost readiness
+is synthetic, provider JSON is synthetic, sync scheduling is invoked explicitly,
+and the SQL cluster is disposable. This is NOT a complete browser/Presence/
+periodic-scheduler/runner STOP/movement/Kubernetes or six-edition acceptance,
+not a deployment/backup SLO or the three representative cycles. Those separate
+requirements remain in the canonical plan and the final exact full gate.
