@@ -36,7 +36,8 @@ profile = System.fetch_env!("RET_LOCAL_PROFILE")
 chat_focus = profile in ["chat-canary", "chat-boundaries"]
 chat_concurrent = profile in ["chat-concurrent", "chat-concurrent-boundaries"]
 config_cache = profile in ["config-cache-canary", "config-cache-boundaries", "config-cache-types"]
-sql_http = profile in ["sql-http-canary", "sql-http-reentry"]
+sql_http = profile in ["sql-http-canary", "sql-http-reentry", "sql-http-stop-drain"]
+stop_drain = profile == "sql-http-stop-drain"
 catalog = profile in ["catalog-dataset", "catalog-graph-dataset"]
 
 if catalog do
@@ -83,6 +84,13 @@ if sql_http do
     endpoint: "http://127.0.0.1:#{bot_port}",
     access_key: key
   )
+
+  if stop_drain do
+    # Run the installed product dispatcher, with its default SQL store,
+    # HTTPoison delivery, 30s claim TTL and real retry clock. Other modes keep
+    # the existing disabled dispatcher and their original test selection.
+    Application.put_env(:ret, Ret.BotRuntimeOutboxDispatcher, enabled: true)
+  end
 end
 
 profiles = %{
@@ -144,7 +152,14 @@ ExUnit.configure(autorun: false)
       # HTTP handlers own automatic independent connections, only in this
       # newly created disposable cluster, never on the default database.
       Ecto.Adapters.SQL.Sandbox.mode(Ret.Repo, :auto)
-      Code.require_file(Path.join(__DIR__, "reticulum-sql-http.exs"))
+
+      Code.require_file(
+        Path.join(
+          __DIR__,
+          if(stop_drain, do: "reticulum-stop-drain.exs", else: "reticulum-sql-http.exs")
+        )
+      )
+
       count = if profile == "sql-http-reentry", do: 1, else: 2
       {count, count, 0}
 

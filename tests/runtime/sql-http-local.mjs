@@ -97,6 +97,9 @@ function childMessages(child) {
 
 export async function runSqlHttpCanary({ root, work, log, env, application, pgPort, mix, botCache }) {
   const profile = env.RET_LOCAL_PROFILE;
+  if (profile === "sql-http-stop-drain") {
+    return runSqlHttpStopDrain({ root, work, log, env, application, pgPort, mix, botCache });
+  }
   const expectedCases = { "sql-http-canary": ["positive", "chat-off"], "sql-http-reentry": ["chat-off-on"] }[profile];
   assert.ok(expectedCases, "explicit integrated profile required");
   assert.ok(work.startsWith("/private/tmp/ynret-local-"));
@@ -285,6 +288,221 @@ export async function runSqlHttpCanary({ root, work, log, env, application, pgPo
   }
   const sourceAfter = snapshot(); assert.deepEqual(sourceAfter, sourceBefore);
   return { scope: "actual-SQL-HTTP-synthetic-provider-readiness-ConnTest-not-browser-Kubernetes",
+    results, source_before: sourceBefore, source_after: sourceAfter, source_unchanged_clean: true,
+    denied_connections: deniedConnections, cleanup, elapsed_ms: Math.round(performance.now() - began) };
+}
+
+export function stopDrainCases(profile) {
+  if (profile !== "sql-http-stop-drain") fail("explicit_stop_drain_profile_required");
+  return ["bots-off-child", "durable-stop-pending"];
+}
+
+export async function finishStopDrainCleanup({ actorCleanups, verifyRunnerAbsent, releaseSockets, closeListener }, originalFailure) {
+  let failure = originalFailure;
+  const attempt = async action => {
+    try { await action(); } catch (error) { failure ??= error; }
+  };
+  try {
+    for (const action of actorCleanups) await attempt(action);
+    await attempt(verifyRunnerAbsent);
+  } finally {
+    try { await attempt(releaseSockets); }
+    finally { await attempt(closeListener); }
+  }
+  // Resource release cannot turn a failed oracle into cleanup acceptance or
+  // replace the original failure with a later cleanup error.
+  if (failure) throw failure;
+}
+
+async function runSqlHttpStopDrain({ root, work, log, env, application, pgPort, mix, botCache }) {
+  const expected = stopDrainCases(env.RET_LOCAL_PROFILE), results = [], began = performance.now();
+  assert.ok(work.startsWith("/private/tmp/ynret-local-"));
+  assert.equal(fs.statSync(work).mode & 0o777, 0o700);
+  const snapshot = () => Object.fromEntries([".", "hubs", "hubs-cloud"].map(name => {
+    const git = args => {
+      const result = spawnSync("/usr/bin/git", ["-C", path.join(root, name), ...args], {
+        env: { PATH: "/usr/bin:/bin" }, encoding: "utf8", timeout: 5000
+      });
+      assert.equal(result.status, 0); assert.equal(result.signal, null); return result.stdout.trim();
+    };
+    assert.equal(git(["status", "--porcelain=v1", "--untracked-files=normal"]), "", "source clean");
+    return [name, git(["rev-parse", "HEAD"])];
+  }));
+  const sourceBefore = snapshot(), cloud = path.join(root, "hubs-cloud");
+  const relative = "community-edition/services/bot-orchestrator", source = path.join(cloud, relative);
+  const cache = fs.realpathSync(botCache);
+  for (const name of ["package.json", "package-lock.json"]) {
+    assert.equal(sha(path.join(source, name)), sha(path.join(cache, name)), "exact dependency cache");
+  }
+  const inventory = spawnSync("/usr/bin/git", ["-C", cloud, "ls-files", "-z", "--", relative], {
+    env: { PATH: "/usr/bin:/bin" }, encoding: "utf8", timeout: 5000
+  });
+  assert.equal(inventory.status, 0); assert.equal(inventory.signal, null);
+  const botApplication = path.join(work, "bot-orchestrator");
+  for (const file of inventory.stdout.split("\0").filter(Boolean)) {
+    const name = file.slice(relative.length + 1), input = path.join(cloud, file), output = path.join(botApplication, name);
+    assert.ok(name && !name.startsWith("../") && fs.lstatSync(input).isFile());
+    fs.mkdirSync(path.dirname(output), { recursive: true, mode: 0o700 }); fs.copyFileSync(input, output);
+  }
+  assert.ok(fs.existsSync(path.join(botApplication, "app.js")));
+  fs.cpSync(path.join(cache, "node_modules"), path.join(botApplication, "node_modules"), { recursive: true, dereference: true });
+  for (const name of ["sql-http-child.cjs", "stop-drain-child.cjs"]) {
+    const output = path.join(work, name);
+    fs.copyFileSync(path.join(root, "tests/runtime", name), output); fs.chmodSync(output, 0o600);
+  }
+  let bot, beam, botExit, beamExit, runnerPid, failure, cleanup = false, deniedConnections = 0;
+  const sockets = new Set();
+  const denied = net.createServer(socket => {
+    deniedConnections++; sockets.add(socket); socket.once("close", () => sockets.delete(socket));
+  });
+  const ownedExit = child => {
+    const pending = new Promise((resolve, reject) => {
+      child.once("error", reject); child.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    pending.catch(() => {}); return pending;
+  };
+  const pidAbsent = pid => {
+    try { process.kill(pid, 0); return false; }
+    catch (error) { if (error.code === "ESRCH") return true; throw error; }
+  };
+  try {
+    const deniedPort = await listen(denied), retPort = await reservePort(), botPort = await reservePort();
+    assert.equal(new Set([pgPort, deniedPort, retPort, botPort]).size, 4);
+    const key = crypto.randomBytes(32).toString("hex");
+    const botEnv = { PATH: "/usr/bin:/bin", HOME: path.join(work, "home"), TMPDIR: work, LANG: "C", LC_ALL: "C", TZ: "UTC",
+      RET_LOCAL_STOP_DRAIN: "true", RUNNER_AUTOSTART: "false", YENHUBS_BOTS_ENABLED: "true", YENHUBS_AI_ENABLED: "true",
+      HUBS_BASE_URL: "http://private-test.invalid", RET_INTERNAL_ENDPOINT: `http://127.0.0.1:${retPort}`,
+      BOT_ORCHESTRATOR_ACCESS_KEY: key, OPENAI_API_KEY: "owned-synthetic-key-never-provider", OPENAI_MODEL: "gpt-6-luna",
+      // No provider is contacted by either STOP case; even these unused URLs
+      // point to the denied peer, never an external/default endpoint.
+      OPENAI_ENDPOINT: `http://127.0.0.1:${deniedPort}/v1/responses`,
+      OPENAI_MODERATION_ENDPOINT: `http://127.0.0.1:${deniedPort}/v1/moderations` };
+    bot = spawn("/usr/bin/sandbox-exec", ["-p", integrationNetworkProfile([retPort, botPort]), process.execPath,
+      path.join(work, "sql-http-child.cjs"), String(botPort), String(deniedPort)], {
+      cwd: work, env: botEnv, stdio: ["ignore", log, log, "ipc"]
+    });
+    botExit = ownedExit(bot);
+    const sendBot = childMessages(bot), started = await sendBot("start");
+    assert.equal(started.denied, true); assert.equal(started.native_fetch, true); assert.equal(deniedConnections, 0);
+    const get = async route => {
+      const response = await fetch(`http://127.0.0.1:${botPort}${route}`, { signal: AbortSignal.timeout(2000) });
+      return { status: response.status, body: await response.json() };
+    };
+    const health = async () => { const result = await get("/health"); assert.equal(result.status, 200); return result.body; };
+    beam = spawn("/usr/bin/sandbox-exec", ["-p", integrationNetworkProfile([pgPort, botPort]), mix, "run", "--no-start", "--no-compile",
+      path.join(root, "tests/runtime/reticulum-local.exs")], {
+      cwd: application, env: { ...env, RET_LOCAL_HTTP_PORT: String(retPort), RET_LOCAL_BOT_PORT: String(botPort),
+        RET_LOCAL_BOT_KEY: key, RET_LOCAL_DENIED_PORT: String(deniedPort) }, stdio: ["pipe", "pipe", log]
+    });
+    beamExit = ownedExit(beam);
+    beam.stdin.on("error", () => { fs.writeSync(log, "OWNED_BEAM_INPUT_CLOSED\n"); });
+    const waitStage = stageQueue(beam, log), seen = new Set();
+    const acknowledge = line => { assert.equal(beam.exitCode, null); beam.stdin.write(`OWNED_SQL_HTTP:${line}\n`); };
+    for (let index = 0; index < expected.length; index++) {
+      const setup = await waitStage("setup", null), kind = setup.test_case;
+      assert.ok(expected.includes(kind) && !seen.has(kind)); seen.add(kind);
+      assert.ok(/^[A-Za-z0-9_-]{1,64}$/.test(setup.hub_sid));
+      for (const field of ["real_http_client", "denied", "real_admission", "config_delivered"]) assert.equal(setup[field], true);
+      if (kind === "bots-off-child") {
+        const seed = await sendBot("seed-stop-runner", { hub_sid: setup.hub_sid, bots: setup.bots });
+        assert.equal(seed.real_handle, true); assert.equal(seed.synthetic_runner_readiness, true);
+        assert.ok(Number.isInteger(seed.runner_pid) && seed.runner_pid > 1); runnerPid = seed.runner_pid;
+        assert.equal(pidAbsent(runnerPid), false);
+        const on = await sendBot("sync"); assert.equal(on.authoritative, true);
+        const ready = await get("/ready"); assert.equal(ready.status, 200); assert.equal(ready.body.ok, true);
+        assert.deepEqual((await health()).modules, { bots_enabled: true, ai_enabled: true });
+        acknowledge("ready");
+        const off = await waitStage("off-committed", kind);
+        for (const field of ["sql_committed_off", "distinct_sql_owners", "raw_cache_still_on", "no_sql_stop_from_global_off"]) assert.equal(off[field], true);
+        const synced = await sendBot("sync"); assert.equal(synced.authoritative, true);
+        const stopping = await sendBot("stopping-runner");
+        assert.equal(stopping.runner_pid, runnerPid); assert.equal(stopping.lifecycle, "stopping");
+        assert.equal(stopping.alive, true); assert.equal(stopping.removed, false); assert.equal(stopping.sigterm_count, 1);
+        assert.equal(pidAbsent(runnerPid), false);
+        const draining = await get("/ready");
+        assert.equal(draining.status, 503); assert.equal(draining.body.ok, false);
+        assert.equal(draining.body.stopping_hubs.length, 1); assert.equal(draining.body.process_hubs.length, 1);
+        const during = await health(); assert.equal(during.runner_processes, 1);
+        assert.deepEqual(during.modules, { bots_enabled: false, ai_enabled: false });
+        const exited = await sendBot("release-runner-exit");
+        assert.deepEqual(exited.exit, { code: 0, signal: null }); assert.equal(exited.lifecycle_finished, true);
+        assert.equal(exited.real_pid_absent, true); assert.equal(exited.sigterm_count, 1); assert.equal(pidAbsent(runnerPid), true);
+        // Existing exit handler is the removal oracle, not reset/delete seams.
+        // Two explicit OFF resyncs test no replacement; no scheduler/ghost claim.
+        for (let pass = 0; pass < 2; pass++) {
+          assert.equal((await sendBot("sync")).authoritative, true);
+          const stopped = await health(); assert.equal(stopped.runner_processes, 0); assert.equal(stopped.queued_rooms, 0);
+          assert.deepEqual(stopped.modules, { bots_enabled: false, ai_enabled: false });
+          const drained = await get("/ready"); assert.equal(drained.status, 200);
+          assert.equal(drained.body.process_hubs.length, 0); assert.equal(drained.body.stopping_hubs.length, 0);
+          assert.equal(pidAbsent(runnerPid), true);
+        }
+        acknowledge("off-synced-and-exited");
+        const verified = await waitStage("verified", kind); assert.equal(verified.no_sql_stop_from_global_off, true);
+        results.push({ test_case: kind, outcome: "PASS", real_sigterm_count: 1, ready_503_before_exit: true,
+          real_pid_absent_before_cleanup: true, existing_exit_handler_removed_runner: true, no_respawn_after_two_off_resyncs: true });
+      } else {
+        acknowledge("producer-ready");
+        const verified = await waitStage("verified", kind);
+        for (const field of ["delivered_at_null", "actual_dispatcher_restart", "distinct_claim_owners", "backoff_preserved", "dispatcher_installed_while_off"]) assert.equal(verified[field], true);
+        assert.equal(verified.status, 202); assert.equal(verified.attempts, 2); assert.equal(verified.hub_sid, setup.hub_sid);
+        assert.ok(Number.isSafeInteger(verified.runtime_revision) && verified.runtime_revision > 1);
+        assert.ok(Number.isSafeInteger(verified.revoke_epoch) && verified.revoke_epoch > 0);
+        const payload = { protocol: "yenhubs-bot-runtime-v2", operation_id: verified.operation_id,
+          hub_sid: setup.hub_sid, runtime_revision: verified.runtime_revision, revoke_epoch: verified.revoke_epoch };
+        const observed = await sendBot("stop-events"), events = observed.events.filter(event => event.payload.operation_id === payload.operation_id);
+        assert.ok(events.length >= 2, "two actual default-dispatcher HTTP attempts");
+        for (const event of events) { assert.equal(event.status, 202); assert.deepEqual(event.payload, payload); }
+        // Real idempotent replay observes the response body; no fabricated ACK
+        // or Kubernetes proof is installed, including after dispatcher restart.
+        const replay = await fetch(`http://127.0.0.1:${botPort}/internal/bots/room-stop`, {
+          method: "POST", headers: { "content-type": "application/json", "x-ret-bot-orchestrator-access-key": key },
+          body: JSON.stringify(payload), signal: AbortSignal.timeout(2000)
+        });
+        assert.equal(replay.status, 202); assert.deepEqual(await replay.json(), { ...payload, state: "pending" });
+        results.push({ test_case: kind, outcome: "PASS", status: 202, delivered_at_null: true,
+          actual_dispatcher_restart: true, attempts: verified.attempts, exact_identity_retained: true,
+          real_backoff_preserved: true, no_kubernetes_absence_proof: true });
+      }
+      assert.equal(deniedConnections, 0); acknowledge("verified");
+    }
+    assert.deepEqual([...seen].sort(), [...expected].sort());
+    assert.deepEqual(await bounded(beamExit, "owned_beam_exit_timeout", 10000), { code: 0, signal: null });
+    assert.equal(fs.readFileSync(path.join(application, "local-result-sql-http-stop-drain.txt"), "utf8"), "2/2\n");
+    await sendBot("shutdown");
+    assert.deepEqual(await bounded(botExit, "owned_bot_exit_timeout"), { code: 0, signal: null });
+    assert.equal(pidAbsent(runnerPid), true); cleanup = true;
+  } catch (error) {
+    failure = error;
+    fs.writeSync(log, String(error.stack) + "\n"); throw error;
+  } finally {
+    await finishStopDrainCleanup({
+      actorCleanups: [[beam, beamExit], [bot, botExit]].map(([child, exited]) => async () => {
+        if (child && child.exitCode === null && child.signalCode === null) {
+          child.stdin?.end(); child.kill("SIGTERM");
+          try { await bounded(exited, "owned_child_cleanup_timeout", 3000); }
+          catch { child.kill("SIGKILL"); await bounded(exited, "owned_child_forced_cleanup_timeout", 3000); }
+        }
+      }),
+      verifyRunnerAbsent: async () => {
+        // The owned IPC fixture exits on parent disconnect even on failure;
+        // verify its PID, never a removed test-state entry.
+        if (runnerPid !== undefined) {
+          const deadline = performance.now() + 3000;
+          while (!pidAbsent(runnerPid) && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+          assert.equal(pidAbsent(runnerPid), true, "owned runner cleanup");
+        }
+      },
+      releaseSockets: () => { for (const socket of sockets) socket.destroy(); },
+      closeListener: async () => {
+        if (denied.listening) await bounded(new Promise(resolve => denied.close(resolve)), "owned_listener_cleanup_timeout", 2000);
+      }
+    }, failure);
+    cleanup &&= !denied.listening;
+  }
+  assert.equal(cleanup, true); assert.equal(deniedConnections, 0);
+  const sourceAfter = snapshot(); assert.deepEqual(sourceAfter, sourceBefore);
+  return { scope: "actual-admission-SQL-HTTP-local-child-STOP-pending-not-ghost-scheduler-Kubernetes",
     results, source_before: sourceBefore, source_after: sourceAfter, source_unchanged_clean: true,
     denied_connections: deniedConnections, cleanup, elapsed_ms: Math.round(performance.now() - began) };
 }

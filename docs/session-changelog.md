@@ -1,5 +1,26 @@
 # Session Changelog
 
+## 2026-10-03 · Add two explicit native STOP subfrontiers
+
+Separate S checkout from b677, with identical Hubs2a3d7ab/Cloudcb15414.
+Only root tests extend the existing owned PostgreSQL/HTTP runner: product
+admission and SQL OFF to a real owned local child signal/lifecycle, and a
+product room-close STOP remaining durable pending without Kubernetes absence
+proof through actual default dispatcher restart. No product/guard changes,
+manual enqueue, fake terminal ACK or inherited full/runtime acceptance.
+Selector RED55cfda then three pure guards GREENab3fcc; five JS syntax checks
+and Elixir AST syntaxc118f2 passed. Mechanical formatting1b5096 preserved AST;
+new guardsa0cd1e and staged delta scan77ec93/42.23KB/0leaks passed. Initial
+format checkc4272d stopped before writes because its normalizer left dot-call
+metadata; corrected check strips the remaining AST metadata, not semantics.
+Independent review identified one P2 in the new error cleanup: an actor/PID
+failure could bypass listener release. REDeef8c2 reproduced that pure cleanup
+failure; correction2f8334 passed two new guards and independent source recheck
+closed only this P2. Both actors and runner oracle are attempted, resources
+always released and original/first error retained without a false PASS.
+Native two-case execution, exact full and all
+representative Kubernetes/profile/cycle/SLO acceptance remain unproven.
+
 ## 2026-10-02 · Close unsupported shell and extracted-harness dependencies
 
 Native chain28635 on b458 passed static0 then security1; H5/recovery/full not
