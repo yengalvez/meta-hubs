@@ -13230,9 +13230,10 @@ start_stream_guard_fixture_publisher() {
   local progress_marker="$1" stop_marker="$2" initial_delay="$3"
   local interval="$4" maximum_increments="$5" start_marker="${6:-}"
   local publication_prefix="${7:-}" frozen_marker="${8:-}"
+  local pause_marker="${9:-}"
   python3 - "$progress_marker" "$stop_marker" "$initial_delay" \
     "$interval" "$maximum_increments" "$start_marker" \
-    "$publication_prefix" "$frozen_marker" <<'PY' &
+    "$publication_prefix" "$frozen_marker" "$pause_marker" <<'PY' &
 import os
 import sys
 import time
@@ -13246,12 +13247,14 @@ import time
     start_path,
     publication_prefix,
     frozen_path,
+    pause_path,
 ) = sys.argv[1:]
 initial_delay = float(initial_text)
 interval = float(interval_text)
 maximum = int(maximum_text)
 counter = int(open(progress_path, encoding="utf-8").read().strip())
 published = 0
+paused = False
 
 
 def publish_private(path, value):
@@ -13270,6 +13273,10 @@ while start_path and not os.path.exists(start_path):
     time.sleep(0.01)
 deadline = time.monotonic() + initial_delay
 while not os.path.exists(stop_path):
+    if pause_path and os.path.exists(pause_path) and not paused:
+        paused = True
+        deadline = time.monotonic() + 11.5
+        publish_private(f"{publication_prefix}-paused", counter)
     if maximum == 0 or published < maximum:
         remaining = deadline - time.monotonic()
         if remaining > 0:
@@ -13314,6 +13321,7 @@ run_multi_guard_round_robin_case() (
   local slow_interval=4.50
   local progress_value_one progress_value_two progress_value_three publisher_pid
   local inner_baseline_value=""
+  local audit_group_pid="" audit_descendant_pid=""
   guard_dir="$(mktemp -d "$TMP_DIR/multi-stream-guards.XXXXXX")" || return 1
   chmod 700 "$guard_dir"
   observation_dir="$guard_dir/observations"
@@ -13349,7 +13357,7 @@ run_multi_guard_round_robin_case() (
   trap 'cleanup_stream_guard_fixture_publishers || :' EXIT INT TERM
 
   case "$case_name" in
-    round-robin-success|round-robin-startup-grace|launch-window-realign|outer-baseline-realign|refresh-deadline|post-audit-healthy)
+    round-robin-success|round-robin-startup-grace|launch-window-realign|outer-baseline-realign|refresh-deadline|post-audit-healthy|post-audit-slow-publisher|post-audit-native-failure|post-audit-timeout|post-audit-owner-death|post-audit-expired-progress)
       # Every publisher starts only after its initial baseline read. The slow
       # guard leaves a deliberately bounded gap between counters 2 and 3 while
       # both fast guards continue at 0.15/0.20 seconds. A serial refresher
@@ -13358,9 +13366,16 @@ run_multi_guard_round_robin_case() (
       # fast lower bounds current. Production remains fixed at ten seconds by
       # the timing contract; only this attested fixture uses six.
       maximum_stale_seconds=10
-      if [[ "$case_name" == post-audit-healthy ]]; then
+      if [[ "$case_name" == post-audit-* ]]; then
         slow_interval=0.20
+        if [[ "$case_name" == post-audit-slow-publisher ]]; then
+          # The native DB/storage profile publishes complete source rounds
+          # about every eight seconds. Fast publishers alone do not exercise
+          # the observer's causal lower-bound uncertainty at this boundary.
+          slow_interval=8.50
+        fi
         initial_deadline_seconds=30
+        [[ "$case_name" != post-audit-timeout ]] || initial_deadline_seconds=10
         require_lease=1
       elif [[ "$case_name" == refresh-deadline ]]; then
         initial_deadline_seconds=4
@@ -13400,7 +13415,7 @@ run_multi_guard_round_robin_case() (
       pid_two="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
       start_stream_guard_fixture_publisher "$progress_three" "$stop_marker" \
         0.15 "$slow_interval" 0 "$observation_dir/guard-three-baseline-read" \
-        "$observation_dir/slow"
+        "$observation_dir/slow" "" "$observation_dir/slow-pause"
       pid_three="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
       ;;
     no-simultaneous-window)
@@ -13463,16 +13478,41 @@ run_multi_guard_round_robin_case() (
       if [[ "$REQUIRE_LEASE" == 1 ]]; then
         recovery_require_operation_serialization_stream() { return 0; }
       fi
-      if [[ "$MULTI_GUARD_CASE" == post-audit-healthy ]]; then
+      if [[ "$MULTI_GUARD_CASE" == post-audit-* ]]; then
         audit_definition="$(declare -f recovery_stream_guard_process_is_healthy)"
         audit_definition="${audit_definition/recovery_stream_guard_process_is_healthy/recovery_stream_guard_process_is_healthy_fixture_original}"
         eval "$audit_definition"
         unset audit_definition
         recovery_stream_guard_process_is_healthy() {
-          # Real publishers keep advancing. Only each complete post-stream
-          # audit is delayed; running-stream supervision and limits are intact.
+          # Real publishers keep advancing. Only complete post-stream audits
+          # are faulted; pre-launch/running supervision remains unmodified.
           if [[ "$#" == 8 && "${stream_diagnostic_stage:-}" == post-audit &&
                 "${stream_child_reaped:-0}" == 1 ]]; then
+            if [[ "$MULTI_GUARD_CASE" == post-audit-native-failure ]]; then
+              printf "%s\n" "$BASHPID" >"$GUARD_OBSERVATION_DIR/audit-group"
+              sleep 0.15
+              printf "7\n" >"$GUARD_OBSERVATION_DIR/audit-native-failure"
+              return 7
+            elif [[ "$MULTI_GUARD_CASE" == post-audit-timeout ||
+                    "$MULTI_GUARD_CASE" == post-audit-owner-death ||
+                    "$MULTI_GUARD_CASE" == post-audit-expired-progress ]]; then
+              local owner_pid owner_identity descendant_pid audit_pid="$BASHPID"
+              printf "%s\n" "$audit_pid" >"$GUARD_OBSERVATION_DIR/audit-group"
+              sleep 40 &
+              descendant_pid=$!
+              printf "%s\n" "$descendant_pid" >"$GUARD_OBSERVATION_DIR/audit-descendant"
+              if [[ "$MULTI_GUARD_CASE" == post-audit-expired-progress ]]; then
+                printf "pause\n" >"$GUARD_OBSERVATION_DIR/slow-pause"
+              fi
+              if [[ "$MULTI_GUARD_CASE" == post-audit-owner-death ]]; then
+                owner_pid="$(ps -o ppid= -p "$audit_pid" | tr -d "[:space:]")" || return 1
+                owner_identity="$(recovery_process_start_identity "$owner_pid")" || return 1
+                recovery_process_identity_is_live "$owner_pid" "$owner_identity" || return 1
+                printf "bound\n" >"$GUARD_OBSERVATION_DIR/owner-death"
+                kill -KILL "$owner_pid" || return 1
+              fi
+              wait "$descendant_pid"
+            fi
             sleep 2
             printf "audited\n" >>"$GUARD_OBSERVATION_DIR/post-audits"
           fi
@@ -13592,9 +13632,46 @@ run_multi_guard_round_robin_case() (
   for publisher_pid in "$pid_one" "$pid_two" "$pid_three"; do
     ! kill -0 "$publisher_pid" 2>/dev/null || return 1
   done
+  if [[ "$case_name" == post-audit-native-failure ||
+        "$case_name" == post-audit-timeout ||
+        "$case_name" == post-audit-owner-death ||
+        "$case_name" == post-audit-expired-progress ]]; then
+    audit_group_pid="$(cat "$observation_dir/audit-group" 2>/dev/null || :)"
+    [[ "$audit_group_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    audit_descendant_pid="$(cat "$observation_dir/audit-descendant" 2>/dev/null || :)"
+    for _ in {1..30}; do
+      kill -0 -- "-$audit_group_pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    ! kill -0 -- "-$audit_group_pid" 2>/dev/null || return 1
+    if [[ -n "$audit_descendant_pid" ]]; then
+      [[ "$audit_descendant_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+      ! kill -0 "$audit_descendant_pid" 2>/dev/null || return 1
+    fi
+  fi
 
   case "$case_name" in
-    post-audit-healthy)
+    post-audit-expired-progress)
+      [[ "$status" != 0 && -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
+         -e "$observation_dir/slow-paused" ]] &&
+        grep -q 'database_restore_stream_detail:guard-stale:2:counter:' \
+          "$guard_dir/supervisor.log" && return 0
+      ;;
+    post-audit-native-failure)
+      [[ "$status" != 0 && -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
+         "$(cat "$observation_dir/audit-native-failure" 2>/dev/null || :)" == 7 ]] &&
+        return 0
+      ;;
+    post-audit-timeout)
+      [[ "$status" != 0 && -e "$STUB_STATE_DIR/multi-guard-stream-completed" ]] &&
+        grep -q "database_restore_stream_detail:guard-audit-timeout" \
+          "$guard_dir/supervisor.log" && return 0
+      ;;
+    post-audit-owner-death)
+      [[ "$status" != 0 && -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
+         -e "$observation_dir/owner-death" ]] && return 0
+      ;;
+    post-audit-healthy|post-audit-slow-publisher)
       if [[ "$status" == 0 &&
             -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
             -s "$observation_dir/post-audits" &&
@@ -13670,10 +13747,18 @@ run_multi_guard_round_robin_case() (
     "$([[ -e "$STUB_STATE_DIR/multi-guard-stream-completed" ]] && printf yes || printf no)" \
     "$progress_value_one" "$progress_value_two" "$progress_value_three" \
     "$(find "$observation_dir" -maxdepth 1 -type f -exec basename {} \; | sort | tr '\n' ',')" >&2
+  if [[ "$case_name" == post-audit-* ]]; then
+    grep -E '^database_restore_stream_(stage|status|detail):' \
+      "$guard_dir/supervisor.log" >&2 || :
+  fi
   return 1
 )
 
 run_multi_guard_stream_regression_tests() {
+  run_post_stream_audit_ownership_tests
+  expect_success \
+    'slow healthy source publishers survive complete post-stream audits' \
+    run_multi_guard_round_robin_case post-audit-slow-publisher
   expect_success \
     'refresh rejects healthy progress arriving after its immutable total deadline' \
     run_multi_guard_round_robin_case refresh-deadline
@@ -13695,6 +13780,21 @@ run_multi_guard_stream_regression_tests() {
   expect_success \
     'a later guard increment predating the inner baseline cannot create false freshness' \
     run_multi_guard_round_robin_case inner-baseline
+}
+
+run_post_stream_audit_ownership_tests() {
+  expect_success \
+    'post-stream progress expiry cannot be hidden by a pending complete audit' \
+    run_multi_guard_round_robin_case post-audit-expired-progress
+  expect_success \
+    'complete post-stream audit native failure cannot accept a stream' \
+    run_multi_guard_round_robin_case post-audit-native-failure
+  expect_success \
+    'blocked complete post-stream audit is revoked at its original deadline' \
+    run_multi_guard_round_robin_case post-audit-timeout
+  expect_success \
+    'SIGKILL of the observer revokes its complete audit and descendants' \
+    run_multi_guard_round_robin_case post-audit-owner-death
 }
 
 # shellcheck disable=SC2030,SC2031 # Each fixture owns its environment and publisher PIDs inside this subshell.
@@ -16884,6 +16984,58 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == post-stream-audits ]]; then
     run_multi_guard_round_robin_case post-audit-healthy
   [[ "$FAIL_COUNT" == 0 ]] || exit 1
   printf 'Focused post-stream audit tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == post-stream-slow-publisher ]]; then
+  expect_success \
+    'slow healthy source publishers survive complete post-stream audits' \
+    run_multi_guard_round_robin_case post-audit-slow-publisher
+  [[ "$FAIL_COUNT" == 0 ]] || exit 1
+  printf 'Focused slow post-stream publisher tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == post-stream-startup-grace ]]; then
+  expect_success \
+    'pre-launch alignment may use startup grace without weakening stream freshness' \
+    run_multi_guard_round_robin_case round-robin-startup-grace
+  [[ "$FAIL_COUNT" == 0 ]] || exit 1
+  printf 'Focused post-stream startup grace tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == post-stream-audit-ownership ]]; then
+  run_post_stream_audit_ownership_tests
+  [[ "$FAIL_COUNT" == 0 ]] || exit 1
+  printf 'Focused post-stream audit ownership tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == post-stream-audit-timeout ]]; then
+  expect_success \
+    'blocked complete post-stream audit is revoked at its original deadline' \
+    run_multi_guard_round_robin_case post-audit-timeout
+  [[ "$FAIL_COUNT" == 0 ]] || exit 1
+  printf 'Focused post-stream audit timeout tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == post-stream-audit-owner-death ]]; then
+  expect_success \
+    'SIGKILL of the observer revokes its complete audit and descendants' \
+    run_multi_guard_round_robin_case post-audit-owner-death
+  [[ "$FAIL_COUNT" == 0 ]] || exit 1
+  printf 'Focused post-stream audit owner death tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == post-stream-audit-expired-progress ]]; then
+  expect_success \
+    'post-stream progress expiry cannot be hidden by a pending complete audit' \
+    run_multi_guard_round_robin_case post-audit-expired-progress
+  [[ "$FAIL_COUNT" == 0 ]] || exit 1
+  printf 'Focused post-stream audit expired progress tests passed: %s.\n' "$PASS_COUNT"
   exit 0
 fi
 

@@ -2341,3 +2341,19 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   consola. Bots visibles, pero aún falta una respuesta interactiva de IA en
   esta sesión y el full final sobre las correcciones locales posteriores al
   despliegue. Avaturn comercial permanece apagado.
+
+# 2026-10-02 — Observación post-stream durante auditorías completas
+
+- Reproducido localmente un rechazo de un publicador sano lento durante las
+  auditorías seriales. No se atribuye esta causa a los fallos reales históricos.
+- Solo tras wait/reap del stream, un hijo acotado por identidad/compuerta/PGID
+  ejecuta los mismos predicados completos por ronda mientras el foreground
+  observa contadores. Se conserva el baseline previo y se drena READY tras
+  wait; no cambian guardas, Lease/fence, plazos30/10s ni reserva2s.
+- Matriz final nativa57/57, exit0 y hashes iguales antes/después; incluye
+  publicador8.5s, doce auditorías completas, auditorías rápidas, exit7, timeout,
+  progreso caducado y SIGKILL con grupos/descendientes ausentes. El candidato
+  congelado aún necesita recibos/full exactos y aceptación aislada/real.
+- Revisión adversarial focal del principal, no independiente: no hubo una
+  ruta hija con modelo principal verificado disponible. Sin cambios productivos,
+  copia real, build remoto, rollout ni modificación del catálogo aprobado.

@@ -282,6 +282,10 @@ driver owns the serialized, phase-aware mutation and its fail-closed gates.
 
 ## Prerequisites
 
+- **Bash** v4.1+ for recovery scripts (local candidate tested with Bash 5.3).
+  The system Bash 3.2 on macOS cannot parse their coprocess/private-FD syntax;
+  resolve the supported interpreter before running them, without changing a
+  live operation's interpreter or installing tools during an incident.
 - **Node.js** v20+ ([nodejs.org](https://nodejs.org))
 - **System Python 3** available as `python3` through the restricted
   `/usr/bin:/bin` path (required by the owner-private `dir_fd` helpers)

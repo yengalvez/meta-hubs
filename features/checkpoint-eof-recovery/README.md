@@ -89,6 +89,42 @@ ten seconds and then resumes. Unchanged counters keep their old causal bounds.
 Each full audit remains mandatory, followed by a joint continuity/freshness
 check; a running or unreaped child cannot opt into this post-stream path.
 
+### Post-stream observation during full audits (2026-10-02)
+
+The native shell fixture reproduced a healthy slow publisher being rejected
+because a blocking full audit prevented timely counter observations. A source
+round below ten seconds can still exhaust its conservative causal lower bound
+when the receiver serially audits other guards. This demonstrates a local
+observer defect; it does not establish the unrecorded cause of a live failure.
+
+ONLY after the stream's real wait/reap retires its destructive capability, one
+gated, owned process group executes all the unchanged complete predicates in
+their original order for each sweep. The foreground continues capability-bound
+counter observations, preserving previous-observation lower bounds and the
+irreversible expiry latch. Native exit zero AND the private guardian handshake
+are required, including a READY buffered after a cheap audit has already exited.
+Post-reap baselines are captured before any complete audit, so a valid increment
+during it is not discarded in favor of another round within the same deadline.
+
+The guardian shares only its own verified process group and the owner's private
+control pipe. EOF/owner death or the original absolute deadline revokes that
+group, including descendants. Normal retirement checks PID/start identity;
+parent cleanup requires its running-child proof or the waited/reaped group.
+There is no new service, coordinator generation, configuration input or retry
+authority. Pre-launch/running paths, all complete PGSQL/writer/durable guards,
+Lease/fence/UID/hash checks, thirty/ten-second limits and two-second cancellation
+reserve remain unchanged. Interrupted copies remain invalid.
+
+The final affected native matrix passed 57/57 with real exit zero and unchanged
+source hashes. It includes an 8.5-second healthy publisher plus at least twelve
+complete slow audits, cheap audits under the original startup window, native
+audit exit 7, blocked audit deadlines, expired progress and SIGKILL of the
+observer. Failure cases assert that audit groups/descendants are gone. This is
+local regression evidence, NOT recovery-section/full or isolated/live acceptance.
+The exact frozen candidate must still renew only invalid receipts and pass full.
+Revert the tooling only before an operation; an active incident retains its
+pinned source, receipt and journal until reconciliation.
+
 Ordinary backup failures emit a bounded, allowlisted stage/status/reason on
 stderr without enabling a diagnostic flag. Archive stdout is unchanged. A
 failed command retains its original exit status and first cause, while the
