@@ -814,6 +814,10 @@ test("rejects setuid, setgid and sticky bits on owner-private operation paths", 
     const input = fixture({ seal: false });
     try {
       const snapshotPath = path.join(input.operationDirectory, "old-snapshot.json");
+      // Darwin may clear setgid on chmod when TMPDIR's inherited group is not
+      // one of this user's groups. Set the synthetic file's own primary group
+      // first; the exact special-bit assertion and rejection must still hold.
+      fs.chownSync(snapshotPath, process.getuid(), process.getgid());
       fs.chmodSync(snapshotPath, mode);
       assert.equal(fs.lstatSync(snapshotPath).mode & 0o7777, mode);
       assert.throws(() => sealProcessLocalRotationOperation({

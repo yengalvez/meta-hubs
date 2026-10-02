@@ -1,5 +1,17 @@
 # Session Changelog
 
+## 2026-10-02 · Grupo explícito solo en fixtures de permisos especiales
+
+77674 terminó security exit1/372.407s; fixture de puerto y ocho unidades Hubs
+ya pasaron, pero el caso de permisos exigía2600 y observaba600. Canary9c768a
+reprodujo grupo heredado no miembro y bit setgid retirado por chmod. Tres
+focos existentes rojos e7f816/09177a/a4af91; cambiar solo UID/GID del archivo
+sintético antes de chmod da verdes107e1c/b1b4f8/e25398,1/1 cada uno,0skips.
+Mismos bits exactos y rechazos, sin bypass, fallback ni cambio de guarda,
+launcher/helper/producto o permisos reales. Revisión primaria dirigida separada,
+no independiente; límites de capture/no-overwrite documentados en DOC. No
+static/H5/recovery/finalizadores ni aceptación full/Goal por este bloque.
+
 ## 2026-10-02 · Fixture de puerto aislada de la política real
 
 94404 terminó exit 1 en security: el caso de puerto default heredaba el perfil

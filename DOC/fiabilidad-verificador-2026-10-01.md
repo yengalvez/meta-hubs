@@ -186,3 +186,32 @@ Los recibos compatibles se conservan; tras congelar este delta hay que consultar
 el finalizador nativo y renovar solo sus secciones pendientes. El full exacto,
 los ciclos, SLO y objetivo completo siguen abiertos. No aceptar nuevos bytes
 por el PASS de H5 anterior ni iniciar DB/VM/build/backup/deploy por este subcaso.
+
+## Permisos especiales con grupo de fixture explícito · 02/10/2026
+
+77674 terminó security exit 1 / 372407ms, fuente b110dbe/2a3d7ab/cb15414
+limpia antes/después; no inició static/H5/recovery ni finalizadores. La fixture
+de puerto anterior ya pasó sus 40 controles y las ocho unidades de entorno Hubs.
+El nuevo fallo fue la precondición de modo del caso 14 de rotation-operation:
+solicitaba 02600 pero el archivo quedaba 00600 antes de ejercitar la guarda.
+
+Reproducción e7f816: caso exacto rojo 1/1, sin runtime/red/SQL reales. Canary
+9c768a en scratch0700 `.../yn-ret-full-ndUhKs/special-mode-precondition-mBBfpj`
+comprobó que el archivo propio heredaba un grupo no miembro del usuario. chmod
+retiraba setgid (600); después de fijar SOLO el grupo al primario del mismo
+usuario conservó exactamente 2600. Resumen0600 sin nombres/valores privados.
+El mismo defecto de precondición se reprodujo en capture-baseline (09177a) y
+redacted-rollout CLI (a4af91), ambos 1/1 rojos; no otra auditoría general.
+
+Delta SOLO en esas tres fixtures: chown del archivo sintético al UID/GID propio
+ANTES de chmod. No cambia helpers compartidos, grupo de datos reales, guardas,
+CLI, permisos productivos ni launcher. Se conservan las assertions exactas de
+4600/2600/1700 y rechazo: sin skip, fallback a600 ni máscara permisiva.
+107e1c, b1b4f8 y e25398: los tres focos normales exit0, 1/1 cada uno, con los bits
+reales y outcomes existentes conservados. Capture prueba la negativa a volver
+a publicar en el mismo path, no por sí solo la lectura de un artefacto inseguro;
+rotation-operation y CLI sí ejercitan sus guards de entrada tras mutar el modo.
+Los otros casos intactos no se repiten fuera del siguiente security nativo.
+Revisión primaria dirigida separada, no independiente; mismo alcance POSIX
+Mac/Linux del contrato, sin afirmar aceptación de Linux o runtime Kubernetes.
+Freeze, inventario de recibos y full posterior siguen obligatorios en PLAN.

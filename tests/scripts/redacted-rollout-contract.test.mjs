@@ -1890,6 +1890,9 @@ test("CLI rejects setuid, setgid and sticky bits on private inputs", () => {
   for (const mode of [0o4600, 0o2600]) {
     const fixture = cliFixture();
     try {
+      // Normalize only this synthetic input's group; retain the exact bit
+      // assertion instead of accepting Darwin's stripped-setgid fallback.
+      fs.chownSync(fixture.paths.bundle, process.getuid(), process.getgid());
       fs.chmodSync(fixture.paths.bundle, mode);
       assert.equal(fs.lstatSync(fixture.paths.bundle).mode & 0o7777, mode);
       const result = runCli(

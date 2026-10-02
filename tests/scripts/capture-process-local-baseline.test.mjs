@@ -256,6 +256,9 @@ test("rejects setuid, setgid and sticky bits in the private publication contract
         outputPath: output,
         fetchResource: resourceFor
       }), true);
+      // Keep the special bits real even when TMPDIR inherits a non-member
+      // group: Darwin otherwise clears setgid before the guard is exercised.
+      fs.chownSync(output, process.getuid(), process.getgid());
       fs.chmodSync(output, mode);
       assert.equal(fs.lstatSync(output).mode & 0o7777, mode);
       assert.throws(() => captureProcessLocalBaseline({
