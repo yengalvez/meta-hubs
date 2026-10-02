@@ -50,6 +50,7 @@ defmodule Ret.LocalCatalogGraph do
       )
       |> Repo.insert!()
 
+    project = Repo.preload(project, :scene)
     {:ok, project} = Project.add_scene_to_project(project, scene)
 
     hub =

@@ -1,5 +1,14 @@
 # Session Changelog
 
+## 2026-10-02 · Load the graph fixture's project association before linking
+
+Graph4629/508b201 TERMINAL1/ad5965/e679f8:1case/1failure/0accepted,12.887s,
+own PG stopped105ms/PIDfile absent, scratch0700 `/private/tmp/ynret-local-iqRtJr`.
+Exact RuntimeError at graph53: normal Project.add_scene_to_project requires
+its :scene association loaded (e776d6). Correct ONLY the caller fixture's
+preload, no core API/model/guard change; no partial SQL/dataset acceptance.
+Next graph execution is due to this demonstrated cause, not a blind retry.
+
 ## 2026-10-02 · Prepare native catalog room/project graph
 
 Catalog-only64349 on4d4b250 TERMINAL0/1case/11.871s, fresh SQL+99 decrypts,
