@@ -2,6 +2,18 @@
 
 Candidate dated 2026-09-26. Baselines: Hubs prod-2026-03-11 and Hubs CE 2.1.0. This changes operator-side backup/recovery tooling, not avatar bytes, application schemas or the accepted checkpoint format. Local tests are not a live recovery acceptance.
 
+## Local interpreter and scheduling harness (2026-10-02)
+
+Recovery requires Bash4.1+. Refuse unsupported interpreters before resetting
+capabilities or parsing the coprocess worker. Native local helpers bind their
+validated executable before sanitizing PostgreSQL's environment; they must not
+continue after a failed `source`. No production Bash override is introduced.
+The deterministic scheduling harness invokes the real ordered full-audit
+dispatcher but explicitly models worker-boundary timing and counter observations.
+It does not attest native IPC, guardian ownership or reaping. Those retain the
+native recovery matrix and exact full-gate requirements, without altered
+30/10-second bounds or two-second cancellation reserve.
+
 ## Isolated full-cycle inputs (2026-10-01)
 
 The existing staging preparer now offers only the two explicit recovery input

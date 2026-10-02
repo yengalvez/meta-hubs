@@ -3,6 +3,17 @@
 # Shared fail-closed guards for backup and restore commands. Callers must set
 # NAMESPACE before invoking recovery_require_cluster_identity.
 
+# Refuse before parsing the coprocess functions or resetting capabilities.
+# Callers choose their supported PATH interpreter; never replace a live shell.
+if ((BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 1))); then
+  printf 'recovery_requires_bash_4_1_or_newer\n' >&2
+  if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    exit 2
+  else
+    return 2
+  fi
+fi
+
 RECOVERY_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # These paths are process-local capabilities. Never honor inherited values:

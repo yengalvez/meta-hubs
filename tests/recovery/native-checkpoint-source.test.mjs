@@ -20,15 +20,20 @@ function fixture(t) {
     "ret-storage-20261001-130000.tar.gz": Buffer.from("incomplete media")
   };
   for (let i = 0; i < 10; i++) files[`inventory-${i}.json`] = Buffer.from("{}");
+  const manifest = () => fs.writeFileSync(path.join(directory, "SHA256SUMS"),
+    Object.entries(files).map(([name, bytes]) => `${digest(bytes)}  ${name}\n`).join(""), { mode: 0o600 });
   for (const [name, bytes] of Object.entries(files)) fs.writeFileSync(path.join(directory, name), bytes, { mode: 0o600 });
-  fs.writeFileSync(path.join(directory, "SHA256SUMS"), Object.entries(files).map(([name, bytes]) => `${digest(bytes)}  ${name}\n`).join(""), { mode: 0o600 });
-  const invoke = () => spawnSync(process.execPath, [script, "--checkpoint", directory], { encoding: "utf8", timeout: 10000 });
+  manifest();
+  function writeArtifact(name, bytes) {
+    files[name] = bytes; fs.writeFileSync(path.join(directory, name), bytes, { mode: 0o600 }); manifest();
+  }
+  const invoke = (options = {}) => spawnSync(process.execPath, [script, "--checkpoint", directory], { encoding: "utf8", timeout: 10000, ...options });
   function rejected(code) {
     const result = invoke(); assert.equal(result.status, 1); assert.equal(result.stdout, "");
     assert.equal(result.stderr, `native_preflight_failed:${code}\n`);
     assert.equal(fs.readdirSync(directory).some(name => /native|restore|postgres|data/.test(name) && name !== "database-contract.json"), false);
   }
-  return { directory, rejected };
+  return { parent, directory, invoke, rejected, writeArtifact };
 }
 test("native source preparation never defaults to a production/private input", () => {
   const result = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 5000 });
@@ -54,4 +59,34 @@ test("checksum traversal cannot select an outside file", t => {
 });
 test("complete hashes alone cannot bless an incomplete SQL/media pair", t => {
   const f = fixture(t); f.rejected("bounded_validation_failed");
+});
+
+test("standalone source binds both source calls to custom-PATH Bash with no inherited startup or PG environment", t => {
+  const f = fixture(t), customBin = path.join(f.parent, "custom-bin"), trace = path.join(f.parent, "shell-calls.jsonl");
+  fs.mkdirSync(customBin, { mode: 0o700 });
+  const executable = path.join(customBin, "bash");
+  // Stub only shell validation for this binding test; it is not evidence
+  // that this intentionally incomplete SQL fixture satisfies the contract.
+  fs.writeFileSync(executable, `#!${process.execPath}\n` +
+    `const fs = require("node:fs"), args = process.argv.slice(2), probe = args.some(arg => arg.includes("BASH_VERSINFO"));\n` +
+    `fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify({ executable: process.argv[1], phase: probe ? "version" : "source", inherited: Object.keys(process.env).filter(key => /^(?:PG|BASH_ENV$|ENV$|SHELLOPTS$)/.test(key)) }) + "\\n");\n` +
+    `if (probe) process.stdout.write("5.2\\n");\n`, { mode: 0o700 });
+  const media = path.join(f.parent, "media"), uuid = "abcdef00-1111-2222-3333-444455556666";
+  const shard = path.join(media, "owned/ab/cd"); fs.mkdirSync(shard, { recursive: true, mode: 0o700 });
+  for (const suffix of [".blob", ".meta.json"]) fs.writeFileSync(path.join(shard, uuid + suffix), "fixture", { mode: 0o600 });
+  const archive = path.join(f.parent, "fixture.tar.gz");
+  const tar = spawnSync("/usr/bin/tar", ["-czf", archive, "-C", media, "owned/"], {
+    env: { PATH: "/usr/bin:/bin", COPYFILE_DISABLE: "1" }, encoding: "utf8", timeout: 5000
+  });
+  assert.equal(tar.status, 0, tar.stderr);
+  f.writeArtifact("ret-storage-20261001-130000.tar.gz", fs.readFileSync(archive));
+  const result = f.invoke({ env: { PATH: customBin, PGSERVICE: "outside", PGPASSWORD: "fixture",
+    BASH_ENV: "/fixture/startup", ENV: "/fixture/startup", SHELLOPTS: "xtrace" } });
+  assert.equal(result.status, 0, result.stderr);
+  const calls = fs.readFileSync(trace, "utf8").trim().split("\n").map(line => JSON.parse(line));
+  assert.deepEqual(calls.map(call => call.phase), ["version", "source", "source"]);
+  for (const call of calls) {
+    assert.equal(call.executable, executable);
+    assert.deepEqual(call.inherited, []);
+  }
 });

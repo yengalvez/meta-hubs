@@ -17,7 +17,7 @@ function fn(name, indent = "") {
 }
 const reporter = fn("recovery_report_stream_failure");
 function run(script, env = {}) {
-  const result = spawnSync("/bin/bash", ["-c", `${reporter}\n${script}`], {
+  const result = spawnSync("bash", ["-c", `${reporter}\n${script}`], {
     cwd: root, encoding: "utf8", timeout: 5000,
     env: { ...process.env, RECOVERY_STREAM_DIAGNOSTIC_CONTEXT: "", ...env }
   });
@@ -70,8 +70,31 @@ test("early argument failure reports safely and preserves its exit code", () => 
   assert.equal(result.stderr, "recovery_stream_stage:arguments\nrecovery_stream_status:2\nrecovery_stream_detail:arguments\n");
 });
 
+test("the recovery library refuses unsupported Bash before initializing capabilities", () => {
+  const shell = process.platform === "darwin" ? "/bin/bash" : "bash";
+  const result = spawnSync(shell, ["-c", 'RECOVERY_MATERIALIZED_DIR=unchanged; source deployment/lib/recovery-safety.sh; status=$?; printf "%s:%s:%s\\n" "$status" "$RECOVERY_MATERIALIZED_DIR" "${BASH_VERSINFO[0]}"'], {
+    cwd: root, encoding: "utf8", timeout: 5000
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  if (process.platform === "darwin") {
+    assert.equal(result.stdout, "2:unchanged:3\n");
+    assert.equal(result.stderr, "recovery_requires_bash_4_1_or_newer\n");
+    const executed = spawnSync(shell, ["deployment/lib/recovery-safety.sh"], {
+      cwd: root, encoding: "utf8", timeout: 5000
+    });
+    assert.ifError(executed.error);
+    assert.equal(executed.status, 2);
+    assert.equal(executed.stdout, "");
+    assert.equal(executed.stderr, "recovery_requires_bash_4_1_or_newer\n");
+  } else {
+    assert.match(result.stdout, /^0::[4-9][0-9]*\n$/);
+    assert.equal(result.stderr, "");
+  }
+});
+
 test("EXIT reporter preserves the first cause and original status", () => {
-  const result = run(`${fn("report_stream_diagnostic", "    ")}\nstream_diagnostic_stage=refresh\nstream_diagnostic_detail=lease-check\ntrap report_stream_diagnostic EXIT\nexit 37`);
+  const result = run(`${fn("supervised_stream_audit_cleanup", "    ")}\n${fn("report_stream_diagnostic", "    ")}\nguard_audit_control_fd=\nguard_audit_read_fd=\nguard_audit_pid=\nstream_diagnostic_stage=refresh\nstream_diagnostic_detail=lease-check\ntrap report_stream_diagnostic EXIT\nexit 37`);
   assert.equal(result.status, 37);
   assert.equal(result.stderr, "recovery_stream_stage:refresh\nrecovery_stream_status:37\nrecovery_stream_detail:lease-check\n");
 });
@@ -146,7 +169,7 @@ for (const commandStatus of [0, 1, 37, 143]) {
       // The isolated Python launcher invokes only this owned local executable.
       // No kubectl binary, cluster, credentials or timing overrides are used.
       writeFileSync(join(fixture, "kubectl"), '#!/bin/bash\nprintf "archive-sentinel"\nexit "$TEST_COMMAND_STATUS"\n', { mode: 0o700 });
-      const result = spawnSync("/bin/bash", ["-c", "set -euo pipefail; source deployment/lib/recovery-safety.sh; recovery_kubectl_stream 10 -- exec local-fixture"], {
+      const result = spawnSync("bash", ["-c", "set -euo pipefail; source deployment/lib/recovery-safety.sh; recovery_kubectl_stream 10 -- exec local-fixture"], {
         cwd: root, encoding: "utf8", timeout: 20000,
         env: { ...process.env, PATH: `${fixture}:${process.env.PATH}`, EXPECTED_KUBE_CONTEXT: "fixture-context",
           RECOVERY_STREAM_DIAGNOSTIC_CONTEXT: "", TEST_COMMAND_STATUS: String(commandStatus) }

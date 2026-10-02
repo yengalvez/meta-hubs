@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import zlib from "node:zlib";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { nativeBashArguments, nativeShellEnvironment, resolveNativeBash } from "./native-bash.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const library = path.join(root, "deployment/lib/recovery-safety.sh");
@@ -20,7 +21,8 @@ function privateRegular(file) {
   return stat;
 }
 try {
-  if (args.length !== 2 || args[0] !== "--checkpoint" || !path.isAbsolute(args[1])) reject("usage_requires_absolute_checkpoint");
+  if (![2, 4].includes(args.length) || args[0] !== "--checkpoint" || !path.isAbsolute(args[1]) ||
+      (args.length === 4 && args[2] !== "--native-bash")) reject("usage_requires_absolute_checkpoint");
   const source = fs.realpathSync(args[1]);
   if (source !== args[1]) reject("source_path_not_canonical");
   const stamp = path.basename(source);
@@ -42,16 +44,20 @@ try {
   const dumpName = `retdb-${stamp}.sql.gz`, archiveName = `ret-storage-${stamp}.tar.gz`;
   if (![dumpName, archiveName, "database-contract.json"].every(name => seen.has(name))) reject("missing_bound_half");
   const sql = zlib.gunzipSync(fs.readFileSync(path.join(source, dumpName)), { maxOutputLength: 64 * 1024 * 1024 });
+  // Restore passes its already selected executable; standalone preparation
+  // resolves the caller's PATH once. Never reselect from the sanitized PATH.
+  const bashExecutable = resolveNativeBash(process.env.PATH, args[3]);
+  const env = nativeShellEnvironment();
   temporary = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "yenhubs-native-preflight-")); fs.chmodSync(temporary, 0o700);
   const sqlPath = path.join(temporary, "dump.sql"); fs.writeFileSync(sqlPath, sql, { mode: 0o600 });
-  execFileSync("/bin/bash", ["-c", 'set -e; source "$1"; recovery_validate_database_contract_against_dump "$2" "$3"',
-    "native-preflight", library, path.join(source, "database-contract.json"), sqlPath],
-  { stdio: ["ignore", "pipe", "pipe"], timeout: 30000 });
+  execFileSync(bashExecutable, nativeBashArguments(library, 'recovery_validate_database_contract_against_dump "$2" "$3"',
+    [path.join(source, "database-contract.json"), sqlPath]),
+  { env, stdio: ["ignore", "pipe", "pipe"], timeout: 30000 });
   const archive = path.join(source, archiveName);
-  const listing = execFileSync("tar", ["-tzf", archive], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: 30000 });
-  execFileSync("/bin/bash", ["-c", 'source "$1"; recovery_storage_path_stream_is_exact', "native-preflight", library],
-    { input: listing, stdio: ["pipe", "pipe", "pipe"], timeout: 30000 });
-  const verbose = execFileSync("tar", ["-tvzf", archive], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: 30000 });
+  const listing = execFileSync("tar", ["-tzf", archive], { env, encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: 30000 });
+  execFileSync(bashExecutable, nativeBashArguments(library, "recovery_storage_path_stream_is_exact"),
+    { env, input: listing, stdio: ["pipe", "pipe", "pipe"], timeout: 30000 });
+  const verbose = execFileSync("tar", ["-tvzf", archive], { env, encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: 30000 });
   if (verbose.trim().split("\n").some(line => !/^[-d]/.test(line))) reject("unsafe_archive_entry_type");
   const names = listing.trim().split("\n"), blobs = names.filter(name => name.endsWith(".blob"));
   const metadata = new Set(names.filter(name => name.endsWith(".meta.json")));

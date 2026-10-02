@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import zlib from "node:zlib";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { nativeBashArguments, resolveNativeBash } from "./native-bash.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const library = path.join(root, "deployment/lib/recovery-safety.sh");
@@ -112,7 +113,7 @@ export function verifyMedia(inventory, active, expected = inventory) {
 
 function main() {
   const args = process.argv.slice(2);
-  let work, env, pgBin, log, serverAttempted = false, serverIdentity, phase = "arguments";
+  let work, env, pgBin, log, bashExecutable, serverAttempted = false, serverIdentity, phase = "arguments";
   const started = performance.now(), metrics = {}, rounds = [];
   const report = { scope: "native-local-postgresql-and-media-not-kubernetes-or-production", outcome: "FAIL" };
   function receipt() {
@@ -131,7 +132,7 @@ function main() {
     if (result.status !== 0 || result.error) reject(`${phase}_command_failed`);
     return result.stdout;
   }
-  const bash = (program, argv = [], input) => run("/bin/bash", ["-c", `set -euo pipefail; source "$1"; ${program}`, "native-local", library, ...argv], { input });
+  const bash = (program, argv = [], input) => run(bashExecutable, nativeBashArguments(library, program, argv), { input });
   function psql(database, input, logOutput = false) {
     return run(path.join(pgBin, "psql"), ["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-h", env.PGHOST,
       "-p", env.PGPORT, "-U", "postgres", "-d", database], { input, logOutput });
@@ -151,6 +152,7 @@ function main() {
   try {
     if (args.length !== 4 || args[0] !== "--checkpoint" || args[2] !== "--pg-bin" ||
         !path.isAbsolute(args[1]) || !path.isAbsolute(args[3])) reject("explicit_local_inputs_required");
+    bashExecutable = resolveNativeBash();
     pgBin = fs.realpathSync(args[3]);
     for (const name of ["initdb", "pg_ctl", "psql", "pg_dump"]) if (!fs.statSync(path.join(pgBin, name)).isFile()) reject("native_tool_missing");
     process.umask(0o077);
@@ -164,7 +166,7 @@ function main() {
     log = fs.openSync(path.join(work, "native-private.log"), "wx", 0o600);
     const source = args[1];
     const prepared = step("source_preflight", () => JSON.parse(run(process.execPath,
-      [path.join(root, "tests/recovery/native-checkpoint-source.mjs"), "--checkpoint", source])));
+      [path.join(root, "tests/recovery/native-checkpoint-source.mjs"), "--checkpoint", source, "--native-bash", bashExecutable])));
     const stamp = prepared.sourceStamp, contractSource = path.join(source, "database-contract.json");
     const contract = JSON.parse(fs.readFileSync(contractSource, "utf8"));
     const sums = fs.readFileSync(path.join(source, "SHA256SUMS"), "utf8");

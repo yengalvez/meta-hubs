@@ -12,12 +12,15 @@ function extract(name) {
   return source.slice(start, end + 7);
 }
 // Execute the production Bash functions, not a JavaScript port of their
-// scheduling algorithm. Only boundary checks, elapsed costs and monitor
-// counters are simulated; no files, timers, kubectl or publishers are needed.
+// scheduling algorithm. Boundary checks, elapsed costs and monitor counters
+// are simulated. The worker boundary below models foreground observation on
+// this virtual clock; actual IPC/guardian/reap acceptance lives in the native
+// recovery matrix, not this scheduling harness.
 const functions = [
   "stream_record_diagnostic",
   "require_reaped_stream_guard_freshness",
   "observe_inactive_stream_guard_progress",
+  "invoke_complete_stream_guard_audit",
   "refresh_supervised_stream_guards_for_launch",
   "supervised_stream_guards_are_healthy",
   "supervised_stream_guards_are_continuously_healthy",
@@ -49,7 +52,19 @@ guard_last_progress_milliseconds=(0 0 0) guard_last_observation_milliseconds=(0 
 recovery_monotonic_milliseconds(){ printf '%s\n' "$clock"; }
 recovery_stream_guard_process_is_healthy(){
   if [[ "$#" == 8 ]]; then
-    full_audits=$((full_audits+1)); clock=$((clock+audit_costs[$1-11]))
+    full_audits=$((full_audits+1))
+    local elapsed=0 cost="@{audit_costs[$1-11]}" step
+    if [[ "$stream_is_gated" == 0 && "$stream_child_reaped" == 1 &&
+          "$stream_diagnostic_stage" == post-audit &&
+          -z "$stream_pid" && -z "$stream_start_identity" ]]; then
+      # Deterministic worker-boundary model only: real complete predicates
+      # keep their order while foreground observations consume virtual time.
+      while ((elapsed < cost)); do
+        step=100; ((cost-elapsed >= step)) || step=$((cost-elapsed))
+        clock=$((clock+step)); elapsed=$((elapsed+step))
+        observe_inactive_stream_guard_progress || return 1
+      done
+    else clock=$((clock+cost)); fi
     [[ "$fault" != audit-after-realignment || "$full_audits" -le 6 ]] || return 1
     [[ "$fault" != full-process && "$fault" != full-authority ]] || return 1
   else
@@ -96,6 +111,11 @@ recovery_require_operation_serialization_stream(){
   [[ "$fault" != lease ]] || return 1
 }
 sleep(){ clock=$((clock+100)); }
+run_complete_stream_guard_audit(){
+  # Only the IPC/scheduling boundary is synthetic. Invoke the REAL ordered
+  # full-audit function; it still executes every eight-argument predicate.
+  invoke_complete_stream_guard_audit "$@"
+}
 main(){
   local status=0 reserve_status=0
   case "$phase" in

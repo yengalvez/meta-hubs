@@ -1,5 +1,31 @@
 # Session Changelog
 
+## 2026-10-02 · Close unsupported shell and extracted-harness dependencies
+
+Native chain28635 on b458 passed static0 then security1; H5/recovery/full not
+executed. Reproduced three exact failed tests: macOS hardcoded Bash3.2 loading
+a Bash4.1+ library, EXIT reporter without its cleanup dependency, and extracted
+scheduler without its ordered audit dispatcher. Unsupported Bash now refuses
+before resetting capabilities. Tests bind supported PATH Bash; reporter loads
+real empty-capability cleanup, and virtual scheduler explicitly models only
+worker-boundary observation while invoking the real complete dispatcher.
+95/95 diagnostics/scheduler and15/15 earlier native helper units passed; no
+security receipt/full acceptance inferred. Independent focal review found a
+residual in canary's sanitized PATH selection. A custom-PATH test reproduced
+it before correction. Local helpers now bind one canonical Bash before PATH
+sanitization, pass it explicitly to preflight and refuse unsupported versions,
+inherited startup settings or failed source continuation. The worker's23/23
+focused cases pass; primary verification and read-only accepted-source check
+remain distinct gates. The new binding is local-only, not production authority.
+Primary60859 confirmed23/23 and accepted historical source13hashes/61pairs
+read-only, then stopped on ShellCheckSC2317. Explicit source/exec header
+branches replace that fallback. Independent binding review also detected
+errexit inhibition by a conditional source; a new RED `false; return 0` case
+and its narrow correction are required before freeze. No full inferred.
+No process/window/Lease/UID/hash predicate or10/30s/2s reserve changes, no
+production/global configuration/secret/DB mutations by this code delta.
+Official SPRINT profile activation is separate from this project change.
+
 ## 2026-10-02 · Complete graph caller's persisted association preloads
 
 Graph48096/e9d8ce3 TERMINAL1/bc2ec6/fc5bd2:1failure/0accepted11.255s,

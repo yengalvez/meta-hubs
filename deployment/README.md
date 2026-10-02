@@ -286,6 +286,10 @@ driver owns the serialized, phase-aware mutation and its fail-closed gates.
   The system Bash 3.2 on macOS cannot parse their coprocess/private-FD syntax;
   resolve the supported interpreter before running them, without changing a
   live operation's interpreter or installing tools during an incident.
+  The library refuses an unsupported shell before initializing capabilities.
+  Node-based local checkpoint tests must bind the validated interpreter,
+  not hardcode macOS `/bin/bash` or reselect it after sanitizing PostgreSQL's
+  environment. This prerequisite is not a runtime/full acceptance receipt.
 - **Node.js** v20+ ([nodejs.org](https://nodejs.org))
 - **System Python 3** available as `python3` through the restricted
   `/usr/bin:/bin` path (required by the owner-private `dir_fd` helpers)
