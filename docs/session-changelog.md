@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-10-02 · Integrated canary first method failure, owned PG stopped
+
+10105 TERMINAL exit1/05f1c0,14.796s/zero accepted cases. Current-source compile
+and actual authenticated Reticulum snapshot GET returned200/one room. Adapter
+then called runnerReadinessSnapshot without required configs/runners, throwing
+TypeError; bounded excerpt305.. of retained private log identifies the exact
+forEach cause. No product defect inferred. Stop-owned-database exit0/113ms,
+PID file absent, source root/Hubs/Cloud clean; scratch0700
+/private/tmp/ynret-local-dlQ1oc and receipt0600 preserved. Fix only two adapter
+lines: sync returns its actual result; parent observes readiness via existing
+real HTTP /ready route, not an incorrectly invoked pure helper. Keep native
+SQL/HTTP clients, guards and all oracles. No provider/production/VM effect;
+only after this demonstrated cause corrected may the same two NEW cases run.
+
 ## 2026-10-02 · Integrated canary cache precondition reconciled
 
 Preparation2cb2e8 exit1/cache_source_mismatch before scratch, PG, HTTP or a

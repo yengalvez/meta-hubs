@@ -32,8 +32,7 @@ process.on("message", async message => {
     } else if (message.type === "sync") {
       const synced = await internals.syncActiveRoomsFromReticulum();
       assert.equal(synced.ok, true); assert.equal(synced.authoritative, true);
-      send(message, { authoritative: synced.authoritative, count: synced.count,
-        ready: internals.runnerReadinessSnapshot().ok });
+      send(message, { authoritative: synced.authoritative, count: synced.count });
     } else if (message.type === "shutdown") {
       internals.resetRuntimeStateForTests();
       await new Promise((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); server.closeAllConnections(); });

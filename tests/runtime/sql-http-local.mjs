@@ -205,7 +205,9 @@ export async function runSqlHttpCanary({ root, work, log, env, application, pgPo
       const seed = await sendBot("seed", { hub_sid: setup.hub_sid, bots: setup.bots });
       assert.equal(seed.synthetic_readiness, true);
       const on = await sendBot("sync");
-      assert.equal(on.authoritative, true); assert.equal(on.count, 1); assert.equal(on.ready, true);
+      assert.equal(on.authoritative, true); assert.equal(on.count, 1);
+      const ready = await fetch(`http://127.0.0.1:${botPort}/ready`, { signal: AbortSignal.timeout(2000) });
+      assert.equal(ready.status, 200); assert.equal((await ready.json()).ok, true);
       assert.deepEqual(await healthModules(), { bots_enabled: true, ai_enabled: true });
       acknowledge("ready");
       const begun = await waitStage("request-started", testCase);
