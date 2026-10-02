@@ -197,13 +197,16 @@ the six profiles, synthetic callback cases or separate Node HTTP tests:
 ```sh
 node tests/runtime/reticulum-local.mjs --sql-http-canary \
   --pg-bin /opt/homebrew/opt/postgresql@14/bin \
-  --cache-reticulum /Users/Shared/Gits/YenHubs/output/product-fixes-20260926/hubs-cloud/community-edition/services/reticulum \
+  --cache-reticulum /Users/yengalvez/.codex/worktrees/reliability-20261001/YenHubs/hubs-cloud/community-edition/services/reticulum \
   --cache-bot-orchestrator /Users/Shared/Gits/YenHubs/output/product-fixes-20260926/hubs-cloud/community-edition/services/bot-orchestrator
 ```
 
 Run only from a clean exact candidate. Both current tracked applications are
 materialized in the existing owned scratch with matching dependency locks;
 Reticulum is freshly compiled. Product source/locks and the cache stay intact.
+The current candidate's existing Reticulum dependency cache is required on
+this host: F's frozen runtime.exs predates the accepted port-binding delta
+and is deliberately rejected. Do not loosen the five-file equality guard.
 The new normal security guard is `node --test tests/runtime/sql-http-local.test.mjs`.
 
 The canary joins PostgreSQL + Reticulum's real HTTPoison client + Node's actual

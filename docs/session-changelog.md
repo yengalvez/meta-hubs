@@ -1,5 +1,16 @@
 # Session Changelog
 
+## 2026-10-02 · Integrated canary cache precondition reconciled
+
+Preparation2cb2e8 exit1/cache_source_mismatch before scratch, PG, HTTP or a
+test started. Frozen F matches four lock/config files, but runtime.exs differs
+from the current accepted Cloudcb15414. Existing current W dependency/cache
+paths are present from the native gates; use that exact current Reticulum
+cache while still freshly copying/compiling Ret itself. No equality guard
+weakened, cache edited or case repeated. Node source/lock cache stays F after
+its own exact guard. Correct only the documented input for the single new
+integrated canary; no product/SQL/production effect or native PASS inferred.
+
 ## 2026-10-02 · Integrated SQL/HTTP canary method, not product acceptance
 
 Add only an explicit two-case opt-in to the existing native Reticulum runner:
