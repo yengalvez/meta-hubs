@@ -293,3 +293,20 @@ major-version runtime, restore, browser, installation, signed images and the
 three Kubernetes/deploy/rollback cycles still need their own acceptance.
 Do not restore this SQL into production, use it to validate an interrupted
 backup, or substitute it for the coordinated installation/restore protocol.
+
+The distinct `--catalog-graph-dataset` selector uses the same required input
+arguments and owned native runner, adding room/scene/listing/Spoke relations
+to the seed. It does not launch the old catalog-only target or chat/profile
+matrices. Current tracked Reticulum fixtures are hash-bound: Spoke v3 with
+Floor Plan and GLB with native navmesh. The GLB's one missing image URL is
+replaced ONLY in a private derived copy with embedded approved PNG bytes;
+geometry/BIN and original source are unchanged, no external resource allowed.
+Four extra
+owned encrypted files belong to a separate project/scene account (103 total).
+Use normal creator-token assignment/co-owner membership; independently query
+SQL links and test that room owners cannot read another account's project
+and the project owner is not implicitly a room owner. Real ProjectView
+projections and decrypted bytes are readbacks, not HTTP/browser acceptance.
+This creates a synthetic functional graph, not the current metaverse or its
+representative total volume. No restored service, signed image, latency SLO,
+provider traffic, full cycle or production approval follows from that seed.

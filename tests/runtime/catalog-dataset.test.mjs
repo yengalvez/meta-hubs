@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
 import { runtimeCases } from "./reticulum-local.mjs";
-import { assertEmbeddedModel, approvedCatalogHash, preservedListings, validateCatalogEntries } from "./catalog-dataset.mjs";
+import { assertEmbeddedModel, approvedCatalogHash, preservedListings, validateCatalogEntries, validateGraphFixtures, localizeGraphModel } from "./catalog-dataset.mjs";
 
 test("catalog target is exactly one new native case, never replaying profile/chat matrices", () => {
   assert.deepEqual(runtimeCases("--catalog-dataset"), [{ profile: "catalog-dataset", count: 1 }]);
@@ -59,4 +59,37 @@ test("normal short guards are registered exactly once locally and in security CI
     const content = readFileSync(new URL(file, import.meta.url), "utf8");
     assert.equal(content.split(invocation).length - 1, 1);
   }
+});
+
+test("catalog graph target adds exactly one case and requires native floor-plan sources", () => {
+  assert.deepEqual(runtimeCases("--catalog-graph-dataset"), [{ profile: "catalog-graph-dataset", count: 1 }]);
+  const base = new URL("../../hubs-cloud/community-edition/services/reticulum/test/fixtures/", import.meta.url);
+  const project = JSON.parse(readFileSync(new URL("spoke-project.json", base)));
+  const glb = readFileSync(new URL("test.glb", base));
+  const original = Buffer.from(glb);
+  const unlocalized = JSON.parse(glb.subarray(20, 20 + glb.readUInt32LE(12)).toString().replace(/\u0000+$/g, "").trimEnd());
+  assert.throws(() => validateGraphFixtures(project, unlocalized), /graph_remote_resource_forbidden/);
+  const { bytes, model } = localizeGraphModel(glb, Buffer.from("owned-png-control"));
+  assert.deepEqual(glb, original, "original fixture remains byte-identical");
+  const oldBin = 28 + glb.readUInt32LE(12), newBin = 28 + bytes.readUInt32LE(12);
+  assert.deepEqual(bytes.subarray(newBin), glb.subarray(oldBin), "geometry binary unchanged");
+  assert.doesNotThrow(() => validateGraphFixtures(project, model));
+  const noFloor = structuredClone(project);
+  for (const entity of Object.values(noFloor.entities)) entity.components = entity.components?.filter(c => c.name !== "floor-plan");
+  assert.throws(() => validateGraphFixtures(noFloor, model), /spoke_floor_plan_required/);
+  assert.throws(() => validateGraphFixtures(project, { ...model, nodes: [] }), /scene_navmesh_required/);
+  for (const uri of ["https://meta-hubs.org/data", "file:///private/values", "//external.invalid/model"]) {
+    assert.throws(() => validateGraphFixtures({ ...project, metadata: { uri } }, model), /graph_remote_resource_forbidden/);
+  }
+});
+
+test("catalog graph retains separate SQL ownership and all additional encrypted file guards", () => {
+  const native = readFileSync(new URL("./reticulum-catalog-graph.exs", import.meta.url), "utf8");
+  const driver = readFileSync(new URL("./reticulum-local.mjs", import.meta.url), "utf8");
+  assert.match(native, /Project\.project_by_sid_for_account\(project\.project_sid, room_owner\) == nil/);
+  assert.match(native, /refute Hub\.is_owner\?\(fresh_hub, project_owner\.account_id\)/);
+  assert.match(native, /Postgrex\.start_link/);
+  assert.match(native, /Storage\.fetch\(current\)/);
+  assert.match(native, /current\.state == :active/);
+  assert.match(driver, /const ownedPairs = catalog\.graph \? 103 : 99/);
 });

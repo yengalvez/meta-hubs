@@ -1,5 +1,23 @@
 # Session Changelog
 
+## 2026-10-02 · Prepare native catalog room/project graph
+
+Catalog-only64349 on4d4b250 TERMINAL0/1case/11.871s, fresh SQL+99 decrypts,
+sevenIDs, original66/sources unchanged and own PG stopped. No need to replay
+that old target. Add one distinct graph selector to the same runner/case
+factory, because the seed is missing scene/project/room/FKs and ownership.
+Tracked native fixtures bind Floor Plan/navmesh and projectv3. be83b3 short
+guard1/2 exposed one GLB image URL (615638), no PG started. In a private
+derived copy ONLY, embed approved PNG bytes in that exact image, retain BIN
+and original hashes; reject all remaining foreign URLs, no network fetch.
+Four extra encrypted media/103 pairs; room/project owners distinct and
+co-owner role with negative project access, SQL peer and fresh view/crypto.
+No product change, new coordinator, duplicate suite, VM, provider, current
+metaverse import, backup/restore, browser, volume SLO or full acceptance.
+601656 actual0: only two new graph guards2/2/0skips, Node syntax and Elixir
+format preserving AST. Other six short controls were not replayed by that
+selection. Scan/freeze and ONE native graph execution still pending.
+
 ## 2026-10-02 · Correct catalog fixture's persisted-state readback
 
 Native33204 on d13ed664 TERMINAL1/0accepted,1 test/1failure,11.589s;

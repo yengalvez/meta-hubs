@@ -31,13 +31,53 @@ export function assertEmbeddedModel(gltf) {
   }
 }
 
+export function validateGraphFixtures(project, model) {
+  assert.ok(project.version === 3 && project.entities?.[project.root], "spoke_fixture_root_required");
+  assert.ok(Object.values(project.entities).some(entity => entity.components?.some(component => component.name === "floor-plan")),
+    "spoke_floor_plan_required");
+  assert.ok(model.nodes?.some(node => node.extensions?.MOZ_hubs_components?.["nav-mesh"]), "scene_navmesh_required");
+  assertEmbeddedModel(model);
+  const visit = value => {
+    if (typeof value === "string") assert.ok(!/^(?:https?:|file:|ftp:|\/\/)/i.test(value), "graph_remote_resource_forbidden");
+    else if (value && typeof value === "object") Object.values(value).forEach(visit);
+  };
+  visit(project); visit(model);
+}
+
+export function localizeGraphModel(source, png) {
+  assert.equal(source.readUInt32LE(0), 0x46546c67, "scene_glb_header_required");
+  assert.equal(source.readUInt32LE(4), 2, "scene_glb_v2_required");
+  assert.equal(source.readUInt32LE(8), source.length, "scene_glb_length_required");
+  const jsonLength = source.readUInt32LE(12), binaryOffset = 20 + jsonLength;
+  assert.equal(source.readUInt32LE(16), 0x4e4f534a, "scene_glb_json_required");
+  assert.equal(source.readUInt32LE(binaryOffset + 4), 0x004e4942, "scene_glb_bin_required");
+  const binaryLength = source.readUInt32LE(binaryOffset);
+  assert.equal(binaryOffset + 8 + binaryLength, source.length, "scene_glb_closed_chunks_required");
+  const model = JSON.parse(source.subarray(20, binaryOffset).toString().replace(/\u0000+$/g, "").trimEnd());
+  const old = "https://hubs.local:4000/files/34a46e72-56f9-46b1-9219-bc6b890fe233.png";
+  const images = model.nodes.filter(node => node.extensions?.MOZ_hubs_components?.image?.src === old);
+  assert.equal(images.length, 1, "exact_scene_fixture_image_required");
+  // Derive privately: replace precisely this fixture's missing external image
+  // with approved PNG bytes, preserving geometry/BIN, source GLB and all IDs.
+  images[0].extensions.MOZ_hubs_components.image.src = `data:image/png;base64,${png.toString("base64")}`;
+  const json = Buffer.from(JSON.stringify(model)), padded = Buffer.alloc(Math.ceil(json.length / 4) * 4, 0x20);
+  json.copy(padded);
+  const out = Buffer.alloc(12 + 8 + padded.length + 8 + binaryLength);
+  out.writeUInt32LE(0x46546c67, 0); out.writeUInt32LE(2, 4); out.writeUInt32LE(out.length, 8);
+  out.writeUInt32LE(padded.length, 12); out.writeUInt32LE(0x4e4f534a, 16); padded.copy(out, 20);
+  out.writeUInt32LE(binaryLength, 20 + padded.length); out.writeUInt32LE(0x004e4942, 24 + padded.length);
+  source.subarray(binaryOffset + 8).copy(out, 28 + padded.length);
+  return { bytes: out, model };
+}
+
 function directFile(file) {
   const stat = fs.lstatSync(file);
   assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.uid === process.getuid(), "direct_owned_catalog_file_required");
   return fs.readFileSync(file);
 }
 
-export function prepareCatalogDataset({ root, work, receiptsPath }) {
+export function prepareCatalogDataset({ root, work, receiptsPath, includeGraph = false }) {
+  assert.equal(typeof includeGraph, "boolean", "closed_catalog_graph_selector_required");
   assert.ok(/^\/private\/tmp\/ynret-local-[A-Za-z0-9]+$/.test(work), "owned_catalog_scratch_required");
   const workStat = fs.lstatSync(work);
   assert.ok(workStat.isDirectory() && !workStat.isSymbolicLink() && workStat.uid === process.getuid() &&
@@ -68,6 +108,20 @@ export function prepareCatalogDataset({ root, work, receiptsPath }) {
   }
   assert.equal(new Set(binding.map(row => row.glb_sha256)).size, 33, "catalog_glb_duplicate");
   assert.equal(sha(Buffer.from(JSON.stringify(binding))), approvedAssetBinding, "approved_asset_binding_required");
+  let graphPrepared;
+  if (includeGraph) {
+    const fixture = path.join(root, "hubs-cloud/community-edition/services/reticulum/test/fixtures");
+    const modelPath = path.join(fixture, "test.glb"), projectPath = path.join(fixture, "spoke-project.json");
+    const originalModel = directFile(modelPath), project = directFile(projectPath);
+    const modelHash = "06f157f1c11e3f03b465e976f27e691dca25461964d660ee1bf3cb186d832385";
+    const projectHash = "c17c76f2fa2231e28551e4b509f0d3fe77efdf35e697772b77a1b3187e18529c";
+    assert.equal(sha(originalModel), modelHash, "approved_scene_fixture_changed");
+    assert.equal(sha(project), projectHash, "approved_project_fixture_changed");
+    const localized = localizeGraphModel(originalModel, prepared[0].png);
+    validateGraphFixtures(JSON.parse(project), localized.model);
+    originals.push({ file: modelPath, sha256: modelHash }, { file: projectPath, sha256: projectHash });
+    graphPrepared = { model: localized.bytes, project };
+  }
   // Validate all inputs before writing any derived material. Reuse the normal
   // importer split/normalization; never overwrite the approved source GLBs.
   const directory = path.join(work, "catalog-input"); fs.mkdirSync(directory, { mode: 0o700 });
@@ -86,15 +140,31 @@ export function prepareCatalogDataset({ root, work, receiptsPath }) {
   });
   // New listing IDs use precisely the existing catalog importer's hash rule.
   assert.equal(new Set(output.map(row => row.listing_sid)).size, 33, "catalog_listing_collision");
+  let graph;
+  if (graphPrepared) {
+    const files = {};
+    for (const [kind, bytes, contentType] of [["model", graphPrepared.model, "model/gltf-binary"],
+      ["scene", graphPrepared.project, "application/json"], ["project", graphPrepared.project, "application/json"]]) {
+      const file = path.join(directory, `graph-${kind}`);
+      fs.writeFileSync(file, bytes, { flag: "wx", mode: 0o600 });
+      files[kind] = { path: file, sha256: sha(bytes), size: bytes.length, content_type: contentType };
+    }
+    // New encryption/OwnedFile belongs to the distinct project owner, not
+    // reuse of the catalog account's row. Only the approved PNG bytes repeat.
+    files.thumbnail = output[0].files.thumbnail;
+    graph = { scope: "native-synthetic-room-project-graph-not-current-metaverse", files };
+  }
   const input = path.join(directory, "input.json");
   fs.writeFileSync(input, JSON.stringify({ schema: 1, scope: "owned-synthetic-catalog-not-production-or-cycles",
-    binding: approvedAssetBinding, entries: output }, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+    binding: approvedAssetBinding, entries: output, ...(graph ? { graph } : {}) }, null, 2) + "\n", { flag: "wx", mode: 0o600 });
   const assertUnchanged = () => {
     assert.equal(sha(directFile(manifestPath)), approvedCatalogHash, "catalog_manifest_changed_during_sample");
     assert.equal(sha(directFile(receiptsPath)), sha(receiptBytes), "catalog_receipts_changed_during_sample");
     for (const original of originals) assert.equal(sha(directFile(original.file)), original.sha256, "catalog_original_changed_during_sample");
   };
   assertUnchanged();
-  return { input, assertUnchanged, originals: 66, listings: 33, preserved: 7,
-    source_bytes: prepared.reduce((sum, item) => sum + item.split.binary.length + item.split.gltf.length + item.png.length, 0) };
+  return { input, assertUnchanged, originals: originals.length, listings: 33, preserved: 7,
+    graph: Boolean(graph),
+    source_bytes: prepared.reduce((sum, item) => sum + item.split.binary.length + item.split.gltf.length + item.png.length, 0) +
+      (graph ? Object.values(graph.files).reduce((sum, file) => sum + file.size, 0) : 0) };
 }

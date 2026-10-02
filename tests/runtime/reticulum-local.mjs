@@ -26,6 +26,7 @@ export function runtimeCases(mode) {
     case "--sql-http-canary": return [{ profile: "sql-http-canary", count: 2 }];
     case "--sql-http-reentry": return [{ profile: "sql-http-reentry", count: 1 }];
     case "--catalog-dataset": return [{ profile: "catalog-dataset", count: 1 }];
+    case "--catalog-graph-dataset": return [{ profile: "catalog-graph-dataset", count: 1 }];
     case "--config-cache-canary": return [{ profile: "config-cache-canary", count: 2 }];
     case "--config-cache-boundaries": return [{ profile: "config-cache-boundaries", count: 4 }];
     case "--config-cache-types": return [{ profile: "config-cache-types", count: 1 }];
@@ -92,7 +93,7 @@ async function main() {
   };
   try {
     const integrated = ["--sql-http-canary", "--sql-http-reentry"].includes(args[0]);
-    const catalogMode = args[0] === "--catalog-dataset";
+    const catalogMode = ["--catalog-dataset", "--catalog-graph-dataset"].includes(args[0]);
     if (args.length !== (integrated || catalogMode ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
         (integrated && args[5] !== "--cache-bot-orchestrator") ||
         (catalogMode && args[5] !== "--catalog-receipts") ||
@@ -110,7 +111,8 @@ async function main() {
     work = fs.mkdtempSync("/private/tmp/ynret-local-"); fs.chmodSync(work, 0o700);
     if (catalogMode) {
       catalogSourceBefore = catalogSourceSnapshot();
-      catalog = step("prepare-approved-catalog-private-input", () => prepareCatalogDataset({ root, work, receiptsPath: args[6] }));
+      catalog = step("prepare-approved-catalog-private-input", () => prepareCatalogDataset({ root, work, receiptsPath: args[6],
+        includeGraph: args[0] === "--catalog-graph-dataset" }));
     }
     for (const name of ["home", "socket", "mix", "hex"]) fs.mkdirSync(path.join(work, name), { mode: 0o700 });
     log = fs.openSync(path.join(work, "private.log"), "wx", 0o600);
@@ -194,7 +196,9 @@ async function main() {
       const captureOwnedCatalogDump = () => {
         if (assertPostmaster(work, data, port, epoch) !== identity) reject("catalog_postmaster_identity_changed");
         const readback = JSON.parse(fs.readFileSync(path.join(work, "catalog-readback.json"), "utf8"));
-        if (readback.models !== 33 || readback.listings !== 33 || readback.owned_pairs !== 99 || readback.preserved !== 7) reject("catalog_readback_missing");
+        const ownedPairs = catalog.graph ? 103 : 99;
+        if (readback.models !== 33 || readback.listings !== 33 || readback.owned_pairs !== ownedPairs || readback.preserved !== 7 ||
+            (catalog.graph && readback.graph?.scope !== "native-synthetic-room-project-graph-not-current-metaverse")) reject("catalog_readback_missing");
         const dump = run(path.join(pgBin, "pg_dump"), ["-h", path.join(work, "socket"), "-p", String(port),
           "-U", "profile_test", "-d", "ret_test", "--no-owner", "--no-acl"], { capture: true });
         fs.writeFileSync(path.join(work, "catalog-native.sql"), dump, { flag: "wx", mode: 0o600 });
@@ -202,9 +206,10 @@ async function main() {
         // advertise it as a complete checkpoint/restore or the PG12 runtime.
         catalog.assertUnchanged(); catalogSourceAfter = catalogSourceSnapshot();
         if (JSON.stringify(catalogSourceAfter) !== JSON.stringify(catalogSourceBefore)) reject("catalog_source_changed");
-        metrics.catalog = { models: 33, owned_pairs: 99, preserved: 7, originals: catalog.originals,
+        metrics.catalog = { models: 33, owned_pairs: ownedPairs, preserved: 7, originals: catalog.originals,
           media_plaintext_bytes: catalog.source_bytes, sql_bytes: Buffer.byteLength(dump),
           postgres_version: catalogPostgresVersion,
+          ...(catalog.graph ? { graph: readback.graph } : {}),
           scope: "native-PG14-synthetic-catalog-not-backup-restore-browser-or-three-cycles" };
       };
       step("capture-owned-catalog-sql-and-source-identity", captureOwnedCatalogDump);

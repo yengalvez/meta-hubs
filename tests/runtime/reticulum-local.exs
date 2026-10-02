@@ -37,10 +37,20 @@ chat_focus = profile in ["chat-canary", "chat-boundaries"]
 chat_concurrent = profile in ["chat-concurrent", "chat-concurrent-boundaries"]
 config_cache = profile in ["config-cache-canary", "config-cache-boundaries", "config-cache-types"]
 sql_http = profile in ["sql-http-canary", "sql-http-reentry"]
-catalog = profile == "catalog-dataset"
+catalog = profile in ["catalog-dataset", "catalog-graph-dataset"]
 
 if catalog do
   Application.put_env(:ret, Ret.ProductModules, bots: false, ai: false, avaturn: false)
+
+  Application.put_env(
+    :ret,
+    RetWeb.Endpoint,
+    Keyword.put(Application.fetch_env!(:ret, RetWeb.Endpoint), :url,
+      host: "127.0.0.1",
+      port: 4000,
+      scheme: "http"
+    )
+  )
 
   Application.put_env(
     :ret,
@@ -142,6 +152,10 @@ ExUnit.configure(autorun: false)
       # Commit only to the independently verified disposable database. Normal
       # DataCase rollback would erase the dataset before its private dump.
       Ecto.Adapters.SQL.Sandbox.mode(Ret.Repo, :auto)
+
+      if profile == "catalog-graph-dataset",
+        do: Code.require_file(Path.join(__DIR__, "reticulum-catalog-graph.exs"))
+
       Code.require_file(Path.join(__DIR__, "reticulum-catalog-dataset.exs"))
       {1, 1, 0}
 

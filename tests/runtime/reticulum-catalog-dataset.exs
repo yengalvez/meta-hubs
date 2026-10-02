@@ -41,7 +41,7 @@ defmodule Ret.LocalCatalogDataset do
     {owned, file["sha256"]}
   end
 
-  test "33 approved catalog models persist through native SQL and encrypted media with seven IDs intact" do
+  test "native #{System.fetch_env!("RET_LOCAL_PROFILE")}: approved catalog and selected SQL graph" do
     {dataset, work} = input!()
     assert Repo.aggregate(Avatar, :count, :avatar_id) == 0
     assert Repo.aggregate(AvatarListing, :count, :avatar_listing_id) == 0
@@ -179,19 +179,32 @@ defmodule Ret.LocalCatalogDataset do
         }
       end)
 
+    graph =
+      if System.fetch_env!("RET_LOCAL_PROFILE") == "catalog-graph-dataset" do
+        assert dataset["graph"]["scope"] ==
+                 "native-synthetic-room-project-graph-not-current-metaverse"
+
+        Ret.LocalCatalogGraph.create_and_verify!(dataset["graph"], account, &stored!/3)
+      end
+
     file = Path.join(work, "catalog-readback.json")
 
     File.write!(
       file,
-      Poison.encode!(%{
-        scope: "native-synthetic-catalog-not-restore-or-browser-or-cycles",
-        binding: dataset["binding"],
-        models: 33,
-        listings: 33,
-        owned_pairs: 99,
-        preserved: 7,
-        entries: binding
-      })
+      Poison.encode!(
+        Map.merge(
+          %{
+            scope: "native-synthetic-catalog-not-restore-or-browser-or-cycles",
+            binding: dataset["binding"],
+            models: 33,
+            listings: 33,
+            owned_pairs: if(graph, do: 103, else: 99),
+            preserved: 7,
+            entries: binding
+          },
+          if(graph, do: %{graph: graph}, else: %{})
+        )
+      )
     )
 
     File.chmod!(file, 0o600)
