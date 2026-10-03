@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { deflateSync } from "node:zlib";
-import { readbackArguments, validateReadback, validateGltf, validateAvatarMaterials, splitOriginalGlb, validatePng, readbackSql } from "./normal-glb-readback.mjs";
+import { readbackArguments, validateReadback, validateGltf, validateAvatarStructure, validateAvatarMaterials, splitOriginalGlb, validatePng, readbackSql } from "./normal-glb-readback.mjs";
 
 const args = ["--work", "/private/tmp/ynret-local-Abc123", "--avatar-sid", "Ab123Xy", "--asset", "/approved/Bata.glb", "--pg-bin", "/explicit/postgres/bin"];
 const peer = { data: `${args[1]}/database`, port: 55483, sid: args[3], accountId: "784512345678901234" };
@@ -106,6 +106,64 @@ test("glTF requires self-contained skinned structure and bounded BIN views", () 
     assert.throws(() => { const value = clone(gltf()); mutate(value); validateGltf(value, 4); }, /invalid_gltf_structure|external_or_invalid_gltf_image/);
 });
 
+function annotatedStructure() {
+  const original = { ...gltf(), asset: { version: "2.0", generator: "approved" },
+    nodes: [{ mesh: 0, skin: 0, translation: [1, 2, 3] }, { mesh: 1 }, { name: "joint" }, { name: "untouched", isBone: false }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1, material: 0 }] }, { primitives: [{}], isSkinnedMesh: false }],
+    skins: [{ joints: [2], skeleton: 2, inverseBindMatrices: 1 }],
+    materials: [{ name: "Body", doubleSided: true }], extras: { approved: "metadata" }, unknownFutureField: { preserved: true } };
+  const expected = clone(original);
+  expected.nodes[2].isBone = true;
+  expected.meshes[0].isSkinnedMesh = true;
+  expected.materials[0].name = "Bot_PBS";
+  return { original, expected };
+}
+
+test("complete glTF comparison permits only exact loader marks plus separately checked material rename", () => {
+  const { original, expected } = annotatedStructure(), before = clone(original);
+  assert.equal(validateAvatarStructure(expected, original), true);
+  assert.equal(validateAvatarMaterials(expected, original), true);
+  assert.deepEqual(original, before, "loader expectations must not mutate the approved source");
+  // _markDefs assigns true even when a referenced original flag was false.
+  original.nodes[2].isBone = false; original.meshes[0].isSkinnedMesh = false;
+  assert.equal(validateAvatarStructure(expected, original), true);
+});
+
+test("complete glTF comparison models splitter JSON serialization of negative zero in nodes and metadata", () => {
+  const { original, expected } = annotatedStructure();
+  original.nodes[0].translation[0] = expected.nodes[0].translation[0] = -0;
+  original.extras.offset = expected.extras.offset = -0;
+  const serialized = JSON.parse(JSON.stringify(expected));
+  assert.equal(Object.is(original.nodes[0].translation[0], -0), true);
+  assert.equal(Object.is(original.extras.offset, -0), true);
+  assert.equal(Object.is(serialized.nodes[0].translation[0], 0), true);
+  assert.equal(Object.is(serialized.extras.offset, 0), true);
+  assert.equal(validateAvatarStructure(serialized, original), true);
+});
+
+test("loader marks reject stray, absent and wrong-valued flags while preserving unrelated original flags", () => {
+  const { original, expected } = annotatedStructure();
+  for (const mutate of [g => g.nodes[0].isBone = true, g => g.nodes[2].isBone = false, g => g.nodes[2].isBone = "true",
+    g => { delete g.nodes[2].isBone; }, g => g.meshes[1].isSkinnedMesh = true, g => g.meshes[0].isSkinnedMesh = false,
+    g => g.meshes[0].isSkinnedMesh = 1, g => { delete g.meshes[0].isSkinnedMesh; },
+    g => { delete g.nodes[3].isBone; }, g => { delete g.meshes[1].isSkinnedMesh; }]) {
+    const changed = clone(expected); mutate(changed);
+    assert.throws(() => validateAvatarStructure(changed, original), /original_gltf_structure_mismatch/);
+  }
+});
+
+test("complete non-material comparison rejects changed transforms, geometry, skins, metadata and unknown fields", () => {
+  const { original, expected } = annotatedStructure();
+  for (const mutate of [g => g.nodes[0].translation[0] = 99, g => g.meshes[0].primitives[0].attributes.POSITION = 2,
+    g => g.meshes[0].primitives[0].indices = 3, g => g.bufferViews[0].byteLength = 3,
+    g => g.skins[0].joints[0] = 3, g => g.skins[0].inverseBindMatrices = 2,
+    g => g.asset.generator = "changed", g => g.extras.approved = "changed",
+    g => g.unknownFutureField.preserved = false, g => { delete g.unknownFutureField; }, g => g.newUnknownField = true]) {
+    const changed = clone(expected); mutate(changed);
+    assert.throws(() => validateAvatarStructure(changed, original), /original_gltf_structure_mismatch/);
+  }
+});
+
 function materialGltf() {
   return { ...gltf(), materials: [
     { name: "Body", pbrMetallicRoughness: { baseColorFactor: [1, 0.5, 0.25, 1], baseColorTexture: { index: 0 }, metallicFactor: 0 }, alphaMode: "BLEND", doubleSided: true },
@@ -162,5 +220,6 @@ test("helper has no mutators, credentials, query URLs, browser automation or rec
   assert.match(source, /PGPASSFILE: "\/dev\/null"/);
   assert.match(source, /scope = "local-not-production-not-six-profiles"/);
   assert.match(source, /validateAvatarMaterials\(gltf, original\.gltf\)/);
+  assert.match(source, /validateAvatarStructure\(gltf, original\.gltf\)/);
   assert.doesNotMatch(source, /process\.(stdout|stderr)\.write\([^\n]*(error|result\.stdout|bootstrap|file\.uuid)/);
 });

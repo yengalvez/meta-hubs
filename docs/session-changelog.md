@@ -2798,3 +2798,15 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   salvo el renombre exacto autorizado por ensureAvatarMaterial. Focales
   puros12/12 y recheck CLOSED; no aceptación runtime por esos focales ni
   comparación errónea GLB completo/bundle desglosado.
+- Ensayo39140: Guardar real con Avaturn OFF produjo onSave1 y recarga API
+  con nombre/preview intactos. Peer SQL/HTTP confirmó privacidad, BIN,
+  materiales y PNG; rechazó sólo las marcas isBone/isSkinnedMesh que el
+  GLTFLoader fijado introduce antes del splitter. STOP y procesos propios
+  limpios. El oráculo deriva ahora esas marcas exactas del original y compara
+  todo el glTF no material, sin ignorar atributos ni campos desconocidos.
+  Tres regresiones nuevas, focales15/15 PASS; aceptación runtime del oráculo
+  reparado aún pendiente. No es causa del fallo multimedia histórico.
+- Revisión focal encontró un P2 de serialización: JSON.stringify convierte
+  -0 en0. El esperado se serializa después de las marcas exactas; cuatro
+  casos afectados pasan, incluida esa regresión y los rechazos de cambios
+  estructurales. Recheck CLOSED, sin ampliar la revisión ni tocar producto.

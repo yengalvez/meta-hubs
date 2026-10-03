@@ -67,6 +67,21 @@ export function validateGltf(gltf, binLength) {
   return gltf;
 }
 
+export function validateAvatarStructure(gltf, original) {
+  const expected = structuredClone(original), actual = { ...gltf };
+  // Materials have their own complete, exact ensureAvatarMaterial comparison.
+  delete expected.materials; delete actual.materials;
+  // Pinned GLTFLoader.parse invokes _markDefs BEFORE splitter.beforeRoot.
+  // Mirror only its JSON assignments (GLTFLoader.js:2513-2564), not a flag filter.
+  const nodes = expected.nodes || [], skins = expected.skins || [], meshes = expected.meshes || [];
+  for (const skin of skins) for (const joint of skin.joints) nodes[joint].isBone = true;
+  for (const node of nodes)
+    if (node.mesh !== undefined && node.skin !== undefined) meshes[node.mesh].isSkinnedMesh = true;
+  // Splitter serializes parser.json with JSON.stringify (avatar-editor.js:74).
+  if (!isDeepStrictEqual(actual, JSON.parse(JSON.stringify(expected)))) fail("original_gltf_structure_mismatch");
+  return true;
+}
+
 export function validateAvatarMaterials(gltf, original) {
   if (!Array.isArray(original.materials)) fail("original_materials_required");
   const materials = structuredClone(original.materials);
@@ -240,9 +255,7 @@ async function main() {
     const gltf = validateGltf(JSON.parse(media.gltf.toString("utf8")), media.bin.length);
     if (!media.bin.equals(original.bin)) fail("original_bin_mismatch");
     validateAvatarMaterials(gltf, original.gltf);
-    // Non-material model structure must remain unchanged too.
-    for (const field of ["nodes", "skins", "meshes", "accessors", "bufferViews", "animations", "scenes", "scene", "images", "textures", "buffers"])
-      if (JSON.stringify(gltf[field]) !== JSON.stringify(original.gltf[field])) fail("original_gltf_structure_mismatch");
+    validateAvatarStructure(gltf, original.gltf);
     const png = validatePng(media.thumbnail);
     if (sha(readOwned(asset, maxModel)) !== originalHash) fail("original_asset_changed");
     process.stdout.write(JSON.stringify({ scope, status: "PASS", sql_read_only: true, private_avatar: true, owned_files: 3,
