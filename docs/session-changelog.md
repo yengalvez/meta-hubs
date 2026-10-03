@@ -1,5 +1,26 @@
 # Session Changelog
 
+## 2026-10-03 · Admit protected scalar CAS shapes in the existing simulator
+
+Frozen whole-entrypoint focus33702/b1a77c reached its simulated writer pause
+and failed at the peer's PATCH parser: it admitted generation for rolling
+full-spec CAS, but not the new generation-and-replicas scalar5/receipt6 shapes.
+The four whole-focus assertions failed because no bundle was produced; no
+production incident or historical multimedia cause is inferred. New focal
+test extracts and executes the actual jq parser, not a copied substitute.
+Primary RED52e5b1: exit1,12PASS/4FAIL,0skips,308.646ms. Only fifteen parser
+lines add exact scalar5 and receipt-plus-scalar6 branches; UID/RV/generation,
+replica/order/receipt predicates and historical branches remain unchanged.
+Primary GREENb2af7f: exit0,16/16,0skips,348.267ms. The scalar-zero parser case
+is a classification check, not proof of a real zero-writer mutation policy.
+Registered once in the existing aggregate/security inventory. Independent
+focal review found one P2 in negative coverage: invalid desired scalar counts
+were tested only with receipts. The test now rejects -1 and 0.5 for both
+scalar variants; primary14f9a4 passes16/16/0skips,368.696ms, and the directed
+read-only recheck closes P2. No material parser defect was found. Clean freeze
+and the affected whole-entrypoint focus remain pending; this parser test is
+not a section receipt, full or live acceptance.
+
 ## 2026-10-03 · Bind writer CAS response and readback to the complete captured spec
 
 Primary focal RED5d24b5 reached its positive before rejecting the assertion;

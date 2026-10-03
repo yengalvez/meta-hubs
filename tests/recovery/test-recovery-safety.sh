@@ -5181,6 +5181,21 @@ if [[ "$joined" == patch\ deployment\ * ]]; then
        (.[4].value | type) == "number" and .[4].value >= 0 and
        (.[4].value | floor) == .[4].value then
       ["rolling-scale",(.[4].value | tostring),""]
+    elif length == 5 and
+         .[2] == {op:"test",path:"/metadata/generation",value:$generation} and
+         .[3] == {op:"test",path:"/spec/replicas",value:$current} and
+         .[4].op == "replace" and .[4].path == "/spec/replicas" and
+         (.[4].value | type) == "number" and .[4].value >= 0 and
+         (.[4].value | floor) == .[4].value then
+      ["scale",(.[4].value | tostring),""]
+    elif length == 6 and
+         .[2] == {op:"test",path:"/metadata/generation",value:$generation} and
+         .[3] == {op:"test",path:"/spec/replicas",value:$current} and
+         (.[4] | added_receipt) != null and
+         .[5].op == "replace" and .[5].path == "/spec/replicas" and
+         (.[5].value | type) == "number" and .[5].value >= 0 and
+         (.[5].value | floor) == .[5].value then
+      ["resume",(.[5].value | tostring),(.[4] | added_receipt)]
     elif length == 4 and (.[3] | added_receipt) != null then
       ["receipt",($current | tostring),(.[3] | added_receipt)]
     elif length == 4 and .[3].op == "replace" and
