@@ -1,5 +1,15 @@
 # Session Changelog
 
+## 2026-10-03 · Close the DB backup literal lint failure
+
+Native authority finish96848 stopped in static after composition, advisories
+and HCCE passed. ShellCheck SC2100 reproduces on the unquoted literal
+`runner-quiescence` at backup-retdb.sh:295. Quote only that literal: shell
+syntax, the complete focused ShellCheck and diff check pass. Guards and
+timings are unchanged; no backup or production action occurred. Preserve
+compatible receipts and require a new exact native finalizer/full on this
+frozen candidate before accepting it.
+
 ## 2026-10-03 · Versioned checkpoint authority closure, local candidate
 
 Final freeze preparation: Cloud7ab6146 contains only the reviewed recovery/

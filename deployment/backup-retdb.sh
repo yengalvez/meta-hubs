@@ -292,7 +292,7 @@ require_backup_guard() {
       return 1
     }
   else
-    DB_BACKUP_GUARD_FAILURE_REASON=runner-quiescence
+    DB_BACKUP_GUARD_FAILURE_REASON="runner-quiescence"
     recovery_require_checkpoint_runner_quiescence_exact \
       "$CHECKPOINT_RUNNER_GENERATION" \
       "$CHECKPOINT_DURABLE_FENCE_BASELINE_PATH" \
