@@ -2769,3 +2769,15 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   Predicado, sleep, launcher, guardas, plazos y oráculos intactos. No se elimina
   ninguna espera ni se declara ahorro; medición del foco existente antes de
   elegir una optimización. La ejecución integral de J sigue separada.
+
+### 2026-10-03 · Entrada nativa de editor GLB normal
+
+- Sólo TEST: selector separado normal-glb con AvatarEditor/private-glb y
+  AvatarPreview reales, AuthChannel/Store auténticos y Guardian de la cuenta
+  SQL sintética. Endpoint/Storage propios de loopback, CSP cerrada y recarga
+  por SID; no proveedor, login externo/OAuth, mocks de loader ni producto nuevo.
+- Sintaxis, parseo Elixir, diez controles bootstrap, siete casos focales,
+  Gitleaks y revisión independiente focal PASS. Se conservan las entradas
+  RoomSettings/MediaBrowser y sus guardas; los tests distinguen las tres rutas.
+  Freeze, build, picker/preview/guardado/recarga y limpieza siguen pendientes;
+  no se acredita Avaturn en vuelo, seis perfiles, full, producción ni Goal.

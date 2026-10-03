@@ -8,25 +8,33 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { browserOrigin, validateCreatorBootstrap, compiledCanarySourcePaths } from "./reticulum-local.mjs";
+import { browserOrigin, validateCreatorBootstrap, validateNormalGlbBootstrap, compiledCanarySourcePaths } from "./reticulum-local.mjs";
 
 const root = fs.realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
 const hubs = path.join(root, "hubs");
 const expectedHubs = "dd176f6ed318ffc724efcd930803ca972058e782";
 const expectedCloud = "2c0b53d591d5547438812d27507bc1b3e1ae6f41";
 const creatorEntry = "tests/runtime/profile-media-browser-entry.js";
+const normalGlbEntry = "tests/runtime/profile-glb-editor-entry.js";
 const ownFiles = [
   "tests/runtime/profile-ui-browser.mjs",
   "tests/runtime/profile-ui-browser-entry.js",
   "tests/runtime/reticulum-local.mjs",
   creatorEntry,
+  normalGlbEntry,
+  "tests/runtime/reticulum-ui-socket.exs",
 ];
 const isCreator = (connection) =>
   connection?.kind === "reticulum-profile-creator-socket";
+const isNormalGlb = (connection) =>
+  connection?.kind === "reticulum-profile-normal-glb";
+const hasCreatorConfig = (connection) => isCreator(connection) || isNormalGlb(connection);
 const consumerEntry = (connection) =>
-  isCreator(connection) ? creatorEntry : ownFiles[1];
+  isNormalGlb(connection) ? normalGlbEntry : isCreator(connection) ? creatorEntry : ownFiles[1];
 const canaryKind = (connection) =>
-  isCreator(connection)
+  isNormalGlb(connection)
+    ? "normal-glb-local-browser-canary"
+    : isCreator(connection)
     ? "media-browser-local-browser-canary"
     : "room-settings-local-browser-canary";
 const publicConfigFiles = new Set([
@@ -135,7 +143,7 @@ function readBootstrap(file, copied = false) {
     (parent.mode & 0o777) !== 0o700 ||
     stat.size > 8192 ||
     (!copied &&
-      !/^\/private\/tmp\/ynret-local-[^/]+\/(ui|creator)-socket-bootstrap\.json$/.test(
+      !/^\/private\/tmp\/ynret-local-[^/]+\/(ui|creator|normal-glb)-socket-bootstrap\.json$/.test(
         actual,
       ))
   )
@@ -146,7 +154,9 @@ function readBootstrap(file, copied = false) {
   } catch {
     fail("invalid_native_bootstrap");
   }
-  if (isCreator(value)) {
+  if (isNormalGlb(value)) {
+    validateNormalGlbBootstrap(value);
+  } else if (isCreator(value)) {
     validateCreatorBootstrap(value);
   } else if (
     !value ||
@@ -171,7 +181,9 @@ function readBootstrap(file, copied = false) {
   if (
     !copied &&
     path.basename(actual) !==
-      (isCreator(value)
+      (isNormalGlb(value)
+        ? "normal-glb-socket-bootstrap.json"
+        : isCreator(value)
         ? "creator-socket-bootstrap.json"
         : "ui-socket-bootstrap.json")
   )
@@ -201,7 +213,7 @@ function connectionForReceipt(scratch, receipt) {
   const value = readBootstrap(file, true);
   if (
     value.browser_origin !== receipt.browserOrigin ||
-    value.ws_url !== receipt.wsUrl ||
+    (!isNormalGlb(value) && value.ws_url !== receipt.wsUrl) ||
     value.backend_pid !== receipt.backendPid
   )
     fail("bootstrap_receipt_mismatch");
@@ -301,7 +313,7 @@ async function buildWorker(directory) {
     // Creator pages receive APP_CONFIG from the backend like a published page.
     // The development factory injects defaults and would overwrite that script.
     // Keep the already accepted RoomSettings canary on its original mode.
-    const buildMode = isCreator(connection) ? "production" : "development";
+    const buildMode = hasCreatorConfig(connection) ? "production" : "development";
     const config = await require(path.join(hubs, "webpack.config.js"))(
       {},
       { mode: buildMode },
@@ -346,6 +358,21 @@ async function buildWorker(directory) {
           `connect-src ${connection.ws_url}/websocket`,
         )
       : html;
+    if (isNormalGlb(connection)) {
+      // Only this entry can upload/read back native local media. Existing
+      // RoomSettings/MediaBrowser keep their WS-only policy unchanged.
+      const native = connection.reticulum_origin;
+      template = template
+        .replace(`connect-src ${connection.ws_url}/websocket`,
+          `connect-src 'self' blob: ${connection.ws_url}/websocket ${native}/api/v1/meta ${native}/api/v1/media ${native}/api/v1/avatars ${native}/api/v1/avatars/ ${native}/files/`)
+        .replace("img-src 'self' data:", `img-src 'self' data: blob: ${native}/files/`)
+        .replace("object-src 'none'", "worker-src 'self' blob:; object-src 'none'")
+        .replace("Canary local RoomSettings", "Canary local AvatarEditor GLB")
+        .replace("</head>",
+          `<meta name="env:reticulum_server" content="${new URL(native).host}"><meta name="env:reticulum_server_protocol" content="http:"><meta name="env:cors_proxy_server" content=""><meta name="env:thumbnail_server" content=""><meta name="env:uploads_host" content=""><meta name="env:non_cors_proxy_domains" content="127.0.0.1"><script src="/public-app-config.js"></script></head>`)
+        .replace("</style>",
+          ".profile-glb-controls{padding:12px;border:1px solid #526078}.profile-glb-controls button{margin:8px;padding:8px}.profile-glb-editor{height:850px;position:relative}</style>");
+    }
     if (isCreator(connection))
       template = template
         .replace("Canary local RoomSettings", "Canary local MediaBrowser")
@@ -404,7 +431,16 @@ async function buildWorker(directory) {
       entryFile,
       "hubs/src/utils/hub-channel.js",
       "hubs/src/utils/configs.js",
-      ...(isCreator(connection)
+      ...(isNormalGlb(connection)
+        ? [
+            "hubs/src/react-components/avatar-editor.js",
+            "hubs/src/react-components/avatar-preview.js",
+            "hubs/src/utils/auth-channel.js",
+            "hubs/src/utils/store-instance.ts",
+            "hubs/src/storage/store.js",
+            "hubs/src/components/gltf-model-plus.js",
+          ]
+        : isCreator(connection)
         ? [
             "hubs/src/react-components/media-browser.js",
             "hubs/src/react-components/room/MediaBrowser.js",
@@ -424,6 +460,8 @@ async function buildWorker(directory) {
         if (compiledSourcePaths.includes(file))
           fail("creator_canary_must_not_include_editor_or_sdk");
       }
+    }
+    if (hasCreatorConfig(connection)) {
       // The same public page initialization configs.js consumes, before the
       // deferred entry imports it. No client capability/config setter.
       fs.writeFileSync(
@@ -494,13 +532,22 @@ function build(bootstrapFile) {
       ? {
           bootstrapSha256: sha(copiedBootstrap),
           browserOrigin: connection.browser_origin,
-          wsUrl: connection.ws_url,
+          ...(isNormalGlb(connection) ? { consumerEntry: "normal-glb", authBootstrap: "local-native-guardian", externalLogin: "NOT_RUN" } : { wsUrl: connection.ws_url }),
           backendPid: connection.backend_pid,
           backendSource: connection.source,
         }
       : {}),
     seams: connection
-      ? isCreator(connection)
+      ? isNormalGlb(connection)
+        ? [
+            "local-synthetic-SQL-account-and-Guardian-token",
+            "real-Store-singleton-and-AuthChannel-handleAuthCredentials-only",
+            "external-login-OAuth-NOT_RUN",
+            "real-AvatarEditor-private-glb-and-AvatarPreview-no-loader-substitution",
+            "native-Endpoint-and-Storage-same-owned-loopback",
+            "static-provider-import-only-no-mount-init-or-network",
+          ]
+        : isCreator(connection)
         ? [
             "local-synthetic-account-and-room",
             "real-empty-MediaSearchStore-with-unsubscribed-synthetic-history",
@@ -578,6 +625,7 @@ async function serve(directory, port) {
     ![
       "room-settings-local-browser-canary",
       "media-browser-local-browser-canary",
+      "normal-glb-local-browser-canary",
     ].includes(receipt.kind) ||
     receipt.version !== 1 ||
     receipt.status !== "BUILD_SUCCEEDED" ||

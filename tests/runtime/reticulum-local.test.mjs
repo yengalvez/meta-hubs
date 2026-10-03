@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { networkProfile, assertPostmaster, runtimeCases, browserOrigin, uiSocketCommand, creatorSocketCommand, validateCreatorBootstrap, compiledCanarySourcePaths, inspectHexArchive, writeUiSocketLog } from "./reticulum-local.mjs";
+import { networkProfile, assertPostmaster, runtimeCases, browserOrigin, uiSocketCommand, creatorSocketCommand, validateCreatorBootstrap, validateNormalGlbBootstrap, compiledCanarySourcePaths, inspectHexArchive, writeUiSocketLog } from "./reticulum-local.mjs";
 
 test("creator compilation guard ignores checker-only files but keeps real resources", () => {
   const root = path.resolve("/synthetic-canary-root");
@@ -98,7 +98,10 @@ test("creator browser routes only to the real action consumer and projected publ
   const wrapper = fs.readFileSync(new URL("./profile-ui-browser.mjs", import.meta.url), "utf8");
   const entry = fs.readFileSync(new URL("./profile-media-browser-entry.js", import.meta.url), "utf8");
   const fixture = fs.readFileSync(new URL("./reticulum-ui-socket.exs", import.meta.url), "utf8");
-  assert.match(wrapper, /consumerEntry\s*=\s*\(?connection\)?\s*=>\s*isCreator\(connection\)\s*\?\s*creatorEntry\s*:\s*ownFiles\[1\]/);
+  assert.match(wrapper, /consumerEntry\s*=\s*\(?connection\)?\s*=>\s*isNormalGlb\(connection\)\s*\?\s*normalGlbEntry\s*:\s*isCreator\(connection\)\s*\?\s*creatorEntry\s*:\s*ownFiles\[1\]/);
+  assert.match(wrapper, /const creatorEntry = "tests\/runtime\/profile-media-browser-entry.js"/);
+  assert.match(wrapper, /const normalGlbEntry = "tests\/runtime\/profile-glb-editor-entry.js"/);
+  assert.match(wrapper, /const ownFiles = \[\s*"tests\/runtime\/profile-ui-browser.mjs",\s*"tests\/runtime\/profile-ui-browser-entry.js"/);
   assert.match(wrapper, /auth_token,backend_pid,browser_origin,hub_sid,kind,schema,source,ws_url/);
   assert.match(wrapper, /bootstrap_mode_path_mismatch|bootstrap_consumer_route_mismatch/);
   assert.match(wrapper, /public-app-config.js/);
@@ -122,11 +125,116 @@ test("creator browser routes only to the real action consumer and projected publ
 
 test("creator build keeps backend public config through the normal production mode", () => {
   const wrapper = fs.readFileSync(new URL("./profile-ui-browser.mjs", import.meta.url), "utf8");
-  assert.equal(/const buildMode = isCreator\(connection\) \? "production" : "development"/.test(wrapper), true, "creator-only production factory required");
+  assert.match(wrapper, /const hasCreatorConfig = \(connection\) => isCreator\(connection\) \|\| isNormalGlb\(connection\)/);
+  assert.match(wrapper, /const isCreator = \(connection\) =>\s*connection\?\.kind === "reticulum-profile-creator-socket"/);
+  assert.match(wrapper, /const isNormalGlb = \(connection\) =>\s*connection\?\.kind === "reticulum-profile-normal-glb"/);
+  assert.equal(/const buildMode = hasCreatorConfig\(connection\) \? "production" : "development"/.test(wrapper), true, "only MediaBrowser/normal-GLB use production; RoomSettings remains development");
   assert.equal(/require\(path.join\(hubs, "webpack.config.js"\)\)\(\s*\{\},\s*\{ mode: buildMode \}/.test(wrapper), true, "factory and webpack mode must agree");
   assert.equal(/config.mode = buildMode/.test(wrapper), true, "compiled mode must agree");
   assert.doesNotMatch(wrapper, /loadAppConfig:\s*true|localDev:\s*true|fetchAppConfigAndEnvironmentVars\(/);
   assert.match(wrapper, /window.APP_CONFIG = \$\{JSON.stringify\(connection.app_config\)\}/);
+});
+
+function normalGlbBootstrap() {
+  return {
+    ...creatorBootstrap(), kind: "reticulum-profile-normal-glb", mode: "normal-glb",
+    auth_bootstrap: "local-native-guardian", auth_email: "ui-socket-99@example.invalid", account_id: 101,
+    reticulum_origin: "http://127.0.0.1:18444", storage_origin: "http://127.0.0.1:18444",
+  };
+}
+
+test("normal GLB bootstrap preserves the native synthetic schema and origin binding", () => {
+  const value = normalGlbBootstrap();
+  assert.equal(validateNormalGlbBootstrap(value), value);
+  assert.equal(value.reticulum_origin, value.storage_origin);
+  assert.equal(value.reticulum_origin, new URL(value.ws_url).origin.replace("ws:", "http:"));
+  assert.notEqual(value.reticulum_origin, value.browser_origin);
+  assert.throws(() => validateCreatorBootstrap(value), /invalid_creator_bootstrap/);
+  assert.throws(() => validateNormalGlbBootstrap(creatorBootstrap()), /invalid_normal_glb_bootstrap/);
+});
+
+test("normal GLB bootstrap rejects altered schema credentials origins storage and ports", () => {
+  const invalid = [
+    v => { v.extra = true; }, v => { delete v.auth_bootstrap; }, v => { v.schema = 2; },
+    v => { v.kind = "reticulum-profile-creator-socket"; }, v => { v.mode = "creator-only"; },
+    v => { v.auth_bootstrap = "external-OAuth"; }, v => { v.auth_email = "owner@example.com"; },
+    v => { v.auth_email = "ui-socket-x@example.invalid"; }, v => { v.auth_email = null; },
+    v => { v.account_id = "101"; }, v => { v.account_id = 0; }, v => { v.account_id = 1.5; },
+    v => { v.account_id = Number.MAX_SAFE_INTEGER + 1; }, v => { v.auth_token = "invalid"; },
+    v => { v.auth_token = null; }, v => { v.app_config_provenance = "client-fixture"; },
+    v => { v.app_config.features.enable_room_bots = true; }, v => { v.app_config.features.enable_bot_chat = true; },
+    v => { v.app_config.features.enable_avaturn_creator = false; },
+    v => { v.browser_origin = "http://localhost:18443"; }, v => { v.browser_origin = v.reticulum_origin; },
+    v => { v.reticulum_origin = "http://localhost:18444"; }, v => { v.reticulum_origin = "https://127.0.0.1:18444"; },
+    v => { v.reticulum_origin = "http://127.0.0.1:18444/"; }, v => { v.reticulum_origin += "?token=synthetic"; },
+    v => { v.reticulum_origin = "http://127.0.0.1:18445"; }, v => { v.storage_origin = "http://127.0.0.1:18445"; },
+    v => { v.storage_origin = "https://remote.invalid"; },
+    v => { v.ws_url = "ws://localhost:18444/socket"; }, v => { v.ws_url = "ws://127.0.0.1:18443/socket"; },
+    v => { v.ws_url = "ws://127.0.0.1:65536/socket"; }, v => { v.ws_url = "ws://127.0.0.1:1000/socket"; },
+    v => { v.reticulum_origin = "http://127.0.0.1:65536"; }, v => { v.reticulum_origin = "http://127.0.0.1:1000"; },
+    v => { v.source.root = "unknown"; }, v => { v.backend_pid = "123"; },
+  ];
+  for (const mutate of invalid) {
+    const value = normalGlbBootstrap(); mutate(value);
+    assert.throws(() => validateNormalGlbBootstrap(value), /invalid_normal_glb_bootstrap|invalid_creator_bootstrap|exact_browser_origin_required|normal_glb_endpoint_storage_mismatch/);
+  }
+  for (const value of [undefined, null, [], 1])
+    assert.throws(() => validateNormalGlbBootstrap(value), /invalid_normal_glb_bootstrap/);
+});
+
+test("normal GLB selector reuses the native socket lifecycle without changing existing consumers", () => {
+  assert.deepEqual(runtimeCases("--normal-glb-browser"), [{ profile: "profile-creator-socket", count: 0 }]);
+  assert.deepEqual(runtimeCases("--profile-creator-socket"), [{ profile: "profile-creator-socket", count: 0 }]);
+  assert.deepEqual(runtimeCases("--profile-ui-socket"), [{ profile: "profile-ui-socket", count: 0 }]);
+  assert.throws(() => runtimeCases("--normal-glb"), /explicit_native_target_required/);
+  const runner = fs.readFileSync(new URL("./reticulum-local.mjs", import.meta.url), "utf8");
+  const fixture = fs.readFileSync(new URL("./reticulum-ui-socket.exs", import.meta.url), "utf8");
+  assert.match(runner, /if \(args\[0\] === "--normal-glb-browser"\) env.RET_LOCAL_CONSUMER_ENTRY = "normal-glb"/);
+  assert.match(runner, /normalGlb \? "normal-glb-socket-bootstrap.json" : creatorMode \? "creator-socket-bootstrap.json" : "ui-socket-bootstrap.json"/);
+  assert.match(fixture, /if normal_glb and not creator_mode, do: raise\("normal GLB requires creator-only native ceiling"\)/);
+  assert.match(fixture, /if normal_glb, do: bind_normal_glb_storage!\(work, http_port\)/);
+  assert.match(fixture, /RetWeb.Endpoint.url\(\) == native_origin and Process.whereis\(RetWeb.Endpoint\)/);
+  assert.match(fixture, /Keyword.put\(:host, native_origin\)/);
+  assert.match(fixture, /uri.scheme == "http" and uri.host == "127.0.0.1" and uri.port == http_port/);
+  assert.match(runner, /ui_socket_owned_process_still_alive/);
+  assert.match(runner, /owned_database_not_stopped/);
+});
+
+test("normal GLB entry uses the real editor preview and native auth API without provider actions", () => {
+  const entry = fs.readFileSync(new URL("./profile-glb-editor-entry.js", import.meta.url), "utf8");
+  const wrapper = fs.readFileSync(new URL("./profile-ui-browser.mjs", import.meta.url), "utf8");
+  for (const file of ["store-instance", "auth-channel", "hub-channel", "phoenix-utils"])
+    assert.ok(entry.includes(`import("../../hubs/src/utils/${file}")`), `real ${file} import required`);
+  assert.match(entry, /import\("\.\.\/\.\.\/hubs\/src\/react-components\/avatar-editor"\)/);
+  assert.match(entry, /await auth.handleAuthCredentials\(bootstrap.auth_email, bootstrap.auth_token\)/);
+  assert.match(entry, /window.APP = \{ store \}/);
+  assert.match(entry, /React.createElement\(AvatarEditor, \{ key: editor, mode: "private-glb"/);
+  assert.match(entry, /response.status !== 401/);
+  assert.match(entry, /for \(const token of \[null, "invalid-local-normal-glb-token"\]\)/);
+  assert.match(entry, /avatar.account_id === String\(bootstrap.account_id\)/);
+  assert.match(entry, /avatar.allow_promotion === false && avatar.allow_remixing === false/);
+  assert.match(entry, /setEditor\(null\)/);
+  assert.match(entry, /href: `\/\?avatar_sid=\$\{encodeURIComponent\(saved.sid\)\}`/);
+  for (const file of ["avatar-editor.js", "avatar-preview.js", "auth-channel.js", "store-instance.ts", "storage/store.js", "gltf-model-plus.js"])
+    assert.ok(wrapper.includes(file), `compiled graph must require ${file}`);
+  assert.doesNotMatch(entry, /store\.update\s*\(|configs\.set|dispatchEvent\s*\(|\.trigger\s*\(|\.setState\s*\(|new File\s*\(|createObjectURL\s*\(|loadAvaturnSdk|sdk\.init|acceptCreatorFile|handleGltfLoaded/);
+  assert.doesNotMatch(entry, /import\([^)]*(avaturn|avatar-preview|GLTFLoader)[^)]*\)/);
+});
+
+test("normal GLB CSP is separate and preserves the WS-only creator guard", () => {
+  const wrapper = fs.readFileSync(new URL("./profile-ui-browser.mjs", import.meta.url), "utf8");
+  const start = wrapper.indexOf("if (isNormalGlb(connection)) {");
+  const end = wrapper.indexOf("if (isCreator(connection))", start);
+  assert.ok(start > 0 && end > start);
+  const normalPolicy = wrapper.slice(start, end);
+  assert.match(wrapper, /connect-src 'none'/);
+  assert.match(wrapper, /connect-src \$\{connection.ws_url\}\/websocket/);
+  assert.match(normalPolicy, /connect-src 'self' blob: \$\{connection.ws_url\}\/websocket \$\{native\}\/api\/v1\/meta \$\{native\}\/api\/v1\/media \$\{native\}\/api\/v1\/avatars \$\{native\}\/api\/v1\/avatars\/ \$\{native\}\/files\//);
+  assert.match(normalPolicy, /worker-src 'self' blob:; object-src 'none'/);
+  assert.doesNotMatch(normalPolicy, /https:\/\/|\*|unsafe-eval|unsafe-inline/);
+  assert.match(wrapper, /if \(isCreator\(connection\)\) \{\s*for \(const file of \[\s*"hubs\/src\/utils\/avaturn-sdk.js",\s*"hubs\/src\/react-components\/avaturn-creator.js",\s*"hubs\/src\/react-components\/avatar-editor.js",[\s\S]*?creator_canary_must_not_include_editor_or_sdk/);
+  assert.match(wrapper, /authBootstrap: "local-native-guardian", externalLogin: "NOT_RUN"/);
+  assert.match(wrapper, /browserAcceptance: "NOT_RUN"/);
 });
 
 for (const stream of ["stdout", "stderr"]) {

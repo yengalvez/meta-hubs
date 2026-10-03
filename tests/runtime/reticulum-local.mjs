@@ -81,6 +81,21 @@ export function validateCreatorBootstrap(value) {
   return value;
 }
 
+export function validateNormalGlbBootstrap(value) {
+  if (!value || Object.keys(value).sort().join(",") !==
+      "account_id,app_config,app_config_provenance,auth_bootstrap,auth_email,auth_token,backend_pid,browser_origin,hub_sid,kind,mode,reticulum_origin,schema,source,storage_origin,ws_url" ||
+      value.kind !== "reticulum-profile-normal-glb" || value.mode !== "normal-glb" ||
+      value.auth_bootstrap !== "local-native-guardian" ||
+      !Number.isSafeInteger(value.account_id) || value.account_id < 1 ||
+      typeof value.auth_email !== "string" || !/^ui-socket-[0-9]+@example\.invalid$/.test(value.auth_email)) reject("invalid_normal_glb_bootstrap");
+  const { account_id, auth_email, auth_bootstrap, reticulum_origin, storage_origin, ...creator } = value;
+  validateCreatorBootstrap({ ...creator, kind: "reticulum-profile-creator-socket", mode: "creator-only" });
+  browserOrigin(reticulum_origin);
+  if (reticulum_origin !== new URL(value.ws_url).origin.replace("ws:", "http:") ||
+      storage_origin !== reticulum_origin) reject("normal_glb_endpoint_storage_mismatch");
+  return value;
+}
+
 export function inspectHexArchive(directory) {
   const actual = fs.realpathSync(directory);
   if (actual !== path.resolve(directory)) reject("hex_archive_symlink_not_allowed");
@@ -120,6 +135,7 @@ export function writeUiSocketLog(log, bytes, onFailure) {
 // This is a finite observation handle, not an ExUnit/browser acceptance gate.
 async function observeUiSocket({ root, work, log, env, application, pgPort, mix }) {
   const creatorMode = env.RET_LOCAL_PROFILE === "profile-creator-socket";
+  const normalGlb = env.RET_LOCAL_CONSUMER_ENTRY === "normal-glb";
   const commandParser = creatorMode ? creatorSocketCommand : uiSocketCommand;
   const profiles = creatorMode ? ["CREATOR_OFF", "CREATOR_ON"] : ["BASE", "BOTS_AI"];
   const child = spawn("/usr/bin/sandbox-exec", ["-p", networkProfile(pgPort), mix, "run", "--no-start", "--no-compile",
@@ -163,7 +179,7 @@ async function observeUiSocket({ root, work, log, env, application, pgPort, mix 
       try {
         const event = JSON.parse(line.slice("RET_UI_SOCKET:".length));
         if (event.phase === "READY" && Object.keys(event).sort().join(",") === "bootstrap,phase,pid" &&
-            event.bootstrap === path.join(work, creatorMode ? "creator-socket-bootstrap.json" : "ui-socket-bootstrap.json") && Number.isInteger(event.pid) && event.pid > 1 && !ready) {
+            event.bootstrap === path.join(work, normalGlb ? "normal-glb-socket-bootstrap.json" : creatorMode ? "creator-socket-bootstrap.json" : "ui-socket-bootstrap.json") && Number.isInteger(event.pid) && event.pid > 1 && !ready) {
           backendPid = event.pid; ready = true; clearTimeout(deadline);
           deadline = setTimeout(() => fail("ui_socket_observation_deadline"), 300000);
         } else if (event.phase === "SQL_APPLIED" && Object.keys(event).sort().join(",") === "phase,profile" && profiles.includes(event.profile) && ready) {
@@ -202,6 +218,8 @@ export function runtimeCases(mode) {
     case "--run": return [{ profile: "existing-tests", count: 5 }];
     case "--profile-ui-socket": return [{ profile: "profile-ui-socket", count: 0 }];
     case "--profile-creator-socket": return [{ profile: "profile-creator-socket", count: 0 }];
+    // Keep the existing native SQL/socket lifecycle; select only a new consumer.
+    case "--normal-glb-browser": return [{ profile: "profile-creator-socket", count: 0 }];
     case "--avaturn-runtime": return [{ profile: "avaturn-runtime", count: 5 }];
     case "--profiles": return ["base", "base-avaturn", "bots", "bots-avaturn", "bots-ai", "bots-ai-avaturn"].map(profile => ({ profile, count: 1 }));
     case "--chat-canary": return [{ profile: "chat-canary", count: 2 }];
@@ -286,7 +304,7 @@ async function main() {
   try {
     const integrated = ["--sql-http-canary", "--sql-http-reentry", "--sql-http-stop-drain", "--sql-http-periodic"].includes(args[0]);
     const catalogMode = ["--catalog-dataset", "--catalog-graph-dataset"].includes(args[0]);
-    socketMode = ["--profile-ui-socket", "--profile-creator-socket"].includes(args[0]);
+    socketMode = ["--profile-ui-socket", "--profile-creator-socket", "--normal-glb-browser"].includes(args[0]);
     if (args.length !== (socketMode ? 9 : integrated || catalogMode ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
         (integrated && args[5] !== "--cache-bot-orchestrator") ||
         (catalogMode && args[5] !== "--catalog-receipts") ||
@@ -372,7 +390,9 @@ async function main() {
     if (socketMode) {
       env.RET_LOCAL_UI_HTTP_PORT = String(await privatePort([port, Number(new URL(args[6]).port)]));
       env.RET_LOCAL_BROWSER_ORIGIN = args[6]; env.RET_LOCAL_UI_BOOTSTRAP = path.join(work,
-        args[0] === "--profile-creator-socket" ? "creator-socket-bootstrap.json" : "ui-socket-bootstrap.json");
+        args[0] === "--normal-glb-browser" ? "normal-glb-socket-bootstrap.json" :
+          args[0] === "--profile-creator-socket" ? "creator-socket-bootstrap.json" : "ui-socket-bootstrap.json");
+      if (args[0] === "--normal-glb-browser") env.RET_LOCAL_CONSUMER_ENTRY = "normal-glb";
       env.RET_LOCAL_SOURCE_ROOT = socketSourceBefore["."]; env.RET_LOCAL_SOURCE_HUBS = socketSourceBefore.hubs;
       env.RET_LOCAL_SOURCE_CLOUD = socketSourceBefore["hubs-cloud"];
     }

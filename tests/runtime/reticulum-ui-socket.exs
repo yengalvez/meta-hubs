@@ -11,7 +11,12 @@ defmodule Ret.LocalUiSocket do
     stat = File.stat!(work)
     profile = System.fetch_env!("RET_LOCAL_PROFILE")
     creator_mode = profile == "profile-creator-socket"
-    bootstrap_name = if creator_mode, do: "creator-socket-bootstrap.json", else: "ui-socket-bootstrap.json"
+    normal_glb = System.get_env("RET_LOCAL_CONSUMER_ENTRY") == "normal-glb"
+    bootstrap_name = cond do
+      normal_glb -> "normal-glb-socket-bootstrap.json"
+      creator_mode -> "creator-socket-bootstrap.json"
+      true -> "ui-socket-bootstrap.json"
+    end
 
     unless profile in ["profile-ui-socket", "profile-creator-socket"] and
              System.fetch_env!("MIX_ENV") == "test" and
@@ -19,6 +24,9 @@ defmodule Ret.LocalUiSocket do
              String.starts_with?(work, "/private/tmp/ynret-local-") and
              stat.type == :directory and rem(stat.mode, 0o1000) == 0o700,
            do: raise("private UI bootstrap target required")
+    if normal_glb and not creator_mode, do: raise("normal GLB requires creator-only native ceiling")
+
+    if normal_glb, do: bind_normal_glb_storage!(work, http_port)
 
     source = %{
       root: System.fetch_env!("RET_LOCAL_SOURCE_ROOT"),
@@ -33,7 +41,8 @@ defmodule Ret.LocalUiSocket do
     AppConfig.set_config_value("features|enable_avaturn_creator", false)
     apply_profile!("BASE")
     if creator_mode, do: apply_creator!("CREATOR_ON")
-    account = Account.find_or_create_account_for_email("ui-socket-#{System.unique_integer([:positive])}@example.invalid")
+    email = "ui-socket-#{System.unique_integer([:positive])}@example.invalid"
+    account = Account.find_or_create_account_for_email(email)
 
     hub =
       %Hub{}
@@ -66,10 +75,40 @@ defmodule Ret.LocalUiSocket do
         context
       end
 
+    context = if normal_glb do
+      native_origin = "http://127.0.0.1:#{http_port}"
+      Map.merge(context, %{
+        kind: "reticulum-profile-normal-glb", mode: "normal-glb",
+        auth_bootstrap: "local-native-guardian", auth_email: email,
+        account_id: account.account_id,
+        reticulum_origin: native_origin, storage_origin: native_origin
+      })
+    else
+      context
+    end
+
     File.write!(bootstrap, Jason.encode!(context) <> "\n", [:exclusive])
     File.chmod!(bootstrap, 0o600)
     emit(%{phase: "READY", bootstrap: bootstrap, pid: pid})
     commands!(creator_mode)
+  end
+
+  defp bind_normal_glb_storage!(work, http_port) do
+    native_origin = "http://127.0.0.1:#{http_port}"
+    endpoint = Application.fetch_env!(:ret, RetWeb.Endpoint)
+    unless endpoint[:http][:ip] == {127, 0, 0, 1} and endpoint[:http][:port] == http_port and
+             RetWeb.Endpoint.url() == native_origin and Process.whereis(RetWeb.Endpoint),
+           do: raise("normal GLB owned Endpoint mismatch")
+    storage = Application.fetch_env!(:ret, Ret.Storage)
+    storage_path = Path.expand(Keyword.fetch!(storage, :storage_path))
+    unless storage_path == Path.join(work, "reticulum/storage/test") and
+             File.dir?(storage_path), do: raise("normal GLB owned storage required")
+    Application.put_env(:ret, Ret.Storage, storage |> Keyword.put(:host, native_origin) |> Keyword.put(:storage_path, storage_path))
+    # The real connection initializer reads the real local /api/v1/meta response.
+    Application.put_env(:ret, Ret.Meta, Keyword.put(Application.get_env(:ret, Ret.Meta, []), :phx_host, "127.0.0.1"))
+    uri = Ret.Storage.uri_for("binding-check", "model/gltf")
+    unless uri.scheme == "http" and uri.host == "127.0.0.1" and uri.port == http_port,
+      do: raise("normal GLB Storage host mismatch")
   end
 
   defp apply_profile!(profile) do
