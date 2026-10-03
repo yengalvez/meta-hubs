@@ -2753,3 +2753,11 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   factory y compilación production; RoomSettings conserva development.
   Sin fetch/config setter/SDK/editor nuevos. Regresión de ruta RED→PASS y
   diagnóstico independiente por fuente; aceptación browser aún pendiente.
+- Aceptación primaria local sobre b00f5b5/dd176f6/2c0b53d: SQL/Phoenix reales,
+  JOINED y dos DENIED; ficha Avaturn ON→OFF→ON, admisión obsoleta negada,
+  GLB independiente y disconnect fail-closed. Mismo form/input/query por DOM;
+  consola sin errores/avisos. Build8697ms0errors/2warnings de tamaño, no SDK
+  en grafo. STOP normal; BEAM/PG/server/tab propios cerrados y fuentes limpias.
+  Evidencia primaria en DOC/fiabilidad-perfiles-runtime-2026-10-01.md del root
+  canónico; recibos NOT_RUN/NOT_RECORDED conservados, no se falsifican. No son
+  editor/import/escena/proveedor/Kubernetes/seis perfiles/ciclos/SLO/full.
