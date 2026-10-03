@@ -1065,6 +1065,128 @@ if recovery_focus_selected git-provenance; then
   recovery_finish_focus 'Focused git provenance'
 fi
 
+run_pgsql_guard_round_native() (
+  set -euo pipefail
+  local case_root="$TMP_DIR/pgsql-guard-round-native"
+  local extraction="$case_root/extraction.json" round_status=0
+  mkdir -p "$case_root/deployment"
+  # Extract only existing setup/helpers and the literal production round. No
+  # recovery assertions, dump, stream, validator replacement or clock shim.
+  node - "${BASH_SOURCE[0]}" "$ROOT_DIR/deployment/backup-retdb.sh" \
+    >"$extraction" <<'PGSQL_GUARD_ROUND_EXTRACT'
+const fs = require("node:fs");
+const suite = fs.readFileSync(process.argv[2], "utf8");
+const backup = fs.readFileSync(process.argv[3], "utf8");
+function anchor(text, line) {
+  const lines = text.split("\n");
+  const hits = lines.flatMap((value, index) => value === line ? [index] : []);
+  if (hits.length !== 1) throw new Error(`non-unique extraction anchor: ${line}`);
+  return lines.slice(0, hits[0]).join("\n").length + (hits[0] ? 1 : 0);
+}
+function between(text, start, end) {
+  const first = anchor(text, start), last = anchor(text, end);
+  if (last <= first) throw new Error("unordered extraction anchors");
+  return text.slice(first, last);
+}
+function fn(text, name) {
+  const first = anchor(text, `${name}() {`);
+  const last = text.indexOf("\n}\n", first);
+  if (last < 0) throw new Error(`unterminated extraction function: ${name}`);
+  return text.slice(first, last + 3);
+}
+const parts = {
+  fixture_setup: between(suite, 'mkdir -p "$TMP_DIR/bin" "$TMP_DIR/stub-state"', 'reset_stub() {'),
+  fixture_helpers: ["reset_stub", "seed_recovery_operation_fence_binding_state",
+    "seed_serialization_lease", "seed_restore_lock", "seed_checkpoint_backup_guard",
+    "start_checkpoint_backup_writer_guard", "stop_checkpoint_backup_writer_guard"]
+    .map(name => fn(suite, name)).join("\n\n"),
+  preamble: between(backup, "#!/usr/bin/env bash", "require_parent_writer_monitor_capability() {"),
+  capabilities: ["require_parent_writer_monitor_capability", "require_parent_freeze_fence_capability",
+    "require_parent_durable_monitor_capability"].map(name => fn(backup, name)).join("\n\n"),
+  guards: ["require_backup_guard", "require_exact_pgsql_source_now",
+    "record_pgsql_source_monitor_failure"].map(name => fn(backup, name)).join("\n\n"),
+  identity: between(backup, 'PGSQL_PODS_JSON="$(recovery_kubectl get pod -n "$NAMESPACE" -l app=pgsql -o json)"',
+    "require_pgsql_source() {"),
+  round: between(backup, "    require_backup_guard || {", "    progress=$((progress + 1))")
+};
+// The loop-closing anchor is scoped to the real monitor, not another loop.
+const monitor = fn(backup, "monitor_exact_pgsql_source");
+parts.publish_poll = between(monitor, "    progress=$((progress + 1))", "  done");
+process.stdout.write(JSON.stringify(parts));
+PGSQL_GUARD_ROUND_EXTRACT
+  jq -j '.fixture_setup' "$extraction" >"$case_root/fixture-setup.sh"
+  jq -j '.fixture_helpers' "$extraction" >"$case_root/fixture-helpers.sh"
+  # shellcheck disable=SC1091 # Literal fragments from this current harness.
+  source "$case_root/fixture-setup.sh"
+  # shellcheck disable=SC1091 # The existing helpers are loaded without changes.
+  source "$case_root/fixture-helpers.sh"
+  export RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=30
+  export RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS=10
+  reset_stub
+  STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" seed_checkpoint_backup_guard
+  seed_recovery_operation_fence_binding_state active
+  trap 'stop_checkpoint_backup_writer_guard' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
+    STUB_RUNNER_NAMESPACE=present STUB_RUNNER_POD_PROFILE=fence-stable \
+    STUB_MONITOR_WATCH_PACE=1 \
+    start_checkpoint_backup_writer_guard healthy durable-v2 \
+      "$DURABLE_FENCE_BASELINE_FIXTURE" "$DURABLE_FENCE_BASELINE_SHA"
+  # A directory link keeps the literal SCRIPT_DIR source and every library
+  # helper path bound to the real library tree, not a copied implementation.
+  ln -s "$ROOT_DIR/deployment/lib" "$case_root/deployment/lib"
+  jq -j '.preamble, .capabilities, "\n", .guards, "\n", .identity,
+    "pgsql_guard_round_native_once() {\n", .round, "}\n",
+    "pgsql_guard_round_native_publish_poll() {\n  local progress=0\n",
+    .publish_poll, "}\n"' "$extraction" \
+    >"$case_root/deployment/backup-retdb.sh"
+  cat >>"$case_root/deployment/backup-retdb.sh" <<'PGSQL_GUARD_ROUND_MEASURE'
+DB_SOURCE_MONITOR_FAILURE="$OUTPUT_DIR/pgsql-round.failure"
+DB_SOURCE_MONITOR_PROGRESS="$OUTPUT_DIR/pgsql-round.progress"
+DB_SOURCE_MONITOR_POLL_SECONDS="$(recovery_stream_poll_seconds)"
+: >"$DB_SOURCE_MONITOR_FAILURE"
+: >"$DB_SOURCE_MONITOR_PROGRESS"
+TIMEFORMAT='PGSQL_GUARD_ROUND_NATIVE duration_seconds=%3R'
+round_status=0
+if { time pgsql_guard_round_native_once; } 2>"$OUTPUT_DIR/round-time.log"; then
+  round_status=0
+else
+  round_status=$?
+fi
+cat "$OUTPUT_DIR/round-time.log" >&2
+printf 'PGSQL_GUARD_ROUND_NATIVE round_exit=%s startup_seconds=30 stale_seconds=10 cancellation_reserve_seconds=2\n' "$round_status"
+printf '%s\n' 'PGSQL_GUARD_ROUND_NATIVE limits=fixture-only,no-dump,no-SLO,no-historical-cause; clock=Bash-time-wall-clock-may-adjust; overhead=timed-function-and-failure-arms; setup-publication-poll-cleanup=excluded'
+if [[ "$round_status" == 0 ]]; then
+  pgsql_guard_round_native_publish_poll
+fi
+exit "$round_status"
+PGSQL_GUARD_ROUND_MEASURE
+  if env BACKUP_COORDINATED=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    RECOVERY_CHECKPOINT_STAMP="$STAMP" RECOVERY_DUMP_SHA256="$DUMP_SHA" \
+    RECOVERY_STORAGE_SHA256="$STORAGE_SHA" \
+    RECOVERY_NAMESPACE_UID=fixture-uid RECOVERY_PVC_UID=fixture-pvc-uid \
+    CHECKPOINT_RUNNER_GENERATION=durable-v2 \
+    CHECKPOINT_DURABLE_FENCE_BASELINE_PATH="$DURABLE_FENCE_BASELINE_FIXTURE" \
+    CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256="$DURABLE_FENCE_BASELINE_SHA" \
+    RUNNER_EVIDENCE_LIVE_DIR="$RUNNER_EVIDENCE_LIVE_DIR" \
+    STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
+    STUB_RUNNER_NAMESPACE=present STUB_RUNNER_POD_PROFILE=fence-stable \
+    STUB_MODE='' RECOVERY_STREAM_POLL_SECONDS=0.25 \
+    bash "$case_root/deployment/backup-retdb.sh" "$case_root/retdb-$STAMP.sql.gz"; then
+    round_status=0
+  else
+    round_status=$?
+  fi
+  exit "$round_status"
+)
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == pgsql-guard-round-native ]]; then
+  run_pgsql_guard_round_native
+  exit "$?"
+fi
+
 SIZE_FIXTURE="$TMP_DIR/file-size-fixture"
 printf '1234' >"$SIZE_FIXTURE"
 # Expansion is intentionally performed by the isolated Bash process below.
@@ -6861,6 +6983,7 @@ export RUNNER_EVIDENCE_LIVE_DIR RUNNER_RESTORE_FENCE_LIVE_DIR \
 export PATH="$TMP_DIR/bin:$PATH"
 export RECOVERY_WAIT_RETRY_DELAY_SECONDS=0
 export RECOVERY_STREAM_POLL_SECONDS=0.01
+# shellcheck disable=SC2031 # This global fixture value is re-established outside the isolated native focus.
 export RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=120
 # shellcheck disable=SC2031 # Intentional global fixture values after isolated subshells.
 export YENHUBS_RECOVERY_TEST_MODE=local-fixture

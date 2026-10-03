@@ -616,6 +616,7 @@ run_security() {
   node --test "$ROOT_DIR/tests/scripts/checkpoint-abort-process.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/recovery-harness-profile.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/recovery-namespace-fast-path.test.mjs"
+  node --test "$ROOT_DIR/tests/scripts/pgsql-guard-round-native.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/native-checkpoint-source.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/native-checkpoint-restore.test.mjs"
   node --test "$ROOT_DIR/tests/runtime/reticulum-local.test.mjs"
