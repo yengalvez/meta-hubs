@@ -248,6 +248,7 @@ test("shell and actual watcher consumer validators accept explicit zero but reje
 
 const zeroSetup=`
 exec 3>&1
+unset RECOVERY_BACKUP_AUTHORITY_KEYRING RECOVERY_BACKUP_AUTHORITY_KEY_ID
 CONSUMERS=(reticulum pgbouncer pgbouncer-t bot-orchestrator coturn)
 ORIGINAL_REPLICAS=(1 1 1 0 1)
 DEPLOYMENT_UIDS=(uid-reticulum uid-pgbouncer uid-pgbouncer-t uid-bot-orchestrator uid-coturn)
@@ -257,6 +258,7 @@ DEPLOYMENT_FINGERPRINTS=(fp fp fp fp fp)
 DEPLOYMENT_RESUME_STARTED=(0 0 0 0 0)
 DEPLOYMENT_RESUME_RECEIPT_CLEARED=(0 0 0 0 0)
 CHECKPOINT_PROCESS_LOCAL_ROLLING=0
+CHECKPOINT_SIGNED_PROCESS_LOCAL_ROLLING=0
 CHECKPOINT_RUNNER_MODE=kubernetes-pod
 RUNNER_DURABLE_FENCE_INVENTORY=known
 RECOVERY_CONSUMER_CONTRACT_JSON=contract
@@ -280,13 +282,15 @@ recovery_scale_deployment_exact() {
 }
 `;
 for(const drift of [false,true])test(`quiesce BASE skips zero-to-zero CAS only with exact zero identity: ${drift}`,()=>{
-  const body=["checkpoint_require_original_zero_writer","quiesce_writers"].map(n=>shellFunction(driver,n)).join("\n");
+  const body=[shellFunction(library,"recovery_backup_authority_is_selected"),
+    ...["checkpoint_require_original_zero_writer","quiesce_writers"].map(n=>shellFunction(driver,n))].join("\n");
   const stubs=["checkpoint_set_failure_context","recovery_require_consumer_contract_entry","recovery_reconcile_durable_runner_namespace","recovery_require_no_legacy_parent_runner_pods","start_runner_monitor","require_checkpoint_runner_absence_stable","require_checkpoint_runner_quiescent_now","recovery_require_exact_pvc_consumers","recovery_require_recovery_operation_fence_state","recovery_activate_recovery_operation_fence","start_checkpoint_writer_monitor","require_checkpoint_writer_monitor_healthy","start_checkpoint_durable_monitor","require_checkpoint_durable_monitor_healthy"].map(n=>`${n}() { :; }`).join("\n");
   const r=run(`set -euo pipefail\n${body}\n${zeroSetup}\n${stubs}
 recovery_capture_durable_quiescence() { printf known; }
 checkpoint_uses_freeze_admission_fence() { return 1; }
 quiesce_writers`,{ZERO_RV:drift?"foreign":"7"});
   assert.equal(r.status,drift?1:0,r.stderr);assert.doesNotMatch(r.stdout,/scale:bot-orchestrator/);
+  assert.doesNotMatch(r.stderr,/command not found|unbound variable/);
   assert.equal((r.stdout.match(/scale:/g)||[]).length,drift?0:4);
 });
 

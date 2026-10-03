@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-10-03 · Restore the BASE transport fixture context
+
+Native finish73894 on4e43bc1 passed static, then stopped in security at the
+BASE quiesce fixture. Its extracted driver functions lacked the current real
+authority-selection helper and the initialized signed-RollingUpdate flag.
+The isolated two-case selection reproduced1/2 FAIL. Only the fixture now
+includes that real selector, unsets inherited authority selection and sets the
+same zero signed flag as the driver. Exact-zero versus foreign-RV rejection,
+four positive scales and zero parent CAS remain required; stderr also rejects
+missing commands/unbound variables. Both quiesce cases pass2/2 and the shared
+zero-resume case passes1/1. No product guards or timeouts change. H5, recovery
+and full did not run in the stopped chain; the new candidate still needs its
+exact finalizer and remaining gates, preserving compatible receipts.
+
 ## 2026-10-03 · Close the DB backup literal lint failure
 
 Native authority finish96848 stopped in static after composition, advisories
