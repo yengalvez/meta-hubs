@@ -25,13 +25,17 @@ export function readbackArguments(args) {
 }
 
 export function validateReadback(value, { data, port, sid, accountId }) {
+  return validatePrivateAvatarReadback(value, { data, port, sid, accountId }, "GLB local privado probado");
+}
+
+export function validatePrivateAvatarReadback(value, { data, port, sid, accountId }, expectedName) {
   const identity = value?.identity;
   if (!identity || identity.data !== data || identity.port !== String(port) || identity.user !== "profile_test" ||
       identity.database !== "ret_test" || identity.read_only !== "on") fail("database_identity_mismatch");
   const rows = value.avatars;
   if (!Array.isArray(rows) || rows.length !== 1) fail("exact_private_avatar_required");
   const avatar = rows[0];
-  if (!decimal(accountId) || avatar.sid !== sid || avatar.owner !== accountId || avatar.name !== "GLB local privado probado" ||
+  if (!decimal(accountId) || avatar.sid !== sid || avatar.owner !== accountId || avatar.name !== expectedName ||
       avatar.state !== "active" || avatar.allow_remixing !== false || avatar.allow_promotion !== false || avatar.listings !== "0" ||
       avatar.parents_absent !== true || avatar.extra_files_absent !== true) fail("private_avatar_mismatch");
   if (!Array.isArray(avatar.files) || avatar.files.length !== 3) fail("three_owned_files_required");

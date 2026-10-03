@@ -192,6 +192,21 @@ Peer `STOP` must confirm its actual exit/rollback; native STOP and static
 server shutdown remain mandatory. The peer has a hard ceiling≤120s and
 releases only its own transaction on EOF/error/deadline/signals.
 
+For the separate positive case, observe real SDK Next → onSave, commit
+`CREATOR_OFF`, and reload its saved SID through the page's real API link.
+Before native STOP, run the bounded read-only peer on that SAME fixture:
+
+```sh
+node tests/runtime/avaturn-save-readback.mjs --work /private/tmp/ynret-local-<owned-suffix> \
+  --avatar-sid <observed-seven-character-SID> --pg-bin /opt/homebrew/Cellar/postgresql@14/14.23/bin
+```
+
+It requires committed creator OFF, exact owner/private rows, three owned
+files and native HTTP glTF/BIN/PNG integrity. Its20s deadline and redacted
+result do not prove SDK-export byte preservation, visual acceptance or HTTP
+completion of a different in-flight request. Run positive and interruption
+as separate native observations, each with the original300s ceiling.
+
 Pure contract tests are registered in security/CI. They cannot accept provider
 login/export, SQL blocking, OFF, browser save/reload or cleanup. Both native
 and build receipts remain NOT_RECORDED until primary observation; this is not
