@@ -96,7 +96,7 @@ async function mount() {
     }, []);
     const onSave = avatar => {
       const valid = avatar && /^[A-Za-z0-9]{7}$/.test(avatar.avatar_id) &&
-        avatar.account_id === String(bootstrap.account_id) &&
+        typeof avatar.account_id === "string" && avatar.account_id === bootstrap.account_id &&
         avatar.allow_promotion === false && avatar.allow_remixing === false &&
         avatar.has_listings === false;
       // Record the real API callback, never manufacture a save or PASS. Closing

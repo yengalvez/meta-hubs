@@ -138,7 +138,7 @@ test("creator build keeps backend public config through the normal production mo
 function normalGlbBootstrap() {
   return {
     ...creatorBootstrap(), kind: "reticulum-profile-normal-glb", mode: "normal-glb",
-    auth_bootstrap: "local-native-guardian", auth_email: "ui-socket-99@example.invalid", account_id: 101,
+    auth_bootstrap: "local-native-guardian", auth_email: "ui-socket-99@example.invalid", account_id: "784512345678901234",
     reticulum_origin: "http://127.0.0.1:18444", storage_origin: "http://127.0.0.1:18444",
   };
 }
@@ -159,7 +159,7 @@ test("normal GLB bootstrap rejects altered schema credentials origins storage an
     v => { v.kind = "reticulum-profile-creator-socket"; }, v => { v.mode = "creator-only"; },
     v => { v.auth_bootstrap = "external-OAuth"; }, v => { v.auth_email = "owner@example.com"; },
     v => { v.auth_email = "ui-socket-x@example.invalid"; }, v => { v.auth_email = null; },
-    v => { v.account_id = "101"; }, v => { v.account_id = 0; }, v => { v.account_id = 1.5; },
+    v => { v.account_id = 101; }, v => { v.account_id = 0; }, v => { v.account_id = 1.5; },
     v => { v.account_id = Number.MAX_SAFE_INTEGER + 1; }, v => { v.auth_token = "invalid"; },
     v => { v.auth_token = null; }, v => { v.app_config_provenance = "client-fixture"; },
     v => { v.app_config.features.enable_room_bots = true; }, v => { v.app_config.features.enable_bot_chat = true; },
@@ -180,6 +180,29 @@ test("normal GLB bootstrap rejects altered schema credentials origins storage an
   }
   for (const value of [undefined, null, [], 1])
     assert.throws(() => validateNormalGlbBootstrap(value), /invalid_normal_glb_bootstrap/);
+});
+
+test("normal GLB account IDs preserve canonical PostgreSQL bigint text without numeric coercion", () => {
+  for (const accountId of ["1", "9007199254740993", "784512345678901234", "9223372036854775807"]) {
+    const value = normalGlbBootstrap(); value.account_id = accountId;
+    const parsed = JSON.parse(JSON.stringify(value));
+    assert.equal(validateNormalGlbBootstrap(parsed), parsed);
+    assert.equal(parsed.account_id, accountId, "private JSON must preserve every decimal digit");
+  }
+  assert.ok(BigInt(normalGlbBootstrap().account_id) > 9007199254740992n);
+  for (const accountId of [null, undefined, true, 1, 101, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1,
+    "", "0", "00", "01", "000101", "+1", "-1", "1e3", "1E3", "1.0", " 1", "1 ", "1\n", "1\r\n", "\t1",
+    "9223372036854775808", "9999999999999999999", "18446744073709551615"]) {
+    const value = normalGlbBootstrap(); value.account_id = accountId;
+    assert.throws(() => validateNormalGlbBootstrap(value), /invalid_normal_glb_bootstrap/);
+  }
+  const fixture = fs.readFileSync(new URL("./reticulum-ui-socket.exs", import.meta.url), "utf8");
+  const avatarView = fs.readFileSync(new URL("../../hubs-cloud/community-edition/services/reticulum/lib/ret_web/views/api/v1/avatar_view.ex", import.meta.url), "utf8");
+  const entry = fs.readFileSync(new URL("./profile-glb-editor-entry.js", import.meta.url), "utf8");
+  assert.match(fixture, /account_id: Integer.to_string\(account.account_id\)/);
+  assert.match(avatarView, /avatar.account_id == account.account_id &&\s*avatar.account_id \|> Integer.to_string\(\)/);
+  assert.match(entry, /typeof avatar.account_id === "string" && avatar.account_id === bootstrap.account_id/);
+  assert.doesNotMatch(entry, /String\(bootstrap.account_id\)|Number\([^)]*account_id/);
 });
 
 test("normal GLB selector reuses the native socket lifecycle without changing existing consumers", () => {
@@ -211,7 +234,7 @@ test("normal GLB entry uses the real editor preview and native auth API without 
   assert.match(entry, /React.createElement\(AvatarEditor, \{ key: editor, mode: "private-glb"/);
   assert.match(entry, /response.status !== 401/);
   assert.match(entry, /for \(const token of \[null, "invalid-local-normal-glb-token"\]\)/);
-  assert.match(entry, /avatar.account_id === String\(bootstrap.account_id\)/);
+  assert.match(entry, /typeof avatar.account_id === "string" && avatar.account_id === bootstrap.account_id/);
   assert.match(entry, /avatar.allow_promotion === false && avatar.allow_remixing === false/);
   assert.match(entry, /setEditor\(null\)/);
   assert.match(entry, /href: `\/\?avatar_sid=\$\{encodeURIComponent\(saved.sid\)\}`/);

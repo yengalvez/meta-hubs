@@ -80,7 +80,8 @@ defmodule Ret.LocalUiSocket do
       Map.merge(context, %{
         kind: "reticulum-profile-normal-glb", mode: "normal-glb",
         auth_bootstrap: "local-native-guardian", auth_email: email,
-        account_id: account.account_id,
+        # Preserve the native PostgreSQL int64, like AvatarView's owner field.
+        account_id: Integer.to_string(account.account_id),
         reticulum_origin: native_origin, storage_origin: native_origin
       })
     else

@@ -82,11 +82,16 @@ export function validateCreatorBootstrap(value) {
 }
 
 export function validateNormalGlbBootstrap(value) {
+  // Ret account IDs are PostgreSQL int64 values, not JavaScript safe integers.
+  // Canonical decimal text preserves every bit across the private JSON boundary.
+  const accountId = value?.account_id;
+  const validAccountId = typeof accountId === "string" && /^[1-9][0-9]{0,18}$/.test(accountId) &&
+    BigInt(accountId).toString() === accountId && BigInt(accountId) <= 9223372036854775807n;
   if (!value || Object.keys(value).sort().join(",") !==
       "account_id,app_config,app_config_provenance,auth_bootstrap,auth_email,auth_token,backend_pid,browser_origin,hub_sid,kind,mode,reticulum_origin,schema,source,storage_origin,ws_url" ||
       value.kind !== "reticulum-profile-normal-glb" || value.mode !== "normal-glb" ||
       value.auth_bootstrap !== "local-native-guardian" ||
-      !Number.isSafeInteger(value.account_id) || value.account_id < 1 ||
+      !validAccountId ||
       typeof value.auth_email !== "string" || !/^ui-socket-[0-9]+@example\.invalid$/.test(value.auth_email)) reject("invalid_normal_glb_bootstrap");
   const { account_id, auth_email, auth_bootstrap, reticulum_origin, storage_origin, ...creator } = value;
   validateCreatorBootstrap({ ...creator, kind: "reticulum-profile-creator-socket", mode: "creator-only" });

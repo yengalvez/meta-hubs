@@ -2781,3 +2781,8 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   RoomSettings/MediaBrowser y sus guardas; los tests distinguen las tres rutas.
   Freeze, build, picker/preview/guardado/recarga y limpieza siguen pendientes;
   no se acredita Avaturn en vuelo, seis perfiles, full, producción ni Goal.
+- Primer arranque llega a READY pero el build rechaza account_id numérico
+  mayor que2^53; STOP nativo normal y BEAM/PG ausentes, sin UI aceptada.
+  El harness serializa ahora decimal nativo antes de JSON, como AvatarView,
+  valida bigint canónico y compara owner por string exacto. Cuatro focales
+  nuevos/afectados y recheck independiente CLOSED; no se relaja ownership.
