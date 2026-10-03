@@ -30,6 +30,36 @@ export function uiSocketCommand(line) {
   return JSON.parse(line).command;
 }
 
+export function creatorSocketCommand(line) {
+  if (typeof line !== "string" || Buffer.byteLength(line) > 128 ||
+      !/^\s*\{\s*"command"\s*:\s*"(CREATOR_OFF|CREATOR_ON|STOP)"\s*\}\s*$/.test(line)) reject("invalid_creator_socket_command");
+  return JSON.parse(line).command;
+}
+
+export function validateCreatorBootstrap(value) {
+  const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
+  const keys = (value, expected) => object(value) && Object.keys(value).sort().join(",") === expected;
+  if (!keys(value, "app_config,app_config_provenance,auth_token,backend_pid,browser_origin,hub_sid,kind,mode,schema,source,ws_url") ||
+      value.schema !== 1 || value.kind !== "reticulum-profile-creator-socket" || value.mode !== "creator-only" ||
+      value.app_config_provenance !== "Ret.ProductModules.project_config/committed-SQL" ||
+      !keys(value.source, "cloud,hubs,root") || !Object.values(value.source).every(head => typeof head === "string" && /^[a-f0-9]{40}$/.test(head)) ||
+      typeof value.hub_sid !== "string" || !/^[A-Za-z0-9]{7}$/.test(value.hub_sid) ||
+      typeof value.auth_token !== "string" || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value.auth_token) ||
+      !Number.isInteger(value.backend_pid) || value.backend_pid < 2 ||
+      typeof value.ws_url !== "string" || !/^ws:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}\/socket$/.test(value.ws_url) ||
+      !keys(value.app_config, "features,links") ||
+      !keys(value.app_config.features, "enable_avaturn_creator,enable_bot_chat,enable_room_bots") ||
+      value.app_config.features.enable_room_bots !== false || value.app_config.features.enable_bot_chat !== false ||
+      value.app_config.features.enable_avaturn_creator !== true ||
+      !keys(value.app_config.links, "avaturn_creator") || value.app_config.links.avaturn_creator !== "https://virtualmente.avaturn.dev") reject("invalid_creator_bootstrap");
+  browserOrigin(value.browser_origin);
+  let ws;
+  try { ws = new URL(value.ws_url); } catch { reject("invalid_creator_bootstrap"); }
+  const port = Number(ws.port);
+  if (port < 1024 || port > 65535 || port === Number(new URL(value.browser_origin).port)) reject("invalid_creator_bootstrap");
+  return value;
+}
+
 export function inspectHexArchive(directory) {
   const actual = fs.realpathSync(directory);
   if (actual !== path.resolve(directory)) reject("hex_archive_symlink_not_allowed");
@@ -68,6 +98,9 @@ export function writeUiSocketLog(log, bytes, onFailure) {
 
 // This is a finite observation handle, not an ExUnit/browser acceptance gate.
 async function observeUiSocket({ root, work, log, env, application, pgPort, mix }) {
+  const creatorMode = env.RET_LOCAL_PROFILE === "profile-creator-socket";
+  const commandParser = creatorMode ? creatorSocketCommand : uiSocketCommand;
+  const profiles = creatorMode ? ["CREATOR_OFF", "CREATOR_ON"] : ["BASE", "BOTS_AI"];
   const child = spawn("/usr/bin/sandbox-exec", ["-p", networkProfile(pgPort), mix, "run", "--no-start", "--no-compile",
     path.join(root, "tests/runtime/reticulum-local.exs")], { cwd: application, env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
   let ready = false, stopped = false, stopRequested = false, backendPid, failure, input = "", output = "";
@@ -84,7 +117,7 @@ async function observeUiSocket({ root, work, log, env, application, pgPort, mix 
     while (input.includes("\n")) {
       const index = input.indexOf("\n"), line = input.slice(0, index); input = input.slice(index + 1);
       try {
-        const command = uiSocketCommand(line);
+        const command = commandParser(line);
         if (!ready || stopRequested) reject("ui_socket_not_accepting_commands");
         child.stdin.write(JSON.stringify({ command }) + "\n");
         if (command === "STOP") { stopRequested = true; child.stdin.end(); clearTimeout(deadline); deadline = setTimeout(() => fail("ui_socket_stop_timeout"), 15000); }
@@ -109,10 +142,10 @@ async function observeUiSocket({ root, work, log, env, application, pgPort, mix 
       try {
         const event = JSON.parse(line.slice("RET_UI_SOCKET:".length));
         if (event.phase === "READY" && Object.keys(event).sort().join(",") === "bootstrap,phase,pid" &&
-            event.bootstrap === path.join(work, "ui-socket-bootstrap.json") && Number.isInteger(event.pid) && event.pid > 1 && !ready) {
+            event.bootstrap === path.join(work, creatorMode ? "creator-socket-bootstrap.json" : "ui-socket-bootstrap.json") && Number.isInteger(event.pid) && event.pid > 1 && !ready) {
           backendPid = event.pid; ready = true; clearTimeout(deadline);
           deadline = setTimeout(() => fail("ui_socket_observation_deadline"), 300000);
-        } else if (event.phase === "SQL_APPLIED" && Object.keys(event).sort().join(",") === "phase,profile" && ["BASE", "BOTS_AI"].includes(event.profile) && ready) {
+        } else if (event.phase === "SQL_APPLIED" && Object.keys(event).sort().join(",") === "phase,profile" && profiles.includes(event.profile) && ready) {
           // No browser assertion is inferred from committed wrappers.
         } else if (event.phase === "STOPPED" && Object.keys(event).join(",") === "phase" && stopRequested) stopped = true;
         else reject("invalid_ui_socket_marker");
@@ -147,6 +180,7 @@ export function runtimeCases(mode) {
   switch (mode) {
     case "--run": return [{ profile: "existing-tests", count: 5 }];
     case "--profile-ui-socket": return [{ profile: "profile-ui-socket", count: 0 }];
+    case "--profile-creator-socket": return [{ profile: "profile-creator-socket", count: 0 }];
     case "--avaturn-runtime": return [{ profile: "avaturn-runtime", count: 5 }];
     case "--profiles": return ["base", "base-avaturn", "bots", "bots-avaturn", "bots-ai", "bots-ai-avaturn"].map(profile => ({ profile, count: 1 }));
     case "--chat-canary": return [{ profile: "chat-canary", count: 2 }];
@@ -209,7 +243,7 @@ async function main() {
     if (work) fs.writeFileSync(path.join(work, "summary.json"), JSON.stringify({
       scope: "native-synthetic-reticulum-not-kubernetes-or-production", phase,
       outcome, tests, metrics, elapsed_ms: Math.round(performance.now() - started),
-      ...(socketMode ? { mode: "profile-ui-socket", browser_acceptance: "NOT_RECORDED", full_acceptance: false,
+      ...(socketMode ? { mode: args[0].slice(2), browser_acceptance: "NOT_RECORDED", full_acceptance: false,
         socket_source_before: socketSourceBefore, socket_source_after: socketSourceAfter,
         hex_archive: hexArchive && { manifest: hexArchive.manifest, files: hexArchive.files, bytes: hexArchive.bytes, version: hexArchive.version } } : {}),
       ...(catalogSourceBefore ? { catalog_source_before: catalogSourceBefore, catalog_source_after: catalogSourceAfter } : {})
@@ -231,7 +265,7 @@ async function main() {
   try {
     const integrated = ["--sql-http-canary", "--sql-http-reentry", "--sql-http-stop-drain", "--sql-http-periodic"].includes(args[0]);
     const catalogMode = ["--catalog-dataset", "--catalog-graph-dataset"].includes(args[0]);
-    socketMode = args[0] === "--profile-ui-socket";
+    socketMode = ["--profile-ui-socket", "--profile-creator-socket"].includes(args[0]);
     if (args.length !== (socketMode ? 9 : integrated || catalogMode ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
         (integrated && args[5] !== "--cache-bot-orchestrator") ||
         (catalogMode && args[5] !== "--catalog-receipts") ||
@@ -316,7 +350,8 @@ async function main() {
     env.RET_LOCAL_DATA = data; env.RET_LOCAL_PORT = String(port); env.RET_LOCAL_CREDENTIAL = credential;
     if (socketMode) {
       env.RET_LOCAL_UI_HTTP_PORT = String(await privatePort([port, Number(new URL(args[6]).port)]));
-      env.RET_LOCAL_BROWSER_ORIGIN = args[6]; env.RET_LOCAL_UI_BOOTSTRAP = path.join(work, "ui-socket-bootstrap.json");
+      env.RET_LOCAL_BROWSER_ORIGIN = args[6]; env.RET_LOCAL_UI_BOOTSTRAP = path.join(work,
+        args[0] === "--profile-creator-socket" ? "creator-socket-bootstrap.json" : "ui-socket-bootstrap.json");
       env.RET_LOCAL_SOURCE_ROOT = socketSourceBefore["."]; env.RET_LOCAL_SOURCE_HUBS = socketSourceBefore.hubs;
       env.RET_LOCAL_SOURCE_CLOUD = socketSourceBefore["hubs-cloud"];
     }
@@ -327,8 +362,8 @@ async function main() {
       // One fresh OS/BEAM process per installation. Application env swaps in
       // a surviving supervisor would not prove that omitted children stay OFF.
       env.RET_LOCAL_PROFILE = profile;
-      if (profile === "profile-ui-socket") {
-        phase = "backend-profile-ui-socket"; writeReceipt(); process.stdout.write(`RET_LOCAL_STAGE:${phase}\n`);
+      if (["profile-ui-socket", "profile-creator-socket"].includes(profile)) {
+        phase = `backend-${profile}`; writeReceipt(); process.stdout.write(`RET_LOCAL_STAGE:${phase}\n`);
         metrics.ui_socket = await observeUiSocket({ root, work, log, env, application, pgPort: port, mix: path.join(elixir, "mix") });
         socketSourceAfter = catalogSourceSnapshot();
         if (JSON.stringify(socketSourceAfter) !== JSON.stringify(socketSourceBefore)) reject("ui_socket_source_changed");

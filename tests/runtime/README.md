@@ -105,6 +105,49 @@ production AppConfig setters and transport, with synthetic RoomSettings data and
 disabled submit. It does not cover Avaturn, scene/WebRTC, raw-SQL periodic
 detection, six profiles, providers, public deployment or final acceptance.
 
+The distinct `--profile-creator-socket` observation keeps that accepted route
+unchanged. It installs only Avaturn (bots/AI absent), initially creator ON, with
+the exact project URL `https://virtualmente.avaturn.dev` as public configuration
+data only. No SDK, iframe or request to that origin is allowed. Use the same
+runner flags/tools/cache/Hex and a separate private observation:
+
+```sh
+node tests/runtime/reticulum-local.mjs --profile-creator-socket \
+  --pg-bin /opt/homebrew/opt/postgresql@14/bin \
+  --cache-reticulum <matching-existing-Reticulum-cache> \
+  --browser-origin http://127.0.0.1:18443 \
+  --hex-cache <verified-existing-hex-2.5.1-archive>
+node tests/runtime/profile-ui-browser.mjs build --bootstrap <creator-private-bootstrap-READY>
+node tests/runtime/profile-ui-browser.mjs serve <creator-build-scratch> --port 18443
+```
+
+The closed creator bootstrap selects ONLY `profile-media-browser-entry.js`.
+Minimal public APP_CONFIG comes from committed SQL wrappers and actual
+`Ret.ProductModules.project_config`, served as an owned script before configs
+imports. It never adds URLs to PubSub or uses a client flag/config setter.
+The real MediaBrowser class, MediaBrowser layout, MediaSearchStore and normal
+A-Frame library are loaded; no scene/editor or component replacement is used.
+Synthetic history is deliberately not subscribed to searches: typing preserves
+the actual search-input state but does not query the catalogue.
+
+Require JOINED and invalid/missing-token DENIED, creator and GLB action tiles.
+Edit the search input and retain DOM references to the form and input. Ordinary
+Avaturn click increments only its action counter, without opening an editor.
+Send `{"command":"CREATOR_OFF"}` to native stdin and observe creator removed.
+Click “Invocar callback real capturado (diagnóstico)”: attempts increment but
+Avaturn admissions must not; the callback is captured from the real mounted
+consumer, not a fabricated event. Ordinary GLB click still increments GLB.
+Send `{"command":"CREATOR_ON"}`, require restored Avaturn admission with the
+same form/input/query, then “Cerrar socket real” must remove only Avaturn.
+Recheck captured admission denied and ordinary GLB admitted. Write STOP and
+stop the static server normally; require existing Endpoint/BEAM/PG cleanup.
+
+SQL_APPLIED/OBSERVATION_STOPPED and action counters are observations, not PASS
+or editor/import acceptance. This does NOT exercise delayed login, SDK export,
+AvatarEditor cancellation/save, GLB preview/import/persistence, catalogue,
+UIRoot/scene/WebRTC, providers or all six complete profiles. Deadlines/privacy/
+source/PG/Hex guards are the same as the preceding socket mode.
+
 For the distinct existing chat-delivery boundary, use `--chat-canary`: it runs
 only the chat-OFF-during-response case plus the positive delivery/fence control.
 After that method sample passes, `--chat-boundaries` runs only the other five

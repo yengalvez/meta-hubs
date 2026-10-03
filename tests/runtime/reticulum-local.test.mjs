@@ -5,7 +5,80 @@ import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { networkProfile, assertPostmaster, runtimeCases, browserOrigin, uiSocketCommand, inspectHexArchive, writeUiSocketLog } from "./reticulum-local.mjs";
+import { networkProfile, assertPostmaster, runtimeCases, browserOrigin, uiSocketCommand, creatorSocketCommand, validateCreatorBootstrap, inspectHexArchive, writeUiSocketLog } from "./reticulum-local.mjs";
+
+test("creator socket mode and commands stay separate from the accepted UI observation", () => {
+  assert.deepEqual(runtimeCases("--profile-creator-socket"), [{ profile: "profile-creator-socket", count: 0 }]);
+  assert.deepEqual(runtimeCases("--profile-ui-socket"), [{ profile: "profile-ui-socket", count: 0 }]);
+  for (const command of ["CREATOR_ON", "CREATOR_OFF", "STOP"]) assert.equal(creatorSocketCommand(JSON.stringify({ command })), command);
+  for (const command of ["BASE", "BOTS_AI"]) assert.throws(() => creatorSocketCommand(JSON.stringify({ command })), /invalid_creator_socket_command/);
+  for (const command of ["CREATOR_ON", "CREATOR_OFF"]) assert.throws(() => uiSocketCommand(JSON.stringify({ command })), /invalid_ui_socket_command/);
+  for (const line of ['{"command":"CREATOR_ON","extra":true}', '{"command":"CREATOR_OFF","command":"STOP"}', '{"command":"CREATOR\\u005fON"}', " ".repeat(129), "[]"]) {
+    assert.throws(() => creatorSocketCommand(line), /invalid_creator_socket_command/);
+  }
+  const source = fs.readFileSync(new URL("./reticulum-local.exs", import.meta.url), "utf8");
+  assert.match(source, /if profile == "profile-creator-socket" do[\s\S]*?bots: false,[\s\S]*?ai: false,[\s\S]*?avaturn: true,[\s\S]*?avaturn_creator_url: "https:\/\/virtualmente.avaturn.dev"/);
+  assert.match(source, /else\s*Application.put_env\(:ret, Ret.ProductModules, bots: true, ai: true, avaturn: false\)/);
+});
+
+function creatorBootstrap() {
+  return {
+    schema: 1, kind: "reticulum-profile-creator-socket", mode: "creator-only",
+    ws_url: "ws://127.0.0.1:18444/socket", browser_origin: "http://127.0.0.1:18443",
+    hub_sid: "Local77", auth_token: "local.local.local", backend_pid: 123,
+    source: { root: "f".repeat(40), hubs: "d".repeat(40), cloud: "2".repeat(40) },
+    app_config_provenance: "Ret.ProductModules.project_config/committed-SQL",
+    app_config: { features: { enable_room_bots: false, enable_bot_chat: false, enable_avaturn_creator: true }, links: { avaturn_creator: "https://virtualmente.avaturn.dev" } },
+  };
+}
+
+test("creator bootstrap rejects extra flags origins types and unbound provenance", () => {
+  const value = creatorBootstrap();
+  assert.equal(validateCreatorBootstrap(value), value);
+  const invalid = [
+    v => { v.extra = true; }, v => { delete v.mode; }, v => { v.kind = "reticulum-profile-ui-socket"; },
+    v => { v.app_config_provenance = "client-fixture"; }, v => { v.backend_pid = "123"; },
+    v => { v.source.root = "unknown"; }, v => { v.source.extra = "f".repeat(40); }, v => { v.auth_token = "invalid"; },
+    v => { v.browser_origin = "https://example.com"; }, v => { v.ws_url = "wss://example.com/socket"; },
+    v => { v.ws_url = "ws://127.0.0.1:18443/socket"; }, v => { v.ws_url = "ws://127.0.0.1:65536/socket"; },
+    v => { v.app_config.links.avaturn_creator = "https://demo.avaturn.dev"; },
+    v => { v.app_config.links.avaturn_creator += "/?token=synthetic"; }, v => { v.app_config.links.extra = "https://example.com"; },
+    v => { v.app_config.features.enable_room_bots = true; }, v => { v.app_config.features.enable_bot_chat = true; },
+    v => { v.app_config.features.enable_avaturn_creator = "true"; }, v => { v.app_config.features.extra = true; },
+    v => { v.app_config.features = []; }, v => { delete v.app_config; },
+  ];
+  for (const mutate of invalid) {
+    const value = creatorBootstrap(); mutate(value);
+    assert.throws(() => validateCreatorBootstrap(value), /invalid_creator_bootstrap|exact_browser_origin_required/);
+  }
+  for (const value of [undefined, null, [], 1]) assert.throws(() => validateCreatorBootstrap(value), /invalid_creator_bootstrap/);
+});
+
+test("creator browser routes only to the real action consumer and projected public config", () => {
+  const wrapper = fs.readFileSync(new URL("./profile-ui-browser.mjs", import.meta.url), "utf8");
+  const entry = fs.readFileSync(new URL("./profile-media-browser-entry.js", import.meta.url), "utf8");
+  const fixture = fs.readFileSync(new URL("./reticulum-ui-socket.exs", import.meta.url), "utf8");
+  assert.match(wrapper, /consumerEntry\s*=\s*\(?connection\)?\s*=>\s*isCreator\(connection\)\s*\?\s*creatorEntry\s*:\s*ownFiles\[1\]/);
+  assert.match(wrapper, /auth_token,backend_pid,browser_origin,hub_sid,kind,schema,source,ws_url/);
+  assert.match(wrapper, /bootstrap_mode_path_mismatch|bootstrap_consumer_route_mismatch/);
+  assert.match(wrapper, /public-app-config.js/);
+  assert.match(wrapper, /window.APP_CONFIG = \$\{JSON.stringify\(connection.app_config\)\}/);
+  assert.match(wrapper, /frame-src 'none'/);
+  assert.match(wrapper, /creator_canary_must_not_include_editor_or_sdk/);
+  assert.match(fixture, /Repo.get_by!\(AppConfig, key: "features\|" <> key\)/);
+  assert.match(fixture, /Ret.ProductModules.project_config\(%\{"features" => features, "links" => %\{\}\}\)/);
+  assert.match(fixture, /AppConfig.set_config_value\("features\|enable_avaturn_creator", enabled\)/);
+  assert.doesNotMatch(fixture, /Endpoint\.broadcast\s*\(/);
+  assert.match(entry, /import "aframe"/);
+  assert.match(entry, /new MediaSearchStore\(\)/);
+  assert.match(entry, /MediaBrowserContainer.WrappedComponent/);
+  assert.match(entry, /capturedAdmission.current = instance.onCreateAvaturnAvatar/);
+  assert.match(entry, /capturedAdmission.current\(\)/);
+  assert.match(entry, /missingChannel\s*\.join\(10000\)/);
+  assert.match(entry, /deniedChannel\s*\.join\(10000\)/);
+  assert.match(entry, /onClick: \(\) => socket.disconnect\(\)/);
+  assert.doesNotMatch(entry, /\.trigger\s*\(|configs\.set|dispatchEvent\s*\(|\.setHistory\s*\(|\.fetch\s*\(/);
+});
 
 for (const stream of ["stdout", "stderr"]) {
   test(`UI socket ${stream} log failure remains a closed callback result`, () => {

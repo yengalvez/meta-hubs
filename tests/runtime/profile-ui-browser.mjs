@@ -1,4 +1,4 @@
-// Opt-in build/serve of one RoomSettings browser canary. No browser acceptance,
+// Opt-in build/serve of one selected real-consumer canary. No browser acceptance,
 // Build success never implies SQL/socket/browser acceptance or production.
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -8,17 +8,27 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { browserOrigin } from "./reticulum-local.mjs";
+import { browserOrigin, validateCreatorBootstrap } from "./reticulum-local.mjs";
 
 const root = fs.realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
 const hubs = path.join(root, "hubs");
 const expectedHubs = "dd176f6ed318ffc724efcd930803ca972058e782";
 const expectedCloud = "2c0b53d591d5547438812d27507bc1b3e1ae6f41";
+const creatorEntry = "tests/runtime/profile-media-browser-entry.js";
 const ownFiles = [
   "tests/runtime/profile-ui-browser.mjs",
   "tests/runtime/profile-ui-browser-entry.js",
   "tests/runtime/reticulum-local.mjs",
+  creatorEntry,
 ];
+const isCreator = (connection) =>
+  connection?.kind === "reticulum-profile-creator-socket";
+const consumerEntry = (connection) =>
+  isCreator(connection) ? creatorEntry : ownFiles[1];
+const canaryKind = (connection) =>
+  isCreator(connection)
+    ? "media-browser-local-browser-canary"
+    : "room-settings-local-browser-canary";
 const publicConfigFiles = new Set([
   "webpack.config.js",
   "babel.config.js",
@@ -125,7 +135,7 @@ function readBootstrap(file, copied = false) {
     (parent.mode & 0o777) !== 0o700 ||
     stat.size > 8192 ||
     (!copied &&
-      !/^\/private\/tmp\/ynret-local-[^/]+\/ui-socket-bootstrap\.json$/.test(
+      !/^\/private\/tmp\/ynret-local-[^/]+\/(ui|creator)-socket-bootstrap\.json$/.test(
         actual,
       ))
   )
@@ -136,7 +146,9 @@ function readBootstrap(file, copied = false) {
   } catch {
     fail("invalid_native_bootstrap");
   }
-  if (
+  if (isCreator(value)) {
+    validateCreatorBootstrap(value);
+  } else if (
     !value ||
     Object.keys(value).sort().join(",") !==
       "auth_token,backend_pid,browser_origin,hub_sid,kind,schema,source,ws_url" ||
@@ -156,6 +168,14 @@ function readBootstrap(file, copied = false) {
     Object.keys(value.source).sort().join(",") !== "cloud,hubs,root"
   )
     fail("invalid_native_bootstrap");
+  if (
+    !copied &&
+    path.basename(actual) !==
+      (isCreator(value)
+        ? "creator-socket-bootstrap.json"
+        : "ui-socket-bootstrap.json")
+  )
+    fail("bootstrap_mode_path_mismatch");
   browserOrigin(value.browser_origin);
   const ws = new URL(value.ws_url);
   if (
@@ -185,6 +205,11 @@ function connectionForReceipt(scratch, receipt) {
     value.backend_pid !== receipt.backendPid
   )
     fail("bootstrap_receipt_mismatch");
+  if (
+    receipt.kind !== canaryKind(value) ||
+    receipt.entryFile !== consumerEntry(value)
+  )
+    fail("bootstrap_consumer_route_mismatch");
   return value;
 }
 
@@ -279,7 +304,13 @@ async function buildWorker(directory) {
     );
     config.mode = "development";
     config.context = hubs;
-    config.entry = { "profile-ui-canary": path.join(root, ownFiles[1]) };
+    const entryFile = consumerEntry(connection);
+    if (
+      receipt.entryFile !== entryFile ||
+      receipt.kind !== canaryKind(connection)
+    )
+      fail("bootstrap_consumer_route_mismatch");
+    config.entry = { "profile-ui-canary": path.join(root, entryFile) };
     config.output = {
       ...config.output,
       path: path.join(scratch, "out"),
@@ -305,18 +336,30 @@ async function buildWorker(directory) {
         !(plugin instanceof HtmlWebpackPlugin) &&
         !(plugin instanceof CopyWebpackPlugin),
     );
+    let template = connection
+      ? html.replace(
+          "connect-src 'none'",
+          `connect-src ${connection.ws_url}/websocket`,
+        )
+      : html;
+    if (isCreator(connection))
+      template = template
+        .replace("Canary local RoomSettings", "Canary local MediaBrowser")
+        .replace(
+          "</head>",
+          '<script src="/public-app-config.js"></script></head>',
+        )
+        .replace(
+          "</style>",
+          ".profile-media-controls{position:fixed;bottom:12px;left:12px;right:12px;z-index:2147483647;background:#101a2d;padding:12px;border:1px solid #526078;border-radius:8px}.profile-media-controls h1{font-size:18px}.profile-media-controls p{margin:6px 0}.profile-media-controls button{margin-right:8px;padding:8px}</style>",
+        );
     config.plugins.push(
       new webpack.DefinePlugin({
         __RETICULUM_UI_BOOTSTRAP__: JSON.stringify(connection),
       }),
       new HtmlWebpackPlugin({
         filename: "index.html",
-        templateContent: connection
-          ? html.replace(
-              "connect-src 'none'",
-              `connect-src ${connection.ws_url}/websocket`,
-            )
-          : html,
+        templateContent: template,
         scriptLoading: "defer",
       }),
     );
@@ -355,13 +398,36 @@ async function buildWorker(directory) {
       .filter((file) => sourcePaths.has(file))
       .sort();
     for (const file of [
-      ownFiles[1],
+      entryFile,
       "hubs/src/utils/hub-channel.js",
       "hubs/src/utils/configs.js",
-      "hubs/src/react-components/room/RoomSettingsSidebar.js",
+      ...(isCreator(connection)
+        ? [
+            "hubs/src/react-components/media-browser.js",
+            "hubs/src/react-components/room/MediaBrowser.js",
+            "hubs/src/storage/media-search-store.js",
+          ]
+        : ["hubs/src/react-components/room/RoomSettingsSidebar.js"]),
     ]) {
       if (!compiledSourcePaths.includes(file))
         fail("real_canary_consumer_missing_from_build");
+    }
+    if (isCreator(connection)) {
+      for (const file of [
+        "hubs/src/utils/avaturn-sdk.js",
+        "hubs/src/react-components/avaturn-creator.js",
+        "hubs/src/react-components/avatar-editor.js",
+      ]) {
+        if (compiledSourcePaths.includes(file))
+          fail("creator_canary_must_not_include_editor_or_sdk");
+      }
+      // The same public page initialization configs.js consumes, before the
+      // deferred entry imports it. No client capability/config setter.
+      fs.writeFileSync(
+        path.join(scratch, "out/public-app-config.js"),
+        `window.APP_CONFIG = ${JSON.stringify(connection.app_config)};\n`,
+        { flag: "wx", mode: 0o600 },
+      );
     }
     const artifacts = artifactInventory(path.join(scratch, "out"));
     if (!artifacts.some((artifact) => artifact.path === "index.html"))
@@ -410,7 +476,8 @@ function build(bootstrapFile) {
   if (connection) json(copiedBootstrap, connection);
   // No inherited NODE_OPTIONS/NODE_PATH, dotenv, credentials, proxy or app-config endpoints.
   json(receiptFile, {
-    kind: "room-settings-local-browser-canary",
+    kind: canaryKind(connection),
+    entryFile: consumerEntry(connection),
     version: 1,
     status: "BUILD_RUNNING",
     startedAt: new Date().toISOString(),
@@ -430,11 +497,18 @@ function build(bootstrapFile) {
         }
       : {}),
     seams: connection
-      ? [
-          "local-synthetic-account-and-room",
-          "SQL-transitions-through-product-setter-not-raw-periodic",
-          "RoomSettings-submit-disabled",
-        ]
+      ? isCreator(connection)
+        ? [
+            "local-synthetic-account-and-room",
+            "real-empty-MediaSearchStore-with-unsubscribed-synthetic-history",
+            "public-config-from-product-projection-before-configs-import",
+            "action-admission-count-only-no-editor-or-import",
+          ]
+        : [
+            "local-synthetic-account-and-room",
+            "SQL-transitions-through-product-setter-not-raw-periodic",
+            "RoomSettings-submit-disabled",
+          ]
       : [
           "unconnected-Phoenix-trigger",
           "local-credential-store",
@@ -498,7 +572,10 @@ async function serve(directory, port) {
       fs.readFileSync(path.join(scratch, "build-receipt.json"), "utf8"),
     );
   if (
-    receipt.kind !== "room-settings-local-browser-canary" ||
+    ![
+      "room-settings-local-browser-canary",
+      "media-browser-local-browser-canary",
+    ].includes(receipt.kind) ||
     receipt.version !== 1 ||
     receipt.status !== "BUILD_SUCCEEDED" ||
     receipt.root !== root ||

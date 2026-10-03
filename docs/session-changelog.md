@@ -2725,3 +2725,18 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
 - Revisión adversarial focal del principal, no independiente: no hubo una
   ruta hija con modelo principal verificado disponible. Sin cambios productivos,
   copia real, build remoto, rollout ni modificación del catálogo aprobado.
+## 2026-10-03 — Consumidor MediaBrowser creator-only conectado
+
+- Harness local opt-in `--profile-creator-socket`: instalación con bots/IA
+  ausentes, SQL creator ON inicial y comandos cerrados ON/OFF/STOP. Bootstrap
+  nuevo obtiene el APP_CONFIG público de wrappers SQL y ProductModules real;
+  mantiene fuente, origen, PID, privacidad y deadlines de la ruta anterior.
+- Entrada separada monta MediaBrowserContainer/MediaBrowser/MediaSearchStore
+  reales sin búsquedas, escena, SDK, editor ni proveedor. Clicks normales y
+  callback real capturado permiten observar admisión obsoleta, GLB independiente
+  y desconexión sin setters de configuración o eventos cliente fabricados.
+- Tres controles nuevos PASS; sintaxis/parse/diff PASS, escáner del árbol
+  11.56MB sin leaks. Revisión independiente focal CLOSED sólo por fuente;
+  freeze y observación nativa/browser/cleanup todavía pendientes. No son
+  aceptación del editor, importación, seis perfiles, full o producción; la
+  entrada RoomSettings previamente aceptada se conserva sin cambios.

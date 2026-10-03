@@ -43,7 +43,7 @@ sql_http =
 
 stop_drain = profile == "sql-http-stop-drain"
 catalog = profile in ["catalog-dataset", "catalog-graph-dataset"]
-ui_socket = profile == "profile-ui-socket"
+ui_socket = profile in ["profile-ui-socket", "profile-creator-socket"]
 
 if ui_socket do
   origin = System.fetch_env!("RET_LOCAL_BROWSER_ORIGIN")
@@ -55,7 +55,16 @@ if ui_socket do
            length(Enum.uniq([port, http_port, browser_port])) == 3,
          do: raise("exact distinct owned loopback origins required")
 
-  Application.put_env(:ret, Ret.ProductModules, bots: true, ai: true, avaturn: false)
+  if profile == "profile-creator-socket" do
+    Application.put_env(:ret, Ret.ProductModules,
+      bots: false,
+      ai: false,
+      avaturn: true,
+      avaturn_creator_url: "https://virtualmente.avaturn.dev"
+    )
+  else
+    Application.put_env(:ret, Ret.ProductModules, bots: true, ai: true, avaturn: false)
+  end
 
   Application.put_env(
     :ret,
