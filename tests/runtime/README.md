@@ -192,6 +192,14 @@ Peer `STOP` must confirm its actual exit/rollback; native STOP and static
 server shutdown remain mandatory. The peer has a hard ceiling≤120s and
 releases only its own transaction on EOF/error/deadline/signals.
 
+The Avaturn-only fixture observes the existing Phoenix router-stop event.
+Require `AVATAR_RESPONSE_STATE` count0 while INSERT is held, and after
+release exactly one `AVATAR_RESPONSE_STOP`: owned account, create, status200.
+This proves controller return and adapter handoff, not browser receipt.
+Duplicate/error/unowned terminals fail the closed reader; snapshots do not
+fabricate completion. Node decoder contracts run in security/CI; actual
+Elixir projection contracts run under the existing pinned Reticulum launcher.
+
 For the separate positive case, observe real SDK Next → onSave, commit
 `CREATOR_OFF`, and reload its saved SID through the page's real API link.
 Before native STOP, run the bounded read-only peer on that SAME fixture:

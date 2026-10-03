@@ -184,6 +184,7 @@ jobs:
           node --test tests/recovery/native-checkpoint-restore.test.mjs
           node --test tests/runtime/reticulum-local.test.mjs
           node --test tests/runtime/reticulum-avaturn-save.test.mjs tests/runtime/avaturn-save-sql-boundary.test.mjs tests/runtime/avaturn-save-readback.test.mjs tests/runtime/normal-glb-readback.test.mjs
+          node --test tests/runtime/avaturn-response-stop.test.mjs
           node --test tests/runtime/bot-transport-local.test.mjs
           node --test tests/runtime/sql-http-local.test.mjs
           node --test tests/runtime/catalog-dataset.test.mjs

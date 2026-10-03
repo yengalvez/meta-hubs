@@ -47,6 +47,8 @@ defmodule Ret.LocalUiSocket do
     if creator_mode, do: apply_creator!("CREATOR_ON")
     email = "ui-socket-#{System.unique_integer([:positive])}@example.invalid"
     account = Account.find_or_create_account_for_email(email)
+    # One owned save attempt per Avaturn fixture, never a product-wide observer.
+    response_observer = if avaturn_save, do: attach_avatar_response_observer!(account.account_id)
 
     hub =
       %Hub{}
@@ -107,7 +109,56 @@ defmodule Ret.LocalUiSocket do
     File.write!(bootstrap, Jason.encode!(context) <> "\n", [:exclusive])
     File.chmod!(bootstrap, 0o600)
     emit(%{phase: "READY", bootstrap: bootstrap, pid: pid})
-    commands!(creator_mode)
+    emit_avatar_response_state(response_observer)
+    commands!(creator_mode, response_observer)
+  end
+
+  # BEGIN PURE AVATAR RESPONSE OBSERVER
+  # Router stop runs after the controller returns. :sent proves adapter handoff,
+  # never browser receipt. Inspect the real Conn only here; never retain/log it.
+  def avatar_response_projection(%{
+        route: "/api/v1/avatars", plug: RetWeb.Api.V1.AvatarController, plug_opts: :create,
+        conn: %Plug.Conn{method: "POST", request_path: "/api/v1/avatars", state: :sent, status: status,
+          private: %{phoenix_endpoint: RetWeb.Endpoint, phoenix_router: RetWeb.Router,
+            phoenix_controller: RetWeb.Api.V1.AvatarController, phoenix_action: :create}} = conn
+      }, expected_account_id) when is_integer(expected_account_id) and expected_account_id > 0 and
+        is_integer(status) and status >= 100 and status <= 599 do
+    owned = case Guardian.Plug.current_resource(conn) do
+      %Account{account_id: ^expected_account_id} -> true
+      _ -> false
+    end
+    projection = %{status: status, controller: "RetWeb.Api.V1.AvatarController", action: "create", owned_account_equal: owned}
+    if status == 200 and owned, do: projection, else: {:reject, projection}
+  end
+  def avatar_response_projection(_, _), do: :ignore
+
+  def avatar_response_stop([:phoenix, :router_dispatch, :stop], _measurements, metadata,
+        %{counter: counter, account_id: account_id}) do
+    case avatar_response_projection(metadata, account_id) do
+      :ignore -> :ok
+      # Never disguise a failed/unowned terminal as a request still in flight.
+      {:reject, projection} -> emit_avatar_response_projection(counter, projection)
+      projection -> emit_avatar_response_projection(counter, projection)
+    end
+  end
+
+  defp emit_avatar_response_projection(counter, projection) do
+    count = :atomics.add_get(counter, 1, 1)
+    emit(Map.merge(projection, %{phase: "AVATAR_RESPONSE_STOP", count: count}))
+  end
+  # END PURE AVATAR RESPONSE OBSERVER
+
+  defp attach_avatar_response_observer!(account_id) do
+    observer = %{handler_id: {:local_avaturn_response, self(), make_ref()},
+      counter: :atomics.new(1, signed: false), account_id: account_id}
+    :ok = :telemetry.attach(observer.handler_id, [:phoenix, :router_dispatch, :stop],
+      &__MODULE__.avatar_response_stop/4, observer)
+    observer
+  end
+
+  defp emit_avatar_response_state(nil), do: :ok
+  defp emit_avatar_response_state(observer) do
+    emit(%{phase: "AVATAR_RESPONSE_STATE", count: :atomics.get(observer.counter, 1)})
   end
 
   defp bind_normal_glb_storage!(work, http_port) do
@@ -180,7 +231,7 @@ defmodule Ret.LocalUiSocket do
     projected
   end
 
-  defp commands!(creator_mode) do
+  defp commands!(creator_mode, response_observer) do
     case IO.gets(:stdio, "") do
       :eof -> raise "UI observation EOF without STOP"
       {:error, _} -> raise "UI observation input failed"
@@ -193,6 +244,7 @@ defmodule Ret.LocalUiSocket do
 
         case Jason.decode!(line) do
           %{"command" => "STOP"} ->
+            if response_observer, do: :telemetry.detach(response_observer.handler_id)
             :ok = Application.stop(:ret)
             if Process.whereis(RetWeb.Endpoint), do: raise("owned Endpoint still alive")
             emit(%{phase: "STOPPED"})
@@ -201,12 +253,13 @@ defmodule Ret.LocalUiSocket do
           %{"command" => profile} when not creator_mode and profile in ["BASE", "BOTS_AI"] ->
             apply_profile!(profile)
             emit(%{phase: "SQL_APPLIED", profile: profile})
-            commands!(creator_mode)
+            commands!(creator_mode, response_observer)
 
           %{"command" => profile} when creator_mode and profile in ["CREATOR_OFF", "CREATOR_ON"] ->
             apply_creator!(profile)
             emit(%{phase: "SQL_APPLIED", profile: profile})
-            commands!(creator_mode)
+            emit_avatar_response_state(response_observer)
+            commands!(creator_mode, response_observer)
         end
     end
   end

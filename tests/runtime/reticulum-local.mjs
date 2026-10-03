@@ -36,6 +36,17 @@ export function creatorSocketCommand(line) {
   return JSON.parse(line).command;
 }
 
+// Pure closed decoder: snapshots never manufacture a terminal response.
+export function avaturnResponseEvent(event, previousCount = 0) {
+  if (![0, 1].includes(previousCount) || !event || typeof event !== "object" || Array.isArray(event)) reject("invalid_avaturn_response_marker");
+  if (event.phase === "AVATAR_RESPONSE_STATE" && Object.keys(event).sort().join(",") === "count,phase" && event.count === previousCount)
+    return previousCount;
+  if (event.phase === "AVATAR_RESPONSE_STOP" && Object.keys(event).sort().join(",") === "action,controller,count,owned_account_equal,phase,status" &&
+      previousCount === 0 && event.count === 1 && event.status === 200 && event.controller === "RetWeb.Api.V1.AvatarController" &&
+      event.action === "create" && event.owned_account_equal === true) return 1;
+  reject("invalid_avaturn_response_marker");
+}
+
 export function compiledCanarySourcePaths(compilation, root, sourcePaths) {
   if (!compilation?.modules || typeof compilation.modules[Symbol.iterator] !== "function" ||
       !path.isAbsolute(root) || !(sourcePaths instanceof Set)) reject("invalid_canary_module_graph");
@@ -163,7 +174,7 @@ async function observeUiSocket({ root, work, log, env, application, pgPort, mix 
   const profiles = creatorMode ? ["CREATOR_OFF", "CREATOR_ON"] : ["BASE", "BOTS_AI"];
   const child = spawn("/usr/bin/sandbox-exec", ["-p", networkProfile(pgPort), mix, "run", "--no-start", "--no-compile",
     path.join(root, "tests/runtime/reticulum-local.exs")], { cwd: application, env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
-  let ready = false, stopped = false, stopRequested = false, backendPid, failure, input = "", output = "";
+  let ready = false, stopped = false, stopRequested = false, backendPid, failure, input = "", output = "", avatarResponseCount = 0;
   const fail = code => {
     if (failure) return;
     failure = code;
@@ -207,6 +218,8 @@ async function observeUiSocket({ root, work, log, env, application, pgPort, mix 
           deadline = setTimeout(() => fail("ui_socket_observation_deadline"), 300000);
         } else if (event.phase === "SQL_APPLIED" && Object.keys(event).sort().join(",") === "phase,profile" && profiles.includes(event.profile) && ready) {
           // No browser assertion is inferred from committed wrappers.
+        } else if (["AVATAR_RESPONSE_STATE", "AVATAR_RESPONSE_STOP"].includes(event.phase) && avaturnSave && ready && !stopRequested) {
+          avatarResponseCount = avaturnResponseEvent(event, avatarResponseCount);
         } else if (event.phase === "STOPPED" && Object.keys(event).join(",") === "phase" && stopRequested) stopped = true;
         else reject("invalid_ui_socket_marker");
         process.stdout.write(`RET_UI_SOCKET:${JSON.stringify(event)}\n`);
