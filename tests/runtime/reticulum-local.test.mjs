@@ -120,6 +120,15 @@ test("creator browser routes only to the real action consumer and projected publ
   assert.doesNotMatch(entry, /\.trigger\s*\(|configs\.set|dispatchEvent\s*\(|\.setHistory\s*\(|\.fetch\s*\(/);
 });
 
+test("creator build keeps backend public config through the normal production mode", () => {
+  const wrapper = fs.readFileSync(new URL("./profile-ui-browser.mjs", import.meta.url), "utf8");
+  assert.equal(/const buildMode = isCreator\(connection\) \? "production" : "development"/.test(wrapper), true, "creator-only production factory required");
+  assert.equal(/require\(path.join\(hubs, "webpack.config.js"\)\)\(\s*\{\},\s*\{ mode: buildMode \}/.test(wrapper), true, "factory and webpack mode must agree");
+  assert.equal(/config.mode = buildMode/.test(wrapper), true, "compiled mode must agree");
+  assert.doesNotMatch(wrapper, /loadAppConfig:\s*true|localDev:\s*true|fetchAppConfigAndEnvironmentVars\(/);
+  assert.match(wrapper, /window.APP_CONFIG = \$\{JSON.stringify\(connection.app_config\)\}/);
+});
+
 for (const stream of ["stdout", "stderr"]) {
   test(`UI socket ${stream} log failure remains a closed callback result`, () => {
     const original = fs.writeSync;

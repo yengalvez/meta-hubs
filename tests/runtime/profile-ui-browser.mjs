@@ -298,11 +298,15 @@ async function buildWorker(directory) {
     const webpack = require("webpack"),
       HtmlWebpackPlugin = require("html-webpack-plugin"),
       CopyWebpackPlugin = require("copy-webpack-plugin");
+    // Creator pages receive APP_CONFIG from the backend like a published page.
+    // The development factory injects defaults and would overwrite that script.
+    // Keep the already accepted RoomSettings canary on its original mode.
+    const buildMode = isCreator(connection) ? "production" : "development";
     const config = await require(path.join(hubs, "webpack.config.js"))(
       {},
-      { mode: "development" },
+      { mode: buildMode },
     );
-    config.mode = "development";
+    config.mode = buildMode;
     config.context = hubs;
     const entryFile = consumerEntry(connection);
     if (

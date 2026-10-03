@@ -125,6 +125,10 @@ The closed creator bootstrap selects ONLY `profile-media-browser-entry.js`.
 Minimal public APP_CONFIG comes from committed SQL wrappers and actual
 `Ret.ProductModules.project_config`, served as an owned script before configs
 imports. It never adds URLs to PubSub or uses a client flag/config setter.
+This route uses the normal production Webpack mode: development defaults
+would overwrite the backend script (including its creator URL). The existing
+RoomSettings route keeps its development mode. No remote app-config load or
+manual DefinePlugin APP_CONFIG is introduced.
 The real MediaBrowser class, MediaBrowser layout, MediaSearchStore and normal
 A-Frame library are loaded; no scene/editor or component replacement is used.
 Synthetic history is deliberately not subscribed to searches: typing preserves

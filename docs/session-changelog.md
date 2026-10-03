@@ -2747,3 +2747,9 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   con tres regresiones dirigidas. El caso de sufijos reproduce el hallazgo
   antes del arreglo y pasa después; recheck focal independiente cerrado.
   La observación fallida se detuvo normalmente y PG/BEAM propios se limpiaron.
+- El build siguiente pasa pero el navegador revela ficha Avaturn ausente
+  aunque el evento real es ON: la factory development inyecta APP_CONFIG por
+  defecto y configs sobrescribe la proyección backend. Sólo creator usa ahora
+  factory y compilación production; RoomSettings conserva development.
+  Sin fetch/config setter/SDK/editor nuevos. Regresión de ruta RED→PASS y
+  diagnóstico independiente por fuente; aceptación browser aún pendiente.
