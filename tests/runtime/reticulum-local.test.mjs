@@ -6,6 +6,30 @@ import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { networkProfile, assertPostmaster, runtimeCases } from "./reticulum-local.mjs";
 
+test("avaturn runtime selects only the five new native capability cases", () => {
+  assert.deepEqual(runtimeCases("--avaturn-runtime"), [{ profile: "avaturn-runtime", count: 5 }]);
+  assert.throws(() => runtimeCases("--avaturn"), /explicit_native_target_required/);
+  const source = fs.readFileSync(new URL("./reticulum-local.exs", import.meta.url), "utf8");
+  const branch = source.match(/avaturn_runtime ->([\s\S]*?)\n    chat_focus ->/);
+  assert.ok(branch, "dedicated capability-only selection is required");
+  for (const file of ["test/ret/product_modules_test.exs", "test/ret/app_config_test.exs", "test/ret_web/channels/hub_channel_test.exs"]) {
+    assert.ok(branch[1].includes(`Code.require_file("${file}")`));
+  }
+  assert.match(branch[1], /length\(selected\) != 5/);
+  assert.match(branch[1], /ExUnit.configure\(exclude: \[:test\], include: \[:avaturn_runtime_capabilities\]\)/);
+  assert.match(branch[1], /\{5, length\(tests\), length\(tests\) - 5\}/);
+  assert.doesNotMatch(branch[1], /reticulum-profiles|bot_chat_presence/);
+});
+
+test("historical five native tests exclude only the new avaturn tag", () => {
+  const source = fs.readFileSync(new URL("./reticulum-local.exs", import.meta.url), "utf8");
+  const branch = source.match(/profile == "existing-tests" ->([\s\S]*?)\n    avaturn_runtime ->/);
+  assert.ok(branch, "preserved historical branch is required");
+  assert.match(branch[1], /ExUnit.configure\(exclude: \[:avaturn_runtime_capabilities\]\)/);
+  assert.match(branch[1], /\{5, 7, 2\}/);
+  assert.match(source, /profile == "existing-tests" or avaturn_runtime or chat_focus/);
+});
+
 test("config-cache canary selects only its positive and immediate OFF cases", () => {
   assert.deepEqual(runtimeCases("--config-cache-canary"), [{ profile: "config-cache-canary", count: 2 }]);
   assert.deepEqual(runtimeCases("--config-cache-boundaries"), [{ profile: "config-cache-boundaries", count: 4 }]);

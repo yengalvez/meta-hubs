@@ -95,12 +95,109 @@ function childMessages(child) {
   };
 }
 
+export function periodicCases(profile) {
+  if (profile !== "sql-http-periodic") fail("explicit_periodic_profile_required");
+  return ["bots-off-periodic"];
+}
+
+async function preparePeriodicWindow(sendBot, get) {
+  const initial = await get("/health"); assert.equal(initial.status, 200);
+  assert.equal(initial.body.authoritative_snapshot_seen, false);
+  assert.equal(initial.body.authoritative_snapshot_valid, false);
+  assert.equal(initial.body.runner_processes, 0);
+  assert.deepEqual(initial.body.modules, { bots_enabled: false, ai_enabled: false });
+  const timer = await sendBot("start-periodic");
+  assert.equal(timer.real_product_timer, true); assert.equal(timer.interval_ms, 30_000);
+  const first = performance.now();
+  let on;
+  // These real-time polls only observe HTTP. They never call the sync callback
+  // or substitute for the product's 30s interval.
+  while (performance.now() - first < 35_000) {
+    const response = await get("/health"); assert.equal(response.status, 200);
+    if (response.body.authoritative_snapshot_seen && response.body.authoritative_snapshot_valid) {
+      on = response.body; break;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.ok(on, "initial automatic authoritative GET required");
+  assert.deepEqual(on.modules, { bots_enabled: true, ai_enabled: true });
+  assert.equal(on.rooms, 1); assert.equal(on.runner_processes, 0);
+  const pending = await get("/ready"); assert.equal(pending.status, 503);
+  const phaseStart = performance.now();
+  while (performance.now() - phaseStart < 28_000) {
+    const response = await get("/health"); assert.equal(response.status, 200);
+    const age = response.body.authoritative_snapshot_age_ms;
+    assert.deepEqual(response.body.modules, { bots_enabled: true, ai_enabled: true });
+    assert.equal(response.body.authoritative_snapshot_valid, true);
+    if (age >= 25_000) {
+      assert.ok(age < 28_000, "request must start near the next real product tick");
+      return response.body;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  fail("periodic_request_window_not_observed");
+}
+
+async function observePeriodicOff({ sendBot, get, current, runnerPid, pidAbsent, commitBefore, commitAfter }) {
+  let off, capabilitiesAt;
+  const began = performance.now();
+  while (performance.now() - began < 12_000) {
+    const response = await get("/health"); assert.equal(response.status, 200);
+    if (response.body.modules.bots_enabled === false && response.body.modules.ai_enabled === false) {
+      off = response.body; capabilitiesAt = performance.now(); break;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.ok(off, "next automatic authoritative GET must observe SQL OFF");
+  assert.equal(off.authoritative_snapshot_valid, true);
+  assert.ok(off.authoritative_snapshot_age_ms < 2000);
+  assert.equal(off.runner_processes, 1);
+  const stopping = await sendBot("stopping-runner");
+  assert.equal(stopping.runner_pid, runnerPid); assert.equal(stopping.alive, true);
+  assert.equal(stopping.lifecycle, "stopping"); assert.equal(stopping.removed, false);
+  assert.equal(stopping.sigterm_count, 1); assert.equal(pidAbsent(runnerPid), false);
+  const draining = await get("/ready"), readinessAt = performance.now();
+  assert.equal(draining.status, 503); assert.equal(draining.body.ok, false);
+  assert.equal(draining.body.stopping_hubs.length, 1); assert.equal(draining.body.process_hubs.length, 1);
+  await bounded(current.closed.promise, "periodic_old_model_socket_not_cancelled", 2000);
+  assert.equal(current.unfinished, true); assert.equal(current.socket.destroyed, true);
+  assert.ok(Number.isFinite(current.requestBeforeReadyAt));
+  // This driver's ACK admits the chat only afterwards, before moderation.
+  // A closure under 14s from that conservative ancla cannot be the unchanged
+  // 15s product deadline. Arrival of the model POST is a separate metric.
+  assert.ok(current.closedAt - current.requestBeforeReadyAt < 14_000, "socket abort precedes the unchanged 15s chat budget");
+  assert.deepEqual(current.calls, ["/v1/moderations", "/v1/responses"]);
+  const exited = await sendBot("release-runner-exit");
+  assert.deepEqual(exited.exit, { code: 0, signal: null }); assert.equal(exited.lifecycle_finished, true);
+  assert.equal(exited.real_pid_absent, true); assert.equal(exited.sigterm_count, 1);
+  assert.equal(pidAbsent(runnerPid), true);
+  const after = await get("/health"); assert.equal(after.status, 200);
+  assert.equal(after.body.runner_processes, 0); assert.equal(after.body.active_rooms, 0);
+  assert.deepEqual(after.body.modules, { bots_enabled: false, ai_enabled: false });
+  const drained = await get("/ready"); assert.equal(drained.status, 200);
+  assert.equal(drained.body.process_hubs.length, 0); assert.equal(drained.body.stopping_hubs.length, 0);
+  // Reticulum commits after model-held ACK and before transition is received.
+  // Both bounds use this driver's monotonic clock; no cross-process clock
+  // subtraction and no claim that observation equals the precise COMMIT time.
+  const sinceCommit = observed => ({ min_ms: Math.max(0, Math.floor(observed - commitAfter)),
+    max_ms: Math.max(0, Math.ceil(observed - commitBefore)) });
+  return { automatic_periodic_sync: true, explicit_sync_calls: 0, product_interval_ms: 30_000,
+    commit_bracket_ms: Math.ceil(commitAfter - commitBefore),
+    commit_to_capabilities_off: sinceCommit(capabilitiesAt), commit_to_readiness_503: sinceCommit(readinessAt),
+    commit_to_socket_close: sinceCommit(current.closedAt), socket_unfinished_before_cleanup: true,
+    request_before_ready_to_socket_close_ms: Math.round(current.closedAt - current.requestBeforeReadyAt),
+    model_request_to_socket_close_ms: Math.round(current.closedAt - current.openedAt),
+    real_sigterm: true, real_exit_pid_absent: true, lifecycle_removed: true };
+}
+
 export async function runSqlHttpCanary({ root, work, log, env, application, pgPort, mix, botCache }) {
   const profile = env.RET_LOCAL_PROFILE;
   if (profile === "sql-http-stop-drain") {
     return runSqlHttpStopDrain({ root, work, log, env, application, pgPort, mix, botCache });
   }
-  const expectedCases = { "sql-http-canary": ["positive", "chat-off"], "sql-http-reentry": ["chat-off-on"] }[profile];
+  const periodic = profile === "sql-http-periodic";
+  const expectedCases = periodic ? periodicCases(profile)
+    : { "sql-http-canary": ["positive", "chat-off"], "sql-http-reentry": ["chat-off-on"] }[profile];
   assert.ok(expectedCases, "explicit integrated profile required");
   assert.ok(work.startsWith("/private/tmp/ynret-local-"));
   assert.equal(fs.statSync(work).mode & 0o777, 0o700);
@@ -131,9 +228,18 @@ export async function runSqlHttpCanary({ root, work, log, env, application, pgPo
   assert.ok(fs.existsSync(path.join(botApplication, "app.js")));
   fs.cpSync(path.join(cache, "node_modules"), path.join(botApplication, "node_modules"), { recursive: true, dereference: true });
   fs.copyFileSync(path.join(root, "tests/runtime/sql-http-child.cjs"), path.join(work, "sql-http-child.cjs"));
+  if (periodic) {
+    const fixture = path.join(work, "stop-drain-child.cjs");
+    fs.copyFileSync(path.join(root, "tests/runtime/stop-drain-child.cjs"), fixture); fs.chmodSync(fixture, 0o600);
+    fs.chmodSync(path.join(work, "sql-http-child.cjs"), 0o600);
+  }
 
-  let current, bot, beam, botExit, beamExit, sendBot;
+  let current, bot, beam, botExit, beamExit, sendBot, runnerPid;
   let cleanup = false, failure;
+  const pidAbsent = pid => {
+    try { process.kill(pid, 0); return false; }
+    catch (error) { if (error.code === "ESRCH") return true; throw error; }
+  };
   const ownedExit = child => {
     const result = new Promise((resolve, reject) => {
       child.once("error", reject); child.once("close", (code, signal) => resolve({ code, signal }));
@@ -152,7 +258,7 @@ export async function runSqlHttpCanary({ root, work, log, env, application, pgPo
       current.calls.push(req.url);
       if (req.url === "/v1/responses") {
         assert.equal(current.calls.length, 2);
-        current.response = res; current.socket = req.socket;
+        current.response = res; current.socket = req.socket; current.openedAt = performance.now();
         const active = current;
         res.once("close", () => {
           active.unfinished = !res.writableFinished; active.closedAt = performance.now(); active.closed.resolve();
@@ -178,6 +284,7 @@ export async function runSqlHttpCanary({ root, work, log, env, application, pgPo
       OPENAI_ENDPOINT: `http://127.0.0.1:${providerPort}/v1/responses`,
       OPENAI_MODERATION_ENDPOINT: `http://127.0.0.1:${providerPort}/v1/moderations`
     };
+    if (periodic) botEnv.RET_LOCAL_PERIODIC = "true";
     bot = spawn("/usr/bin/sandbox-exec", ["-p", integrationNetworkProfile([providerPort, retPort]), process.execPath,
       path.join(work, "sql-http-child.cjs"), String(botPort), String(deniedPort)], {
       cwd: work, env: botEnv, stdio: ["ignore", log, log, "ipc"]
@@ -190,6 +297,10 @@ export async function runSqlHttpCanary({ root, work, log, env, application, pgPo
     const healthModules = async () => {
       const response = await fetch(`http://127.0.0.1:${botPort}/health`, { signal: AbortSignal.timeout(2000) });
       assert.equal(response.status, 200); return (await response.json()).modules;
+    };
+    const get = async route => {
+      const response = await fetch(`http://127.0.0.1:${botPort}${route}`, { signal: AbortSignal.timeout(2000) });
+      return { status: response.status, body: await response.json() };
     };
     const beamEnv = { ...env, RET_LOCAL_HTTP_PORT: String(retPort), RET_LOCAL_BOT_PORT: String(botPort),
       RET_LOCAL_BOT_KEY: key, RET_LOCAL_DENIED_PORT: String(deniedPort) };
@@ -207,24 +318,45 @@ export async function runSqlHttpCanary({ root, work, log, env, application, pgPo
       assert.ok(/^[A-Za-z0-9_-]{1,64}$/.test(setup.hub_sid));
       assert.equal(setup.real_http_client, true); assert.equal(setup.denied, true);
       current = { calls: [], held: deferred(), closed: deferred(), response: null };
-      const seed = await sendBot("seed", { hub_sid: setup.hub_sid, bots: setup.bots });
-      assert.equal(seed.synthetic_readiness, true);
-      const on = await sendBot("sync");
-      assert.equal(on.authoritative, true); assert.equal(on.count, 1);
+      if (periodic) {
+        await preparePeriodicWindow(sendBot, get);
+        const seed = await sendBot("seed-stop-runner", { hub_sid: setup.hub_sid, bots: setup.bots });
+        runnerPid = seed.runner_pid;
+        assert.equal(seed.real_handle, true); assert.equal(seed.synthetic_runner_readiness, true);
+        assert.ok(Number.isInteger(runnerPid) && runnerPid > 1); assert.equal(pidAbsent(runnerPid), false);
+      } else {
+        const seed = await sendBot("seed", { hub_sid: setup.hub_sid, bots: setup.bots });
+        assert.equal(seed.synthetic_readiness, true);
+        const on = await sendBot("sync");
+        assert.equal(on.authoritative, true); assert.equal(on.count, 1);
+      }
       const ready = await fetch(`http://127.0.0.1:${botPort}/ready`, { signal: AbortSignal.timeout(2000) });
       assert.equal(ready.status, 200); assert.equal((await ready.json()).ok, true);
       assert.deepEqual(await healthModules(), { bots_enabled: true, ai_enabled: true });
+      if (periodic) current.requestBeforeReadyAt = performance.now();
       acknowledge("ready");
       const begun = await waitStage("request-started", testCase);
       assert.equal(begun.distinct_sql_owners, true);
       await bounded(current.held.promise, "actual_provider_model_not_reached");
       assert.deepEqual(current.calls, ["/v1/moderations", "/v1/responses"]);
       assert.equal(current.response.writableFinished, false); assert.equal(current.socket.destroyed, false);
+      if (periodic) {
+        const phase = await get("/health"); assert.equal(phase.status, 200);
+        assert.ok(phase.body.authoritative_snapshot_age_ms >= 25_000 && phase.body.authoritative_snapshot_age_ms < 28_000,
+          "COMMIT must fit before the next tick and within the unchanged chat budget");
+      }
+      const commitBefore = periodic ? performance.now() : undefined;
       acknowledge("model-held");
       const transition = await waitStage("transition", testCase);
+      const commitAfter = periodic ? performance.now() : undefined;
       assert.equal(transition.request_pending, true);
-      let elapsed;
-      if (testCase === "chat-off") {
+      let elapsed, periodicReceipt;
+      if (periodic) {
+        assert.equal(transition.sql_committed_bots_off, true); assert.equal(transition.three_distinct_sql_owners, true);
+        assert.equal(transition.raw_cache_still_on, true);
+        periodicReceipt = await observePeriodicOff({ sendBot, get, current, runnerPid, pidAbsent, commitBefore, commitAfter });
+        acknowledge("off-periodic-observed");
+      } else if (testCase === "chat-off") {
         assert.equal(transition.sql_committed_off, true); assert.equal(transition.three_distinct_sql_owners, true);
         assert.equal(transition.raw_cache_still_on, true);
         const before = performance.now(), off = await sendBot("sync");
@@ -255,39 +387,76 @@ export async function runSqlHttpCanary({ root, work, log, env, application, pgPo
       }
       const verified = await waitStage("verified", testCase);
       assert.equal(verified.no_command, true); assert.equal(verified.no_old_reply, testCase !== "positive");
-      assert.equal(verified.status, testCase === "positive" ? 200 : testCase === "chat-off" ? 502 : 403);
-      assert.deepEqual(current.calls, testCase === "chat-off"
+      if (periodic) assert.equal(verified.raw_cache_still_on_after_periodic_get, true);
+      assert.equal(verified.status, testCase === "positive" ? 200 : (testCase === "chat-off" || periodic) ? 502 : 403);
+      assert.deepEqual(current.calls, testCase === "chat-off" || periodic
         ? ["/v1/moderations", "/v1/responses"] : ["/v1/moderations", "/v1/responses", "/v1/moderations"]);
       assert.equal(deniedConnections, 0);
       results.push({ test_case: testCase, outcome: "PASS", actual_provider_phases: current.calls.length,
+        ...(periodicReceipt || {}),
         ...(elapsed === undefined ? {} : { snapshot_to_socket_close_ms: elapsed, socket_unfinished_before_cleanup: true }) });
       acknowledge("verified");
     }
     assert.deepEqual([...seen].sort(), [...expectedCases].sort());
     assert.deepEqual(await bounded(beamExit, "owned_beam_exit_timeout", 10000), { code: 0, signal: null });
     assert.equal(fs.readFileSync(path.join(application, `local-result-${profile}.txt`), "utf8"), `${expectedCases.length}/${expectedCases.length}\n`);
-    await sendBot("shutdown");
+    const shutdown = await sendBot("shutdown");
+    if (periodic) assert.equal(shutdown.product_timer_closed, true);
     assert.deepEqual(await bounded(botExit, "owned_bot_exit_timeout"), { code: 0, signal: null });
     cleanup = true;
   } catch (error) {
     failure = error; fs.writeSync(log, String(error.stack) + "\n"); throw error;
   } finally {
-    for (const [child, exit] of [[beam, beamExit], [bot, botExit]]) {
-      if (child && child.exitCode === null && child.signalCode === null) {
-        child.stdin?.end(); child.kill("SIGTERM");
-        try { await bounded(exit, "owned_child_cleanup_timeout", 3000); }
-        catch { child.kill("SIGKILL"); await bounded(exit, "owned_child_forced_cleanup_timeout", 3000); }
+    if (periodic) {
+      await finishStopDrainCleanup({
+        actorCleanups: [[beam, beamExit], [bot, botExit]].map(([child, exit]) => async () => {
+          if (child && child.exitCode === null && child.signalCode === null) {
+            child.stdin?.end(); child.kill("SIGTERM");
+            try { await bounded(exit, "periodic_actor_cleanup_timeout", 3000); }
+            catch { child.kill("SIGKILL"); await bounded(exit, "periodic_actor_forced_cleanup_timeout", 3000); }
+          }
+        }),
+        verifyRunnerAbsent: async () => {
+          if (!runnerPid) return;
+          const before = performance.now();
+          while (!pidAbsent(runnerPid) && performance.now() - before < 3000) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+          assert.equal(pidAbsent(runnerPid), true, "periodic owned runner absent after actor cleanup");
+        },
+        releaseSockets: () => { for (const socket of sockets) socket.destroy(); },
+        closeListener: async () => {
+          let first;
+          for (const server of [provider, denied]) {
+            try {
+              if (server.listening) await bounded(new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())),
+                "periodic_listener_cleanup_timeout", 2000);
+            } catch (error) { first ??= error; }
+          }
+          if (first) throw first;
+          assert.equal(provider.listening, false); assert.equal(denied.listening, false);
+          if (!cleanup) fail("periodic_cleanup_not_verified");
+        }
+      }, failure);
+    } else {
+      for (const [child, exit] of [[beam, beamExit], [bot, botExit]]) {
+        if (child && child.exitCode === null && child.signalCode === null) {
+          child.stdin?.end(); child.kill("SIGTERM");
+          try { await bounded(exit, "owned_child_cleanup_timeout", 3000); }
+          catch { child.kill("SIGKILL"); await bounded(exit, "owned_child_forced_cleanup_timeout", 3000); }
+        }
       }
+      for (const socket of sockets) socket.destroy();
+      for (const server of [provider, denied]) {
+        if (server.listening) await bounded(new Promise(resolve => server.close(resolve)), "owned_listener_cleanup_timeout", 2000);
+      }
+      cleanup &&= !provider.listening && !denied.listening;
+      if (!cleanup && !failure) fail("sql_http_cleanup_not_verified");
     }
-    for (const socket of sockets) socket.destroy();
-    for (const server of [provider, denied]) {
-      if (server.listening) await bounded(new Promise(resolve => server.close(resolve)), "owned_listener_cleanup_timeout", 2000);
-    }
-    cleanup &&= !provider.listening && !denied.listening;
-    if (!cleanup && !failure) fail("sql_http_cleanup_not_verified");
   }
   const sourceAfter = snapshot(); assert.deepEqual(sourceAfter, sourceBefore);
-  return { scope: "actual-SQL-HTTP-synthetic-provider-readiness-ConnTest-not-browser-Kubernetes",
+  return { scope: periodic ? "actual-SQL-product-periodic-HTTP-owned-child-synthetic-provider-readiness-ConnTest-not-autostart-Kubernetes"
+    : "actual-SQL-HTTP-synthetic-provider-readiness-ConnTest-not-browser-Kubernetes",
     results, source_before: sourceBefore, source_after: sourceAfter, source_unchanged_clean: true,
     denied_connections: deniedConnections, cleanup, elapsed_ms: Math.round(performance.now() - began) };
 }

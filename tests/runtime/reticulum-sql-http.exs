@@ -9,7 +9,12 @@ defmodule Ret.LocalSqlHttpTest do
   @endpoint RetWeb.Endpoint
 
   setup do
-    assert System.fetch_env!("RET_LOCAL_PROFILE") in ["sql-http-canary", "sql-http-reentry"]
+    assert System.fetch_env!("RET_LOCAL_PROFILE") in [
+             "sql-http-canary",
+             "sql-http-reentry",
+             "sql-http-periodic"
+           ]
+
     :ok = Sandbox.checkout(Repo, sandbox: false)
     config = Application.fetch_env!(:ret, AppConfig)
     Application.put_env(:ret, AppConfig, Keyword.put(config, :caching?, true))
@@ -29,18 +34,28 @@ defmodule Ret.LocalSqlHttpTest do
     {:ok, warm: warm}
   end
 
-  if System.fetch_env!("RET_LOCAL_PROFILE") == "sql-http-reentry" do
-    test("unobserved committed SQL OFF ON rejects an old real HTTP reply", %{warm: warm},
-      do: run_case("chat-off-on", warm)
-    )
-  else
-    test("real SQL HTTP control completes a held provider reply", %{warm: warm},
-      do: run_case("positive", warm)
-    )
+  case System.fetch_env!("RET_LOCAL_PROFILE") do
+    "sql-http-periodic" ->
+      @tag timeout: 90_000
+      test(
+        "committed bots OFF reaches Node only through its real periodic HTTP sync",
+        %{warm: warm},
+        do: run_case("bots-off-periodic", warm)
+      )
 
-    test("committed SQL OFF cancels real held provider HTTP before cleanup", %{warm: warm},
-      do: run_case("chat-off", warm)
-    )
+    "sql-http-reentry" ->
+      test("unobserved committed SQL OFF ON rejects an old real HTTP reply", %{warm: warm},
+        do: run_case("chat-off-on", warm)
+      )
+
+    _ ->
+      test("real SQL HTTP control completes a held provider reply", %{warm: warm},
+        do: run_case("positive", warm)
+      )
+
+      test("committed SQL OFF cancels real held provider HTTP before cleanup", %{warm: warm},
+        do: run_case("chat-off", warm)
+      )
   end
 
   defp run_case(kind, warm) do
@@ -100,7 +115,9 @@ defmodule Ret.LocalSqlHttpTest do
       denied: true
     })
 
-    handshake("ready")
+    # Only this new case waits for two real 30s timer phases. Existing native
+    # handshakes and the product's 15s/18s chat deadlines remain unchanged.
+    if kind == "bots-off-periodic", do: handshake("ready", 60_000), else: handshake("ready")
 
     request =
       own_sql_task(fn ->
@@ -121,38 +138,69 @@ defmodule Ret.LocalSqlHttpTest do
       handshake("model-held")
       assert Task.yield(request, 0) == nil
 
-      if kind == "chat-off" do
+      if kind in ["chat-off", "bots-off-periodic"] do
+        key =
+          if kind == "bots-off-periodic",
+            do: "features|enable_room_bots",
+            else: "features|enable_bot_chat"
+
         transition =
           own_sql_task(fn ->
             pid = sql_pid()
-            AppConfig.set_config_value("features|enable_bot_chat", false)
-            {pid, Repo.get_by!(AppConfig, key: "features|enable_bot_chat").value}
+
+            if kind == "bots-off-periodic" do
+              # The earlier entry expired normally while waiting for ticks.
+              # Model a late ON fill BEFORE COMMIT with the unchanged 10s TTL.
+              assert warm["features"]["enable_room_bots"] === true
+              assert warm["features"]["enable_bot_chat"] === true
+              assert {:ok, true} = Cachex.put(:app_config, "", warm)
+              assert {:ok, ^warm} = Cachex.get(:app_config, "")
+            end
+
+            AppConfig.set_config_value(key, false)
+            {pid, Repo.get_by!(AppConfig, key: key).value}
           end)
 
         try do
           {off_sql, value} = Task.await(transition, 2000)
           assert value == %{"value" => false}
           assert length(Enum.uniq([owner_sql, request_sql, off_sql])) == 3
-          assert Repo.get_by!(AppConfig, key: "features|enable_bot_chat").value == value
+          assert Repo.get_by!(AppConfig, key: key).value == value
           refute Ret.ProductModules.ai_enabled?()
+          if kind == "bots-off-periodic", do: refute(Ret.ProductModules.bots_enabled?())
           assert BotChatPresence.revision() > revision
           assert {:ok, ^warm} = Cachex.get(:app_config, "")
 
+          bots_enabled = kind != "bots-off-periodic"
+
           assert_receive %Phoenix.Socket.Broadcast{
             event: "product_modules_changed",
-            payload: %{bots_enabled: true, ai_enabled: false}
+            payload: %{bots_enabled: ^bots_enabled, ai_enabled: false}
           }
 
           assert Task.yield(request, 0) == nil
 
-          signal(kind, "transition", %{
+          data = %{
             sql_committed_off: true,
             three_distinct_sql_owners: true,
             raw_cache_still_on: true,
             request_pending: true
-          })
+          }
 
-          handshake("off-synced")
+          data =
+            if kind == "bots-off-periodic",
+              do: Map.put(data, :sql_committed_bots_off, true),
+              else: data
+
+          signal(kind, "transition", data)
+
+          if kind == "bots-off-periodic",
+            do: handshake("off-periodic-observed", 15_000),
+            else: handshake("off-synced")
+
+          if kind == "bots-off-periodic" do
+            assert {:ok, ^warm} = Cachex.get(:app_config, "")
+          end
         after
           stop_task(transition)
         end
@@ -228,11 +276,18 @@ defmodule Ret.LocalSqlHttpTest do
 
       refute_receive %Phoenix.Socket.Broadcast{event: "message"}, 100
 
-      signal(kind, "verified", %{
+      data = %{
         status: conn.status,
         no_command: true,
         no_old_reply: kind != "positive"
-      })
+      }
+
+      data =
+        if kind == "bots-off-periodic",
+          do: Map.put(data, :raw_cache_still_on_after_periodic_get, true),
+          else: data
+
+      signal(kind, "verified", data)
 
       handshake("verified")
     after
@@ -252,11 +307,11 @@ defmodule Ret.LocalSqlHttpTest do
     )
   end
 
-  defp handshake(stage) do
+  defp handshake(stage, timeout \\ 5000) do
     task = Task.async(fn -> IO.gets("") end)
 
     try do
-      assert Task.await(task, 5000) == "OWNED_SQL_HTTP:#{stage}\n"
+      assert Task.await(task, timeout) == "OWNED_SQL_HTTP:#{stage}\n"
     after
       stop_task(task)
     end

@@ -25,6 +25,40 @@ OS/BEAM starts: BASE, BASE+Avaturn, bots, bots+Avaturn, bots+IA, full.
 Do not rerun the five existing tests separately once the method is accepted.
 The profile chain stops at its first failure; no parallel server/auto-retry.
 
+For the distinct live creator-capability message, use `--avaturn-runtime`:
+it selects exactly five new tagged cases from ProductModules, AppConfig and
+HubChannel, with zero failures/skips and exact excluded counts. It exercises
+current SQL flags, the initial channel snapshot and updates, not a browser or
+provider. On this host use the matching existing dependency cache:
+
+```sh
+node tests/runtime/reticulum-local.mjs --avaturn-runtime \
+  --pg-bin /opt/homebrew/opt/postgresql@14/bin \
+  --cache-reticulum /Users/yengalvez/.codex/worktrees/reliability-20261001/YenHubs/hubs-cloud/community-edition/services/reticulum
+```
+
+Do not replay `--run` or `--profiles` for this delta. The historical `--run`
+still selects its five original cases, explicitly excluding the two new tagged
+ProductModules cases (seven total, two excluded, no skips).
+
+For one distinct browser consumer, build the current RoomSettings/HubChannel
+canary with the existing Hubs webpack toolchain, then serve its returned private
+scratch separately:
+
+```sh
+node tests/runtime/profile-ui-browser.mjs build
+node tests/runtime/profile-ui-browser.mjs serve <scratch-from-build-receipt>
+```
+
+Open the returned127.0.0.1 URL in the internal browser. BASE must hide bot/chat
+controls, BOTS+IA must expose them, and returning to BASE must hide them without
+remounting the form or losing an edited room name. The three accessible buttons
+deliver the existing event through an unconnected real Phoenix channel. Build
+and artifact hashes bind the frozen Hubs source; compilation is NOT browser
+acceptance. No SQL/socket/provider/scene or other UI consumer is covered. The
+loopback server uses no proxy, rejects writes and closes with SIGINT/SIGTERM,
+recording STOPPED; do not leave it running after the browser check.
+
 For the distinct existing chat-delivery boundary, use `--chat-canary`: it runs
 only the chat-OFF-during-response case plus the positive delivery/fence control.
 After that method sample passes, `--chat-boundaries` runs only the other five

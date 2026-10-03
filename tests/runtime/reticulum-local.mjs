@@ -18,6 +18,7 @@ const reject = code => { throw new Error(code); };
 export function runtimeCases(mode) {
   switch (mode) {
     case "--run": return [{ profile: "existing-tests", count: 5 }];
+    case "--avaturn-runtime": return [{ profile: "avaturn-runtime", count: 5 }];
     case "--profiles": return ["base", "base-avaturn", "bots", "bots-avaturn", "bots-ai", "bots-ai-avaturn"].map(profile => ({ profile, count: 1 }));
     case "--chat-canary": return [{ profile: "chat-canary", count: 2 }];
     case "--chat-boundaries": return [{ profile: "chat-boundaries", count: 5 }];
@@ -26,6 +27,7 @@ export function runtimeCases(mode) {
     case "--sql-http-canary": return [{ profile: "sql-http-canary", count: 2 }];
     case "--sql-http-reentry": return [{ profile: "sql-http-reentry", count: 1 }];
     case "--sql-http-stop-drain": return [{ profile: "sql-http-stop-drain", count: 2 }];
+    case "--sql-http-periodic": return [{ profile: "sql-http-periodic", count: 1 }];
     case "--catalog-dataset": return [{ profile: "catalog-dataset", count: 1 }];
     case "--catalog-graph-dataset": return [{ profile: "catalog-graph-dataset", count: 1 }];
     case "--config-cache-canary": return [{ profile: "config-cache-canary", count: 2 }];
@@ -93,7 +95,7 @@ async function main() {
     return result.stdout || "";
   };
   try {
-    const integrated = ["--sql-http-canary", "--sql-http-reentry", "--sql-http-stop-drain"].includes(args[0]);
+    const integrated = ["--sql-http-canary", "--sql-http-reentry", "--sql-http-stop-drain", "--sql-http-periodic"].includes(args[0]);
     const catalogMode = ["--catalog-dataset", "--catalog-graph-dataset"].includes(args[0]);
     if (args.length !== (integrated || catalogMode ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
         (integrated && args[5] !== "--cache-bot-orchestrator") ||
@@ -174,7 +176,7 @@ async function main() {
       // One fresh OS/BEAM process per installation. Application env swaps in
       // a surviving supervisor would not prove that omitted children stay OFF.
       env.RET_LOCAL_PROFILE = profile;
-      if (["sql-http-canary", "sql-http-reentry", "sql-http-stop-drain"].includes(profile)) {
+      if (["sql-http-canary", "sql-http-reentry", "sql-http-stop-drain", "sql-http-periodic"].includes(profile)) {
         const { runSqlHttpCanary } = await import("./sql-http-local.mjs");
         phase = `backend-${profile}`; writeReceipt();
         process.stdout.write(`RET_LOCAL_STAGE:${phase}\n`);

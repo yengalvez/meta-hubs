@@ -67,6 +67,37 @@ and page-config serialization to reproduce stale ON before the fix and check
 immediate OFF after it. See the candidate's [runtime recipe](../../tests/runtime/README.md).
 Browser/UI cache, complete profiles, STOP and release acceptance stay separate.
 
+### Live creator and room-settings projection
+
+The existing `product_modules_changed` channel message carries exactly the
+effective booleans `bots_enabled`, `ai_enabled` and `avaturn_enabled`; creator
+origins and credentials are not included. Initial join and canonical Admin
+writes use the same installed ceilings and current SQL flags. Creator-only
+writes publish after persistence without invalidating server chat admission;
+the existing bots/AI locking and invalidation order is retained.
+Internally, creator-only persistence emits `avaturn_capabilities_changed` on
+the existing topic; HubChannel maps it to the same client message, while the
+chat presence tracker ignores only that creator event.
+
+The client projects only those three flags from its current channel and fails
+closed on missing/malformed capability data or lost channel authority. Mounted
+room settings, media browser and creator receive synchronous updates so an
+OFF/ON pulse cannot leave work admitted by the old creator session alive.
+Delayed login, SDK export, preview, upload and avatar-save continuations must
+revalidate their current selection/epoch; cancellation uses the existing fetch
+AbortSignal path. Old completions cannot clear a newer session's autosave state.
+Every projection subscriber must be notified even if another subscriber fails.
+All other config, ordinary GLB import/editing and chat's unconditional capability
+epoch rotation remain unchanged. Aborting a client request cannot undo bytes
+the server has already committed.
+
+The native opt-in `--avaturn-runtime` selects exactly five tagged backend
+regressions in the existing local runner. It does not run the six profiles or
+the entire historical suite; `--run` preserves its original five selected cases
+and explicitly excludes the two newly loaded creator tests. Unit/native checks
+of these boundaries do not establish a connected browser, provider login,
+all six complete runtimes, installation transition or deployment acceptance.
+
 The distinct normal client regressions connect actual Phoenix message dispatch
 and HubChannel capability epochs to a mounted useBotChatRequest hook. OFF
 aborts a held request; OFF→ON cannot deliver its old reply/action notice, but
@@ -76,6 +107,24 @@ parent sendingDisabled remain explicit seams. This does not prove the full
 UIRoot, SQL-to-network propagation or movement/STOP. Keep these cases when
 merging upstream changes to HubChannel or the hook's cancellation identity.
 See [local evidence](../../DOC/fiabilidad-ui-canal-2026-10-01.md).
+
+### Automatic active-room propagation regression
+
+The parent uses the same active-room periodic sync under RUNNER_AUTOSTART;
+its default interval remains30s. A shared internal timer function preserves
+the real callback/catch/unref and server-close cleanup without exposing a
+new endpoint or allowing Kubernetes autostart on a loopback test server.
+
+The opt-in `tests/runtime/reticulum-local.mjs --sql-http-periodic` mode selects
+one committed synthetic SQL bots-OFF case. It waits for real timer ticks and
+authenticated HTTP reads, not an explicit sync command or injected clock.
+It observes capability OFF, readiness503 during a real owned child's stop,
+held provider socket abortion, native child exit and lifecycle removal. The
+chat timing oracle starts before request admission and must close below14s,
+excluding the unchanged15s product deadline; COMMIT latency has honest bounds.
+This narrow canary does not prove full ghost authentication, autostart,
+Kubernetes, all six profiles, browser behaviour or whole-operation SLOs.
+It never substitutes for exact full verification or deployment acceptance.
 
 ## Provider contract
 

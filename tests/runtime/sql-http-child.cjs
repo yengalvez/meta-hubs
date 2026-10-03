@@ -11,7 +11,8 @@ assert.equal(process.env.RUNNER_AUTOSTART, "false");
 assert.match(process.env.RET_INTERNAL_ENDPOINT, /^http:\/\/127\.0\.0\.1:[0-9]{4,5}$/);
 assert.ok(process.send);
 internals.validateRuntimeConfiguration();
-let server, busy = false, ownedRunner;
+const periodic = process.env.RET_LOCAL_PERIODIC === "true";
+let server, busy = false, ownedRunner, activeSyncTimer;
 const stopEvents = [];
 const bounded = promise => {
   let timer;
@@ -51,18 +52,30 @@ process.on("message", async message => {
       try { await nativeFetch(`http://127.0.0.1:${deniedPort}/denied`, { signal: AbortSignal.timeout(1500) }); }
       catch { denied = true; }
       assert.equal(denied, true); send(message, { port, denied, native_fetch: true });
+    } else if (message.type === "start-periodic") {
+      assert.equal(periodic, true);
+      assert.equal(activeSyncTimer, undefined);
+      assert.equal(process.env.RET_SYNC_INTERVAL_MS, undefined);
+      // The exact product timer, with its unmodified default and real fetch.
+      // No initial/manual sync and no replacement scheduler are installed.
+      activeSyncTimer = internals.startActiveRoomSyncTimer();
+      assert.equal(activeSyncTimer._idleTimeout, 30_000);
+      assert.equal(activeSyncTimer.hasRef(), false);
+      send(message, { real_product_timer: true, interval_ms: activeSyncTimer._idleTimeout });
     } else if (message.type === "seed") {
+      assert.equal(periodic, false);
       // Only readiness is seeded. Authoritative capabilities/config below
       // MUST come from real authenticated HTTP + SQL, not this fixture.
       internals.resetRuntimeStateForTests();
       assert.equal(internals.seedReadyRoomForTests(message.hub_sid, message.bots), true);
       send(message, { synthetic_readiness: true });
     } else if (message.type === "sync") {
+      assert.equal(periodic, false);
       const synced = await internals.syncActiveRoomsFromReticulum();
       assert.equal(synced.ok, true); assert.equal(synced.authoritative, true);
       send(message, { authoritative: synced.authoritative, count: synced.count });
     } else if (message.type === "seed-stop-runner") {
-      assert.equal(process.env.RET_LOCAL_STOP_DRAIN, "true");
+      assert.ok(process.env.RET_LOCAL_STOP_DRAIN === "true" || periodic);
       assert.equal(ownedRunner, undefined);
       const bots = internals.normalizeConfig(message.bots), now = Date.now();
       const child = spawn(process.execPath, [path.join(__dirname, "stop-drain-child.cjs"), "owned-stop-drain"], {
@@ -94,7 +107,7 @@ process.on("message", async message => {
       assert.equal(runnerAlive(), true);
       send(message, { synthetic_runner_readiness: true, real_handle: true, runner_pid: child.pid });
     } else if (message.type === "stopping-runner") {
-      assert.equal(process.env.RET_LOCAL_STOP_DRAIN, "true");
+      assert.ok(process.env.RET_LOCAL_STOP_DRAIN === "true" || periodic);
       await bounded(ownedRunner.signalled);
       assert.equal(ownedRunner.signals, 1);
       assert.equal(ownedRunner.info.lifecycle, "stopping");
@@ -104,7 +117,7 @@ process.on("message", async message => {
       send(message, { lifecycle: "stopping", ready: false, alive: true, sigterm_count: 1,
         runner_pid: ownedRunner.child.pid, removed: false });
     } else if (message.type === "release-runner-exit") {
-      assert.equal(process.env.RET_LOCAL_STOP_DRAIN, "true");
+      assert.ok(process.env.RET_LOCAL_STOP_DRAIN === "true" || periodic);
       assert.equal(ownedRunner.info.lifecycle, "stopping");
       ownedRunner.child.send({ type: "release-exit" });
       const exit = await bounded(ownedRunner.exited);
@@ -116,10 +129,15 @@ process.on("message", async message => {
       assert.equal(process.env.RET_LOCAL_STOP_DRAIN, "true");
       send(message, { events: stopEvents });
     } else if (message.type === "shutdown") {
-      if (process.env.RET_LOCAL_STOP_DRAIN === "true" && ownedRunner) assert.equal(runnerAlive(), false);
+      if ((process.env.RET_LOCAL_STOP_DRAIN === "true" || periodic) && ownedRunner) assert.equal(runnerAlive(), false);
+      if (periodic) {
+        assert.ok(activeSyncTimer);
+        clearInterval(activeSyncTimer);
+        assert.equal(activeSyncTimer._destroyed, true);
+      }
       internals.resetRuntimeStateForTests();
       await new Promise((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); server.closeAllConnections(); });
-      send(message, {}); process.disconnect();
+      send(message, periodic ? { product_timer_closed: true } : {}); process.disconnect();
     } else { throw new Error("unknown_owned_message"); }
   } catch (error) {
     process.send({ id: message.id, type: "failed", pid: process.pid, ok: false });

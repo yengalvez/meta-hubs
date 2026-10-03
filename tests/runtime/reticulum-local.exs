@@ -33,10 +33,14 @@ Application.put_env(:ret, Ret.RoomAssigner, balancer_weights: [{600, 1}, {300, 5
 Application.put_env(:ret, Ret.MediaResolver, [])
 
 profile = System.fetch_env!("RET_LOCAL_PROFILE")
+avaturn_runtime = profile == "avaturn-runtime"
 chat_focus = profile in ["chat-canary", "chat-boundaries"]
 chat_concurrent = profile in ["chat-concurrent", "chat-concurrent-boundaries"]
 config_cache = profile in ["config-cache-canary", "config-cache-boundaries", "config-cache-types"]
-sql_http = profile in ["sql-http-canary", "sql-http-reentry", "sql-http-stop-drain"]
+
+sql_http =
+  profile in ["sql-http-canary", "sql-http-reentry", "sql-http-stop-drain", "sql-http-periodic"]
+
 stop_drain = profile == "sql-http-stop-drain"
 catalog = profile in ["catalog-dataset", "catalog-graph-dataset"]
 
@@ -102,7 +106,8 @@ profiles = %{
   "bots-ai-avaturn" => [bots: true, ai: true, avaturn: true]
 }
 
-unless profile == "existing-tests" or chat_focus or chat_concurrent or config_cache or sql_http or
+unless profile == "existing-tests" or avaturn_runtime or chat_focus or chat_concurrent or
+         config_cache or sql_http or
          catalog do
   modules = Map.fetch!(profiles, profile)
 
@@ -137,7 +142,26 @@ ExUnit.configure(autorun: false)
     profile == "existing-tests" ->
       Code.require_file("test/ret/product_modules_test.exs")
       Code.require_file("test/ret/bot_chat_presence_test.exs")
-      {5, 5, 0}
+      ExUnit.configure(exclude: [:avaturn_runtime_capabilities])
+      {5, 7, 2}
+
+    avaturn_runtime ->
+      Code.require_file("test/ret/product_modules_test.exs")
+      Code.require_file("test/ret/app_config_test.exs")
+      Code.require_file("test/ret_web/channels/hub_channel_test.exs")
+
+      tests =
+        Enum.flat_map(
+          [Ret.ProductModulesTest, Ret.AppConfigTest, RetWeb.HubChannelTest],
+          fn module ->
+            module.__ex_unit__().tests
+          end
+        )
+
+      selected = Enum.filter(tests, &(Map.get(&1.tags, :avaturn_runtime_capabilities) == true))
+      if length(selected) != 5, do: raise("exact five avaturn runtime cases required")
+      ExUnit.configure(exclude: [:test], include: [:avaturn_runtime_capabilities])
+      {5, length(tests), length(tests) - 5}
 
     chat_focus ->
       Code.require_file(Path.join(__DIR__, "reticulum-chat-focus.exs"))
@@ -160,7 +184,7 @@ ExUnit.configure(autorun: false)
         )
       )
 
-      count = if profile == "sql-http-reentry", do: 1, else: 2
+      count = if profile in ["sql-http-reentry", "sql-http-periodic"], do: 1, else: 2
       {count, count, 0}
 
     catalog ->

@@ -1,5 +1,29 @@
 # Session Changelog
 
+## 2026-10-03 · Assemble authority and live-profile integration candidate
+
+Reuse the idle I worktree on a new `codex/reliability-integration-20261003`
+branch based on Jba13de7; the original I branch and commit are retained.
+I's sole divergent fixture commit has the same stable patch-id as J7ce15f45,
+and its Lease/CAS/publication source commits are ancestors of J. Do not replace
+the signed recovery branch with the older profile branch.
+
+Hubs keeps the accepted dd176f6 client tip. Cloud keeps J7ab6146 as an ancestor
+and cherry-picks only S's unchanged periodic timer and two creator-capability
+commits. Primary byte comparison proves all four authority paths equal J,
+all eight profile paths equal S, and no additional Cloud path changes.
+Eleven selected root runtime/spec paths are byte-identical to S; J had no
+changes to these paths after their shared root baseline. Do not port S's
+root commit, historical changelog, recovery tree or Cloud gitlink wholesale.
+
+The dependency context is an owned APFS clone of the existing Spoke cache,
+with package.json and yarn.lock byte-matched; no installation or network.
+The first cherry-pick stopped while that copy was still in progress. After
+its actual exit0, the same cherry-pick continued with the original hooks.
+This assembly does not inherit full acceptance, native cycles or production
+acceptance. Preserve the single live J verifier and require the combined
+candidate's exact finalizer and affected gates before integration/publication.
+
 ## 2026-10-03 · Restore the BASE transport fixture context
 
 Native finish73894 on4e43bc1 passed static, then stopped in security at the
