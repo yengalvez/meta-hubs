@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { inflateSync } from "node:zlib";
+import { isDeepStrictEqual } from "node:util";
 import { validateNormalGlbBootstrap } from "./reticulum-local.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -64,6 +65,29 @@ export function validateGltf(gltf, binLength) {
         !["image/png", "image/jpeg", "image/webp"].includes(image.mimeType)) fail("external_or_invalid_gltf_image");
   }
   return gltf;
+}
+
+export function validateAvatarMaterials(gltf, original) {
+  if (!Array.isArray(original.materials)) fail("original_materials_required");
+  const materials = structuredClone(original.materials);
+  // Mirror ONLY ensureAvatarMaterial's exact selection/name assignment
+  // (hubs/src/utils/avatar-utils.js:63-85); every other property stays intact.
+  if (!materials.find(material => material.name === "Bot_PBS")) {
+    const materialForMesh = mesh => {
+      if (!mesh.primitives) return;
+      const primitive = mesh.primitives.find(p => p.material !== undefined);
+      return primitive && materials[primitive.material];
+    };
+    let nodes = original.scenes[original.scene].nodes.slice(0);
+    while (nodes.length) {
+      const node = original.nodes[nodes.shift()];
+      const material = node.mesh !== undefined && materialForMesh(original.meshes[node.mesh]);
+      if (material) { material.name = "Bot_PBS"; break; }
+      if (node.children) nodes = nodes.concat(node.children);
+    }
+  }
+  if (!isDeepStrictEqual(gltf.materials, materials)) fail("original_materials_mismatch");
+  return true;
 }
 
 export function splitOriginalGlb(bytes) {
@@ -215,13 +239,14 @@ async function main() {
     phase = "gltf-bin-png-integrity";
     const gltf = validateGltf(JSON.parse(media.gltf.toString("utf8")), media.bin.length);
     if (!media.bin.equals(original.bin)) fail("original_bin_mismatch");
-    // Material names may change in ensureAvatarMaterial; model structure must not.
+    validateAvatarMaterials(gltf, original.gltf);
+    // Non-material model structure must remain unchanged too.
     for (const field of ["nodes", "skins", "meshes", "accessors", "bufferViews", "animations", "scenes", "scene", "images", "textures", "buffers"])
       if (JSON.stringify(gltf[field]) !== JSON.stringify(original.gltf[field])) fail("original_gltf_structure_mismatch");
     const png = validatePng(media.thumbnail);
     if (sha(readOwned(asset, maxModel)) !== originalHash) fail("original_asset_changed");
     process.stdout.write(JSON.stringify({ scope, status: "PASS", sql_read_only: true, private_avatar: true, owned_files: 3,
-      bin_matches_original: true, bin_bytes: media.bin.length, gltf_structure: true, png_structure: true,
+      bin_matches_original: true, bin_bytes: media.bin.length, gltf_structure: true, materials_preserved: true, png_structure: true,
       thumbnail_width: png.width, thumbnail_height: png.height, original_unchanged: true }) + "\n");
   } catch {
     // Never print exception messages, private rows, paths, credentials or URLs.

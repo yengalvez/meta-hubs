@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { deflateSync } from "node:zlib";
-import { readbackArguments, validateReadback, validateGltf, splitOriginalGlb, validatePng, readbackSql } from "./normal-glb-readback.mjs";
+import { readbackArguments, validateReadback, validateGltf, validateAvatarMaterials, splitOriginalGlb, validatePng, readbackSql } from "./normal-glb-readback.mjs";
 
 const args = ["--work", "/private/tmp/ynret-local-Abc123", "--avatar-sid", "Ab123Xy", "--asset", "/approved/Bata.glb", "--pg-bin", "/explicit/postgres/bin"];
 const peer = { data: `${args[1]}/database`, port: 55483, sid: args[3], accountId: "784512345678901234" };
@@ -106,6 +106,45 @@ test("glTF requires self-contained skinned structure and bounded BIN views", () 
     assert.throws(() => { const value = clone(gltf()); mutate(value); validateGltf(value, 4); }, /invalid_gltf_structure|external_or_invalid_gltf_image/);
 });
 
+function materialGltf() {
+  return { ...gltf(), materials: [
+    { name: "Body", pbrMetallicRoughness: { baseColorFactor: [1, 0.5, 0.25, 1], baseColorTexture: { index: 0 }, metallicFactor: 0 }, alphaMode: "BLEND", doubleSided: true },
+    { name: "Eyes", emissiveFactor: [0.1, 0.2, 0.3] }
+  ], nodes: [{ children: [2] }, { mesh: 1 }, { mesh: 0 }],
+  meshes: [{ primitives: [{}, { material: 1 }, { material: 0 }] }, { primitives: [{ material: 0 }] }],
+  scenes: [{ nodes: [0, 1] }] };
+}
+
+test("materials allow only the exact product rename with its node queue and first defined primitive", () => {
+  const original = materialGltf(), expected = clone(original);
+  expected.materials[0].name = "Bot_PBS"; // Node 1 precedes node 0's child in the product queue.
+  assert.equal(validateAvatarMaterials(expected, original), true);
+  assert.equal(original.materials[0].name, "Body", "the approved original must not be modified");
+  const wrongQueue = clone(original); wrongQueue.materials[1].name = "Bot_PBS";
+  assert.throws(() => validateAvatarMaterials(wrongQueue, original), /original_materials_mismatch/);
+  const primitiveOriginal = clone(original); primitiveOriginal.scenes[0].nodes = [2];
+  const primitiveExpected = clone(primitiveOriginal); primitiveExpected.materials[1].name = "Bot_PBS";
+  assert.equal(validateAvatarMaterials(primitiveExpected, primitiveOriginal), true);
+});
+
+test("an existing Bot_PBS authorizes no additional rename or material change", () => {
+  const original = materialGltf(); original.materials[1].name = "Bot_PBS";
+  assert.equal(validateAvatarMaterials(clone(original), original), true);
+  const changed = clone(original); changed.materials[0].name = "Bot_PBS";
+  assert.throws(() => validateAvatarMaterials(changed, original), /original_materials_mismatch/);
+});
+
+test("same BIN and structure cannot hide altered material color, transparency, textures or other names", () => {
+  const original = materialGltf(), expected = clone(original); expected.materials[0].name = "Bot_PBS";
+  for (const mutate of [m => m[0].pbrMetallicRoughness.baseColorFactor[0] = 0,
+    m => m[0].alphaMode = "OPAQUE", m => m[0].pbrMetallicRoughness.baseColorTexture.index = 1,
+    m => m[0].doubleSided = false, m => m[1].emissiveFactor[0] = 1, m => m[1].name = "other",
+    m => m[0].name = "Body", m => m[0].extensions = { altered: true }]) {
+    const changed = clone(expected); mutate(changed.materials);
+    assert.throws(() => validateAvatarMaterials(changed, original), /original_materials_mismatch/);
+  }
+});
+
 test("PNG checks chunks, CRC, decompressed scanline length and filters without rendering", () => {
   assert.deepEqual(validatePng(png()), { width: 1, height: 1 });
   const broken = png(); broken[20] ^= 1;
@@ -122,5 +161,6 @@ test("helper has no mutators, credentials, query URLs, browser automation or rec
   assert.match(source, /method: "GET", redirect: "error"/);
   assert.match(source, /PGPASSFILE: "\/dev\/null"/);
   assert.match(source, /scope = "local-not-production-not-six-profiles"/);
+  assert.match(source, /validateAvatarMaterials\(gltf, original\.gltf\)/);
   assert.doesNotMatch(source, /process\.(stdout|stderr)\.write\([^\n]*(error|result\.stdout|bootstrap|file\.uuid)/);
 });

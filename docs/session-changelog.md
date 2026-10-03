@@ -2794,5 +2794,7 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   dirigida CLOSED; persistencia real aún requiere peer SQL independiente.
 - Helper local read-only de peer SQL/Storage añadido para probar privacidad,
   owner decimal exacto, tres archivos nativos, BIN/estructura glTF y miniatura
-  tras onSave y recarga reales. Focales puros9/9; no aceptación runtime por
-  esos focales ni comparación errónea GLB completo/bundle desglosado.
+  tras onSave y recarga reales. Revisión corrigió un P2: materiales completos
+  salvo el renombre exacto autorizado por ensureAvatarMaterial. Focales
+  puros12/12 y recheck CLOSED; no aceptación runtime por esos focales ni
+  comparación errónea GLB completo/bundle desglosado.
