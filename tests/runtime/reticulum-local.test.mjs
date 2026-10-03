@@ -223,6 +223,24 @@ test("normal GLB selector reuses the native socket lifecycle without changing ex
   assert.match(runner, /owned_database_not_stopped/);
 });
 
+test("normal GLB native owner lifetime covers finite observation without a sandbox transaction", () => {
+  const bootstrap = fs.readFileSync(new URL("./reticulum-local.exs", import.meta.url), "utf8");
+  const fixture = fs.readFileSync(new URL("./reticulum-ui-socket.exs", import.meta.url), "utf8");
+  const runner = fs.readFileSync(new URL("./reticulum-local.mjs", import.meta.url), "utf8");
+  const ownerConfig = /if profile == "profile-creator-socket" and System.get_env\("RET_LOCAL_CONSUMER_ENTRY"\) == "normal-glb" do[\s\S]*?Application.put_env\(\s*:ret,\s*Ret.Repo,\s*Application.fetch_env!\(:ret, Ret.Repo\)\s*\|> Keyword.put\(:ownership_timeout, 120_000 \+ 300_000 \+ 15_000\)\s*\)\s*end/;
+  const selected = bootstrap.match(ownerConfig);
+  assert.ok(selected, "finite pool override must be guarded by both native profile and selected consumer");
+  assert.ok(selected.index < bootstrap.indexOf("Application.ensure_all_started(:ret)"), "owner lifetime must be configured before the Repo pool starts");
+  assert.equal((bootstrap.match(/Keyword.put\(:ownership_timeout/g) || []).length, 1, "other native modes must keep their original ownership lifetime");
+  assert.match(bootstrap, /if ui_socket do\s*Ecto.Adapters.SQL.Sandbox.mode\(Ret.Repo, :auto\)/);
+  assert.doesNotMatch(bootstrap + fixture, /Sandbox.checkout\s*\(|Sandbox.start_owner|\{:shared,|ownership_timeout[^\n]*:infinity/);
+  assert.match(runner, /setTimeout\(\(\) => fail\("ui_socket_startup_timeout"\), 120000\)/);
+  assert.match(runner, /setTimeout\(\(\) => fail\("ui_socket_observation_deadline"\), 300000\)/);
+  assert.match(runner, /setTimeout\(\(\) => fail\("ui_socket_stop_timeout"\), 15000\)/);
+  assert.match(fixture, /Application.stop\(:ret\)/);
+  assert.match(runner, /owned_database_not_stopped/);
+});
+
 test("normal GLB entry uses the real editor preview and native auth API without provider actions", () => {
   const entry = fs.readFileSync(new URL("./profile-glb-editor-entry.js", import.meta.url), "utf8");
   const wrapper = fs.readFileSync(new URL("./profile-ui-browser.mjs", import.meta.url), "utf8");

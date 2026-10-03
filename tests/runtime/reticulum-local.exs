@@ -55,6 +55,18 @@ if ui_socket do
            length(Enum.uniq([port, http_port, browser_port])) == 3,
          do: raise("exact distinct owned loopback origins required")
 
+  if profile == "profile-creator-socket" and System.get_env("RET_LOCAL_CONSUMER_ENTRY") == "normal-glb" do
+    # :auto retains committed SQL across independent HTTP/peer connections.
+    # Configure its owner lifetime BEFORE Repo starts; do not add a sandbox
+    # checkout/transaction or extend any native observation/STOP deadline.
+    Application.put_env(
+      :ret,
+      Ret.Repo,
+      Application.fetch_env!(:ret, Ret.Repo)
+      |> Keyword.put(:ownership_timeout, 120_000 + 300_000 + 15_000)
+    )
+  end
+
   if profile == "profile-creator-socket" do
     Application.put_env(:ret, Ret.ProductModules,
       bots: false,

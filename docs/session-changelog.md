@@ -2786,3 +2786,13 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   El harness serializa ahora decimal nativo antes de JSON, como AvatarView,
   valida bigint canónico y compara owner por string exacto. Cuatro focales
   nuevos/afectados y recheck independiente CLOSED; no se relaja ownership.
+- Segundo ensayo79817: picker/Preview y transición SQL OFF reales observados;
+  guardado/recarga no aceptados antes del techo de observación. Owners del
+  pool SQL de prueba caducaron a60s; cierre nativo y servidor propios limpios.
+  Sólo normal-GLB configura ahora vida finita del owner antes de Repo,
+  manteniendo observación/STOP y guardas productivas. Focales3/3 y revisión
+  dirigida CLOSED; persistencia real aún requiere peer SQL independiente.
+- Helper local read-only de peer SQL/Storage añadido para probar privacidad,
+  owner decimal exacto, tres archivos nativos, BIN/estructura glTF y miniatura
+  tras onSave y recarga reales. Focales puros9/9; no aceptación runtime por
+  esos focales ni comparación errónea GLB completo/bundle desglosado.
