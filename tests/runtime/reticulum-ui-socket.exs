@@ -164,14 +164,14 @@ defmodule Ret.LocalUiSocket do
 
   # BEGIN PURE AVATAR REQUEST LIFECYCLE
   # Phoenix start/exception Conn is PRE-pipeline: never infer Guardian ownership
-  # there. Match the one existing fixture Bearer privately, not a new token.
+  # there. Match the product's literal "bearer " + existing token privately.
   def avatar_request_projection(%{route: "/api/v1/avatars",
         plug: RetWeb.Api.V1.AvatarController, plug_opts: :create,
         conn: %Plug.Conn{method: "POST", request_path: "/api/v1/avatars",
           private: %{phoenix_endpoint: RetWeb.Endpoint, phoenix_router: RetWeb.Router},
           req_headers: headers}}, token) when is_binary(token) and byte_size(token) > 0 do
     %{own_token_equal: Enum.filter(headers, fn {name, _} -> name == "authorization" end) ==
-      [{"authorization", "Bearer " <> token}]}
+      [{"authorization", "bearer " <> token}]}
   end
   def avatar_request_projection(_, _), do: :ignore
 

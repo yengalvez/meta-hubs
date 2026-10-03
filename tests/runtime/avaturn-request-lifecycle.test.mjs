@@ -6,8 +6,25 @@ import { spawnSync } from "node:child_process";
 import { avaturnRequestEvent } from "./reticulum-local.mjs";
 
 const fixture = fs.readFileSync(new URL("./reticulum-ui-socket.exs", import.meta.url), "utf8");
+const phoenix = fs.readFileSync(new URL("../../hubs/src/utils/phoenix-utils.js", import.meta.url), "utf8");
+// Derive the actual formatting expression from the product helper, not from
+// the fixture. Evaluate ONLY that pure expression: no fetch/auth/store runtime.
+const fetchHelper = phoenix.slice(phoenix.indexOf("export function fetchReticulumAuthenticatedWithToken("),
+  phoenix.indexOf("export function fetchReticulumAuthenticated(", phoenix.indexOf("export function fetchReticulumAuthenticatedWithToken(")));
+const authExpressions = [...fetchHelper.matchAll(/params\.headers\.authorization\s*=\s*(`[^`\r\n]+`)\s*;/g)];
+assert.equal(authExpressions.length, 1, "one real authenticated-fetch header expression is required");
+const productAuthorization = new Function("token", `return ${authExpressions[0][1]};`);
 const startEvent = () => ({ phase: "AVATAR_REQUEST_LIFECYCLE", attempt_count: 1, start_seen: true,
   own_token_equal: true, terminal: "pending", request_down: false, down_reason: "not_observed", failed: false });
+
+test("observer expectation follows the exact lowercase bearer scheme in both real Phoenix helpers", () => {
+  assert.equal(productAuthorization("PURE_TOKEN"), "bearer PURE_TOKEN");
+  const hubExpressions = [...phoenix.matchAll(/(?<!params\.)headers\.authorization\s*=\s*(`[^`\r\n]+`)\s*;/g)];
+  assert.equal(hubExpressions.length, 1);
+  const hubAuthorization = new Function("store", `return ${hubExpressions[0][1]};`);
+  assert.equal(hubAuthorization({ state: { credentials: { token: "PURE_TOKEN" } } }), productAuthorization("PURE_TOKEN"));
+  assert.match(fixture, /\[\{"authorization", "bearer " <> token\}\]/);
+});
 
 test("decoder requires exact one owned start, terminal monotonicity and exact correlated DOWN projection", () => {
   const start = avaturnRequestEvent(startEvent());
@@ -35,6 +52,8 @@ test("actual Elixir projection/reducer keeps token, PID, Conn and exceptions pri
   const end = fixture.indexOf("  # END PURE AVATAR REQUEST LIFECYCLE", begin);
   assert.ok(begin >= 0 && end > begin);
   const actual = fixture.slice(begin, end);
+  const ownAuthorization = JSON.stringify(productAuthorization("MUST_NOT_ESCAPE"));
+  const wrongAuthorization = JSON.stringify(productAuthorization("WRONG_TOKEN"));
   const script = `
 defmodule Plug.Conn do
   defstruct [:method, :request_path, :state, :status, :private, :req_headers, :assigns, :params, :resp_body]
@@ -45,12 +64,16 @@ end
 token = "MUST_NOT_ESCAPE"
 conn = struct(Plug.Conn, method: "POST", request_path: "/api/v1/avatars", state: :unset,
   private: %{phoenix_endpoint: RetWeb.Endpoint, phoenix_router: RetWeb.Router},
-  req_headers: [{"authorization", "Bearer " <> token}], assigns: %{}, params: %{secret: token})
+  req_headers: [{"authorization", ${ownAuthorization}}], assigns: %{}, params: %{secret: token})
 meta = %{route: "/api/v1/avatars", plug: RetWeb.Api.V1.AvatarController, plug_opts: :create, conn: conn,
   reason: token, stacktrace: [token], kind: :error}
 unless PureLifecycle.avatar_request_projection(meta, token) == %{own_token_equal: true}, do: raise("own_start_not_bound")
-for bad <- [put_in(meta.conn.req_headers, []), put_in(meta.conn.req_headers, [{"authorization", "Bearer other"}]),
-  put_in(meta.conn.req_headers, [{"authorization", "Bearer " <> token}, {"authorization", "Bearer " <> token}])] do
+for bad <- [put_in(meta.conn.req_headers, []), put_in(meta.conn.req_headers, [{"authorization", ${wrongAuthorization}}]),
+  put_in(meta.conn.req_headers, [{"authorization", ${ownAuthorization}}, {"authorization", ${ownAuthorization}}]),
+  put_in(meta.conn.req_headers, [{"Authorization", ${ownAuthorization}}]),
+  put_in(meta.conn.req_headers, [{"authorization", "Bearer " <> token}]),
+  put_in(meta.conn.req_headers, [{"authorization", "bEaReR " <> token}]),
+  put_in(meta.conn.req_headers, [{"authorization", "bearer  " <> token}])] do
   unless PureLifecycle.avatar_request_projection(bad, token) == %{own_token_equal: false}, do: raise("unowned_accepted")
 end
 for bad <- [put_in(meta.route, "/api/v1/avatars/"), put_in(meta.plug, Other.Controller), put_in(meta.plug_opts, :update),
