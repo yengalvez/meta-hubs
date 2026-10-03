@@ -25,6 +25,7 @@ const ownFiles = [
   creatorEntry,
   normalGlbEntry,
   avaturnEntry,
+  "tests/runtime/avaturn-editor-observation.mjs",
   "tests/runtime/reticulum-ui-socket.exs",
 ];
 const isCreator = (connection) =>
@@ -503,6 +504,7 @@ async function buildWorker(directory) {
         "hubs/src/utils/avaturn-sdk.js",
         "hubs/src/utils/avaturn-utils.js",
         sdkEntry,
+        "tests/runtime/avaturn-editor-observation.mjs",
       ]) {
         if (!compiledSourcePaths.includes(file)) fail("real_avaturn_sdk_consumer_missing_from_build");
       }

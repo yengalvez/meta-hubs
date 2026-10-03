@@ -1,9 +1,12 @@
 // Genuine provider observation: AvatarEditor -> AvaturnCreator -> installed
 // SDK -> owned iframe Next -> native uploads/API. No export or callback seam.
 import "aframe";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { IntlProvider } from "react-intl";
+import { injectIntl, IntlProvider } from "react-intl";
+import {
+  AVATURN_OBSERVATION_CEILING_MS, AVATURN_OBSERVATION_INTERVAL_MS, createAvaturnEditorObservation,
+} from "./avaturn-editor-observation.mjs";
 import messages from "../../hubs/src/assets/locales/es.json";
 import "../../hubs/src/react-components/styles/global.scss";
 
@@ -23,14 +26,20 @@ if (initialSid !== null && !/^[A-Za-z0-9]{7}$/.test(initialSid))
 async function mount() {
   const [
     { store }, { default: AuthChannel }, { default: HubChannel },
-    { default: AvatarEditor }, { connectToReticulum, getReticulumFetchUrl },
+    { default: DefaultAvatarEditor }, { connectToReticulum, getReticulumFetchUrl }, { default: configs },
   ] = await Promise.all([
     import("../../hubs/src/utils/store-instance"),
     import("../../hubs/src/utils/auth-channel"),
     import("../../hubs/src/utils/hub-channel"),
     import("../../hubs/src/react-components/avatar-editor"),
     import("../../hubs/src/utils/phoenix-utils"),
+    import("../../hubs/src/utils/configs"),
   ]);
+  // The installed react-intl wrapper normally does not forward a ref. Its
+  // standard forwardRef option preserves IntlConsumer/the exact real class;
+  // only this opt-in new-avatar page needs it. API reload/private-GLB is intact.
+  const AvatarEditor = initialSid === null
+    ? injectIntl(DefaultAvatarEditor.WrappedComponent, { forwardRef: true }) : DefaultAvatarEditor;
   if (window.APP) throw new Error("avaturn_save_standalone_page_required");
   // Real material preferences and credentials, shared by the real preview/API.
   window.APP = { store };
@@ -62,6 +71,61 @@ async function mount() {
     const [editor, setEditor] = useState(initialSid === null ? "new" : initialSid);
     const [saved, setSaved] = useState({ sid: initialSid, callbacks: 0, failure: null });
     const [dependency, setDependency] = useState(null);
+    const [observer] = useState(() => createAvaturnEditorObservation());
+    const [observation, setObservation] = useState(() => observer.snapshot());
+    const callbacksRef = useRef(saved.callbacks);
+    callbacksRef.current = saved.callbacks;
+    const intervalRef = useRef(null);
+    const observingRef = useRef(false);
+    const stopObservationRef = useRef(null);
+    const publishObservation = useCallback(next => setObservation(previous =>
+      JSON.stringify(previous) === JSON.stringify(next) ? previous : next), []);
+    const sampleObservation = useCallback(() => observer.sample({
+      creatorEnabled: configs.feature("enable_avaturn_creator") === true,
+      socketConnected: socket.isConnected(), callbackcount: callbacksRef.current,
+    }), [observer]);
+    const observeEditor = useCallback(instance => {
+      observer.attachEditor(instance);
+      if (instance === null) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+        stopObservationRef.current?.("harness_teardown");
+      }
+      if (observingRef.current) publishObservation(sampleObservation());
+    }, [observer, publishObservation, sampleObservation]);
+    useEffect(() => {
+      if (initialSid !== null) return;
+      observingRef.current = true;
+      const started = performance.now();
+      let unsubscribe = null;
+      const cleanup = reason => {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+        observingRef.current = false;
+        unsubscribe?.();
+        unsubscribe = null;
+        window.removeEventListener("pagehide", pagehide);
+        return observer.stop(reason);
+      };
+      const stop = reason => publishObservation(cleanup(reason));
+      const pagehide = () => stop("harness_teardown");
+      stopObservationRef.current = stop;
+      const tick = () => {
+        if (!observingRef.current) return;
+        if (performance.now() - started >= AVATURN_OBSERVATION_CEILING_MS) return stop("deadline");
+        publishObservation(sampleObservation());
+      };
+      // One bounded read-only poll. The real AbortSignal event is listened to
+      // inside the observer; no fetch, upload or abort method is wrapped/called.
+      intervalRef.current = setInterval(tick, AVATURN_OBSERVATION_INTERVAL_MS);
+      unsubscribe = configs.subscribeToProductModules(tick);
+      window.addEventListener("pagehide", pagehide);
+      tick();
+      return () => {
+        stopObservationRef.current = null;
+        cleanup("harness_teardown");
+      };
+    }, [observer, publishObservation, sampleObservation]);
     useEffect(() => {
       const update = patch => setStatus(previous => ({ ...previous, ...patch }));
       const moduleRef = transport.on("product_modules_changed", capabilities => {
@@ -112,12 +176,32 @@ async function mount() {
           `Join: ${status.join}; socket: ${status.socket}; creador: ${status.creator}; eventos: ${status.events}.`)),
         React.createElement("output", { id: "avaturn-save-saves", "data-saved-avatar-sid": saved.sid || "", "aria-live": "polite" },
           `Callbacks onSave reales: ${saved.callbacks}; vista: ${initialSid ? "recarga API" : editor ? "proveedor" : "desmontado"}; ${saved.failure || "sin aceptación inferida"}.`),
+        initialSid === null && React.createElement("output", {
+          id: "avaturn-save-editor-observation", "aria-live": "polite",
+          "data-observation-state": observation.observation_state,
+          "data-upload-started": String(observation.upload_started),
+          "data-abort-event-seen": String(observation.abort_event_seen),
+          "data-aborted-signal": String(observation.aborted_signal),
+          "data-upload-drained": String(observation.upload_drained),
+          "data-same-editor-instance": String(observation.same_editor_instance),
+          "data-controller-seen-count": observation.controller_seen_count,
+          "data-editor-mount-count": observation.editor_mount_count,
+          "data-is-current-guards": String(observation.is_current_guards),
+          "data-off-observed": String(observation.off_observed),
+          "data-saved-state-seen": String(observation.saved_state_seen),
+          "data-callbackcount": saved.callbacks,
+          "data-invalid-reasons": observation.invalid_reasons.join(","),
+        }, `Observación pasiva: ${observation.observation_state}; aborted_signal: ${observation.aborted_signal}; ` +
+          `abort_event_seen: ${observation.abort_event_seen}; upload_drained: ${observation.upload_drained}; ` +
+          `same_editor_instance: ${observation.same_editor_instance}; controller_seen_count: ${observation.controller_seen_count}; ` +
+          `saved_state_seen: ${observation.saved_state_seen}; ` +
+          `callbackcount: ${saved.callbacks}. No acredita terminal de red ni aceptación runtime.`),
         dependency && React.createElement("p", { id: "avaturn-save-dependency", role: "status" },
           `Dependencia bloqueada por CSP: ${dependency.directive}; origen: ${dependency.origin}. No se amplía el permiso automáticamente.`),
         saved.sid && React.createElement("a", { id: "avaturn-save-reload", href: `/?avatar_sid=${encodeURIComponent(saved.sid)}` }, "Recargar guardado desde API (página nueva)"),
         React.createElement("button", { id: "avaturn-save-disconnect", type: "button", onClick: () => socket.disconnect() }, "Cerrar socket real")),
       editor && status.join === "JOINED" && React.createElement("section", { className: "profile-avaturn-editor", "aria-label": "AvatarEditor Avaturn real" },
-        React.createElement(AvatarEditor, { key: editor, mode: editor === "new" ? "avaturn" : "private-glb", ...(editor === "new" ? {} : { avatarId: editor }), hideDelete: true, onSave })));
+        React.createElement(AvatarEditor, { key: editor, mode: editor === "new" ? "avaturn" : "private-glb", ...(editor === "new" ? {} : { avatarId: editor }), ...(editor === "new" ? { ref: observeEditor } : {}), hideDelete: true, onSave })));
   }
   createRoot(document.getElementById("root")).render(
     React.createElement(IntlProvider, { locale: "es", messages }, React.createElement(AvaturnSaveCanary)));

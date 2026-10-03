@@ -57,6 +57,7 @@ defmodule Ret.LocalUiSocket do
       |> Repo.insert!()
 
     {:ok, token, _claims} = Ret.Guardian.encode_and_sign(account)
+    request_observer = if avaturn_save, do: attach_avatar_request_observer!(token)
     pid = System.pid() |> String.to_integer()
 
     context = %{
@@ -110,7 +111,7 @@ defmodule Ret.LocalUiSocket do
     File.chmod!(bootstrap, 0o600)
     emit(%{phase: "READY", bootstrap: bootstrap, pid: pid})
     emit_avatar_response_state(response_observer)
-    commands!(creator_mode, response_observer)
+    commands!(creator_mode, response_observer, request_observer)
   end
 
   # BEGIN PURE AVATAR RESPONSE OBSERVER
@@ -159,6 +160,100 @@ defmodule Ret.LocalUiSocket do
   defp emit_avatar_response_state(nil), do: :ok
   defp emit_avatar_response_state(observer) do
     emit(%{phase: "AVATAR_RESPONSE_STATE", count: :atomics.get(observer.counter, 1)})
+  end
+
+  # BEGIN PURE AVATAR REQUEST LIFECYCLE
+  # Phoenix start/exception Conn is PRE-pipeline: never infer Guardian ownership
+  # there. Match the one existing fixture Bearer privately, not a new token.
+  def avatar_request_projection(%{route: "/api/v1/avatars",
+        plug: RetWeb.Api.V1.AvatarController, plug_opts: :create,
+        conn: %Plug.Conn{method: "POST", request_path: "/api/v1/avatars",
+          private: %{phoenix_endpoint: RetWeb.Endpoint, phoenix_router: RetWeb.Router},
+          req_headers: headers}}, token) when is_binary(token) and byte_size(token) > 0 do
+    %{own_token_equal: Enum.filter(headers, fn {name, _} -> name == "authorization" end) ==
+      [{"authorization", "Bearer " <> token}]}
+  end
+  def avatar_request_projection(_, _), do: :ignore
+
+  def avatar_request_event([:phoenix, :router_dispatch, kind], _measurements, metadata,
+        %{owner: owner, token: token}) when kind in [:start, :stop, :exception] do
+    case avatar_request_projection(metadata, token) do
+      :ignore -> :ok
+      projection ->
+        # Do not send Conn, exception, reason, stacktrace, headers or credentials.
+        terminal = case kind do
+          :stop -> if match?(%{conn: %Plug.Conn{state: :sent, status: 200}}, metadata),
+            do: :router_stop_200, else: :error_terminal
+          :exception -> :router_exception
+          :start -> :pending
+        end
+        send(owner, {:avatar_request_event, self(), kind, projection.own_token_equal, terminal})
+    end
+  end
+
+  def avatar_request_initial, do: %{count: 0, pid: nil, monitor: nil,
+    terminal: :pending, down: false, down_reason: :not_observed, failed: false}
+
+  def avatar_request_reduce(state, {:avatar_request_event, pid, :start, owned, :pending}, monitor)
+        when is_pid(pid) and is_function(monitor, 1) do
+    count = state.count + 1
+    if count == 1 and owned == true and not state.failed do
+      %{state | count: count, pid: pid, monitor: monitor.(pid)}
+    else
+      {%{state | count: count, failed: true}, :invalid_start}
+    end
+  end
+  def avatar_request_reduce(state, {:avatar_request_event, pid, kind, owned, terminal}, _monitor)
+        when kind in [:stop, :exception] do
+    if state.count == 1 and pid == state.pid and owned == true and
+         state.terminal == :pending and not state.down and not state.failed and
+         terminal in [:router_stop_200, :router_exception] do
+      %{state | terminal: terminal}
+    else
+      {%{state | failed: true}, :invalid_terminal}
+    end
+  end
+  def avatar_request_reduce(state, {:DOWN, ref, :process, pid, reason}, _monitor) do
+    if state.count == 1 and ref == state.monitor and pid == state.pid and not state.down and not state.failed do
+      %{state | down: true, down_reason: if(reason == :normal, do: :normal, else: :abnormal)}
+    else
+      {%{state | failed: true}, :invalid_down}
+    end
+  end
+  def avatar_request_reduce(state, _, _), do: {%{state | failed: true}, :invalid_event}
+
+  def avatar_request_public(state) do
+    %{phase: "AVATAR_REQUEST_LIFECYCLE", attempt_count: state.count,
+      start_seen: state.count == 1 and is_pid(state.pid), own_token_equal: state.count == 1 and is_pid(state.pid),
+      terminal: Atom.to_string(state.terminal), request_down: state.down,
+      down_reason: Atom.to_string(state.down_reason), failed: state.failed}
+  end
+  # END PURE AVATAR REQUEST LIFECYCLE
+
+  defp attach_avatar_request_observer!(token) do
+    parent = self()
+    owner = spawn_link(fn -> avatar_request_loop(parent, avatar_request_initial()) end)
+    handler_id = {:local_avaturn_request, self(), make_ref()}
+    :ok = :telemetry.attach_many(handler_id,
+      for(kind <- [:start, :stop, :exception], do: [:phoenix, :router_dispatch, kind]),
+      &__MODULE__.avatar_request_event/4, %{owner: owner, token: token})
+    %{handler_id: handler_id, owner: owner}
+  end
+
+  defp avatar_request_loop(parent, state) do
+    receive do
+      {:close, ^parent} -> :ok
+      event ->
+        case avatar_request_reduce(state, event, &Process.monitor/1) do
+          {failed, _reason} ->
+            emit(avatar_request_public(failed))
+            # Fail closed in the fixture; do not log the rejected event.
+            exit(:invalid_avatar_request_lifecycle)
+          next ->
+            emit(avatar_request_public(next))
+            avatar_request_loop(parent, next)
+        end
+    end
   end
 
   defp bind_normal_glb_storage!(work, http_port) do
@@ -231,7 +326,7 @@ defmodule Ret.LocalUiSocket do
     projected
   end
 
-  defp commands!(creator_mode, response_observer) do
+  defp commands!(creator_mode, response_observer, request_observer) do
     case IO.gets(:stdio, "") do
       :eof -> raise "UI observation EOF without STOP"
       {:error, _} -> raise "UI observation input failed"
@@ -245,6 +340,10 @@ defmodule Ret.LocalUiSocket do
         case Jason.decode!(line) do
           %{"command" => "STOP"} ->
             if response_observer, do: :telemetry.detach(response_observer.handler_id)
+            if request_observer do
+              :telemetry.detach(request_observer.handler_id)
+              send(request_observer.owner, {:close, self()})
+            end
             :ok = Application.stop(:ret)
             if Process.whereis(RetWeb.Endpoint), do: raise("owned Endpoint still alive")
             emit(%{phase: "STOPPED"})
@@ -253,13 +352,13 @@ defmodule Ret.LocalUiSocket do
           %{"command" => profile} when not creator_mode and profile in ["BASE", "BOTS_AI"] ->
             apply_profile!(profile)
             emit(%{phase: "SQL_APPLIED", profile: profile})
-            commands!(creator_mode, response_observer)
+            commands!(creator_mode, response_observer, request_observer)
 
           %{"command" => profile} when creator_mode and profile in ["CREATOR_OFF", "CREATOR_ON"] ->
             apply_creator!(profile)
             emit(%{phase: "SQL_APPLIED", profile: profile})
             emit_avatar_response_state(response_observer)
-            commands!(creator_mode, response_observer)
+            commands!(creator_mode, response_observer, request_observer)
         end
     end
   end

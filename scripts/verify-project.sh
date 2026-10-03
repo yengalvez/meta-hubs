@@ -621,6 +621,7 @@ run_security() {
   node --test "$ROOT_DIR/tests/runtime/reticulum-local.test.mjs"
   node --test "$ROOT_DIR/tests/runtime/reticulum-avaturn-save.test.mjs" "$ROOT_DIR/tests/runtime/avaturn-save-sql-boundary.test.mjs" "$ROOT_DIR/tests/runtime/avaturn-save-readback.test.mjs" "$ROOT_DIR/tests/runtime/normal-glb-readback.test.mjs"
   node --test "$ROOT_DIR/tests/runtime/avaturn-response-stop.test.mjs"
+  node --test "$ROOT_DIR/tests/runtime/avaturn-editor-observation.test.mjs" "$ROOT_DIR/tests/runtime/avaturn-cancel-native-driver.test.mjs"
   node --test "$ROOT_DIR/tests/runtime/bot-transport-local.test.mjs"
   node --test "$ROOT_DIR/tests/runtime/sql-http-local.test.mjs"
   node --test "$ROOT_DIR/tests/runtime/catalog-dataset.test.mjs"
@@ -756,6 +757,7 @@ run_reticulum() {
     test_launcher=(sandbox-exec -p "$test_sandbox_profile" "${test_launcher[@]}")
   fi
   "${test_launcher[@]}" -- node --test "$ROOT_DIR/tests/runtime/avaturn-response-projection.test.mjs"
+  "${test_launcher[@]}" -- node --test "$ROOT_DIR/tests/runtime/avaturn-request-lifecycle.test.mjs"
   (
     cd "$ROOT_DIR/hubs-cloud/community-edition/services/reticulum"
     "${test_launcher[@]}" -- env MIX_ENV=test mix deps.get --only test --check-locked

@@ -107,6 +107,8 @@ test("new build route requires compiled real creator and installed pinned SDK wi
   const wrapper = read("./profile-ui-browser.mjs");
   assert.match(wrapper, /isAvaturn\(connection\) \? avaturnEntry : isNormalGlb\(connection\) \? normalGlbEntry : isCreator\(connection\) \? creatorEntry : ownFiles\[1\]/);
   assert.match(wrapper, /const avaturnEntry = "tests\/runtime\/profile-avaturn-editor-entry.js"/);
+  assert.equal((wrapper.match(/"tests\/runtime\/avaturn-editor-observation\.mjs"/g) || []).length, 2,
+    "passive observer bytes must be hashed and its actual compiled module required");
   assert.match(wrapper, /const sdkEntry = "hubs\/node_modules\/@avaturn\/sdk\/dist\/index.js"/);
   assert.match(wrapper, /manifest.version !== "1.1.4"/);
   assert.match(wrapper, /declared.dependencies\?\.\["@avaturn\/sdk"\] !== "1.1.4"/);

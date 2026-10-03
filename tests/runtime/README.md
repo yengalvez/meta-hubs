@@ -173,32 +173,44 @@ fabricated SDK event or callback. No new account, photo, terms or cost.
 An external export/download origin is blocked; observe the safe origin-only
 CSP dependency and resolve authority explicitly, never wildcard the policy.
 
-For the native in-flight fault, run the separate peer against that SAME owned
-scratch (not a production server or port5432):
+For the distinct cancellation case, use the automated test-only driver with
+the same explicit native runner arguments and existing caches:
 
 ```sh
-node tests/runtime/avaturn-save-sql-boundary.mjs --work /private/tmp/ynret-local-<owned-suffix> \
-  --pg-bin /opt/homebrew/Cellar/postgresql@14/14.23/bin
+node tests/runtime/avaturn-cancel-native-driver.mjs \
+  --pg-bin /opt/homebrew/Cellar/postgresql@14/14.23/bin \
+  --cache-reticulum /private/tmp/ynret-local-<existing-suffix>/reticulum \
+  --browser-origin http://127.0.0.1:18445 \
+  --hex-cache /private/tmp/ynret-local-<existing-suffix>/mix/archives/hex-2.5.1
 ```
 
-Keep stdin open. Peer `ARM` → `ARMED` locks only `ret0.avatars` in its own
-transaction. Perform real browser Save; require `BLOCKED_INSERT`. Native
-runner `CREATOR_OFF` commits policy through AppConfig and the real socket;
-observe revocation before peer `RELEASE`. Require no stale onSave callback
-after the real backend completion. Do not unmount the editor on OFF to hide
-that callback. A separately saved SID reloads via AvatarEditor/private-glb
-and its real API/model preview while creator OFF, not via a new provider.
-Peer `STOP` must confirm its actual exit/rollback; native STOP and static
-server shutdown remain mandatory. The peer has a hard ceiling≤120s and
-releases only its own transaction on EOF/error/deadline/signals.
+Keep stdin open. On READY build/serve the exact private bootstrap, open a fresh
+internal browser and select an existing owned provider avatar. Only when the
+real SDK Next button is visible send literal JSON `{"command":"ARM"}`.
+After ARMED perform the real Next action once. The driver owns the existing
+peer's BLOCKED_INSERT → JSON CREATOR_OFF → correlated native terminal/DOWN →
+read-only zero-row/no-active-INSERT observations → RELEASE → peer STOP order.
+It never clicks the browser or repeats the save. OBSERVATIONS_PENDING is not
+acceptance; native remains alive for actual primary browser observations until
+literal JSON `{"command":"STOP"}`. Never send bare command text. Cleanup
+preserves any failure, closes only owned children and does not extend the
+existing observation300s/peer≤120s ceilings.
 
-The Avaturn-only fixture observes the existing Phoenix router-stop event.
-Require `AVATAR_RESPONSE_STATE` count0 while INSERT is held, and after
-release exactly one `AVATAR_RESPONSE_STOP`: owned account, create, status200.
-This proves controller return and adapter handoff, not browser receipt.
-Duplicate/error/unowned terminals fail the closed reader; snapshots do not
-fabricate completion. Node decoder contracts run in security/CI; actual
-Elixir projection contracts run under the existing pinned Reticulum launcher.
+Cancellation without commit and an actual late owned HTTP200 are distinct
+outcomes. Do not require a commit/HTTP200 for cancellation: that would contradict
+the product AbortSignal. Require the original still-mounted AvatarEditor's
+genuine abort event and aborted signal, OFF, finally-cleared controller and
+uploadInFlight, no saved state and zero ALL-onSave callbacks; correlate the
+actual fetch's canceled network terminal separately. Native exception/DOWN
+alone never proves browser abort. SQL count0 alone never proves drain. The
+driver's correlated native lifecycle plus both read-only drain observations
+and actual peer STOP0 are additional required evidence, not a global PASS.
+If a real late200 occurs, preserve exactly one owned router-stop200/commit1
+and independently prove client cancellation; never force or fabricate it.
+Router-stop200 means controller return/adapter handoff, not browser receipt.
+Duplicate/error/unowned observations fail closed. Pure decoder/observer tests
+run in security/CI; actual extracted Elixir lifecycle/projection contracts run
+under the existing pinned Reticulum launcher. Neither accepts native runtime.
 
 For the separate positive case, observe real SDK Next → onSave, commit
 `CREATOR_OFF`, and reload its saved SID through the page's real API link.

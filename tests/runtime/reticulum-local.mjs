@@ -47,6 +47,24 @@ export function avaturnResponseEvent(event, previousCount = 0) {
   reject("invalid_avaturn_response_marker");
 }
 
+// Opaque native lifecycle only. No exception/PID disappearance is acceptance.
+export function avaturnRequestEvent(event, previous = null) {
+  const fields = "attempt_count,down_reason,failed,own_token_equal,phase,request_down,start_seen,terminal";
+  const valid = value => value && Object.keys(value).sort().join(",") === fields && value.phase === "AVATAR_REQUEST_LIFECYCLE" &&
+    value.attempt_count === 1 && value.start_seen === true && value.own_token_equal === true && value.failed === false &&
+    typeof value.request_down === "boolean" && ["pending", "router_stop_200", "router_exception"].includes(value.terminal) &&
+    (value.request_down ? ["normal", "abnormal"].includes(value.down_reason) : value.down_reason === "not_observed");
+  if (!valid(event)) reject("invalid_avaturn_request_marker");
+  if (!previous) {
+    if (event.terminal !== "pending" || event.request_down) reject("invalid_avaturn_request_order");
+  } else {
+    if (!valid(previous)) reject("invalid_avaturn_request_marker");
+    if (previous.request_down || (previous.terminal !== "pending" && event.terminal !== previous.terminal) ||
+        (event.terminal === previous.terminal && event.request_down === previous.request_down)) reject("invalid_avaturn_request_order");
+  }
+  return Object.freeze({ ...event });
+}
+
 export function compiledCanarySourcePaths(compilation, root, sourcePaths) {
   if (!compilation?.modules || typeof compilation.modules[Symbol.iterator] !== "function" ||
       !path.isAbsolute(root) || !(sourcePaths instanceof Set)) reject("invalid_canary_module_graph");
@@ -174,7 +192,7 @@ async function observeUiSocket({ root, work, log, env, application, pgPort, mix 
   const profiles = creatorMode ? ["CREATOR_OFF", "CREATOR_ON"] : ["BASE", "BOTS_AI"];
   const child = spawn("/usr/bin/sandbox-exec", ["-p", networkProfile(pgPort), mix, "run", "--no-start", "--no-compile",
     path.join(root, "tests/runtime/reticulum-local.exs")], { cwd: application, env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
-  let ready = false, stopped = false, stopRequested = false, backendPid, failure, input = "", output = "", avatarResponseCount = 0;
+  let ready = false, stopped = false, stopRequested = false, backendPid, failure, input = "", output = "", avatarResponseCount = 0, avatarRequestState = null;
   const fail = code => {
     if (failure) return;
     failure = code;
@@ -220,6 +238,8 @@ async function observeUiSocket({ root, work, log, env, application, pgPort, mix 
           // No browser assertion is inferred from committed wrappers.
         } else if (["AVATAR_RESPONSE_STATE", "AVATAR_RESPONSE_STOP"].includes(event.phase) && avaturnSave && ready && !stopRequested) {
           avatarResponseCount = avaturnResponseEvent(event, avatarResponseCount);
+        } else if (event.phase === "AVATAR_REQUEST_LIFECYCLE" && avaturnSave && ready && !stopRequested) {
+          avatarRequestState = avaturnRequestEvent(event, avatarRequestState);
         } else if (event.phase === "STOPPED" && Object.keys(event).join(",") === "phase" && stopRequested) stopped = true;
         else reject("invalid_ui_socket_marker");
         process.stdout.write(`RET_UI_SOCKET:${JSON.stringify(event)}\n`);
