@@ -12,6 +12,10 @@ import { execFileSync, spawn } from "node:child_process";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
+import {
+  parseCheckpointBackupAuthorityVersioned,
+  validateCheckpointBackupAuthorityVersioned
+} from "./recovery-checkpoint-authority.mjs";
 
 const MAX_LIST_BYTES = 16 * 1024 * 1024;
 const MAX_EVENT_BYTES = 4 * 1024 * 1024;
@@ -160,11 +164,17 @@ function exactArguments(argv) {
   const modeSpecific = mode === "monitor"
     ? ["--stop", "--failure", "--ready", "--progress", "--final", "--authority"]
     : ["--baseline-sha256"];
-  const expected = [...common, ...modeSpecific].sort();
+  const signedKeys = ["--backup-authority-keyring", "--backup-authority-key-id"];
+  const signed = signedKeys.some(key => values.has(key));
+  const expected = [...common, ...modeSpecific, ...(signed ? signedKeys : [])].sort();
   if (
     values.size !== expected.length ||
     [...values.keys()].sort().join("\n") !== expected.join("\n")
   ) fail("arguments");
+  if (signed && (!path.isAbsolute(values.get("--backup-authority-keyring")) ||
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+        values.get("--backup-authority-key-id")
+      ))) fail("backup_authority_arguments");
   if (!/^[A-Za-z0-9_.:@/-]{1,253}$/.test(values.get("--context"))) {
     fail("context");
   }
@@ -376,6 +386,10 @@ function validateMonitorAuthority(values, options) {
     },
     hashes: { contract_sha256: values.get("--contract-sha256") }
   };
+  if (options.backupAuthorityKeyring) expected.backup_authority = {
+    keyring_path: options.backupAuthorityKeyring,
+    key_id: options.backupAuthorityKeyId
+  };
   if (
     !object(authority) || !Number.isSafeInteger(authority.pid) ||
     authority.pid !== process.pid || typeof authority.start_identity !== "string" ||
@@ -415,12 +429,31 @@ function canonicalConsumerFingerprint(encoded, code = "consumer_contract") {
   }
 }
 
-function validateConsumerContract(text, expectedDigest, namespace) {
+function validateConsumerContract(text, expectedDigest, namespace, signed = false) {
   if (sha256(text) !== expectedDigest) fail("contract_digest");
   const contract = parseJson(text, "contract_json");
   const expectedNames = [
     "bot-orchestrator", "coturn", "pgbouncer", "pgbouncer-t", "reticulum"
   ];
+  if (signed) {
+    if (!exactKeys(contract, ["schema_version", "operation_id", "authority_sha256", "consumers"]) ||
+        ![2, 3].includes(contract.schema_version) || !/^[a-f0-9]{32}$/.test(contract.operation_id) ||
+        !/^[a-f0-9]{64}$/.test(contract.authority_sha256) || !namespace ||
+        !Array.isArray(contract.consumers) || contract.consumers.length !== 5) {
+      fail("consumer_contract");
+    }
+    contract.consumers.forEach((consumer, index) => {
+      if (!exactKeys(consumer, [
+        "name", "uid", "initial_resource_version", "initial_generation", "original_replicas", "selector"
+      ]) || consumer.name !== expectedNames[index] || consumer.selector !== consumer.name ||
+          typeof consumer.uid !== "string" || !consumer.uid ||
+          typeof consumer.initial_resource_version !== "string" || !consumer.initial_resource_version ||
+          !Number.isSafeInteger(consumer.initial_generation) || consumer.initial_generation < 1 ||
+          !Number.isSafeInteger(consumer.original_replicas) ||
+          consumer.original_replicas < (contract.schema_version === 2 ? 1 : 0)) fail("consumer_contract");
+    });
+    return contract;
+  }
   if (
     !exactKeys(contract, ["schema_version", "operation_id", "consumers"]) ||
     contract.schema_version !== 1 || !/^[a-f0-9]{32}$/.test(contract.operation_id) ||
@@ -553,11 +586,9 @@ function validateLease(kubectl, context, options, expected = null, deadline = nu
   return identity;
 }
 
-function validateOperationLock(kubectl, context, options, deadline = null) {
-  const value = kubectlJson(kubectl, context, [
-    "get", "configmap", options.lockName, "-n", options.namespace, "-o", "json"
-  ], MAX_LIST_BYTES, deadline);
+function validateOperationLockObject(value, options) {
   const metadata = value.metadata;
+  const signed = Boolean(options.backupAuthorityKeyring);
   if (
     value.apiVersion !== "v1" || value.kind !== "ConfigMap" ||
     metadata?.name !== options.lockName || metadata?.namespace !== options.namespace ||
@@ -568,8 +599,111 @@ function validateOperationLock(kubectl, context, options, deadline = null) {
       "yenhubs.org/recovery-owner": options.operationOwner
     }) ||
     metadata.annotations?.["yenhubs.org/operation-id"] !== options.operationId ||
-    JSON.stringify(value.data || {}) !== "{}" || JSON.stringify(value.binaryData || {}) !== "{}"
+    (!signed && JSON.stringify(value.data || {}) !== "{}") ||
+    JSON.stringify(value.binaryData || {}) !== "{}"
   ) fail("operation_lock_contract");
+  if (!signed) return null;
+  if (options.operationOwner !== "checkpoint-backup" ||
+      metadata.deletionGracePeriodSeconds !== undefined ||
+      ![undefined, null].includes(metadata.finalizers) && canonicalJson(metadata.finalizers) !== "[]" ||
+      ![undefined, null].includes(metadata.ownerReferences) && canonicalJson(metadata.ownerReferences) !== "[]" ||
+      !exactKeys(metadata.annotations, [
+        "yenhubs.org/operation-id", "yenhubs.org/recovery-token", "yenhubs.org/namespace-uid",
+        "yenhubs.org/pvc-uid", "yenhubs.org/checkpoint-stamp", "yenhubs.org/dump-sha256",
+        "yenhubs.org/storage-sha256"
+      ]) || !exactKeys(value.data, ["checkpoint-backup-authority.json"]) ||
+      typeof value.data["checkpoint-backup-authority.json"] !== "string") fail("operation_lock_contract");
+  const authorityText = value.data["checkpoint-backup-authority.json"];
+  const authority = parseCheckpointBackupAuthorityVersioned(authorityText);
+  if (authority.operation_id !== options.operationId || authority.namespace.name !== options.namespace ||
+      authority.namespace.uid !== options.namespaceUid || authority.runner_generation !== options.runtimeGeneration ||
+      authority.hmac_key_id !== options.backupAuthorityKeyId ||
+      (options.baseline?.backup_authority !== undefined &&
+        options.baseline.backup_authority !== authorityText)) fail("backup_authority_binding");
+  const annotations = metadata.annotations;
+  const lockBinding = {
+    name: metadata.name, namespace: metadata.namespace, owner: options.operationOwner,
+    operation_id: annotations["yenhubs.org/operation-id"],
+    recovery_token: annotations["yenhubs.org/recovery-token"],
+    namespace_uid: annotations["yenhubs.org/namespace-uid"],
+    pvc_uid: annotations["yenhubs.org/pvc-uid"],
+    checkpoint_stamp: annotations["yenhubs.org/checkpoint-stamp"],
+    dump_sha256: annotations["yenhubs.org/dump-sha256"],
+    storage_sha256: annotations["yenhubs.org/storage-sha256"]
+  };
+  return { authorityText, authority, lockBinding };
+}
+
+function validateOperationLock(kubectl, context, options, deadline = null) {
+  const value = kubectlJson(kubectl, context, [
+    "get", "configmap", options.lockName, "-n", options.namespace, "-o", "json"
+  ], MAX_LIST_BYTES, deadline);
+  return validateOperationLockObject(value, options);
+}
+
+function validateSignedConsumerPhase(deployment, consumer) {
+  const initialGeneration = consumer.initial_generation;
+  const generation = initialGeneration + (consumer.original_replicas > 0 ? 1 : 0);
+  if (!Number.isSafeInteger(generation) || deployment.metadata.generation !== generation ||
+      deployment.spec.replicas !== 0 || deployment.metadata.uid !== consumer.uid ||
+      deployment.spec.selector?.matchLabels?.app !== consumer.selector ||
+      (consumer.original_replicas === 0 &&
+        deployment.metadata.resourceVersion !== consumer.initial_resource_version)) fail("backup_authority_phase");
+}
+
+function authenticateSignedDeployments(material, deployments, consumerContract, options) {
+  if (!Array.isArray(deployments) || deployments.length !== DEPLOYMENT_NAMES.length ||
+      new Set(deployments.map(item => item?.metadata?.name)).size !== DEPLOYMENT_NAMES.length ||
+      new Set(deployments.map(item => item?.metadata?.uid)).size !== DEPLOYMENT_NAMES.length ||
+      deployments.some(item => !DEPLOYMENT_NAME_SET.has(item?.metadata?.name))) fail("deployment_inventory");
+  const deploymentContracts = material.authority.consumers.map(consumer => {
+    const matches = deployments.filter(item => item.metadata?.name === consumer.name);
+    if (matches.length !== 1) fail("deployment_inventory");
+    const deployment = matches[0];
+    validateDeploymentEnvelope(deployment, options.namespace, "deployment_inventory", true);
+    validateDeploymentShape(deployment, false);
+    validateSignedConsumerPhase(deployment, consumer);
+    const spec = structuredClone(deployment.spec);
+    delete spec.replicas;
+    return {
+      api_version: "apps/v1", kind: "Deployment", namespace: options.namespace,
+      name: consumer.name, uid: deployment.metadata.uid, spec_without_replicas: spec
+    };
+  });
+  validateCheckpointBackupAuthorityVersioned({
+    keyringPath: options.backupAuthorityKeyring, keyId: options.backupAuthorityKeyId,
+    lockBinding: material.lockBinding, authority: material.authority,
+    deploymentContracts, consumerContract
+  });
+  return material.authorityText;
+}
+
+function validateSignedDeploymentList(value) {
+  if ((value.metadata.continue !== undefined && value.metadata.continue !== "") ||
+      (value.metadata.remainingItemCount !== undefined && value.metadata.remainingItemCount !== 0)) {
+    fail("deployments_list_contract");
+  }
+  return value;
+}
+
+function validateSignedFenceAuthority(authority, fence) {
+  if (authority.runner_generation === "legacy-absent") {
+    if (authority.operation_fence !== null || fence !== null) fail("backup_authority_fence");
+    return;
+  }
+  const signed = authority.operation_fence;
+  if (!fence || ["parent", "runner"].some(key => {
+    const initial = signed.namespaces[key];
+    const current = fence.namespaces?.[key];
+    return !current || current.name !== initial.name || current.uid !== initial.uid ||
+      current.resource_version !== initial.initial_resource_version ||
+      current.phase !== initial.phase || current.metadata_name_label !== initial.metadata_name_label;
+  }) || fence.policy?.uid !== signed.policy.uid ||
+      fence.policy.resource_version !== signed.policy.initial_resource_version ||
+      fence.policy.generation !== signed.policy.initial_generation ||
+      fence.policy.spec_sha256 !== signed.policy.spec_sha256 ||
+      fence.binding?.uid !== signed.binding.uid ||
+      fence.binding.spec_sha256 !== signed.binding.active_spec_sha256) fail("backup_authority_fence");
 }
 
 function validateControlPlane(
@@ -587,7 +721,13 @@ function validateControlPlane(
     );
   }
   const lease = validateLease(kubectl, context, options, expectedLease, deadline);
-  validateOperationLock(kubectl, context, options, deadline);
+  const material = validateOperationLock(kubectl, context, options, deadline);
+  if (material) {
+    validateSignedFenceAuthority(material.authority, options.baseline.recovery_operation_fence);
+    const deployments = listResource(kubectl, context, options.namespace, "deployments", deadline);
+    validateSignedDeploymentList(deployments);
+    authenticateSignedDeployments(material, deployments.items, options.consumerContract, options);
+  }
   return lease;
 }
 
@@ -890,7 +1030,7 @@ function validateDeploymentEnvelope(
   ) fail(code);
 }
 
-function deploymentIdentity(deployment) {
+function deploymentIdentity(deployment, signed = false) {
   return {
     name: deployment.metadata.name,
     uid: deployment.metadata.uid,
@@ -898,7 +1038,11 @@ function deploymentIdentity(deployment) {
     generation: deployment.metadata.generation,
     replicas: deployment.spec.replicas,
     selector: deployment.spec.selector.matchLabels.app,
-    fingerprint: deploymentFingerprint(deployment),
+    fingerprint: signed ? sha256(canonicalJson({
+      selector: deployment.spec.selector,
+      strategy: deployment.spec.strategy || {},
+      template: deployment.spec.template
+    })) : deploymentFingerprint(deployment),
     spec_fingerprint: deploymentSpecFingerprint(deployment),
     metadata_fingerprint: metadataFingerprint(deployment)
   };
@@ -922,14 +1066,15 @@ function validateDeploymentShape(deployment, event) {
 
 function validateDeploymentObject(
   deployment, namespace, expected, consumer = null, event = false,
-  allowOmittedTypeMeta = false
+  allowOmittedTypeMeta = false, signed = false
 ) {
   validateDeploymentEnvelope(
     deployment, namespace, event ? "deployment_event_contract" : "deployment_inventory",
     allowOmittedTypeMeta
   );
   validateDeploymentShape(deployment, event);
-  const identity = deploymentIdentity(deployment);
+  const identity = deploymentIdentity(deployment, signed);
+  if (signed && consumer) validateSignedConsumerPhase(deployment, consumer);
   if (
     identity.name !== expected.name || identity.uid !== expected.uid ||
     identity.generation !== expected.generation || identity.replicas !== expected.replicas ||
@@ -939,7 +1084,7 @@ function validateDeploymentObject(
     (WRITER_NAME_SET.has(identity.name) && identity.replicas !== 0) ||
     (consumer && (
       identity.uid !== consumer.uid || identity.selector !== consumer.selector ||
-      canonicalDeploymentFingerprint(deployment) !==
+      !signed && canonicalDeploymentFingerprint(deployment) !==
         canonicalConsumerFingerprint(consumer.fingerprint)
     ))
   ) fail(event ? "deployment_drift" : "deployment_inventory");
@@ -1403,10 +1548,14 @@ function listResource(kubectl, context, namespace, resource, deadline = null) {
 
 function captureBaseline(
   kubectl, context, namespace, namespaceUid, contract, lease,
-  runtimeGeneration, recoveryOperationFence, operationOwner, operationLock
+  runtimeGeneration, recoveryOperationFence, operationOwner, operationLock,
+  options = null
 ) {
+  const signed = [2, 3].includes(contract.schema_version);
+  if (signed !== Boolean(options?.backupAuthorityKeyring)) fail("backup_authority_arguments");
   const consumerByName = new Map(contract.consumers.map(consumer => [consumer.name, consumer]));
   const deploymentList = listResource(kubectl, context, namespace, "deployments");
+  if (signed) validateSignedDeploymentList(deploymentList);
   if (deploymentList.items.length !== DEPLOYMENT_NAMES.length) fail("deployment_inventory");
   const deployments = [];
   const rawDeploymentByName = new Map();
@@ -1416,23 +1565,27 @@ function captureBaseline(
     const current = matches[0];
     validateDeploymentEnvelope(current, namespace, "deployment_inventory", true);
     validateDeploymentShape(current, false);
-    const identity = deploymentIdentity(current);
+    const identity = deploymentIdentity(current, signed);
     const consumer = consumerByName.get(name) || null;
     if (
       WRITER_NAME_SET.has(name) !== Boolean(consumer) ||
       consumer && (
         identity.uid !== consumer.uid || identity.selector !== consumer.selector ||
-        canonicalDeploymentFingerprint(current) !==
+        !signed && canonicalDeploymentFingerprint(current) !==
           canonicalConsumerFingerprint(consumer.fingerprint) ||
         identity.replicas !== 0
       )
     ) fail("deployment_inventory");
+    if (signed && consumer) validateSignedConsumerPhase(current, consumer);
     deployments.push(identity);
     rawDeploymentByName.set(name, current);
   }
   if (deploymentList.items.some(item => !DEPLOYMENT_NAME_SET.has(item.metadata?.name))) {
     fail("deployment_inventory");
   }
+  const backupAuthority = signed ? authenticateSignedDeployments(
+    validateOperationLock(kubectl, context, options), deploymentList.items, contract, options
+  ) : null;
   const deploymentByUid = new Map(deployments.map(item => [item.uid, item]));
   if (deploymentByUid.size !== DEPLOYMENT_NAMES.length) fail("deployment_inventory");
   const replicaSetList = listResource(kubectl, context, namespace, "replicasets");
@@ -1486,7 +1639,8 @@ function captureBaseline(
   if (podUids.size !== pods.length) fail("pod_inventory_uid_duplicate");
   const reticulum = rawDeploymentByName.get("reticulum");
   return {
-    schema_version: 3,
+    schema_version: signed ? 4 : 3,
+    ...(signed ? { backup_authority: backupAuthority } : {}),
     runtime_generation: runtimeGeneration,
     recovery_operation_fence: recoveryOperationFence,
     operation_id: contract.operation_id,
@@ -1499,7 +1653,7 @@ function captureBaseline(
     storage_helper: storageHelperContract(
       contract.operation_id, reticulumImage(reticulum), operationOwner
     ),
-    consumers: contract.consumers.map(consumer => ({
+    consumers: signed ? structuredClone(contract.consumers) : contract.consumers.map(consumer => ({
       name: consumer.name,
       uid: consumer.uid,
       selector: consumer.selector,
@@ -1522,13 +1676,14 @@ function validateBaseline(
 ) {
   if (expectedDigest && sha256(text) !== expectedDigest) fail("baseline_digest");
   const baseline = parseJson(text, "baseline_json");
+  const signed = [2, 3].includes(contract.schema_version);
   if (
     !exactKeys(baseline, [
       "schema_version", "namespace", "namespace_uid", "lease", "storage_helper",
       "consumers", "deployments", "replica_sets", "pods", "boundaries",
       "runtime_generation", "recovery_operation_fence", "operation_id",
-      "operation_owner", "operation_lock", "context"
-    ]) || baseline.schema_version !== 3 || baseline.context !== context ||
+      "operation_owner", "operation_lock", "context", ...(signed ? ["backup_authority"] : [])
+    ]) || baseline.schema_version !== (signed ? 4 : 3) || baseline.context !== context ||
     baseline.namespace !== namespace ||
     baseline.namespace_uid !== namespaceUid || !Array.isArray(baseline.consumers) ||
     baseline.operation_id !== contract.operation_id ||
@@ -1559,11 +1714,22 @@ function validateBaseline(
     !Array.isArray(baseline.pods) ||
     !exactKeys(baseline.boundaries, ["deployments", "replicasets", "pods"])
   ) fail("baseline_contract");
-  const expectedConsumers = contract.consumers.map(consumer => ({
+  if (signed) {
+    const authority = parseCheckpointBackupAuthorityVersioned(baseline.backup_authority);
+    if (authority.schema_version !== (contract.schema_version === 2 ? 1 : 2) ||
+        sha256(baseline.backup_authority) !== contract.authority_sha256 ||
+        canonicalJson(authority.consumers) !== canonicalJson(contract.consumers) ||
+        authority.operation_id !== contract.operation_id || authority.namespace.name !== namespace ||
+        authority.namespace.uid !== namespaceUid || authority.runner_generation !== runtimeGeneration ||
+        operationOwner !== "checkpoint-backup") fail("baseline_contract");
+    validateSignedFenceAuthority(authority, baseline.recovery_operation_fence);
+  }
+  const expectedConsumers = signed ? structuredClone(contract.consumers) : contract.consumers.map(consumer => ({
     name: consumer.name, uid: consumer.uid, selector: consumer.selector,
     fingerprint: consumer.fingerprint
   })).sort((left, right) => left.name.localeCompare(right.name));
-  if (JSON.stringify(baseline.consumers) !== JSON.stringify(expectedConsumers)) {
+  if ((signed ? canonicalJson(baseline.consumers) : JSON.stringify(baseline.consumers)) !==
+      (signed ? canonicalJson(expectedConsumers) : JSON.stringify(expectedConsumers))) {
     fail("baseline_contract");
   }
   const expectedConsumerByName = new Map(
@@ -1588,6 +1754,7 @@ function validateBaseline(
       deployment.generation < 1 || !Number.isInteger(deployment.replicas) ||
       deployment.replicas < 0 || typeof deployment.selector !== "string" ||
       typeof deployment.fingerprint !== "string" ||
+      signed && !/^[a-f0-9]{64}$/.test(deployment.fingerprint) ||
       !/^[a-f0-9]{64}$/.test(deployment.spec_fingerprint) ||
       !/^[a-f0-9]{64}$/.test(deployment.metadata_fingerprint) ||
       !DEPLOYMENT_NAME_SET.has(deployment.name) ||
@@ -1595,12 +1762,16 @@ function validateBaseline(
       expectedConsumer && (
         deployment.uid !== expectedConsumer.uid ||
         deployment.selector !== expectedConsumer.selector ||
-        canonicalConsumerFingerprint(deployment.fingerprint, "baseline_contract") !==
+        !signed && canonicalConsumerFingerprint(deployment.fingerprint, "baseline_contract") !==
           canonicalConsumerFingerprint(expectedConsumer.fingerprint, "baseline_contract") ||
         deployment.replicas !== 0
       ) ||
       deploymentUids.has(deployment.uid)
     ) fail("baseline_contract");
+    if (signed && expectedConsumer && (
+      deployment.generation !== expectedConsumer.initial_generation + (expectedConsumer.original_replicas > 0 ? 1 : 0) ||
+      expectedConsumer.original_replicas === 0 && deployment.resource_version !== expectedConsumer.initial_resource_version
+    )) fail("baseline_contract");
     names.add(deployment.name);
     deploymentUids.add(deployment.uid);
   }
@@ -1726,13 +1897,17 @@ function validateCurrentLists(
     kubectl, context, namespace, "deployments", deadline
   );
   if (deploymentList.items.length !== DEPLOYMENT_NAMES.length) fail("deployment_inventory");
+  if (baseline.schema_version === 4) authenticateSignedDeployments(
+    validateOperationLock(kubectl, context, options, deadline), validateSignedDeploymentList(deploymentList).items,
+    options.consumerContract, options
+  );
   const writerDeployments = [];
   for (const expected of baseline.deployments) {
     const matches = deploymentList.items.filter(item => item.metadata?.name === expected.name);
     if (matches.length !== 1) fail("deployment_inventory");
     const identity = validateDeploymentObject(
       matches[0], namespace, expected,
-      maps.consumerByName.get(expected.name) || null, false, true
+      maps.consumerByName.get(expected.name) || null, false, true, baseline.schema_version === 4
     );
     if (WRITER_NAME_SET.has(expected.name)) {
       writerDeployments.push({
@@ -1813,6 +1988,10 @@ function validateReceiptCurrentLists(
   if (deploymentList.items.length !== DEPLOYMENT_NAMES.length) {
     fail("deployment_inventory");
   }
+  if (baseline.schema_version === 4) authenticateSignedDeployments(
+    validateOperationLock(kubectl, context, options, deadline), validateSignedDeploymentList(deploymentList).items,
+    options.consumerContract, options
+  );
   const writerDeployments = [];
   let targetIdentity = null;
   for (const expected of baseline.deployments) {
@@ -1821,11 +2000,11 @@ function validateReceiptCurrentLists(
     const identity = expected.name === handoff.target.name
       ? validateReceiptDeploymentObject(
           matches[0], namespace, expected, maps.consumerByName.get(expected.name),
-          options.operationId, false, true
+          options.operationId, false, true, baseline.schema_version === 4
         )
       : validateDeploymentObject(
           matches[0], namespace, expected,
-          maps.consumerByName.get(expected.name) || null, false, true
+          maps.consumerByName.get(expected.name) || null, false, true, baseline.schema_version === 4
         );
     if (expected.name === handoff.target.name) targetIdentity = identity;
     if (WRITER_NAME_SET.has(expected.name)) {
@@ -2052,7 +2231,8 @@ function validateEvent(resource, event, namespace, options, baseline, state) {
     const expected = maps.deploymentByName.get(event.object.metadata?.name);
     if (!expected || event.type !== "MODIFIED") fail("deployment_event");
     validateDeploymentObject(
-      event.object, namespace, expected, maps.consumerByName.get(expected.name) || null, true
+      event.object, namespace, expected, maps.consumerByName.get(expected.name) || null,
+      true, false, baseline.schema_version === 4
     );
   } else if (resource === "replicasets") {
     validateReplicaSetEnvelope(event.object, namespace, "replicaset_event_contract");
@@ -2069,14 +2249,18 @@ function validateEvent(resource, event, namespace, options, baseline, state) {
 
 function validateReceiptDeploymentObject(
   deployment, namespace, expected, consumer, operationId, event = false,
-  allowOmittedTypeMeta = false
+  allowOmittedTypeMeta = false, signed = false
 ) {
   validateDeploymentEnvelope(
     deployment, namespace, event ? "deployment_event_contract" : "deployment_inventory",
     allowOmittedTypeMeta
   );
   validateDeploymentShape(deployment, event);
-  const identity = deploymentIdentity(deployment);
+  const identity = deploymentIdentity(deployment, signed);
+  if (signed && consumer) {
+    if (consumer.original_replicas === 0) fail("receipt_zero_consumer");
+    validateSignedConsumerPhase(deployment, consumer);
+  }
   const annotation = deployment.metadata.annotations?.[
     "yenhubs.org/checkpoint-resume-operation"
   ];
@@ -2094,7 +2278,7 @@ function validateReceiptDeploymentObject(
     metadataFingerprint(normalized) !== expected.metadata_fingerprint ||
     !consumer || identity.uid !== consumer.uid ||
     identity.selector !== consumer.selector ||
-    canonicalDeploymentFingerprint(deployment) !==
+    !signed && canonicalDeploymentFingerprint(deployment) !==
       canonicalConsumerFingerprint(consumer.fingerprint)
   ) fail(event ? "receipt_deployment_drift" : "receipt_deployment_inventory");
   return identity;
@@ -2107,14 +2291,16 @@ function validateReceiptArmTarget(options, handoff) {
   const maps = baselineMaps(options.baseline);
   const expected = maps.deploymentByName.get(handoff.target.name);
   const consumer = maps.consumerByName.get(handoff.target.name);
-  validateDeploymentObject(deployment, options.namespace, expected, consumer);
+  const signed = options.baseline.schema_version === 4;
+  if (signed && consumer.original_replicas === 0) fail("receipt_zero_consumer");
+  validateDeploymentObject(deployment, options.namespace, expected, consumer, false, false, signed);
   if (
     Object.prototype.hasOwnProperty.call(
       deployment.metadata.annotations || {},
       "yenhubs.org/checkpoint-resume-operation"
     )
   ) fail("receipt_already_present");
-  return deploymentIdentity(deployment);
+  return deploymentIdentity(deployment, signed);
 }
 
 function validateReceiptEvent(resource, event, namespace, options, baseline, state) {
@@ -2148,7 +2334,7 @@ function validateReceiptEvent(resource, event, namespace, options, baseline, sta
       if (receiptValue !== undefined) fail("receipt_event_not_armed");
       validateDeploymentObject(
         event.object, namespace, handoff.target,
-        maps.consumerByName.get(handoff.target.name), true
+        maps.consumerByName.get(handoff.target.name), true, false, baseline.schema_version === 4
       );
       return eventVersion;
     }
@@ -2158,12 +2344,13 @@ function validateReceiptEvent(resource, event, namespace, options, baseline, sta
       // PATCH will conflict and fail closed if it used an older armed RV.
       validateDeploymentObject(
         event.object, namespace, handoff.target,
-        maps.consumerByName.get(handoff.target.name), true
+        maps.consumerByName.get(handoff.target.name), true, false, baseline.schema_version === 4
       );
     } else {
       validateReceiptDeploymentObject(
         event.object, namespace, handoff.target,
-        maps.consumerByName.get(handoff.target.name), options.operationId, true
+        maps.consumerByName.get(handoff.target.name), options.operationId, true, false,
+        baseline.schema_version === 4
       );
       if (handoff.observedPatchResourceVersion === null) {
         handoff.observedPatchResourceVersion = eventVersion;
@@ -3067,7 +3254,11 @@ function optionsFrom(values) {
     operationOwner: values.get("--operation-owner"),
     operationId: values.get("--operation-id"), leaseName: values.get("--lease-name"),
     leaseUid: values.get("--lease-uid"), leaseHolder: values.get("--lease-holder"),
-    runtimeGeneration: values.get("--runtime-generation")
+    runtimeGeneration: values.get("--runtime-generation"),
+    ...(values.has("--backup-authority-keyring") ? {
+      backupAuthorityKeyring: values.get("--backup-authority-keyring"),
+      backupAuthorityKeyId: values.get("--backup-authority-key-id")
+    } : {})
   };
 }
 
@@ -3077,8 +3268,10 @@ async function monitor(values) {
   const authoritySha256 = validateMonitorAuthority(values, options);
   const contractText = readRegular(values.get("--contract"), MAX_CONTRACT_BYTES);
   const contract = validateConsumerContract(
-    contractText, values.get("--contract-sha256"), options.namespace
+    contractText, values.get("--contract-sha256"), options.namespace,
+    Boolean(options.backupAuthorityKeyring)
   );
+  options.consumerContract = contract;
   if (contract.operation_id !== options.operationId) fail("operation_binding");
   for (const marker of [
     "--stop", "--failure", "--ready", "--progress", "--final", "--baseline"
@@ -3106,7 +3299,7 @@ async function monitor(values) {
       name: options.lockName,
       uid: options.lockUid,
       resource_version: options.lockResourceVersion
-    }
+    }, preBaselineOptions
   );
   failureStage = "control-plane";
   const monitoredOptions = { ...options, baseline };
@@ -3204,8 +3397,10 @@ function boundary(values) {
   const options = optionsFrom(values);
   const contractText = readRegular(values.get("--contract"), MAX_CONTRACT_BYTES);
   const contract = validateConsumerContract(
-    contractText, values.get("--contract-sha256"), options.namespace
+    contractText, values.get("--contract-sha256"), options.namespace,
+    Boolean(options.backupAuthorityKeyring)
   );
+  options.consumerContract = contract;
   if (contract.operation_id !== options.operationId) fail("operation_binding");
   const baselineText = readRegular(values.get("--baseline"), MAX_BASELINE_BYTES);
   const baseline = validateBaseline(
@@ -3235,7 +3430,11 @@ function boundary(values) {
 // Importing them must not enter the monitor CLI or create a child process.
 export {
   controllerOwner, podTemplateFingerprint, podAdmissionFingerprint,
-  validatePodEnvelope, validateReplicaSetEnvelope, validateReplicaSetShape
+  validatePodEnvelope, validateReplicaSetEnvelope, validateReplicaSetShape,
+  authenticateSignedDeployments, deploymentIdentity, exactArguments,
+  validateBaseline, validateConsumerContract, validateDeploymentObject,
+  validateMonitorAuthority, validateOperationLockObject,
+  validateSignedConsumerPhase, validateSignedFenceAuthority
 };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

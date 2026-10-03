@@ -27,6 +27,9 @@ MANIFEST_INPUT_FILE="${HCCE_MANIFEST_PATH:-$SCRIPT_DIR/../hubs-cloud/community-e
 CUTOVER_KEY_INPUT_FILE="${PROCESS_LOCAL_CUTOVER_KEY_PATH:-}"
 FREEZE_RECEIPT_INPUT_FILE="${FREEZE_RECEIPT_PATH:-}"
 VALUES_SOURCE_FILE=""
+# Backup selectors describe the source capture, not this process's destination
+# consumer1 and checkpoint-restore lock. Do not inherit that protocol selection.
+unset RECOVERY_BACKUP_AUTHORITY_KEYRING RECOVERY_BACKUP_AUTHORITY_KEY_ID
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
 recovery_require_in_place_restore_target_mode
@@ -1050,12 +1053,55 @@ require_checkpoint_runner_quiescent_now() {
   esac
 }
 
+restore_checkpoint_has_signed_source_authority() {
+  [[ "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == 4 ||
+     "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v2 ]]
+}
+
+restore_checkpoint_public_binding_is_acceptable() {
+  local versions
+  versions="$(jq -er --slurpfile metadata "$RECOVERY_CHECKPOINT_METADATA_COPY" '
+    select(($metadata | length) == 1) |
+    [($metadata[0].schema_version // $metadata[0].schema), .schema_version] | @tsv
+  ' "$RECOVERY_DEPLOYMENT_INVENTORY_COPY")" || return 1
+  case "$versions" in
+    $'2\t3'|$'2\t4'|$'3\t4'|$'freeze-bundle-v1\t4') return 0 ;;
+    $'4\t5'|$'freeze-bundle-v2\t5')
+      # Offline signed-field/hash correlation is not original HMAC evidence.
+      # Full topology, payload hashes, custody and live gates remain separate.
+      jq -jnSc --slurpfile metadata "$RECOVERY_CHECKPOINT_METADATA_COPY" \
+        --slurpfile inventory "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" '
+        if ($metadata | length) == 1 and ($inventory | length) == 1
+        then {metadata:$metadata[0],inventory:$inventory[0]} else error("binding") end
+      ' | node "$SCRIPT_DIR/checkpoint-backup-formats.mjs" validate-binding
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+restore_checkpoint_source_evidence_mode() {
+  restore_checkpoint_public_binding_is_acceptable || return 1
+  if restore_checkpoint_has_signed_source_authority; then
+    printf 'active-source-authority\n'
+  else
+    printf 'active-source\n'
+  fi
+}
+
+require_durable_checkpoint_source_evidence_live() {
+  local mode
+  [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]] || return 0
+  mode="$(restore_checkpoint_source_evidence_mode)" || return 1
+  require_durable_checkpoint_evidence_live "$mode" "$1"
+}
+
 require_durable_checkpoint_evidence_live() {
   local live_mode="$1" expected_fence_state="$2"
   local manifest_path="" expected_state="" expected_phase=""
   local values_epoch="" evidence_values_path="$VALUES_SOURCE_FILE"
   [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]] || return 0
-  [[ "$live_mode" == active-source || "$live_mode" == quiesced-source ||
+  [[ "$live_mode" == active-source || "$live_mode" == active-source-authority ||
+     "$live_mode" == quiesced-source ||
      "$live_mode" == quiesced-target || "$live_mode" == active-target ||
      "$live_mode" == quiesced-active-target ]] || return 2
   [[ "$expected_fence_state" == dormant ||
@@ -1067,7 +1113,10 @@ require_durable_checkpoint_evidence_live() {
   [[ -n "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY" &&
      -n "$RECOVERY_CHECKPOINT_OPERATION_ID" ]] || return 1
   case "$live_mode" in
-    active-source|quiesced-source)
+    active-source|active-source-authority|quiesced-source)
+      if [[ "$live_mode" != quiesced-source ]]; then
+        [[ "$live_mode" == "$(restore_checkpoint_source_evidence_mode)" ]] || return 1
+      fi
       [[ -n "$RESTORE_HISTORICAL_VALUES_SNAPSHOT" ]] || return 1
       evidence_values_path="$RESTORE_HISTORICAL_VALUES_SNAPSHOT"
       manifest_path=""
@@ -1111,7 +1160,7 @@ require_durable_checkpoint_evidence_live() {
 
 require_durable_checkpoint_evidence_for_parent_state() {
   local expected_fence_state="$1"
-  local contract uid resource_version replicas selector fingerprint live_phase mode
+  local contract uid resource_version replicas selector fingerprint live_phase mode role_json target_originals
   [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]] || return 0
   [[ "$expected_fence_state" == dormant ||
      "$expected_fence_state" == active ]] || return 2
@@ -1123,14 +1172,32 @@ require_durable_checkpoint_evidence_for_parent_state() {
       if [[ "$RECOVERY_OPERATION_STATE" == restore-complete-awaiting-reactivation ]]; then
         mode="active-target"
       else
-        mode="active-source"
+        mode="$(restore_checkpoint_source_evidence_mode)" || return 1
       fi
       ;;
     0:active)
       if [[ "$RECOVERY_OPERATION_STATE" == restore-complete-awaiting-reactivation ]]; then
         mode="quiesced-active-target"
+        if restore_checkpoint_has_signed_source_authority; then
+          target_originals="$(restore_active_target_originals_json)" || return 1
+          if [[ "$(jq -er '.["bot-orchestrator"]' <<<"$target_originals")" == 0 ]]; then
+            mode="active-target"
+          fi
+        fi
       else
-        mode="quiesced-source"
+        if restore_checkpoint_has_signed_source_authority; then
+          role_json="$(recovery_kubectl get role bot-orchestrator-runner-pods \
+            -n hcce-bot-runners -o json)" || return 1
+          if runner_role_json_has_active_contract "$role_json"; then
+            mode="$(restore_checkpoint_source_evidence_mode)" || return 1
+          else
+            # A legitimately paused source still uses the historical inert
+            # Role gate; zero alone never selects that gate for signed BASE.
+            mode="quiesced-source"
+          fi
+        else
+          mode="quiesced-source"
+        fi
       fi
       ;;
     0:restore-fence) mode="quiesced-target" ;;
@@ -1380,7 +1447,8 @@ clear_stale_restore_lock() {
           ;;
         cold-rebind)
           [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind &&
-             "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 ]] ||
+             ( "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 ||
+               "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v2 ) ]] ||
             return 1
           ;;
         *) return 1 ;;
@@ -1706,8 +1774,22 @@ release_restore_serialization() {
   SERIALIZATION_LEASE_OWNED=0
 }
 
+restore_active_target_originals_json() {
+  local originals
+  [[ -n "$VALUES_SOURCE_FILE" && -n "$RESTORE_MANIFEST_SNAPSHOT" ]] || return 1
+  originals="$(recovery_restore_active_target_originals_json \
+    "$VALUES_SOURCE_FILE" "$RESTORE_MANIFEST_SNAPSHOT")" || return 1
+  jq -ceS '
+    select(type == "object" and (keys | sort) ==
+      ["bot-orchestrator", "coturn", "pgbouncer", "pgbouncer-t", "reticulum"] and
+      .reticulum == 1 and .pgbouncer == 1 and .["pgbouncer-t"] == 1 and
+      .coturn == 1 and (.["bot-orchestrator"] == 0 or .["bot-orchestrator"] == 1))
+  ' <<<"$originals"
+}
+
 capture_consumer_contracts_at_replicas() {
   local expected_replicas="$1" original_replicas="$2"
+  local target_originals="" expected_current_replicas="$expected_replicas"
   local deployment deployment_contract deployment_uid deployment_resource_version
   local replicas deployment_selector deployment_fingerprint consumer_contracts='[]'
   DEPLOYMENT_UIDS=()
@@ -1715,13 +1797,25 @@ capture_consumer_contracts_at_replicas() {
   ORIGINAL_REPLICAS=()
   DEPLOYMENT_SELECTORS=()
   DEPLOYMENT_FINGERPRINTS=()
+  if restore_checkpoint_has_signed_source_authority; then
+    # This is the destination ACTIVE profile, never the source authority's
+    # consumer3 and never a guess from an already-paused live Deployment.
+    target_originals="$(restore_active_target_originals_json)" || return 1
+    [[ "$expected_replicas" == 0 || "$expected_replicas" == 1 ]] || return 2
+  fi
   for deployment in "${CONSUMERS[@]}"; do
+    if [[ -n "$target_originals" ]]; then
+      original_replicas="$(jq -er --arg name "$deployment" '.[$name]' \
+        <<<"$target_originals")" || return 1
+      expected_current_replicas="$expected_replicas"
+      [[ "$expected_replicas" != 1 ]] || expected_current_replicas="$original_replicas"
+    fi
     deployment_contract="$(recovery_capture_deployment_contract "$deployment")" || return 1
     IFS=$'\t' read -r deployment_uid deployment_resource_version replicas \
       deployment_selector deployment_fingerprint <<<"$deployment_contract"
-    [[ "$replicas" == "$expected_replicas" ]] || {
+    [[ "$replicas" == "$expected_current_replicas" ]] || {
       printf 'Restore fence requires deployment/%s replicas=%s, found %s.\n' \
-        "$deployment" "$expected_replicas" "$replicas" >&2
+        "$deployment" "$expected_current_replicas" "$replicas" >&2
       return 1
     }
     DEPLOYMENT_UIDS+=("$deployment_uid")
@@ -1741,8 +1835,46 @@ capture_consumer_contracts_at_replicas() {
   RECOVERY_CONSUMER_CONTRACT_JSON="$(jq -cn \
     --arg operation_id "$RESTORE_OPERATION_ID" --argjson consumers "$consumer_contracts" \
     '{schema_version:1,operation_id:$operation_id,consumers:$consumers}')"
-  recovery_consumer_contract_is_acceptable "$RECOVERY_CONSUMER_CONTRACT_JSON"
+  recovery_consumer_contract_is_acceptable "$RECOVERY_CONSUMER_CONTRACT_JSON" || return 1
   export RECOVERY_CONSUMER_CONTRACT_JSON
+}
+
+restore_scale_consumer_to_zero() {
+  local index="$1" resource_version
+  if [[ "${ORIGINAL_REPLICAS[$index]}" == 0 ]]; then
+    resource_version="$(recovery_capture_checkpoint_resume_receipt_absent_contract \
+      "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" 0 \
+      "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" || return 1
+    [[ "$resource_version" == "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" ]] || return 1
+    return 0
+  fi
+  [[ "${ORIGINAL_REPLICAS[$index]}" == 1 ]] || return 1
+  DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
+    "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
+    "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" 1 0 \
+    "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" || return 1
+}
+
+restore_resume_consumer() {
+  local index="$1"
+  if [[ "${ORIGINAL_REPLICAS[$index]}" == 0 ]]; then
+    # Original zero: no PATCH, resume receipt or fabricated generation.
+    DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_capture_checkpoint_resume_receipt_absent_contract \
+      "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" 0 \
+      "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" || return 1
+    recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
+      "deployment/${CONSUMERS[$index]}" 180s || return 1
+  else
+    [[ "${ORIGINAL_REPLICAS[$index]}" == 1 ]] || return 1
+    DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
+      "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
+      "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" 0 1 \
+      "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" || return 1
+    recovery_wait_for_deployment_rollout "${CONSUMERS[$index]}" 300 || return 1
+  fi
+  recovery_require_consumer_contract_entry \
+    "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" \
+    "${ORIGINAL_REPLICAS[$index]}" "$RESTORE_OPERATION_ID"
 }
 
 require_restore_zero_boundary() {
@@ -1917,8 +2049,12 @@ capture_inert_runner_role_for_failclose() {
 }
 
 capture_finalizer_failclose_contracts() {
-  capture_runner_role_for_failclose &&
+  capture_runner_role_for_failclose || return 1
+  if restore_checkpoint_has_signed_source_authority; then
+    capture_consumer_contracts_at_replicas 1 1
+  else
     capture_consumer_contracts_for_failclose
+  fi
 }
 
 neutralize_runner_role_exact() {
@@ -2010,7 +2146,7 @@ require_runner_absence_stable() {
 }
 
 prepare_restore_fence() {
-  local index parent_resource_version="" parent_scale_status=0
+  local index parent_scale_status=0
   local -a remaining_quiesce_order=(0 1 2 4)
   [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]] || {
     printf 'The durable restore-fence protocol cannot restore a legacy checkpoint.\n' >&2
@@ -2027,17 +2163,13 @@ prepare_restore_fence() {
   # after the parent scale CAS, then prove the parent is gone before touching
   # any remaining consumer.
   index=3
-  if ! parent_resource_version="$(recovery_scale_deployment_exact \
-    "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
-    "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" 1 0 \
-    "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")"; then
+  if ! restore_scale_consumer_to_zero "$index"; then
     parent_scale_status=1
   fi
   # A failed scale response may conceal a successful CAS. Always remove the
   # captured runner authority before propagating that failure to fail-close.
   neutralize_runner_role_exact || return 1
   [[ "$parent_scale_status" == 0 ]] || return 1
-  DEPLOYMENT_RESOURCE_VERSIONS[index]="$parent_resource_version"
   recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
     "deployment/${CONSUMERS[$index]}" 180s || return 1
   recovery_require_consumer_contract_entry \
@@ -2045,10 +2177,7 @@ prepare_restore_fence() {
     "$RESTORE_OPERATION_ID" || return 1
 
   for index in "${remaining_quiesce_order[@]}"; do
-    DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
-      "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
-      "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" 1 0 \
-      "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" || return 1
+    restore_scale_consumer_to_zero "$index" || return 1
   done
   for index in "${remaining_quiesce_order[@]}"; do
     recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
@@ -2108,9 +2237,14 @@ verify_legacy_live_reactivation() {
   recovery_require_live_images_match_checkpoint \
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" || return 1
   for index in "${!CONSUMERS[@]}"; do
-    recovery_wait_for_deployment_rollout "${CONSUMERS[$index]}" 300 || return 1
+    if [[ "${ORIGINAL_REPLICAS[$index]}" != 0 ]]; then
+      recovery_wait_for_deployment_rollout "${CONSUMERS[$index]}" 300 || return 1
+    else
+      recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
+        "deployment/${CONSUMERS[$index]}" 180s || return 1
+    fi
     recovery_require_consumer_contract_entry \
-      "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" 1 \
+      "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" "${ORIGINAL_REPLICAS[$index]}" \
       "$RESTORE_OPERATION_ID" || return 1
   done
   validate_restored_database_contract
@@ -2438,7 +2572,7 @@ run_legacy_in_place_restore() {
   for index in "${!CONSUMERS[@]}"; do
     receipt_resource_version="$(
       recovery_capture_checkpoint_resume_receipt_absent_contract \
-        "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" 1 \
+        "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" "${ORIGINAL_REPLICAS[$index]}" \
         "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}"
     )" || return 1
     [[ "$receipt_resource_version" == \
@@ -2451,10 +2585,7 @@ run_legacy_in_place_restore() {
   for index in "${quiesce_order[@]}"; do
     recovery_require_checkpoint_generation_matches_live \
       "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" "$VALUES_SOURCE_FILE"
-    DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
-      "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
-      "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" 1 0 \
-      "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" || return 1
+    restore_scale_consumer_to_zero "$index" || return 1
   done
   for index in "${!CONSUMERS[@]}"; do
     recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
@@ -2581,28 +2712,14 @@ run_legacy_in_place_restore() {
     recovery_require_checkpoint_generation_matches_live \
       "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" "$VALUES_SOURCE_FILE"
     require_runner_resume_monitor_healthy
-    DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
-      "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
-      "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" 0 1 \
-      "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" || return 1
-    recovery_wait_for_deployment_rollout "${CONSUMERS[$index]}" 300 || return 1
-    recovery_require_consumer_contract_entry \
-      "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" 1 \
-      "$RESTORE_OPERATION_ID" || return 1
+    restore_resume_consumer "$index" || return 1
   done
   require_runner_resume_monitor_healthy
   stop_runner_resume_monitor_before_parent
   index=3
   recovery_require_checkpoint_generation_matches_live \
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" "$VALUES_SOURCE_FILE"
-  DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
-    "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
-    "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" 0 1 \
-    "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")" || return 1
-  recovery_wait_for_deployment_rollout "${CONSUMERS[$index]}" 300 || return 1
-  recovery_require_consumer_contract_entry \
-    "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" 1 \
-    "$RESTORE_OPERATION_ID" || return 1
+  restore_resume_consumer "$index" || return 1
 
   recovery_require_checkpoint_generation_matches_live \
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY" "$VALUES_SOURCE_FILE"
@@ -2629,7 +2746,8 @@ run_cold_rebind_restore() {
   local materialized_bundle
   local -a resume_order=(1 2 0 4)
   [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind &&
-     "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 &&
+     ( "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 ||
+       "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v2 ) &&
      "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == legacy-absent ]] || return 2
   materialized_bundle="$(dirname "$RECOVERY_CHECKPOINT_METADATA_COPY")"
   if ! recovery_private_values_file_is_acceptable "$FREEZE_RECEIPT_INPUT_FILE" ||
@@ -2770,21 +2888,13 @@ run_cold_rebind_restore() {
         "${CONSUMERS[$index]}" >&2
       return 1
     fi
-    if ! DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
-        "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
-        "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" 0 1 \
-        "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")"; then
+    if ! restore_resume_consumer "$index"; then
       printf 'Cold rebind could not scale %s from its exact frozen contract.\n' \
         "${CONSUMERS[$index]}" >&2
       return 1
     fi
-    if ! recovery_wait_for_deployment_rollout "${CONSUMERS[$index]}" 300; then
-      printf 'Cold rebind rollout did not become ready: %s.\n' \
-        "${CONSUMERS[$index]}" >&2
-      return 1
-    fi
     if ! recovery_require_consumer_contract_entry \
-        "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" 1 \
+        "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" "${ORIGINAL_REPLICAS[$index]}" \
         "$RESTORE_OPERATION_ID"; then
       printf 'Cold rebind post-resume contract changed: %s.\n' \
         "${CONSUMERS[$index]}" >&2
@@ -2800,19 +2910,12 @@ run_cold_rebind_restore() {
     printf 'Cold rebind lost its exact restore lock before resuming the parent.\n' >&2
     return 1
   fi
-  if ! DEPLOYMENT_RESOURCE_VERSIONS[index]="$(recovery_scale_deployment_exact \
-      "${CONSUMERS[$index]}" "${DEPLOYMENT_UIDS[$index]}" \
-      "${DEPLOYMENT_RESOURCE_VERSIONS[$index]}" 0 1 \
-      "${DEPLOYMENT_SELECTORS[$index]}" "${DEPLOYMENT_FINGERPRINTS[$index]}")"; then
+  if ! restore_resume_consumer "$index"; then
     printf 'Cold rebind could not scale the parent from its exact frozen contract.\n' >&2
     return 1
   fi
-  if ! recovery_wait_for_deployment_rollout "${CONSUMERS[$index]}" 300; then
-    printf 'Cold rebind parent rollout did not become ready.\n' >&2
-    return 1
-  fi
   if ! recovery_require_consumer_contract_entry \
-      "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" 1 \
+      "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" "${ORIGINAL_REPLICAS[$index]}" \
       "$RESTORE_OPERATION_ID"; then
     printf 'Cold rebind parent post-resume contract changed.\n' >&2
     return 1
@@ -2912,6 +3015,7 @@ trap 'driver_interrupted 143' TERM
 # This validation and private materialization happens before any Kubernetes
 # read, and is repeated by each child immediately before its own operation.
 recovery_materialize_checkpoint "$DUMP_PATH" "$SCRIPT_DIR/validate-checkpoint.sh"
+restore_checkpoint_public_binding_is_acceptable
 DUMP_PATH="$RECOVERY_DUMP_COPY"
 STORAGE_PATH="$RECOVERY_STORAGE_COPY"
 export RECOVERY_CHECKPOINT_METADATA_SCHEMA RECOVERY_CHECKPOINT_RUNNER_GENERATION \
@@ -2928,17 +3032,24 @@ if [[ "$LEGACY_IN_PLACE" == 1 &&
   exit 1
 fi
 if [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind &&
-      "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" != freeze-bundle-v1 ]]; then
-  printf 'Cold rebind accepts only a complete freeze-bundle-v1.\n' >&2
+      "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" != freeze-bundle-v1 &&
+      "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" != freeze-bundle-v2 ]]; then
+  printf 'Cold rebind accepts only a complete versioned freeze bundle.\n' >&2
   exit 1
 fi
 if [[ "${RESTORE_TARGET_MODE:-in-place}" == in-place &&
-      "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 ]]; then
-  printf 'freeze-bundle-v1 requires RESTORE_TARGET_MODE=cold-rebind.\n' >&2
+      ( "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 ||
+        "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v2 ) ]]; then
+  printf 'Freeze bundles require RESTORE_TARGET_MODE=cold-rebind.\n' >&2
   exit 1
 fi
 snapshot_restore_private_file RESTORE_VALUES_SNAPSHOT "$VALUES_INPUT_FILE" values
 VALUES_SOURCE_FILE="$RESTORE_VALUES_SNAPSHOT"
+if restore_checkpoint_has_signed_source_authority &&
+   [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" != durable-v2 ]]; then
+  snapshot_restore_private_file \
+    RESTORE_MANIFEST_SNAPSHOT "$MANIFEST_INPUT_FILE" manifest
+fi
 if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
   [[ -n "$CUTOVER_KEY_INPUT_FILE" ]] || {
     printf 'PROCESS_LOCAL_CUTOVER_KEY_PATH is required for durable restore evidence.\n' >&2
@@ -2989,7 +3100,7 @@ if [[ "$PREFLIGHT" == 1 || "$PREPARE_FENCE" == 1 ]]; then
     exit 1
   fi
   if [[ "${RESTORE_TARGET_MODE:-in-place}" != cold-rebind ]]; then
-    require_durable_checkpoint_evidence_live active-source dormant
+    require_durable_checkpoint_source_evidence_live dormant
   fi
   if [[ "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
     recovery_require_restore_epoch_candidate \
@@ -3041,7 +3152,7 @@ if [[ "$PREPARE_FENCE" == "1" ]]; then
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
   recovery_require_live_images_match_checkpoint \
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
-  require_durable_checkpoint_evidence_live active-source dormant
+  require_durable_checkpoint_source_evidence_live dormant
   acquire_restore_serialization
   recovery_require_cluster_identity
   recovery_require_pvc_identity ret-pvc
@@ -3054,7 +3165,7 @@ if [[ "$PREPARE_FENCE" == "1" ]]; then
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
   recovery_require_live_images_match_checkpoint \
     "$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
-  require_durable_checkpoint_evidence_live active-source dormant
+  require_durable_checkpoint_source_evidence_live dormant
   acquire_restore_lock
   recovery_require_recovery_operation_fence_state dormant
   prepare_restore_fence
@@ -3135,7 +3246,7 @@ if [[ "$EXECUTE_FENCED" == "1" ]]; then
   require_restore_monitors_healthy
 else
   if [[ "$FINALIZE_REACTIVATION" != "1" ]]; then
-    printf 'A destructive restore requires RESTORE_CHECKPOINT_COLD_REBIND=1 for freeze-bundle-v1, RESTORE_CHECKPOINT_LEGACY_IN_PLACE=1 for a legacy checkpoint, or RESTORE_CHECKPOINT_PREPARE_FENCE=1 for durable-v2.\n' >&2
+    printf 'A destructive restore requires RESTORE_CHECKPOINT_COLD_REBIND=1 for a freeze bundle, RESTORE_CHECKPOINT_LEGACY_IN_PLACE=1 for a legacy checkpoint, or RESTORE_CHECKPOINT_PREPARE_FENCE=1 for durable-v2.\n' >&2
     exit 2
   fi
 fi
@@ -3177,12 +3288,17 @@ if [[ "$FINALIZE_REACTIVATION" == "1" ]]; then
   restore_transition_phase finalizing-reactivation
   for index in "${!CONSUMERS[@]}"; do
     recovery_require_consumer_contract_entry \
-      "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" 1 \
+      "$RECOVERY_CONSUMER_CONTRACT_JSON" "${CONSUMERS[$index]}" "${ORIGINAL_REPLICAS[$index]}" \
       "$RESTORE_OPERATION_ID"
-    recovery_wait_for_deployment_rollout "${CONSUMERS[$index]}" 300
+    if [[ "${ORIGINAL_REPLICAS[$index]}" != 0 ]]; then
+      recovery_wait_for_deployment_rollout "${CONSUMERS[$index]}" 300
+    else
+      recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
+        "deployment/${CONSUMERS[$index]}" 180s
+    fi
     require_owned_restore_lock
     recovery_require_deployment_contract "${CONSUMERS[$index]}" \
-      "${DEPLOYMENT_UIDS[$index]}" 1 "${DEPLOYMENT_SELECTORS[$index]}" \
+      "${DEPLOYMENT_UIDS[$index]}" "${ORIGINAL_REPLICAS[$index]}" "${DEPLOYMENT_SELECTORS[$index]}" \
       "${DEPLOYMENT_FINGERPRINTS[$index]}"
   done
   require_owned_restore_lock

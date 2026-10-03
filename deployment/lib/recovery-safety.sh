@@ -56,6 +56,11 @@ RECOVERY_OPERATION_BINDING_SHA256="${RECOVERY_OPERATION_BINDING_SHA256:-}"
 # library and after durably persisting the AUD-065 token/operation ID. Never
 # honor an inherited environment marker.
 RECOVERY_OPERATION_IDENTITY_PREBOUND=0
+# Signed backup originals are private, process-local input. In particular a
+# child must authenticate current normalized specs against the signed lock,
+# never trust an inherited full-spec/body capability.
+RECOVERY_BACKUP_AUTHORITY_ORIGINALS_JSON=""
+export -n RECOVERY_BACKUP_AUTHORITY_ORIGINALS_JSON 2>/dev/null || :
 RECOVERY_OPERATION_LOCK_GLOBAL_NAME="yenhubs-recovery-operation-lock"
 RECOVERY_SERIALIZATION_LEASE_NAME="yenhubs-operation-serialization"
 RECOVERY_OPERATION_FENCE_POLICY_NAME="recovery-operation-pod-fence.yenhubs.org"
@@ -1766,30 +1771,76 @@ recovery_kubectl_stream_supervised() {
       guard_audit_pid=""
     }
     invoke_complete_stream_guard_audit() {
-      local complete_index
+      local complete_index complete_status
+      local -a complete_indices=()
+      stream_guard_audit_result_kind=healthy
+      stream_guard_audit_result_index=""
+      stream_guard_audit_result_status=0
+      stream_guard_audit_result_reason=complete-predicate
       if [[ "$#" == 8 ]]; then
-        recovery_stream_guard_process_is_healthy "$@"
-        return $?
+        # Preserve the exact selected Lease tuple's index, including sparse
+        # arrays. A position in a shortened sweep is not a guard identity.
+        for complete_index in "${!guard_pids[@]}"; do
+          if [[ "$1" == "${guard_pids[$complete_index]}" &&
+                "$2" == "${guard_start_identities[$complete_index]-}" &&
+                "$3" == "${guard_failure_markers[$complete_index]-}" &&
+                "$4" == "${guard_ready_markers[$complete_index]-}" &&
+                "$5" == "${guard_progress_markers[$complete_index]-}" &&
+                "$6" == "${guard_authority_paths[$complete_index]-}" &&
+                "$7" == "${guard_authority_sha256s[$complete_index]-}" &&
+                "$8" == "${guard_authority_kinds[$complete_index]-}" ]]; then
+            complete_indices=("$complete_index")
+            break
+          fi
+        done
+      elif [[ "$#" == 0 ]]; then
+        complete_indices=("${!guard_pids[@]}")
       fi
-      [[ "$#" == 0 ]] || return 2
+      if [[ ( "$#" != 0 && "$#" != 8 ) ||
+            ( "$#" == 8 && "${#complete_indices[@]}" != 1 ) ]]; then
+        stream_guard_audit_result_kind=infrastructure
+        stream_guard_audit_result_status=2
+        stream_guard_audit_result_reason=arguments
+        return 2
+      fi
       # One worker performs the SAME ordered complete predicates for a sweep;
       # foreground observations continue throughout. No guard is cached,
       # omitted or reduced to its counter. Avoid paying process/gate setup
       # once per guard inside the fixed startup window.
-      for complete_index in "${!guard_pids[@]}"; do
-        recovery_stream_guard_process_is_healthy \
+      for complete_index in "${complete_indices[@]}"; do
+        if recovery_stream_guard_process_is_healthy \
           "${guard_pids[$complete_index]}" "${guard_start_identities[$complete_index]}" \
           "${guard_failure_markers[$complete_index]}" "${guard_ready_markers[$complete_index]}" \
           "${guard_progress_markers[$complete_index]}" \
           "${guard_authority_paths[$complete_index]}" \
           "${guard_authority_sha256s[$complete_index]}" \
-          "${guard_authority_kinds[$complete_index]}" || return $?
+          "${guard_authority_kinds[$complete_index]}"; then
+          :
+        else
+          complete_status=$?
+          stream_guard_audit_result_kind=guard-rejected
+          stream_guard_audit_result_index="$complete_index"
+          stream_guard_audit_result_status="$complete_status"
+          return "$complete_status"
+        fi
       done
+      return 0
     }
     run_complete_stream_guard_audit() {
       local audit_now audit_deadline audit_status audit_identity audit_group
       local audit_monitor_mode=0 audit_pipe_read audit_pipe_write audit_ready=""
-      [[ "$#" == 8 || "$#" == 0 ]] || return 2
+      local audit_ready_complete=0 audit_result_read_fd="" audit_result=""
+      local audit_result_complete=0 audit_end_status audit_result_kind audit_result_index
+      local audit_result_status audit_result_reason audit_result_valid=0
+      stream_guard_audit_result_kind=infrastructure
+      stream_guard_audit_result_index=""
+      stream_guard_audit_result_status=1
+      stream_guard_audit_result_reason=setup
+      [[ "$#" == 8 || "$#" == 0 ]] || {
+        stream_guard_audit_result_status=2
+        stream_guard_audit_result_reason=arguments
+        return 2
+      }
       # Keep the unopened gate and running stream exactly as before. ONLY
       # after wait/reap removes the destructive capability may a read-only
       # full audit run beside continuous foreground counter observations.
@@ -1799,14 +1850,21 @@ recovery_kubectl_stream_supervised() {
         invoke_complete_stream_guard_audit "$@"
         return $?
       fi
-      observe_inactive_stream_guard_progress || return 1
-      audit_now="$(recovery_monotonic_milliseconds)" || return 1
+      observe_inactive_stream_guard_progress || {
+        stream_guard_audit_result_reason=observation
+        return 1
+      }
+      audit_now="$(recovery_monotonic_milliseconds)" || {
+        stream_guard_audit_result_reason=clock
+        return 1
+      }
       audit_deadline=$((audit_now + refresh_deadline_seconds * 1000))
       if [[ -n "${launch_alignment_deadline_milliseconds:-}" ]] &&
          ((launch_alignment_deadline_milliseconds < audit_deadline)); then
         audit_deadline="$launch_alignment_deadline_milliseconds"
       fi
       if ((audit_now >= audit_deadline)); then
+        stream_guard_audit_result_reason=timeout
         stream_record_diagnostic guard-audit-timeout
         return 1
       fi
@@ -1816,6 +1874,7 @@ recovery_kubectl_stream_supervised() {
       set -m
       coproc YENHUBS_STREAM_AUDIT {
         local permission guardian_pid guardian_identity child_status child_pid="$BASHPID"
+        local guardian_failure=""
         trap - EXIT INT TERM
         set +m
         IFS= read -r -t "$refresh_deadline_seconds" permission || exit 1
@@ -1863,11 +1922,27 @@ while True:
         else
           child_status=$?
         fi
-        if ! recovery_process_identity_is_live "$guardian_pid" "$guardian_identity" ||
-           ! kill -USR1 "$guardian_pid" 2>/dev/null ||
-           ! wait "$guardian_pid" 2>/dev/null; then
-          [[ "$child_status" != 0 ]] || child_status=1
+        if ! recovery_process_identity_is_live "$guardian_pid" "$guardian_identity"; then
+          guardian_failure=guardian-identity
+        elif ! kill -USR1 "$guardian_pid" 2>/dev/null; then
+          guardian_failure=guardian-signal
+        elif ! wait "$guardian_pid" 2>/dev/null; then
+          guardian_failure=guardian-wait
         fi
+        if [[ -n "$guardian_failure" ]]; then
+          # A failed infrastructure join cannot attest even a genuine guard
+          # rejection. Never preserve its nonzero exit as generic guard proof.
+          stream_guard_audit_result_kind=infrastructure
+          stream_guard_audit_result_index=""
+          stream_guard_audit_result_status=1
+          stream_guard_audit_result_reason="$guardian_failure"
+          child_status=1
+        fi
+        # This coprocess stdout is private IPC, NOT the archive stream. Only
+        # bounded internal fields are published after the guardian outcome.
+        printf 'result:v1:%s:%s:%s:%s\n' "$stream_guard_audit_result_kind" \
+          "${stream_guard_audit_result_index:--}" "$stream_guard_audit_result_status" \
+          "$stream_guard_audit_result_reason" || exit 1
         exit "$child_status"
       }
       guard_audit_pid="${YENHUBS_STREAM_AUDIT_PID:-}"
@@ -1896,8 +1971,14 @@ while True:
       fi
       while :; do
         if [[ -z "$audit_ready" ]]; then
-          IFS= read -r -t 0.01 -u "$guard_audit_read_fd" audit_ready || :
-          if [[ -n "$audit_ready" && "$audit_ready" != ready ]]; then
+          # Ordinary read silently drops NUL. An explicit NUL delimiter keeps
+          # it observable as a short successful read; C locale counts bytes.
+          if LC_ALL=C IFS= read -r -d '' -n 6 -t 0.01 -u "$guard_audit_read_fd" audit_ready; then
+            audit_ready_complete=1
+          fi
+          if [[ ( "$audit_ready_complete" == 1 || -n "$audit_ready" ) &&
+                "$audit_ready" != $'ready\n' ]]; then
+            stream_guard_audit_result_reason=handshake
             stream_record_diagnostic guard-audit-setup
             supervised_stream_audit_cleanup
             return 1
@@ -1905,14 +1986,17 @@ while True:
         fi
         if ! observe_inactive_stream_guard_progress ||
            ! recovery_process_identity_is_live "$caller_pid" "$caller_start_identity"; then
+          stream_guard_audit_result_reason=observation
           supervised_stream_audit_cleanup
           return 1
         fi
         audit_now="$(recovery_monotonic_milliseconds)" || {
+          stream_guard_audit_result_reason=clock
           supervised_stream_audit_cleanup
           return 1
         }
         if ((audit_now >= audit_deadline)); then
+          stream_guard_audit_result_reason=timeout
           stream_record_diagnostic guard-audit-timeout
           supervised_stream_audit_cleanup
           return 1
@@ -1921,22 +2005,121 @@ while True:
         sleep 0.05
       done
       if wait "$guard_audit_pid"; then audit_status=0; else audit_status=$?; fi
-      if [[ "$audit_status" != 0 ]]; then
-        stream_record_diagnostic "guard-audit-exit:$audit_status"
-      fi
+      [[ "$audit_status" == 0 ]] || stream_guard_audit_result_status="$audit_status"
       # A cheap complete audit can finish DURING the foreground observation.
       # Its READY remains buffered in the duplicated pipe after native wait;
       # consume that final buffered record before cleanup closes the reader.
       # Do not require another live-job iteration merely to collect its result.
       if [[ -z "$audit_ready" ]]; then
-        IFS= read -r -t 0.01 -u "$guard_audit_read_fd" audit_ready || :
+        if LC_ALL=C IFS= read -r -d '' -n 6 -t 0.01 -u "$guard_audit_read_fd" audit_ready; then
+          audit_ready_complete=1
+        fi
+      fi
+      # Retain only a reader while native cleanup closes the control capability
+      # and retires any failed guardian. Then EOF is meaningful even when an
+      # infrastructure failure left that guardian alive after the leader's reap.
+      if ! exec {audit_result_read_fd}<&"$guard_audit_read_fd"; then
+        stream_guard_audit_result_reason=result
+        stream_record_diagnostic guard-audit-handshake
+        supervised_stream_audit_cleanup
+        return 1
       fi
       supervised_stream_audit_cleanup
-      if [[ "$audit_ready" != ready ]]; then
+      if [[ "$audit_ready_complete" != 1 || "$audit_ready" != $'ready\n' ]]; then
+        exec {audit_result_read_fd}<&-
+        stream_guard_audit_result_reason=handshake
         stream_record_diagnostic guard-audit-handshake
         return 1
       fi
-      require_reaped_stream_guard_freshness || return 1
+      # Read the entire bounded remainder INCLUDING LF and require native EOF.
+      # 128 payload bytes + LF fit below 130. Success instead means NUL or the
+      # byte limit, both invalid; timeout/partial records also cannot attest.
+      if LC_ALL=C IFS= read -r -d '' -n 130 -t 0.01 -u "$audit_result_read_fd" audit_result; then
+        audit_end_status=0
+      else
+        audit_end_status=$?
+      fi
+      exec {audit_result_read_fd}<&-
+      if [[ "$audit_end_status" == 1 && "$audit_result" == *$'\n' ]]; then
+        audit_result="${audit_result%$'\n'}"
+        audit_result_complete=1
+      fi
+      stream_guard_audit_result_reason=result
+      # Require one terminated, bounded record and EOF: an unterminated line,
+      # duplicate, extra blank line, unexpected bytes or open writer is invalid.
+      if [[ "$audit_result_complete" == 1 && "$audit_end_status" == 1 &&
+            ${#audit_result} -le 128 &&
+            "$audit_result" =~ ^result:v1:(healthy|guard-rejected|infrastructure):(-|0|[1-9][0-9]{0,17}):(0|[1-9][0-9]{0,2}):([a-z][a-z-]{0,31})$ ]]; then
+        audit_result_kind="${BASH_REMATCH[1]}"
+        audit_result_index="${BASH_REMATCH[2]}"
+        audit_result_status="${BASH_REMATCH[3]}"
+        audit_result_reason="${BASH_REMATCH[4]}"
+        case "$audit_result_kind" in
+          healthy)
+            if [[ "$audit_result_index" == - && "$audit_result_status" == 0 &&
+                  "$audit_result_reason" == complete-predicate ]]; then
+              audit_result_valid=1
+            fi
+            ;;
+          guard-rejected)
+            if [[ "$audit_result_index" != - && "$audit_result_status" != 0 &&
+                  "$audit_result_reason" == complete-predicate ]] &&
+               ((audit_result_status <= 255)) &&
+               [[ ${guard_pids[$audit_result_index]+present} == present &&
+                  ${guard_start_identities[$audit_result_index]+present} == present &&
+                  ${guard_failure_markers[$audit_result_index]+present} == present &&
+                  ${guard_ready_markers[$audit_result_index]+present} == present &&
+                  ${guard_progress_markers[$audit_result_index]+present} == present &&
+                  ${guard_authority_paths[$audit_result_index]+present} == present &&
+                  ${guard_authority_sha256s[$audit_result_index]+present} == present &&
+                  ${guard_authority_kinds[$audit_result_index]+present} == present ]]; then
+              if [[ "$#" == 0 ]] ||
+                 [[ "$1" == "${guard_pids[$audit_result_index]}" &&
+                    "$2" == "${guard_start_identities[$audit_result_index]}" &&
+                    "$3" == "${guard_failure_markers[$audit_result_index]}" &&
+                    "$4" == "${guard_ready_markers[$audit_result_index]}" &&
+                    "$5" == "${guard_progress_markers[$audit_result_index]}" &&
+                    "$6" == "${guard_authority_paths[$audit_result_index]}" &&
+                    "$7" == "${guard_authority_sha256s[$audit_result_index]}" &&
+                    "$8" == "${guard_authority_kinds[$audit_result_index]}" ]]; then
+                audit_result_valid=1
+              fi
+            fi
+            ;;
+          infrastructure)
+            if [[ "$audit_result_index" == - && "$audit_result_status" == 1 ]]; then
+              case "$audit_result_reason" in
+                guardian-identity|guardian-signal|guardian-wait) audit_result_valid=1 ;;
+              esac
+            fi
+            ;;
+        esac
+      fi
+      if [[ "$audit_result_valid" != 1 ]]; then
+        stream_record_diagnostic guard-audit-handshake
+        return 1
+      fi
+      if [[ "$audit_result_status" != "$audit_status" ]]; then
+        stream_guard_audit_result_reason=child-exit
+        stream_record_diagnostic "guard-audit-exit:$audit_status"
+        return 1
+      fi
+      stream_guard_audit_result_kind="$audit_result_kind"
+      stream_guard_audit_result_index="${audit_result_index/-/}"
+      stream_guard_audit_result_status="$audit_result_status"
+      stream_guard_audit_result_reason="$audit_result_reason"
+      if [[ "$audit_result_kind" == guard-rejected ]]; then
+        stream_record_diagnostic "guard-process:$audit_result_index"
+      elif [[ "$audit_result_kind" == infrastructure ]]; then
+        stream_record_diagnostic "guard-audit-exit:$audit_status"
+      fi
+      require_reaped_stream_guard_freshness || {
+        stream_guard_audit_result_kind=infrastructure
+        stream_guard_audit_result_index=""
+        stream_guard_audit_result_status=1
+        stream_guard_audit_result_reason=freshness
+        return 1
+      }
       return "$audit_status"
     }
     trap report_stream_diagnostic EXIT
@@ -2768,7 +2951,7 @@ recovery_file_size_bytes() {
 
 recovery_checkpoint_snapshot_artifacts() {
   local metadata_schema="${1:-3}"
-  [[ "$metadata_schema" == 2 || "$metadata_schema" == 3 ]] || return 2
+  [[ "$metadata_schema" == 2 || "$metadata_schema" == 3 || "$metadata_schema" == 4 ]] || return 2
   printf '%s\n' \
     checkpoint-metadata.json \
     configured-value-keys.txt \
@@ -2780,7 +2963,7 @@ recovery_checkpoint_snapshot_artifacts() {
     git-state.txt \
     k8s-configmaps-redacted.json \
     k8s-hcce-structure.json
-  if [[ "$metadata_schema" == 3 ]]; then
+  if [[ "$metadata_schema" == 3 || "$metadata_schema" == 4 ]]; then
     printf '%s\n' runner-cutover-evidence.json
   fi
 }
@@ -2789,7 +2972,7 @@ recovery_checkpoint_metadata_schema() {
   local directory="$1" metadata_path schema
   metadata_path="$directory/checkpoint-metadata.json"
   recovery_require_regular_direct_file "$metadata_path" || return 1
-  schema="$(jq -er '.schema_version | select(. == 2 or . == 3)' \
+  schema="$(jq -er '.schema_version | select(. == 2 or . == 3 or . == 4)' \
     "$metadata_path")" || return 1
   printf '%s\n' "$schema"
 }
@@ -3343,6 +3526,12 @@ recovery_freeze_bundle_artifacts() {
 recovery_freeze_bundle_metadata_is_acceptable() {
   local metadata_path="$1" expected_stamp="$2"
   recovery_require_regular_direct_file "$metadata_path" || return 1
+  if jq -e '.schema=="freeze-bundle-v2"' "$metadata_path" >/dev/null 2>&1; then
+    [[ "$(jq -er '.stamp' "$metadata_path")" == "$expected_stamp" ]] || return 1
+    recovery_signed_checkpoint_public_binding_is_acceptable \
+      "$metadata_path" "$(dirname "$metadata_path")/deployment-images.json"
+    return
+  fi
   jq -e --arg stamp "$expected_stamp" '
     def utc: type == "string" and
       test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
@@ -3560,7 +3749,8 @@ recovery_verify_freeze_bundle_contents() {
       .namespace == $metadata[0].source.namespace.name and
       .namespace_uid == $metadata[0].source.namespace.uid
     ' "$directory/deployment-images.json" >/dev/null &&
-    jq -e '.schema_version == 4 and
+    jq -e --slurpfile metadata "$metadata" '
+      (.schema_version == (if $metadata[0].schema=="freeze-bundle-v2" then 5 else 4 end)) and
       .bot_runner_runtime == {generation:"legacy-absent",mode:"process-local",
         image:null,control_plane:{state:"legacy-absent"},
         recovery_epoch:{state:"legacy-absent"}}' \
@@ -3598,6 +3788,12 @@ recovery_freeze_bundle_receipt_is_acceptable() {
   inventory="$bundle_directory/deployment-images.json"
   recovery_require_regular_direct_file "$metadata" &&
     recovery_require_regular_direct_file "$inventory" || return 1
+  if jq -e '.schema=="freeze-bundle-v2"' "$metadata" >/dev/null 2>&1; then
+    recovery_signed_checkpoint_public_binding_is_acceptable "$metadata" "$inventory" || return 1
+  else
+    jq -e '.schema=="freeze-bundle-v1"' "$metadata" >/dev/null || return 1
+    jq -e '.schema_version==4' "$inventory" >/dev/null || return 1
+  fi
   manifest_digest="$(recovery_sha256_digest "$bundle_directory/SHA256SUMS")" || return 1
   jq -e --arg manifest_digest "$manifest_digest" \
     --slurpfile metadata "$metadata" --slurpfile inventory "$inventory" '
@@ -3663,7 +3859,7 @@ recovery_validate_checkpoint_layout() {
       printf 'Checkpoint metadata schema is missing or unsupported.\n' >&2
       return 1
     }
-  elif [[ "$metadata_schema" != 2 && "$metadata_schema" != 3 ]]; then
+  elif [[ "$metadata_schema" != 2 && "$metadata_schema" != 3 && "$metadata_schema" != 4 ]]; then
     printf 'Checkpoint metadata schema is missing or unsupported.\n' >&2
     return 1
   fi
@@ -3706,7 +3902,7 @@ recovery_validate_sha256_manifest() {
       printf 'Checkpoint metadata schema is missing or unsupported.\n' >&2
       return 1
     }
-  elif [[ "$metadata_schema" != 2 && "$metadata_schema" != 3 ]]; then
+  elif [[ "$metadata_schema" != 2 && "$metadata_schema" != 3 && "$metadata_schema" != 4 ]]; then
     printf 'Checkpoint metadata schema is missing or unsupported.\n' >&2
     return 1
   fi
@@ -3759,10 +3955,34 @@ recovery_validate_sha256_manifest() {
   done <"$manifest"
 }
 
+recovery_signed_checkpoint_public_binding_is_acceptable() {
+  local metadata="$1" inventory="$2" helper
+  helper="$RECOVERY_SAFETY_DIR/../checkpoint-backup-formats.mjs"
+  recovery_require_regular_direct_file "$metadata" &&
+    recovery_require_regular_direct_file "$inventory" &&
+    recovery_require_regular_direct_file "$helper" || return 1
+  # Public-only, canonical stdin. This is typed correlation, never operational
+  # authentication or a replacement for topology/evidence/full-spec guards.
+  jq -cs '{metadata:.[0],inventory:.[1]}' "$metadata" "$inventory" |
+    command node --input-type=module -e '
+      import fs from "node:fs";import {pathToFileURL} from "node:url";
+      const {canonicalJsonV1}=await import(pathToFileURL(process.argv[1]));
+      const input=fs.readFileSync(0);if(input.length>8*1024*1024)process.exit(1);
+      process.stdout.write(canonicalJsonV1(JSON.parse(input)));
+    ' "$RECOVERY_SAFETY_DIR/../recovery-checkpoint-authority.mjs" |
+    command node "$helper" validate-binding
+}
+
 recovery_checkpoint_metadata_is_acceptable() {
   local metadata_path="$1"
   local expected_stamp="$2"
   recovery_require_regular_direct_file "$metadata_path" || return 1
+  if jq -e '.schema_version==4' "$metadata_path" >/dev/null 2>&1; then
+    [[ "$(jq -er '.stamp' "$metadata_path")" == "$expected_stamp" ]] || return 1
+    recovery_signed_checkpoint_public_binding_is_acceptable \
+      "$metadata_path" "$(dirname "$metadata_path")/deployment-images.json"
+    return
+  fi
   jq -e --arg stamp "$expected_stamp" '
     type == "object" and
     .schema_version as $schema |
@@ -3978,6 +4198,9 @@ recovery_checkpoint_generation_is_acceptable() {
   inventory_path="$directory/deployment-images.json"
   evidence_path="$directory/runner-cutover-evidence.json"
   metadata_schema="$(recovery_checkpoint_metadata_schema "$directory")" || return 1
+  if [[ "$metadata_schema" == 4 ]]; then
+    recovery_signed_checkpoint_public_binding_is_acceptable "$metadata_path" "$inventory_path" || return 1
+  fi
   recovery_checkpoint_deployment_inventory_is_acceptable \
     "$inventory_path" "$(jq -er '.namespace' "$metadata_path")" || return 1
   if [[ "$metadata_schema" == 2 ]]; then
@@ -3994,12 +4217,12 @@ recovery_checkpoint_generation_is_acceptable() {
   recovery_validate_runner_cutover_evidence_offline \
     "$evidence_path" "$inventory_path" || return 1
   evidence_digest="$(recovery_sha256_digest "$evidence_path")" || return 1
-  jq -e --arg digest "$evidence_digest" \
+  jq -e --arg digest "$evidence_digest" --argjson metadata_schema "$metadata_schema" \
     --slurpfile inventory "$inventory_path" --slurpfile evidence "$evidence_path" '
-    .schema_version == 3 and
+    .schema_version == $metadata_schema and
     .runner_cutover_evidence_sha256 == $digest and
     ($inventory | length) == 1 and ($evidence | length) == 1 and
-    $inventory[0].schema_version == 4 and
+    $inventory[0].schema_version == (if $metadata_schema==4 then 5 else 4 end) and
     .runtime_generation == $inventory[0].bot_runner_runtime.generation and
     .runtime_generation == $evidence[0].runtime_generation and
     .operation_id == $evidence[0].checkpoint_operation_id and
@@ -4227,6 +4450,15 @@ recovery_deployment_inventory_is_acceptable() {
   local expected_namespace_uid="$3"
   local expected_images_json="${4:-}"
   local expected_runner_image="${5:-}"
+  if jq -e '.schema_version==5' "$inventory_path" >/dev/null 2>&1; then
+    command node --input-type=module -e '
+      import fs from "node:fs";import {pathToFileURL} from "node:url";
+      const {canonicalJsonV1}=await import(pathToFileURL(process.argv[1]));
+      const input=fs.readFileSync(0);if(input.length>8*1024*1024)process.exit(1);
+      process.stdout.write(canonicalJsonV1(JSON.parse(input)));
+    ' "$RECOVERY_SAFETY_DIR/../recovery-checkpoint-authority.mjs" <"$inventory_path" |
+      command node "$RECOVERY_SAFETY_DIR/../checkpoint-backup-formats.mjs" validate-inventory || return 1
+  fi
   jq -e \
     --arg namespace "$expected_namespace" \
     --arg namespace_uid "$expected_namespace_uid" \
@@ -4282,8 +4514,9 @@ recovery_deployment_inventory_is_acceptable() {
       else false end;
     .schema_version as $inventory_schema |
     (keys | sort) ==
-      ["bot_runner_runtime", "deployments", "namespace", "namespace_uid", "schema_version"] and
-    (.schema_version == 3 or .schema_version == 4) and
+      (["bot_runner_runtime", "deployments", "namespace", "namespace_uid", "schema_version"] +
+        (if $inventory_schema==5 then ["backup_authority"] else [] end) | sort) and
+    (.schema_version == 3 or .schema_version == 4 or .schema_version == 5) and
     .namespace == $namespace and
     .namespace_uid == $namespace_uid and
     (.bot_runner_runtime | type == "object" and
@@ -4395,7 +4628,8 @@ recovery_deployment_inventory_is_acceptable() {
     (.deployments | type == "array") and
     ([.deployments[].name] | sort) == (expected_deployments | sort) and
     ([.deployments[].name] | unique | length) == (.deployments | length) and
-    ([.deployments[] | select(.name == "bot-orchestrator") | .replicas] == [1]) and
+    ([.deployments[] | select(.name == "bot-orchestrator") | .replicas] |
+      if $inventory_schema==5 then .==[0] or .==[1] else .==[1] end) and
     all(.deployments[];
       (.uid | type == "string" and length > 0) and
       (.replicas | type == "number" and floor == . and . >= 0) and
@@ -4519,11 +4753,12 @@ recovery_require_restore_epoch_candidate() {
 }
 
 recovery_require_durable_checkpoint_source_matches_live() {
-  local inventory_path="$1" mode checkpoint_epoch live_epoch
+  local inventory_path="$1" mode checkpoint_epoch live_epoch inventory_schema
   recovery_checkpoint_deployment_inventory_is_acceptable \
     "$inventory_path" "$NAMESPACE" || return 1
+  inventory_schema="$(jq -er '.schema_version' "$inventory_path")" || return 1
   [[ "${RECOVERY_CHECKPOINT_RUNNER_GENERATION:-}" == durable-v2 &&
-     "$(jq -er '.schema_version' "$inventory_path")" == 4 ]] || return 1
+     ( "$inventory_schema" == 4 || "$inventory_schema" == 5 ) ]] || return 1
   mode="$(jq -er '.bot_runner_runtime.mode' "$inventory_path")" || return 1
   [[ "$mode" == kubernetes-pod ]] || return 1
   recovery_require_live_runner_control_plane_matches_checkpoint \
@@ -5019,8 +5254,13 @@ recovery_require_live_process_local_cold_rebind_target_exact() {
 
 recovery_require_live_process_local_freeze_checkpoint_exact() {
   local values_path="$1" checkpoint_format="$2" runner_mode="$3"
-  [[ "$checkpoint_format" == freeze-bundle-v1 &&
-     "$runner_mode" == process-local ]] || return 2
+  [[ "$runner_mode" == process-local ]] || return 2
+  if [[ "$checkpoint_format" == freeze-bundle-v2 ]]; then
+    [[ "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" == /* &&
+       "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || return 2
+  else
+    [[ "$checkpoint_format" == freeze-bundle-v1 ]] || return 2
+  fi
   recovery_require_live_process_local_runner_contract_exact \
     "$values_path" freeze-checkpoint
 }
@@ -5062,10 +5302,10 @@ recovery_checkpoint_runner_mode_candidate() {
     recovery_kubectl get deployment reticulum -n "$NAMESPACE" -o json
   )" || return 1
   residual_state="$(recovery_runner_isolation_residual_state)" || return 1
-  jq -ern --arg namespace "$NAMESPACE" --arg strategy_scope "$strategy_scope" \
-    --argjson parent "$parent_json" \
-    --argjson reticulum "$reticulum_json" \
+  printf '%s\n%s\n' "$parent_json" "$reticulum_json" |
+  jq -ers --arg namespace "$NAMESPACE" --arg strategy_scope "$strategy_scope" \
     --arg residual_state "$residual_state" '
+    .[0] as $parent | .[1] as $reticulum |
     def valid_deployment($value; $name):
       $value.apiVersion == "apps/v1" and $value.kind == "Deployment" and
       $value.metadata.name == $name and $value.metadata.namespace == $namespace;
@@ -5177,12 +5417,13 @@ recovery_resource_identity_tsv() {
 
 recovery_require_live_runner_control_plane_matches_checkpoint() {
   local inventory_path="$1" mode target_mode="${RESTORE_TARGET_MODE:-in-place}" expected_uid identity
-  local api_version kind namespace name uid extra expected_namespace
+  local api_version kind namespace name uid extra expected_namespace inventory_schema
   recovery_checkpoint_deployment_inventory_is_acceptable \
     "$inventory_path" "$NAMESPACE" || return 1
   mode="$(jq -er '.bot_runner_runtime.mode' "$inventory_path")" || return 1
   [[ "$mode" == kubernetes-pod ]] || return 0
-  [[ "$(jq -er '.schema_version' "$inventory_path")" == 4 ]] || return 1
+  inventory_schema="$(jq -er '.schema_version' "$inventory_path")" || return 1
+  [[ "$inventory_schema" == 4 || "$inventory_schema" == 5 ]] || return 1
   [[ "$target_mode" == in-place ]] || return 1
 
   expected_uid="$(jq -er '
@@ -5355,9 +5596,9 @@ recovery_set_materialized_checkpoint_cleanup_allowlist() {
     "f:checkpoint/SHA256SUMS"
   )
   [[ "$stamp" =~ ^[0-9]{8}-[0-9]{6}$ &&
-     ( "$metadata_schema" == 2 || "$metadata_schema" == 3 ||
-       "$metadata_schema" == freeze-bundle-v1 ) ]] || return 2
-  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+     ( "$metadata_schema" == 2 || "$metadata_schema" == 3 || "$metadata_schema" == 4 ||
+       ( "$metadata_schema" == freeze-bundle-v1 || "$metadata_schema" == freeze-bundle-v2 ) ) ]] || return 2
+  if [[ ( "$metadata_schema" == freeze-bundle-v1 || "$metadata_schema" == freeze-bundle-v2 ) ]]; then
     while IFS= read -r artifact; do
       cleanup_paths+=("f:checkpoint/$artifact")
     done < <(recovery_freeze_bundle_artifacts "$stamp")
@@ -5484,9 +5725,9 @@ recovery_materialize_checkpoint() {
       return 1
     fi
   done
-  if jq -e '.schema == "freeze-bundle-v1"' \
+  if jq -e '.schema == "freeze-bundle-v1" or .schema == "freeze-bundle-v2"' \
       "$checkpoint_copy_dir/checkpoint-metadata.json" >/dev/null 2>&1; then
-    metadata_schema=freeze-bundle-v1
+    metadata_schema="$(jq -er '.schema' "$checkpoint_copy_dir/checkpoint-metadata.json")"
   else
     metadata_schema="$(recovery_checkpoint_metadata_schema "$checkpoint_copy_dir")" || {
       recovery_cleanup_materialized_checkpoint || :
@@ -5500,7 +5741,7 @@ recovery_materialize_checkpoint() {
     printf 'Could not bind the materialized checkpoint cleanup contract.\n' >&2
     return 1
   fi
-  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+  if [[ ( "$metadata_schema" == freeze-bundle-v1 || "$metadata_schema" == freeze-bundle-v2 ) ]]; then
     recovery_validate_freeze_bundle_layout "$directory" "$stamp" || {
       recovery_cleanup_materialized_checkpoint || :
       return 1
@@ -5534,7 +5775,7 @@ recovery_materialize_checkpoint() {
     done < <(recovery_checkpoint_artifacts "$stamp" "$metadata_schema")
   fi
 
-  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+  if [[ ( "$metadata_schema" == freeze-bundle-v1 || "$metadata_schema" == freeze-bundle-v2 ) ]]; then
     recovery_verify_freeze_bundle_directory "$checkpoint_copy_dir" "$stamp"
   else
     recovery_verify_checkpoint_directory "$checkpoint_copy_dir" "$stamp"
@@ -5543,7 +5784,7 @@ recovery_materialize_checkpoint() {
     printf 'Private checkpoint snapshot failed integrity validation.\n' >&2
     return 1
   }
-  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+  if [[ ( "$metadata_schema" == freeze-bundle-v1 || "$metadata_schema" == freeze-bundle-v2 ) ]]; then
     if ! dump_digest="$(recovery_sha256_digest "$checkpoint_copy_dir/$dump_name")" ||
        ! storage_digest="$(recovery_sha256_digest "$checkpoint_copy_dir/$storage_name")" ||
        ! inventory_digest="$(recovery_sha256_digest "$checkpoint_copy_dir/$inventory_name")"; then
@@ -5558,7 +5799,7 @@ recovery_materialize_checkpoint() {
     printf 'Could not resolve exact checkpoint artifact digests.\n' >&2
     return 1
   fi
-  if [[ "$metadata_schema" == 3 ]] &&
+  if [[ ( "$metadata_schema" == 3 || "$metadata_schema" == 4 ) ]] &&
      ! evidence_digest="$(recovery_checkpoint_digest_for \
        "$checkpoint_copy_dir" "$evidence_name")"; then
     recovery_cleanup_materialized_checkpoint || :
@@ -5575,7 +5816,7 @@ recovery_materialize_checkpoint() {
   # A concurrent publication or directory replacement must not silently turn
   # the private view into an A/B mixture. Revalidate the source and require its
   # defining metadata and manifest to remain byte-identical to the private view.
-  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+  if [[ ( "$metadata_schema" == freeze-bundle-v1 || "$metadata_schema" == freeze-bundle-v2 ) ]]; then
     recovery_verify_freeze_bundle_directory "$directory" "$stamp"
   else
     recovery_validate_checkpoint_layout "$directory" "$stamp" "$metadata_schema" &&
@@ -5609,7 +5850,7 @@ recovery_materialize_checkpoint() {
   RECOVERY_CHECKPOINT_METADATA_COPY="$checkpoint_copy_dir/checkpoint-metadata.json"
   RECOVERY_DEPLOYMENT_INVENTORY_SHA256="$inventory_digest"
   RECOVERY_CHECKPOINT_METADATA_SCHEMA="$metadata_schema"
-  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+  if [[ ( "$metadata_schema" == freeze-bundle-v1 || "$metadata_schema" == freeze-bundle-v2 ) ]]; then
     RECOVERY_CHECKPOINT_OPERATION_ID="$(jq -er '
       .operation.id | select(type == "string" and test("^[a-f0-9]{32}$"))
     ' "$RECOVERY_CHECKPOINT_METADATA_COPY")"
@@ -5636,12 +5877,12 @@ recovery_materialize_checkpoint() {
     recovery_cleanup_materialized_checkpoint || :
     return 1
   }
-  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+  if [[ ( "$metadata_schema" == freeze-bundle-v1 || "$metadata_schema" == freeze-bundle-v2 ) ]]; then
     RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY=""
     RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256="$inventory_digest"
     RECOVERY_CHECKPOINT_RUNNER_GENERATION=legacy-absent
     RECOVERY_RUNNER_RUNTIME_GENERATION=legacy-absent
-  elif [[ "$metadata_schema" == 3 ]]; then
+  elif [[ ( "$metadata_schema" == 3 || "$metadata_schema" == 4 ) ]]; then
     runner_generation="$(jq -er '
       .runtime_generation | select(. == "legacy-absent" or . == "durable-v2")
     ' "$RECOVERY_CHECKPOINT_METADATA_COPY")" || {
@@ -5661,7 +5902,7 @@ recovery_materialize_checkpoint() {
     RECOVERY_CHECKPOINT_RUNNER_GENERATION=legacy-absent
     RECOVERY_RUNNER_RUNTIME_GENERATION=legacy-absent
   fi
-  if [[ "$metadata_schema" == freeze-bundle-v1 ]]; then
+  if [[ ( "$metadata_schema" == freeze-bundle-v1 || "$metadata_schema" == freeze-bundle-v2 ) ]]; then
     RECOVERY_CHECKPOINT_NAMESPACE_UID="$(jq -er \
       '.source.namespace.uid | select(type == "string" and length > 0)' \
       "$RECOVERY_CHECKPOINT_METADATA_COPY")"
@@ -6361,6 +6602,371 @@ recovery_exact_ready_deployment_pod_info() {
   printf '%s\t%s\n' "$pod_info" "$deployment_uid"
 }
 
+recovery_backup_authority_is_selected() {
+  [[ -n "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" ||
+     -n "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" ]]
+}
+
+# Public selection only. The existing safe reader enforces ownership, mode,
+# direct paths and an existing key record; this never creates/imports a key.
+recovery_validate_backup_authority_selection() {
+  recovery_backup_authority_is_selected || return 0
+  [[ "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" == /* &&
+     "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || return 2
+  command node "$RECOVERY_SAFETY_DIR/../recovery-checkpoint-authority.mjs" \
+    key inspect "$RECOVERY_BACKUP_AUTHORITY_KEYRING" \
+    "$RECOVERY_BACKUP_AUTHORITY_KEY_ID" >/dev/null
+}
+
+# All dynamic private inputs are JSON values on bounded stdin. MODE and the
+# remaining arguments are public identifiers only. No private aggregate is
+# written to a file, inherited environment or process command line.
+recovery_backup_authority_transform() {
+  command node --input-type=module -e '
+  import fs from "node:fs";
+  import {createHash} from "node:crypto";
+  import {pathToFileURL} from "node:url";
+  const {canonicalJsonV1:canonical,parseCheckpointBackupAuthorityVersioned:parse} =
+    await import(pathToFileURL(process.argv[1]));
+  const mode=process.argv[2],args=process.argv.slice(3);
+  const bytes=fs.readFileSync(0);
+  if(bytes.length>16*1024*1024) process.exit(1);
+  try {
+  const values=JSON.parse(bytes),same=(a,b)=>canonical(a)===canonical(b);
+  const sha=v=>createHash("sha256").update(canonical(v),"utf8").digest("hex");
+  const names=["bot-orchestrator","coturn","pgbouncer","pgbouncer-t","reticulum"];
+  const annotation="yenhubs.org/checkpoint-resume-operation";
+  const fail=()=>{throw new Error("authority_operational_contract");};
+  const object=v=>v!==null&&typeof v==="object"&&!Array.isArray(v);
+  const valid=(d,name,namespace)=>{
+    if(!d||d.apiVersion!=="apps/v1"||d.kind!=="Deployment"||
+      d.metadata?.name!==name||d.metadata.namespace!==namespace||
+      typeof d.metadata.uid!=="string"||!d.metadata.uid||
+      typeof d.metadata.resourceVersion!=="string"||!d.metadata.resourceVersion||
+      !Number.isSafeInteger(d.metadata.generation)||d.metadata.generation<1||
+      d.metadata.deletionTimestamp||!object(d.spec)||
+      !Number.isSafeInteger(d.spec.replicas)||d.spec.replicas<0||
+      !same(d.spec.selector?.matchLabels,{app:name})||
+      !same(d.spec.selector.matchExpressions||[],[])||
+      d.spec.template?.metadata?.labels?.app!==name) fail();
+  };
+  const full=d=>({api_version:"apps/v1",kind:"Deployment",namespace:d.metadata.namespace,
+    name:d.metadata.name,uid:d.metadata.uid,spec_without_replicas:
+      Object.fromEntries(Object.entries(d.spec).filter(([k])=>k!=="replicas"))});
+  const consumer=d=>({name:d.metadata.name,uid:d.metadata.uid,
+    initial_resource_version:d.metadata.resourceVersion,initial_generation:d.metadata.generation,
+    original_replicas:d.spec.replicas,selector:d.metadata.name});
+  const fingerprint=d=>sha({selector:d.spec.selector,strategy:d.spec.strategy||{},template:d.spec.template});
+  const contract=a=>({schema_version:3,operation_id:a.operation_id,
+    authority_sha256:sha(a),consumers:a.consumers});
+  const out=v=>process.stdout.write(canonical(v));
+  if(mode==="projection") {
+    const [d]=values;valid(d,args[0],args[1]);
+    process.stdout.write([d.metadata.uid,d.metadata.resourceVersion,d.spec.replicas,
+      d.metadata.name,fingerprint(d)].join("\t"));
+  } else if(mode==="originals") {
+    const [deployments]=values;
+    if(!Array.isArray(deployments)||deployments.length!==5) fail();
+    deployments.sort((a,b)=>a.metadata.name<b.metadata.name?-1:1);
+    deployments.forEach((d,i)=>{valid(d,names[i],args[0]);
+      if(Object.hasOwn(d.metadata.annotations||{},annotation))fail();});
+    if(![0,1].includes(deployments[0].spec.replicas))fail();
+    out(deployments);
+  } else if(mode==="create-request") {
+    const [binding,deployments,fence]=values;
+    out({lock_binding:binding,public_authority:{schema_version:2,
+      operation_id:binding.operation_id,namespace:{name:binding.namespace,uid:binding.namespace_uid},
+      pvc:{name:"ret-pvc",uid:binding.pvc_uid},hmac_profile:"yenhubs-checkpoint-backup-authority-hmac-v2",
+      hmac_key_id:args[0],runner_generation:args[1],operation_fence:fence,
+      consumers:deployments.map(consumer)},deployment_contracts:deployments.map(full)});
+  } else if(mode==="fence") {
+    const [parent,runner,policy,binding]=values;
+    const ns=d=>({name:d.metadata.name,uid:d.metadata.uid,
+      initial_resource_version:d.metadata.resourceVersion,phase:d.status.phase,
+      metadata_name_label:d.metadata.labels["kubernetes.io/metadata.name"]});
+    const active=structuredClone(binding.spec);
+    active.matchResources.namespaceSelector={matchExpressions:[
+      {key:"kubernetes.io/metadata.name",operator:"In",values:[args[0],"hcce-bot-runners"]}]};
+    out({state:"dormant",namespaces:{parent:ns(parent),runner:ns(runner)},
+      policy:{uid:policy.metadata.uid,initial_resource_version:policy.metadata.resourceVersion,
+        initial_generation:policy.metadata.generation,spec_sha256:sha(policy.spec)},
+      binding:{uid:binding.metadata.uid,initial_resource_version:binding.metadata.resourceVersion,
+        dormant_spec_sha256:sha(binding.spec),active_spec_sha256:sha(active)}});
+  } else if(mode==="consumer") {
+    const [a]=values;out(contract(parse(canonical(a))));
+  } else if(mode==="consumer-valid") {
+    const [a,c]=values;
+    if(a.schema_version!==2||!same(c,contract(parse(canonical(a)))))fail();
+  } else if(mode==="original-exact") {
+    const [before,after]=values;
+    if(!same(before,after))fail();
+  } else if(mode==="validate-request") {
+    const [binding,a,c,deployments]=values;
+    out({lock_binding:binding,authority:a,consumer_contract:c,
+      deployment_contracts:deployments.map(full)});
+  } else if(mode==="lock") {
+    const [lock,binding,a]=values;
+    const annotations={"yenhubs.org/operation-id":binding.operation_id,
+      "yenhubs.org/recovery-token":binding.recovery_token,
+      "yenhubs.org/namespace-uid":binding.namespace_uid,"yenhubs.org/pvc-uid":binding.pvc_uid,
+      "yenhubs.org/checkpoint-stamp":binding.checkpoint_stamp,
+      "yenhubs.org/dump-sha256":binding.dump_sha256,"yenhubs.org/storage-sha256":binding.storage_sha256};
+    if(lock.apiVersion!=="v1"||lock.kind!=="ConfigMap"||
+      lock.metadata?.name!==binding.name||lock.metadata.namespace!==binding.namespace||
+      lock.metadata.uid!==args[0]||lock.metadata.resourceVersion!==args[1]||
+      lock.metadata.deletionTimestamp||lock.metadata.deletionGracePeriodSeconds!==undefined||
+      (lock.metadata.finalizers||[]).length||(lock.metadata.ownerReferences||[]).length||
+      !same(lock.metadata.labels||{},{"yenhubs.org/recovery-owner":binding.owner})||
+      !same(lock.metadata.annotations||{},annotations)||lock.immutable!==true||
+      !same(lock.binaryData||{},{})||!same(lock.data,{"checkpoint-backup-authority.json":canonical(a)}))fail();
+  } else if(mode==="lock-create") {
+    const [b,a]=values;
+    out({apiVersion:"v1",kind:"ConfigMap",metadata:{name:b.name,namespace:b.namespace,
+      labels:{"yenhubs.org/recovery-owner":b.owner},annotations:{
+        "yenhubs.org/operation-id":b.operation_id,"yenhubs.org/recovery-token":b.recovery_token,
+        "yenhubs.org/namespace-uid":b.namespace_uid,"yenhubs.org/pvc-uid":b.pvc_uid,
+        "yenhubs.org/checkpoint-stamp":b.checkpoint_stamp,"yenhubs.org/dump-sha256":b.dump_sha256,
+        "yenhubs.org/storage-sha256":b.storage_sha256}},immutable:true,
+      data:{"checkpoint-backup-authority.json":canonical(a)}});
+  } else if(mode==="state") {
+    const [a,d,original]=values,c=a.consumers.find(c=>c.name===args[0]);
+    const phase=args[1];if(!c)fail();valid(d,c.name,a.namespace.name);
+    if(d.metadata.uid!==c.uid)fail();
+    const receipt=Object.hasOwn(d.metadata.annotations||{},annotation);
+    const delta=phase==="original"||c.original_replicas===0?0:
+      phase==="paused"?1:phase==="resumed"?2:phase==="cleared"?3:-100;
+    if(d.metadata.generation!==c.initial_generation+delta||
+      d.spec.replicas!==(phase==="paused"?0:c.original_replicas)||
+      (phase==="resumed"&&c.original_replicas>0?
+        d.metadata.annotations?.[annotation]!==a.operation_id:receipt))fail();
+    if(delta===0&&d.metadata.resourceVersion!==c.initial_resource_version)fail();
+    if(original) {
+      if(!same(full(d),full(original)))fail();
+      const metadata=m=>({...Object.fromEntries(Object.entries(m).filter(([k])=>
+        !["generation","resourceVersion","managedFields","annotations"].includes(k))),
+        annotations:Object.fromEntries(Object.entries(m.annotations||{}).filter(([n])=>n!==annotation))});
+      if(!same(metadata(d.metadata),metadata(original.metadata)))fail();
+    }
+    process.stdout.write(d.metadata.resourceVersion);
+  } else if(mode==="patch") {
+    const [before]=values;const desired=Number(args[0]),receipt=args[1],clear=args[2]==="clear";
+    const patch=[{op:"test",path:"/metadata/uid",value:before.metadata.uid},
+      {op:"test",path:"/metadata/resourceVersion",value:before.metadata.resourceVersion},
+      {op:"test",path:"/metadata/generation",value:before.metadata.generation},
+      {op:"test",path:"/spec",value:before.spec}];
+    if(clear) patch.push({op:"test",path:"/metadata/annotations/yenhubs.org~1checkpoint-resume-operation",value:receipt},
+      {op:"remove",path:"/metadata/annotations/yenhubs.org~1checkpoint-resume-operation"});
+    else {
+      if(receipt) patch.push(before.metadata.annotations==null?
+        {op:"add",path:"/metadata/annotations",value:{[annotation]:receipt}}:
+        {op:"add",path:"/metadata/annotations/yenhubs.org~1checkpoint-resume-operation",value:receipt});
+      patch.push({op:"replace",path:"/spec/replicas",value:desired});
+    }
+    out(patch);
+  } else fail();
+  } catch { process.stderr.write("backup_authority_operational_contract_failed\n");process.exitCode=1; }
+' "$RECOVERY_SAFETY_DIR/../recovery-checkpoint-authority.mjs" "$@"
+}
+
+recovery_backup_authority_capture_deployments() {
+  local name deployment_json deployments='[]'
+  local +x deployment_json deployments
+  for name in bot-orchestrator coturn pgbouncer pgbouncer-t reticulum; do
+    deployment_json="$(recovery_kubectl get deployment "$name" -n "$NAMESPACE" -o json)" || return 1
+    deployments="$(printf '%s\n%s\n' "$deployments" "$deployment_json" | jq -cse '.[0]+[.[1]]')" || return 1
+  done
+  printf '%s' "$deployments"
+}
+
+recovery_backup_authority_lock_binding() {
+  local +x token="${RECOVERY_OPERATION_TOKEN:-}" lock_json="${1:-}"
+  if [[ -z "$token" ]]; then
+    [[ -n "$lock_json" ]] || return 1
+    token="$(jq -er '.metadata.annotations["yenhubs.org/recovery-token"]' <<<"$lock_json")" || return 1
+  fi
+  [[ "$token" =~ ^[a-f0-9]{32}$ ]] || return 1
+  { jq -cn --arg name "$RECOVERY_OPERATION_LOCK_GLOBAL_NAME" --arg namespace "$NAMESPACE" \
+      --arg owner checkpoint-backup --arg operation "$RECOVERY_OPERATION_ID" \
+      --arg namespace_uid "$RECOVERY_NAMESPACE_UID" --arg pvc_uid "$RECOVERY_PVC_UID" \
+      --arg stamp "$RECOVERY_CHECKPOINT_STAMP" --arg dump "$RECOVERY_DUMP_SHA256" \
+      --arg storage "$RECOVERY_STORAGE_SHA256" '{name:$name,namespace:$namespace,owner:$owner,
+        operation_id:$operation,namespace_uid:$namespace_uid,pvc_uid:$pvc_uid,
+        checkpoint_stamp:$stamp,dump_sha256:$dump,storage_sha256:$storage}';
+    printf '"%s"\n' "$token";
+  } | jq -cse 'select(length==2) | .[0]+{recovery_token:.[1]}'
+}
+
+recovery_backup_authority_validate_specs() {
+  local +x lock_json="$1" deployments="$2" binding request
+  binding="$(recovery_backup_authority_lock_binding "$lock_json")" || return 1
+  request="$(printf '%s\n%s\n%s\n%s\n' "$binding" "$RECOVERY_BACKUP_AUTHORITY_JSON" \
+    "$RECOVERY_CONSUMER_CONTRACT_JSON" "$deployments" | jq -cs . |
+    recovery_backup_authority_transform validate-request)" || return 1
+  printf '%s' "$request" | command node "$RECOVERY_SAFETY_DIR/../recovery-checkpoint-authority.mjs" \
+    authority validate-versioned "$RECOVERY_BACKUP_AUTHORITY_KEYRING" \
+    "$RECOVERY_BACKUP_AUTHORITY_KEY_ID" >/dev/null
+}
+
+recovery_backup_authority_prepare() {
+  local +x originals binding request fence='null' parent runner policy binding_object
+  recovery_validate_backup_authority_selection || return 1
+  set +x
+  recovery_require_operation_serialization || return 1
+  [[ "${RECOVERY_OPERATION_IDENTITY_PREBOUND:-0}" == 0 ]] || return 2
+  RECOVERY_OPERATION_TOKEN="$(od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]')" || return 1
+  RECOVERY_OPERATION_ID="$(od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]')" || return 1
+  [[ "$RECOVERY_OPERATION_TOKEN" =~ ^[a-f0-9]{32}$ &&
+     "$RECOVERY_OPERATION_ID" =~ ^[a-f0-9]{32}$ ]] || return 1
+  export -n RECOVERY_OPERATION_TOKEN 2>/dev/null || return 1
+  RECOVERY_OPERATION_IDENTITY_PREBOUND=1
+  RECOVERY_OPERATION_OWNER=checkpoint-backup
+  RECOVERY_OPERATION_LOCK_NAME="$RECOVERY_OPERATION_LOCK_GLOBAL_NAME"
+  originals="$(recovery_backup_authority_capture_deployments)" || return 1
+  RECOVERY_BACKUP_AUTHORITY_ORIGINALS_JSON="$(printf '%s\n' "$originals" | jq -cs . |
+    recovery_backup_authority_transform originals "$NAMESPACE")" || return 1
+  if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
+    parent="$(recovery_kubectl get namespace "$NAMESPACE" -o json)" || return 1
+    runner="$(recovery_kubectl get namespace hcce-bot-runners -o json)" || return 1
+    policy="$(recovery_kubectl get validatingadmissionpolicy "$RECOVERY_OPERATION_FENCE_POLICY_NAME" -o json)" || return 1
+    binding_object="$(recovery_kubectl get validatingadmissionpolicybinding "$RECOVERY_OPERATION_FENCE_POLICY_NAME" -o json)" || return 1
+    recovery_operation_fence_pair_is_exact dormant "$policy" "$binding_object" || return 1
+    fence="$(printf '%s\n%s\n%s\n%s\n' "$parent" "$runner" "$policy" "$binding_object" |
+      jq -cs . | recovery_backup_authority_transform fence "$NAMESPACE")" || return 1
+  fi
+  binding="$(recovery_backup_authority_lock_binding)" || return 1
+  request="$(printf '%s\n%s\n%s\n' "$binding" "$RECOVERY_BACKUP_AUTHORITY_ORIGINALS_JSON" "$fence" |
+    jq -cs . | recovery_backup_authority_transform create-request \
+      "$RECOVERY_BACKUP_AUTHORITY_KEY_ID" "$CHECKPOINT_RUNNER_GENERATION")" || return 1
+  RECOVERY_BACKUP_AUTHORITY_JSON="$(printf '%s' "$request" |
+    command node "$RECOVERY_SAFETY_DIR/../recovery-checkpoint-authority.mjs" authority create-v2 \
+      "$RECOVERY_BACKUP_AUTHORITY_KEYRING" "$RECOVERY_BACKUP_AUTHORITY_KEY_ID")" || return 1
+  RECOVERY_CONSUMER_CONTRACT_JSON="$(printf '%s' "$RECOVERY_BACKUP_AUTHORITY_JSON" |
+    jq -cs . | recovery_backup_authority_transform consumer)" || return 1
+  recovery_backup_authority_require_originals_exact || return 1
+  export RECOVERY_BACKUP_AUTHORITY_JSON RECOVERY_CONSUMER_CONTRACT_JSON
+}
+
+recovery_backup_authority_require_originals_exact() {
+  local +x current binding request
+  [[ -n "$RECOVERY_BACKUP_AUTHORITY_ORIGINALS_JSON" ]] || return 1
+  current="$(recovery_backup_authority_capture_deployments)" || return 1
+  current="$(printf '%s\n' "$current" | jq -cs . |
+    recovery_backup_authority_transform originals "$NAMESPACE")" || return 1
+  printf '%s\n%s\n' "$RECOVERY_BACKUP_AUTHORITY_ORIGINALS_JSON" "$current" |
+    jq -cs . | recovery_backup_authority_transform original-exact || return 1
+  binding="$(recovery_backup_authority_lock_binding)" || return 1
+  request="$(printf '%s\n%s\n%s\n%s\n' "$binding" "$RECOVERY_BACKUP_AUTHORITY_JSON" \
+    "$RECOVERY_CONSUMER_CONTRACT_JSON" "$current" | jq -cs . |
+    recovery_backup_authority_transform validate-request)" || return 1
+  printf '%s' "$request" | command node "$RECOVERY_SAFETY_DIR/../recovery-checkpoint-authority.mjs" \
+    authority validate-versioned "$RECOVERY_BACKUP_AUTHORITY_KEYRING" \
+    "$RECOVERY_BACKUP_AUTHORITY_KEY_ID" >/dev/null
+}
+
+recovery_backup_authority_require_state() {
+  local name="$1" phase="$2" supplied="${3:-}"
+  local +x deployment_json original='null' deployments lock_json
+  [[ -n "${RECOVERY_BACKUP_AUTHORITY_JSON:-}" ]] || return 1
+  if [[ -n "$supplied" ]]; then deployment_json="$supplied";
+  else deployment_json="$(recovery_kubectl get deployment "$name" -n "$NAMESPACE" -o json)" || return 1; fi
+  if [[ -n "$RECOVERY_BACKUP_AUTHORITY_ORIGINALS_JSON" ]]; then
+    original="$(jq -ce --arg name "$name" '.[]|select(.metadata.name==$name)' \
+      <<<"$RECOVERY_BACKUP_AUTHORITY_ORIGINALS_JSON")" || return 1
+  fi
+  # This is an invocation-independent full-spec proof, not a WeakMap/hash-only
+  # shortcut: all five normalized current specs recreate the signed body.
+  if [[ -n "$RECOVERY_BACKUP_AUTHORITY_ORIGINALS_JSON" ]]; then
+    deployments="$RECOVERY_BACKUP_AUTHORITY_ORIGINALS_JSON"
+  else
+    deployments="$(recovery_backup_authority_capture_deployments)" || return 1
+  fi
+  deployments="$(printf '%s\n%s\n' "$deployments" "$deployment_json" | jq -cse \
+    '.[1] as $d | .[0]|map(if .metadata.name==$d.metadata.name then $d else . end)')" || return 1
+  lock_json="$(recovery_kubectl get configmap "$RECOVERY_OPERATION_LOCK_NAME" -n "$NAMESPACE" -o json)" || return 1
+  recovery_backup_authority_validate_specs "$lock_json" "$deployments" || return 1
+  printf '%s\n%s\n%s\n' "$RECOVERY_BACKUP_AUTHORITY_JSON" "$deployment_json" "$original" | jq -cs . |
+    recovery_backup_authority_transform state "$name" "$phase"
+}
+
+# Signed CAS retains the existing serialization/mutation supervisor. Every
+# request tests full spec and generation from the signed original, and both
+# the ACK and readback must prove the unique requested phase. Ambiguous ACKs
+# get one exact readback, never a second mutation.
+recovery_backup_authority_mutate_deployment() {
+  local name="$1" uid="$2" rv="$3" before_replicas="$4" desired="$5"
+  local selector="$6" fingerprint="$7" receipt="$8" action="$9"
+  local before_phase after_phase observed_rv response_rv contract c_uid c_rv c_replicas c_selector c_fingerprint
+  local +x before_json response readback patch
+  [[ "$action" == scale || "$action" == clear ]] || return 2
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  before_json="$(recovery_kubectl get deployment "$name" -n "$NAMESPACE" -o json)" || return 1
+  contract="$(recovery_deployment_contract_from_json "$name" <<<"$before_json")" || return 1
+  IFS=$'\t' read -r c_uid c_rv c_replicas c_selector c_fingerprint <<<"$contract"
+  [[ "$c_uid" == "$uid" && "$c_rv" == "$rv" && "$c_replicas" == "$before_replicas" &&
+     "$c_selector" == "$selector" && "$c_fingerprint" == "$fingerprint" ]] || return 1
+  if [[ "$action" == clear ]]; then
+    [[ "$receipt" == "$RECOVERY_OPERATION_ID" && "$before_replicas" != 0 && "$desired" == "$before_replicas" ]] || return 1
+    before_phase=resumed; after_phase=cleared
+  elif [[ "$desired" == 0 && -z "$receipt" ]]; then
+    before_phase=original; after_phase=paused
+  elif [[ "$before_replicas" == 0 && "$desired" != 0 && "$receipt" == "$RECOVERY_OPERATION_ID" ]]; then
+    before_phase=paused; after_phase=resumed
+  else return 2; fi
+  observed_rv="$(recovery_backup_authority_require_state "$name" "$before_phase" "$before_json")" || return 1
+  [[ "$observed_rv" == "$rv" ]] || return 1
+  if [[ "$before_replicas" == 0 && "$desired" == 0 ]]; then
+    # BASE-zero has no replica PATCH and no resume receipt/generation advance.
+    printf '%s\n' "$rv"
+    return
+  fi
+  patch="$(printf '%s\n' "$before_json" | jq -cs . |
+    recovery_backup_authority_transform patch "$desired" "$receipt" "$action")" || return 1
+  if response="$(printf '%s' "$patch" | recovery_kubectl_mutate patch deployment "$name" \
+      -n "$NAMESPACE" --type=json --patch-file=/dev/stdin -o json 2>/dev/null)"; then
+    response_rv="$(recovery_backup_authority_require_state "$name" "$after_phase" "$response")" || return 1
+    [[ "$response_rv" != "$rv" ]] || return 1
+  fi
+  recovery_require_operation_serialization || return 1
+  recovery_require_operation_lock || return 1
+  readback="$(recovery_kubectl get deployment "$name" -n "$NAMESPACE" -o json)" || return 1
+  observed_rv="$(recovery_backup_authority_require_state "$name" "$after_phase" "$readback")" || return 1
+  [[ "$observed_rv" != "$rv" ]] || return 1
+  printf '%s\n' "$observed_rv"
+}
+
+# Restore deliberately captures a new target consumer1. This projection is
+# derived only from the verified target config/manifest pair; it never borrows
+# source backup consumers or infers ACTIVE originals from currently paused
+# replicas. The fixed Cloud reader keeps its canonical private-TEMP comparison
+# and structural/source-profile checks without replacing owner input files.
+recovery_restore_active_target_originals_json() {
+  local values_path="$1" manifest_path="$2"
+  local cloud_root="${RECOVERY_SAFETY_DIR%/deployment/lib}/hubs-cloud/community-edition"
+  local helper="$cloud_root/apply/manifest-input-contract.js"
+  recovery_private_values_file_is_acceptable "$values_path" &&
+    recovery_private_values_file_is_acceptable "$manifest_path" &&
+    recovery_require_regular_direct_file "$helper" || return 1
+  command node --input-type=module -e '
+    import {createRequire} from "node:module";import {pathToFileURL} from "node:url";
+    const require=createRequire(import.meta.url);
+    try {
+      const {verifyRestoreTargetManifestAgainstInputValues}=require(process.argv[1]);
+      const {canonicalJsonV1}=await import(pathToFileURL(process.argv[2]));
+      if(typeof verifyRestoreTargetManifestAgainstInputValues!=="function")throw Error();
+      const {config,originalReplicas}=verifyRestoreTargetManifestAgainstInputValues(process.argv[3],process.argv[4]);
+      const keys=["bot-orchestrator","coturn","pgbouncer","pgbouncer-t","reticulum"];
+      if(config.Namespace!==process.argv[5]||originalReplicas===null||
+         typeof originalReplicas!=="object"||Array.isArray(originalReplicas)||
+         canonicalJsonV1(Object.keys(originalReplicas).sort())!==canonicalJsonV1(keys)||
+         ![0,1].includes(originalReplicas["bot-orchestrator"])||
+         keys.slice(1).some(name=>originalReplicas[name]!==1))throw Error();
+      process.stdout.write(canonicalJsonV1(originalReplicas));
+    } catch {process.stderr.write("restore_target_original_profile_invalid\n");process.exitCode=1;}
+  ' "$helper" "$RECOVERY_SAFETY_DIR/../recovery-checkpoint-authority.mjs" \
+    "$values_path" "$manifest_path" "$NAMESPACE"
+}
+
 recovery_capture_deployment_contract() {
   local deployment_name="$1"
   local +x deployment_json
@@ -6376,6 +6982,10 @@ recovery_capture_deployment_contract() {
 recovery_deployment_contract_from_json() {
   local deployment_name="$1"
   [[ "$deployment_name" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
+  if recovery_backup_authority_is_selected; then
+    jq -cs . | recovery_backup_authority_transform projection "$deployment_name" "$NAMESPACE"
+    return
+  fi
   jq -er --arg name "$deployment_name" --arg namespace "$NAMESPACE" '
     select(.apiVersion == "apps/v1" and .kind == "Deployment") |
     select(.metadata.name == $name) |
@@ -6443,8 +7053,8 @@ recovery_capture_process_local_freeze_parent_contract_exact() {
     return 1
   }
   if [[ -n "$expected_contract" ]]; then
-    jq -e --argjson expected "$expected_contract" '. == $expected' \
-      >/dev/null <<<"$contract_json" || {
+    printf '%s\n%s\n' "$contract_json" "$expected_contract" |
+      jq -se 'length==2 and .[0]==.[1]' >/dev/null || {
       printf 'The process-local freeze parent changed across lock acquisition.\n' >&2
       return 1
     }
@@ -6525,16 +7135,15 @@ recovery_capture_process_local_freeze_parent_boundary_exact() {
     (.items | type == "array")
   ' >/dev/null <<<"$pods_json" || return 1
 
-  contract_json="$(jq -cne \
+  contract_json="$(printf '%s\n%s\n%s\n%s\n%s\n' \
+    "$deployment_before" "$deployment_after" "$replica_sets_json" "$pods_json" "${baseline_json:-null}" |
+    jq -cse \
     --arg boundary "$boundary" \
     --argjson expected_replicas "$expected_replicas" \
     --argjson expected_ready "$expected_ready" \
-    --arg expected_generation "$expected_generation" \
-    --argjson before "$deployment_before" \
-    --argjson after "$deployment_after" \
-    --argjson replica_sets "$replica_sets_json" \
-    --argjson pods "$pods_json" \
-    --argjson baseline "${baseline_json:-null}" '
+    --arg expected_generation "$expected_generation" '
+    .[0] as $before | .[1] as $after | .[2] as $replica_sets |
+    .[3] as $pods | .[4] as $baseline |
     def count($value): ($value // 0);
     def listed_item_gvk($value; $api_version; $kind):
       ($value.apiVersion == null or $value.apiVersion == $api_version) and
@@ -6742,6 +7351,13 @@ recovery_capture_checkpoint_resume_receipt_contract() {
   local deployment_json
   [[ "$expected_replicas" =~ ^[0-9]+$ &&
      "$operation_id" =~ ^[a-f0-9]{32}$ ]] || return 2
+  if recovery_backup_authority_is_selected; then
+    [[ "$operation_id" == "$RECOVERY_OPERATION_ID" ]] || return 1
+    recovery_require_deployment_contract "$deployment_name" "$expected_uid" \
+      "$expected_replicas" "$expected_selector" "$expected_fingerprint" || return 1
+    recovery_backup_authority_require_state "$deployment_name" resumed
+    return
+  fi
   deployment_json="$(
     recovery_kubectl get deployment "$deployment_name" -n "$NAMESPACE" -o json
   )" || return 1
@@ -6769,6 +7385,19 @@ recovery_capture_checkpoint_resume_receipt_absent_contract() {
   local deployment_name="$1" expected_uid="$2" expected_replicas="$3"
   local expected_selector="$4" expected_fingerprint="$5" deployment_json
   [[ "$expected_replicas" =~ ^[0-9]+$ ]] || return 2
+  if recovery_backup_authority_is_selected; then
+    recovery_require_deployment_contract "$deployment_name" "$expected_uid" \
+      "$expected_replicas" "$expected_selector" "$expected_fingerprint" || return 1
+    if [[ "$expected_replicas" == 0 ]]; then
+      recovery_backup_authority_require_state "$deployment_name" paused
+    else
+      # A cleanup state is admitted only by its exact G+3/no-receipt proof,
+      # never by a generation wildcard. Original G/RV has a separate path.
+      recovery_backup_authority_require_state "$deployment_name" original 2>/dev/null ||
+        recovery_backup_authority_require_state "$deployment_name" cleared
+    fi
+    return
+  fi
   deployment_json="$(
     recovery_kubectl get deployment "$deployment_name" -n "$NAMESPACE" -o json
   )" || return 1
@@ -7058,6 +7687,12 @@ recovery_clear_checkpoint_resume_receipt() {
   [[ "$expected_replicas" =~ ^[0-9]+$ &&
      -n "$expected_resource_version" &&
      "$operation_id" =~ ^[a-f0-9]{32}$ ]] || return 2
+  if recovery_backup_authority_is_selected; then
+    recovery_backup_authority_mutate_deployment "$deployment_name" "$expected_uid" \
+      "$expected_resource_version" "$expected_replicas" "$expected_replicas" \
+      "$expected_selector" "$expected_fingerprint" "$operation_id" clear
+    return
+  fi
   recovery_require_operation_serialization || return 1
   recovery_require_operation_lock || return 1
   current_resource_version="$(recovery_capture_checkpoint_resume_receipt_contract \
@@ -7177,6 +7812,12 @@ recovery_scale_deployment_exact() {
   [[ "$expected_replicas" =~ ^[0-9]+$ && "$desired_replicas" =~ ^[0-9]+$ &&
      -n "$expected_resource_version" &&
      ( -z "$resume_operation_id" || "$resume_operation_id" =~ ^[a-f0-9]{32}$ ) ]] || return 2
+  if recovery_backup_authority_is_selected; then
+    recovery_backup_authority_mutate_deployment "$deployment_name" "$expected_uid" \
+      "$expected_resource_version" "$expected_replicas" "$desired_replicas" \
+      "$expected_selector" "$expected_fingerprint" "$resume_operation_id" scale
+    return
+  fi
   recovery_require_operation_serialization || return 1
   recovery_require_operation_lock || return 1
   [[ "$deployment_name" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
@@ -7267,6 +7908,14 @@ recovery_scale_deployment_exact() {
 
 recovery_consumer_contract_is_acceptable() {
   local contract_json="$1"
+  if [[ "$(jq -r '.schema_version // empty' <<<"$contract_json" 2>/dev/null)" == 3 ]]; then
+    recovery_backup_authority_is_selected &&
+      [[ -n "${RECOVERY_BACKUP_AUTHORITY_JSON:-}" ]] || return 1
+    printf '%s\n%s\n' "$RECOVERY_BACKUP_AUTHORITY_JSON" "$contract_json" |
+      jq -cs . | recovery_backup_authority_transform consumer-valid
+    return
+  fi
+  recovery_backup_authority_is_selected && return 1
   jq -e '
     type == "object" and
     (keys | sort) == ["consumers", "operation_id", "schema_version"] and
@@ -7294,6 +7943,12 @@ recovery_require_consumer_contract_entry() {
   local expected uid selector fingerprint current_contract current_uid _current_rv current_replicas current_selector current_fingerprint
   recovery_consumer_contract_is_acceptable "$contract_json" || return 1
   [[ "$(jq -r '.operation_id' <<<"$contract_json")" == "$expected_operation_id" ]] || return 1
+  if recovery_backup_authority_is_selected; then
+    [[ "$expected_operation_id" == "$RECOVERY_OPERATION_ID" &&
+       "$expected_current_replicas" == 0 ]] || return 1
+    recovery_backup_authority_require_state "$deployment_name" paused >/dev/null
+    return
+  fi
   expected="$(jq -cer --arg name "$deployment_name" \
     '[.consumers[] | select(.name == $name)] | select(length == 1) | .[0]' \
     <<<"$contract_json")" || return 1
@@ -7777,6 +8432,23 @@ recovery_materialized_schema3_runner_binding_is_valid() {
   ' "$metadata_path" >/dev/null
 }
 
+recovery_materialized_schema4_runner_binding_is_valid() {
+  local expected_generation="$1" metadata="${RECOVERY_CHECKPOINT_METADATA_COPY:-}"
+  local inventory="${RECOVERY_DEPLOYMENT_INVENTORY_COPY:-}" evidence="${RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY:-}"
+  [[ "$expected_generation" == legacy-absent || "$expected_generation" == durable-v2 ]] || return 2
+  recovery_require_regular_direct_file "$metadata" &&
+    recovery_require_regular_direct_file "$inventory" &&
+    recovery_require_regular_direct_file "$evidence" || return 1
+  jq -e '.schema_version==4' "$metadata" >/dev/null || return 1
+  recovery_checkpoint_metadata_is_acceptable "$metadata" "$RECOVERY_CHECKPOINT_STAMP" || return 1
+  recovery_checkpoint_generation_is_acceptable "$(dirname "$metadata")" || return 1
+  [[ "$(recovery_sha256_digest "$inventory")" == "$RECOVERY_DEPLOYMENT_INVENTORY_SHA256" &&
+     "$(recovery_sha256_digest "$evidence")" == "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" ]] || return 1
+  jq -e --arg namespace "$NAMESPACE" --arg generation "$expected_generation" '
+    .namespace==$namespace and .runtime_generation==$generation
+  ' "$metadata" >/dev/null
+}
+
 recovery_operation_runner_contract_is_valid() {
   local owner="$1"
   case "$owner" in
@@ -7816,7 +8488,11 @@ recovery_operation_runner_contract_is_valid() {
           recovery_materialized_schema3_runner_binding_is_valid \
             "$RECOVERY_RUNNER_RUNTIME_GENERATION" || return 1
           ;;
-        freeze-bundle-v1)
+        4)
+          recovery_materialized_schema4_runner_binding_is_valid \
+            "$RECOVERY_RUNNER_RUNTIME_GENERATION" || return 1
+          ;;
+        freeze-bundle-v1 | freeze-bundle-v2)
           [[ "${RECOVERY_RUNNER_RUNTIME_GENERATION:-}" == legacy-absent &&
              -z "${RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY:-}" &&
              "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_SHA256" == \
@@ -7853,16 +8529,30 @@ recovery_operation_runner_contract_is_valid() {
 
 recovery_operation_lock_json_is_exact() {
   local lock_json="$1"
+  local +x lock_json signed_binding
   [[ "${RECOVERY_OPERATION_LOCK_NAME:-}" == "$RECOVERY_OPERATION_LOCK_GLOBAL_NAME" &&
      -n "${RECOVERY_OPERATION_LOCK_UID:-}" &&
      -n "${RECOVERY_OPERATION_LOCK_RESOURCE_VERSION:-}" &&
-     "${RECOVERY_OPERATION_TOKEN:-}" =~ ^[a-f0-9]{32}$ &&
+     ( "${RECOVERY_OPERATION_TOKEN:-}" =~ ^[a-f0-9]{32}$ ||
+       ( -z "${RECOVERY_OPERATION_TOKEN:-}" &&
+         -n "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" &&
+         -n "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" ) ) &&
      "${RECOVERY_OPERATION_ID:-}" =~ ^[a-f0-9]{32}$ &&
      "${RECOVERY_OPERATION_OWNER:-}" =~ ^(checkpoint-backup|checkpoint-restore|aud065-rotation)$ &&
      -n "${RECOVERY_NAMESPACE_UID:-}" && -n "${RECOVERY_PVC_UID:-}" &&
      "${RECOVERY_CHECKPOINT_STAMP:-}" =~ ^[0-9]{8}-[0-9]{6}$ &&
      "${RECOVERY_DUMP_SHA256:-}" =~ ^[a-fA-F0-9]{64}$ &&
      "${RECOVERY_STORAGE_SHA256:-}" =~ ^[a-fA-F0-9]{64}$ ]] || return 1
+  if recovery_backup_authority_is_selected; then
+    [[ "$RECOVERY_OPERATION_OWNER" == checkpoint-backup &&
+       -n "${RECOVERY_BACKUP_AUTHORITY_JSON:-}" &&
+       -n "${RECOVERY_CONSUMER_CONTRACT_JSON:-}" ]] || return 1
+    signed_binding="$(recovery_backup_authority_lock_binding "$lock_json")" || return 1
+    printf '%s\n%s\n%s\n' "$lock_json" "$signed_binding" "$RECOVERY_BACKUP_AUTHORITY_JSON" |
+      jq -cs . | recovery_backup_authority_transform lock \
+        "$RECOVERY_OPERATION_LOCK_UID" "$RECOVERY_OPERATION_LOCK_RESOURCE_VERSION"
+    return
+  fi
   if [[ "$RECOVERY_OPERATION_OWNER" == aud065-rotation ]]; then
     [[ "$RECOVERY_OPERATION_BINDING_SHA256" =~ ^[a-f0-9]{64}$ &&
        "$RECOVERY_OPERATION_STATE" =~ ^(preflight|quiesced|db-rotated|bundle-applied|verified|cleanup-authorized)$ ]] || return 1
@@ -7931,6 +8621,7 @@ recovery_operation_lock_json_is_exact() {
 
 recovery_require_operation_lock() {
   local lock_json
+  local +x lock_json signed_deployments
   RECOVERY_OPERATION_LOCK_FAILURE_DETAIL=operation-lock
   if [[ "${RECOVERY_SERIALIZATION_LEASE_REQUIRED:-0}" == 1 ]]; then
     recovery_require_operation_serialization || {
@@ -7957,6 +8648,14 @@ recovery_require_operation_lock() {
   if ! recovery_operation_lock_json_is_exact "$lock_json"; then
     printf 'The coordinated recovery lock identity or operation binding changed.\n' >&2
     return 1
+  fi
+  if recovery_backup_authority_is_selected; then
+    if [[ -n "$RECOVERY_BACKUP_AUTHORITY_ORIGINALS_JSON" ]]; then
+      signed_deployments="$RECOVERY_BACKUP_AUTHORITY_ORIGINALS_JSON"
+    else
+      signed_deployments="$(recovery_backup_authority_capture_deployments)" || return 1
+    fi
+    recovery_backup_authority_validate_specs "$lock_json" "$signed_deployments" || return 1
   fi
   RECOVERY_OPERATION_LOCK_FAILURE_DETAIL=""
 }
@@ -8384,6 +9083,7 @@ recovery_acquire_operation_lock() {
   local state_annotation="" binding_annotation=""
   local runner_checkpoint_annotations="" create_status=0
   local lock_uid="" lock_resource_version=""
+  local +x signed_binding
   [[ "$owner" =~ ^(checkpoint-backup|checkpoint-restore|aud065-rotation)$ &&
      "$lock_name" == "$RECOVERY_OPERATION_LOCK_GLOBAL_NAME" &&
      -n "${RECOVERY_NAMESPACE_UID:-}" && -n "${RECOVERY_PVC_UID:-}" &&
@@ -8442,6 +9142,9 @@ recovery_acquire_operation_lock() {
       "$RECOVERY_RUNNER_RUNTIME_GENERATION")"
   fi
   if [[ "$owner" == aud065-rotation ||
+        ( "$owner" == checkpoint-backup &&
+          -n "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" &&
+          -n "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" ) ||
         ( "$owner" == checkpoint-restore &&
           "${RECOVERY_OPERATION_STATE:-}" == cold-rebind ) ]]; then
     [[ "$RECOVERY_OPERATION_IDENTITY_PREBOUND" == 1 &&
@@ -8459,7 +9162,18 @@ recovery_acquire_operation_lock() {
       return 1
     fi
   fi
-  if cat <<EOF | recovery_kubectl_mutate create -f - >/dev/null
+  if recovery_backup_authority_is_selected; then
+    [[ "$owner" == checkpoint-backup && -n "${RECOVERY_BACKUP_AUTHORITY_JSON:-}" ]] || return 2
+    recovery_backup_authority_require_originals_exact || return 1
+    signed_binding="$(recovery_backup_authority_lock_binding)" || return 1
+    if printf '%s\n%s\n' "$signed_binding" "$RECOVERY_BACKUP_AUTHORITY_JSON" |
+      jq -cs . | recovery_backup_authority_transform lock-create |
+      recovery_kubectl_mutate create -f - >/dev/null; then
+      create_status=0
+    else
+      create_status=$?
+    fi
+  elif cat <<EOF | recovery_kubectl_mutate create -f - >/dev/null
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8518,9 +9232,14 @@ EOF
     fi
     return 1
   fi
+  if recovery_backup_authority_is_selected; then
+    export -n RECOVERY_OPERATION_TOKEN 2>/dev/null || return 1
+  else
+    export RECOVERY_OPERATION_TOKEN
+  fi
   export RECOVERY_OPERATION_OWNER RECOVERY_OPERATION_LOCK_NAME \
     RECOVERY_OPERATION_LOCK_UID RECOVERY_OPERATION_LOCK_RESOURCE_VERSION \
-    RECOVERY_OPERATION_TOKEN RECOVERY_OPERATION_ID RECOVERY_OPERATION_STATE \
+    RECOVERY_OPERATION_ID RECOVERY_OPERATION_STATE \
     RECOVERY_OPERATION_BINDING_SHA256
 }
 
@@ -8992,7 +9711,8 @@ recovery_require_confirmation() {
 
 recovery_restore_rebind_confirmation_value() {
   [[ "${RESTORE_TARGET_MODE:-in-place}" == cold-rebind &&
-     "${RECOVERY_CHECKPOINT_METADATA_SCHEMA:-}" == freeze-bundle-v1 &&
+     ( "${RECOVERY_CHECKPOINT_METADATA_SCHEMA:-}" == freeze-bundle-v1 ||
+       "${RECOVERY_CHECKPOINT_METADATA_SCHEMA:-}" == freeze-bundle-v2 ) &&
      "${RECOVERY_FREEZE_ID:-}" =~ ^[a-f0-9]{32}$ &&
      "${RECOVERY_FREEZE_MANIFEST_SHA256:-}" =~ ^[a-f0-9]{64}$ &&
      -n "${RECOVERY_FREEZE_SOURCE_CLUSTER_UID:-}" &&
@@ -9059,7 +9779,8 @@ recovery_require_restore_target_binding() {
       }
       ;;
     cold-rebind)
-      [[ "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 &&
+      [[ ( "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 ||
+           "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v2 ) &&
          "$RECOVERY_CHECKPOINT_RUNNER_GENERATION" == legacy-absent &&
          "$RECOVERY_NAMESPACE_UID" != "$RECOVERY_CHECKPOINT_NAMESPACE_UID" &&
          "$RECOVERY_PVC_UID" != "$RECOVERY_CHECKPOINT_PVC_UID" ]] || {
@@ -9616,7 +10337,7 @@ recovery_require_checkpoint_runner_quiescence_exact() {
     RECOVERY_RUNNER_QUIESCENCE_FAILURE_DETAIL="${RECOVERY_OPERATION_LOCK_FAILURE_DETAIL:-operation-lock}"
     return 1
   }
-  RECOVERY_RUNNER_QUIESCENCE_FAILURE_DETAIL=runner-quiescence
+  RECOVERY_RUNNER_QUIESCENCE_FAILURE_DETAIL="runner-quiescence"
   case "$generation" in
     legacy-absent)
       [[ -z "$durable_baseline_path" && -z "$expected_baseline_sha256" ]] ||
@@ -10225,7 +10946,9 @@ recovery_checkpoint_writer_monitor_authority_json() {
     --arg baseline "$baseline_path" --arg stop "$stop_path" \
     --arg failure "$failure_path" --arg ready "$ready_path" \
     --arg progress "$progress_path" --arg final "$final_path" \
-    --arg contract_sha256 "$contract_sha256" '
+    --arg contract_sha256 "$contract_sha256" \
+    --arg backup_keyring "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" \
+    --arg backup_key_id "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" '
     {schema_version:1,kind:$kind,pid:$pid,start_identity:$start_identity,
      context:$context,namespace:$namespace,namespace_uid:$namespace_uid,
      operation_id:$operation_id,operation_owner:$operation_owner,
@@ -10234,7 +10957,9 @@ recovery_checkpoint_writer_monitor_authority_json() {
      lease:{name:$lease_name,uid:$lease_uid,holder:$lease_holder},
      paths:{authority:$authority,contract:$contract,baseline:$baseline,
        stop:$stop,failure:$failure,ready:$ready,progress:$progress,final:$final},
-     hashes:{contract_sha256:$contract_sha256}}
+     hashes:{contract_sha256:$contract_sha256}} +
+     (if $backup_keyring=="" and $backup_key_id=="" then {} else
+       {backup_authority:{keyring_path:$backup_keyring,key_id:$backup_key_id}} end)
   '
 }
 
@@ -10741,6 +11466,12 @@ recovery_checkpoint_writer_monitor_common_args() {
     --lease-uid "$RECOVERY_SERIALIZATION_LEASE_UID" \
     --lease-holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" \
     --runtime-generation "$runtime_generation"
+  if recovery_backup_authority_is_selected; then
+    recovery_validate_backup_authority_selection || return 1
+    [[ "$operation_owner" == checkpoint-backup ]] || return 1
+    printf '%s\0' --backup-authority-keyring "$RECOVERY_BACKUP_AUTHORITY_KEYRING" \
+      --backup-authority-key-id "$RECOVERY_BACKUP_AUTHORITY_KEY_ID"
+  fi
 }
 
 recovery_checkpoint_writer_monitor_kubectl_bin() {
@@ -10784,7 +11515,10 @@ recovery_checkpoint_writer_monitor_boundary_json() {
   done < <(recovery_checkpoint_writer_monitor_common_args \
     "$contract_path" "$contract_sha256" "$baseline_path" \
     "$runtime_generation" "$operation_owner")
-  [[ "${#common_args[@]}" == 30 ]] || return 1
+  [[ ( "${#common_args[@]}" == 30 && -z "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" &&
+        -z "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" ) ||
+     ( "${#common_args[@]}" == 34 && -n "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" &&
+        -n "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" ) ]] || return 1
   boundary_json="$(env KUBECTL_BIN="$watcher_kubectl_bin" \
     node "$watcher_path" boundary \
       "${common_args[@]}" --baseline-sha256 "$baseline_sha256")" || return 1
@@ -10859,7 +11593,10 @@ recovery_start_checkpoint_writer_monitor() {
   done < <(recovery_checkpoint_writer_monitor_common_args \
     "$contract_path" "$contract_sha256" "$baseline_path" \
     "$runtime_generation" "$operation_owner")
-  [[ "${#common_args[@]}" == 30 ]] || return 1
+  [[ ( "${#common_args[@]}" == 30 && -z "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" &&
+        -z "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" ) ||
+     ( "${#common_args[@]}" == 34 && -n "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" &&
+        -n "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" ) ]] || return 1
   stable_seconds="$(recovery_stable_absence_seconds)" || return 1
   if [[ "$stable_seconds" != 61 ]]; then
     watcher_test_mode=local-fixture
@@ -11233,6 +11970,15 @@ recovery_durable_runner_monitor_control_capability_sha256() {
      "$operation_owner" == "${RECOVERY_OPERATION_OWNER:-}" ]] || return 2
   recovery_checkpoint_writer_monitor_file_is_exact \
     "$control_baseline_path" "$control_baseline_sha256" 2097152 || return 1
+  if recovery_backup_authority_is_selected; then
+    recovery_consumer_contract_is_acceptable "$RECOVERY_CONSUMER_CONTRACT_JSON" || return 1
+    jq -e --arg authority "$RECOVERY_BACKUP_AUTHORITY_JSON" \
+      --argjson contract "$RECOVERY_CONSUMER_CONTRACT_JSON" '
+      .schema_version==4 and .backup_authority==$authority and .consumers==$contract.consumers
+    ' "$control_baseline_path" >/dev/null || return 1
+  else
+    jq -e '.schema_version==3' "$control_baseline_path" >/dev/null || return 1
+  fi
   jq -e \
     --arg context "$EXPECTED_KUBE_CONTEXT" --arg namespace "$NAMESPACE" \
     --arg namespace_uid "$RECOVERY_NAMESPACE_UID" \
@@ -11244,11 +11990,13 @@ recovery_durable_runner_monitor_control_capability_sha256() {
     --arg lease_name "$RECOVERY_SERIALIZATION_LEASE_NAME" \
     --arg lease_uid "$RECOVERY_SERIALIZATION_LEASE_UID" \
     --arg lease_holder "$RECOVERY_SERIALIZATION_LEASE_HOLDER" '
-    (keys | sort) == ["boundaries","consumers","context","deployments",
+    .schema_version as $schema |
+    (keys | sort) == (["boundaries","consumers","context","deployments",
       "lease","namespace","namespace_uid","operation_id","operation_lock",
       "operation_owner","pods","recovery_operation_fence","replica_sets",
-      "runtime_generation","schema_version","storage_helper"] and
-    .schema_version == 3 and .runtime_generation == "durable-v2" and
+      "runtime_generation","schema_version","storage_helper"] +
+      (if $schema==4 then ["backup_authority"] else [] end) | sort) and
+    ($schema==3 or $schema==4) and .runtime_generation == "durable-v2" and
     .context == $context and .namespace == $namespace and
     .namespace_uid == $namespace_uid and .operation_id == $operation_id and
     .operation_owner == $operation_owner and
@@ -11332,7 +12080,9 @@ recovery_durable_runner_monitor_authority_json() {
     --arg progress "$progress_path" --arg final "$final_path" \
     --arg durable_sha256 "$durable_baseline_sha256" \
     --arg control_sha256 "$control_baseline_sha256" \
-    --arg control_capability_sha256 "$control_capability_sha256" '
+    --arg control_capability_sha256 "$control_capability_sha256" \
+    --arg backup_keyring "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" \
+    --arg backup_key_id "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" '
     {schema_version:1,kind:$kind,pid:$pid,start_identity:$start_identity,
      context:$context,namespace:$namespace,namespace_uid:$namespace_uid,
      operation_id:$operation_id,operation_owner:$operation_owner,
@@ -11344,7 +12094,9 @@ recovery_durable_runner_monitor_authority_json() {
        ready:$ready,progress:$progress,final:$final},
      hashes:{durable_baseline_sha256:$durable_sha256,
        control_baseline_sha256:$control_sha256,
-       control_capability_sha256:$control_capability_sha256}}
+       control_capability_sha256:$control_capability_sha256}} +
+     (if $backup_keyring=="" and $backup_key_id=="" then {} else
+       {backup_authority:{keyring_path:$backup_keyring,key_id:$backup_key_id}} end)
   '
 }
 
@@ -11410,6 +12162,13 @@ recovery_start_durable_runner_quiescence_monitor() {
   local started_pid="" started_identity="" expected_capability=""
   local expected_marker="" ready_value="" attempt=0 watcher_test_mode=""
   local authority_path authority_json authority_sha256=""
+  local -a backup_authority_args=()
+  if recovery_backup_authority_is_selected; then
+    recovery_validate_backup_authority_selection || return 1
+    [[ "$operation_owner" == checkpoint-backup ]] || return 1
+    backup_authority_args=(--backup-authority-keyring "$RECOVERY_BACKUP_AUTHORITY_KEYRING" \
+      --backup-authority-key-id "$RECOVERY_BACKUP_AUTHORITY_KEY_ID")
+  fi
   watcher_path="$(cd "$RECOVERY_SAFETY_DIR/.." && pwd -P)/watch-durable-runner-quiescence.mjs" ||
     return 1
   [[ "$pid_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
@@ -11506,7 +12265,7 @@ os.execvp(sys.argv[2], sys.argv[2:])
       --control-baseline-sha256 "$control_baseline_sha256" \
       --stop "$stop_path" --failure "$failure_path" --ready "$ready_path" \
       --progress "$progress_path" --final "$final_path" \
-      --authority "$authority_path"
+      --authority "$authority_path" "${backup_authority_args[@]}"
   ) &
   started_pid=$!
   started_identity="$(recovery_process_start_identity "$started_pid")" || {
@@ -11657,7 +12416,7 @@ recovery_require_durable_runner_quiescence_monitor_healthy() {
   RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-baseline
   recovery_checkpoint_writer_monitor_file_is_exact \
     "$durable_baseline_path" "$durable_baseline_sha256" 1048576 || return 1
-  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=runner-quiescence
+  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL="runner-quiescence"
   recovery_require_checkpoint_runner_quiescence_exact \
     durable-v2 "$durable_baseline_path" "$durable_baseline_sha256" || {
     RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL="${RECOVERY_RUNNER_QUIESCENCE_FAILURE_DETAIL:-runner-quiescence}"

@@ -16,6 +16,17 @@ import {
   durableInventoryFromPodList,
   readDurableFenceBaseline
 } from "./watch-bot-runner-pods.mjs";
+import {
+  parseCheckpointBackupAuthorityVersioned,
+  validateCheckpointBackupAuthorityVersioned
+} from "./recovery-checkpoint-authority.mjs";
+import {
+  validateBaseline as validateWriterBaseline,
+  validateDeploymentObject,
+  validateOperationLockObject,
+  validateSignedConsumerPhase,
+  validateSignedFenceAuthority
+} from "./watch-checkpoint-writers.mjs";
 
 const require = createRequire(import.meta.url);
 const {
@@ -95,6 +106,8 @@ function exactArguments(argv) {
     "--baseline-sha256", "--control-baseline", "--control-baseline-sha256",
     "--stop", "--failure", "--ready", "--progress", "--final", "--authority"
   ]);
+  const signedKeys = ["--backup-authority-keyring", "--backup-authority-key-id"];
+  if (argv.some(value => signedKeys.includes(value))) signedKeys.forEach(key => allowed.add(key));
   if (argv.length !== allowed.size * 2) fail("arguments");
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
@@ -104,6 +117,11 @@ function exactArguments(argv) {
     values.set(key, value);
   }
   if (values.size !== allowed.size) fail("arguments");
+  if (values.has("--backup-authority-keyring") &&
+      (!path.isAbsolute(values.get("--backup-authority-keyring")) ||
+       !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+         values.get("--backup-authority-key-id")
+       ))) fail("backup_authority_arguments");
   if (!/^[A-Za-z0-9_.:@/-]{1,253}$/.test(values.get("--context"))) fail("context");
   for (const key of ["--namespace", "--runner-namespace"]) {
     if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(values.get(key))) {
@@ -308,13 +326,14 @@ function parseControlBaseline(source, expectedSha256, context, namespace, runner
   // byte-for-byte capability emitted by watch-checkpoint-writers.mjs.
   if (source !== `${JSON.stringify(baseline)}\n`) fail("control_baseline_serialization");
   const fence = baseline?.recovery_operation_fence;
+  const signed = baseline?.schema_version === 4;
   if (
     !exactKeys(baseline, [
       "schema_version", "context", "namespace", "namespace_uid", "operation_id",
       "operation_owner", "operation_lock", "lease", "storage_helper", "consumers", "deployments",
       "replica_sets", "pods", "boundaries", "runtime_generation",
-      "recovery_operation_fence"
-    ]) || baseline.schema_version !== 3 || baseline.context !== context ||
+      "recovery_operation_fence", ...(signed ? ["backup_authority"] : [])
+    ]) || ![3, 4].includes(baseline.schema_version) || baseline.context !== context ||
     baseline.namespace !== namespace ||
     typeof baseline.namespace_uid !== "string" || !baseline.namespace_uid ||
     !/^[a-f0-9]{32}$/.test(baseline.operation_id) ||
@@ -354,7 +373,84 @@ function parseControlBaseline(source, expectedSha256, context, namespace, runner
   ) {
     fail("control_baseline_contract");
   }
+  if (signed) {
+    const authority = parseCheckpointBackupAuthorityVersioned(baseline.backup_authority);
+    const consumerContract = signedConsumerContract(authority, baseline.backup_authority);
+    validateWriterBaseline(source, expectedSha256, context, namespace, baseline.namespace_uid,
+      consumerContract, "durable-v2", baseline.operation_owner, baseline.operation_lock, OPERATION_LEASE_NAME);
+  }
   return baseline;
+}
+
+function signedConsumerContract(authority, authorityText) {
+  return {
+    schema_version: authority.schema_version === 1 ? 2 : 3,
+    operation_id: authority.operation_id,
+    authority_sha256: sha256(authorityText),
+    consumers: structuredClone(authority.consumers)
+  };
+}
+
+function signedControlOptions(baseline, values) {
+  const signed = baseline.schema_version === 4;
+  if (signed !== values.has("--backup-authority-keyring") ||
+      signed !== values.has("--backup-authority-key-id")) fail("backup_authority_arguments");
+  if (!signed) return null;
+  return {
+    namespace: baseline.namespace, namespaceUid: baseline.namespace_uid,
+    operationOwner: baseline.operation_owner, operationId: baseline.operation_id,
+    lockName: baseline.operation_lock.name, lockUid: baseline.operation_lock.uid,
+    lockResourceVersion: baseline.operation_lock.resource_version,
+    runtimeGeneration: baseline.runtime_generation, baseline,
+    backupAuthorityKeyring: values.get("--backup-authority-keyring"),
+    backupAuthorityKeyId: values.get("--backup-authority-key-id")
+  };
+}
+
+function authenticateControlBackupResources(lock, deployments, baseline, options) {
+  const material = validateOperationLockObject(lock, options);
+  if (!material || baseline.schema_version !== 4) fail("backup_authority_arguments");
+  validateSignedFenceAuthority(material.authority, baseline.recovery_operation_fence);
+  const consumerContract = signedConsumerContract(material.authority, material.authorityText);
+  if (deployments.length !== baseline.deployments.length) fail("control_writer_deployment_inventory");
+  for (const expected of baseline.deployments) {
+    const matches = deployments.filter(item => item.metadata?.name === expected.name);
+    const consumer = material.authority.consumers.find(item => item.name === expected.name) || null;
+    if (matches.length !== 1) fail("control_writer_deployment_inventory");
+    validateDeploymentObject(matches[0], baseline.namespace, expected, consumer, false, true, true);
+  }
+  const deploymentContracts = material.authority.consumers.map(consumer => {
+    const matches = deployments.filter(item => item.metadata?.name === consumer.name);
+    const expected = baseline.deployments.find(item => item.name === consumer.name);
+    if (matches.length !== 1 || !expected) fail("control_writer_deployment_inventory");
+    const deployment = matches[0];
+    validateDeploymentObject(deployment, baseline.namespace, expected, consumer, false, true, true);
+    validateSignedConsumerPhase(deployment, consumer);
+    const spec = structuredClone(deployment.spec);
+    delete spec.replicas;
+    return {
+      api_version: "apps/v1", kind: "Deployment", namespace: baseline.namespace,
+      name: consumer.name, uid: deployment.metadata.uid, spec_without_replicas: spec
+    };
+  });
+  validateCheckpointBackupAuthorityVersioned({
+    keyringPath: options.backupAuthorityKeyring, keyId: options.backupAuthorityKeyId,
+    lockBinding: material.lockBinding, authority: material.authority,
+    deploymentContracts, consumerContract
+  });
+}
+
+function completeDeploymentList(value, baseline) {
+  if (!object(value) || value.apiVersion !== "apps/v1" || value.kind !== "DeploymentList" ||
+      !object(value.metadata) || !validResourceVersion(value.metadata.resourceVersion) ||
+      (value.metadata.continue !== undefined && value.metadata.continue !== "") ||
+      (value.metadata.remainingItemCount !== undefined && value.metadata.remainingItemCount !== 0) ||
+      !Array.isArray(value.items) || value.items.length !== baseline.deployments.length ||
+      new Set(value.items.map(item => item?.metadata?.uid)).size !== value.items.length ||
+      new Set(value.items.map(item => item?.metadata?.name)).size !== value.items.length) {
+    fail("control_writer_deployment_list_contract");
+  }
+  return value.items;
 }
 
 function readControlBaselineCapability(values, expectedIdentity = null) {
@@ -917,7 +1013,7 @@ function validateControlBinding(resource, descriptor, namespace) {
   }
 }
 
-function validateControlOperationLock(resource, descriptor, controlBaseline) {
+function validateControlOperationLock(resource, descriptor, controlBaseline, signedOptions = null) {
   fixedMetadata(resource, descriptor);
   const metadata = resource.metadata;
   if (
@@ -926,11 +1022,12 @@ function validateControlOperationLock(resource, descriptor, controlBaseline) {
     canonicalJson(metadata.labels || {}) !==
       canonicalJson({ "yenhubs.org/recovery-owner": controlBaseline.operation_owner }) ||
     metadata.annotations?.["yenhubs.org/operation-id"] !== controlBaseline.operation_id ||
-    canonicalJson(resource.data || {}) !== "{}" ||
+    (!signedOptions && canonicalJson(resource.data || {}) !== "{}") ||
     canonicalJson(resource.binaryData || {}) !== "{}"
   ) {
     fail("control_operation_lock_contract");
   }
+  if (signedOptions) validateOperationLockObject(resource, signedOptions);
 }
 
 function validateControlLease(resource, descriptor, controlBaseline) {
@@ -1030,7 +1127,7 @@ function controlDescriptors(controlBaseline) {
   }));
 }
 
-function validateControlResource(resource, descriptor, controlBaseline) {
+function validateControlResource(resource, descriptor, controlBaseline, signedOptions = null) {
   if (descriptor.key === "parent_namespace" || descriptor.key === "runner_namespace") {
     validateControlNamespace(resource, descriptor);
   } else if (descriptor.key === "recovery_policy") {
@@ -1038,7 +1135,7 @@ function validateControlResource(resource, descriptor, controlBaseline) {
   } else if (descriptor.key === "recovery_binding") {
     validateControlBinding(resource, descriptor, controlBaseline.namespace);
   } else if (descriptor.key === "operation_lock") {
-    validateControlOperationLock(resource, descriptor, controlBaseline);
+    validateControlOperationLock(resource, descriptor, controlBaseline, signedOptions);
   } else if (descriptor.key === "operation_lease") {
     validateControlLease(resource, descriptor, controlBaseline);
   } else {
@@ -1052,16 +1149,19 @@ async function readControlResources(
   state,
   { initialize = false, rememberTargets = false } = {}
 ) {
-  const texts = await Promise.all(state.descriptors.map(descriptor =>
+  const texts = await Promise.all([...state.descriptors.map(descriptor =>
     kubectlCapture(kubectl, context, initialize
       ? `${descriptor.collectionPath}?fieldSelector=${encodeURIComponent(`metadata.name=${descriptor.name}`)}`
       : descriptor.getPath, MAX_CONTROL_OBJECT_BYTES)
-  ));
-  texts.forEach((text, index) => {
+  ), ...(state.signedOptions ? [kubectlCapture(kubectl, context,
+    `/apis/apps/v1/namespaces/${encodeURIComponent(state.baseline.namespace)}/deployments`, MAX_LIST_BYTES
+  )] : [])]);
+  texts.slice(0, state.descriptors.length).forEach((text, index) => {
     const descriptor = state.descriptors[index];
     const response = parseJson(text, `control_${descriptor.key}_json`);
     const resource = initialize ? controlResourceFromList(response, descriptor) : response;
-    validateControlResource(resource, descriptor, state.baseline);
+    validateControlResource(resource, descriptor, state.baseline, state.signedOptions);
+    if (descriptor.key === "operation_lock") state.lockResource = resource;
     if (initialize) {
       // An unchanged object's RV may predate etcd compaction by weeks. Bind
       // its exact immutable identity as before, but WATCH from the fresh,
@@ -1076,6 +1176,14 @@ async function readControlResources(
   });
   if (state.descriptors.some(descriptor => !validResourceVersion(descriptor.cursor))) {
     fail("control_cursor_initialization");
+  }
+  if (state.signedOptions) {
+    // One complete snapshot authenticates the five original full specs while
+    // retaining the other seven spec/metadata comparisons. It shares the same
+    // existing seven-second process deadline with the parallel control reads.
+    const deployments = completeDeploymentList(parseJson(texts[state.descriptors.length],
+      "control_writer_deployment_json"), state.baseline);
+    authenticateControlBackupResources(state.lockResource, deployments, state.baseline, state.signedOptions);
   }
 }
 
@@ -1407,7 +1515,11 @@ function monitorCapabilitySha256(values, durableBaseline, controlCapability) {
     policy: fence.policy,
     binding: fence.binding,
     durable_fence_baseline_sha256: durableBaseline.sha256,
-    control_baseline_sha256: controlCapability.sha256
+    control_baseline_sha256: controlCapability.sha256,
+    ...(values.has("--backup-authority-keyring") ? { backup_authority: {
+      keyring_path: values.get("--backup-authority-keyring"),
+      key_id: values.get("--backup-authority-key-id")
+    } } : {})
   }));
 }
 
@@ -1450,6 +1562,10 @@ function validateMonitorAuthority(
       control_capability_sha256: controlCapabilitySha256
     }
   };
+  if (values.has("--backup-authority-keyring")) expected.backup_authority = {
+    keyring_path: values.get("--backup-authority-keyring"),
+    key_id: values.get("--backup-authority-key-id")
+  };
   if (
     !object(authority) || !Number.isSafeInteger(authority.pid) ||
     authority.pid !== process.pid || typeof authority.start_identity !== "string" ||
@@ -1484,7 +1600,8 @@ async function monitor(values) {
   const controlCapability = readControlBaselineCapability(values);
   const controlState = {
     baseline: controlCapability.baseline,
-    descriptors: controlDescriptors(controlCapability.baseline)
+    descriptors: controlDescriptors(controlCapability.baseline),
+    signedOptions: signedControlOptions(controlCapability.baseline, values)
   };
   const capabilitySha256 = monitorCapabilitySha256(values, baseline, controlCapability);
   const authoritySha256 = validateMonitorAuthority(
@@ -1646,13 +1763,21 @@ async function runCli() {
 }
 
 export {
+  authenticateControlBackupResources,
+  completeDeploymentList,
   controlResourceFromList,
   captureRound,
+  exactArguments,
+  parseControlBaseline,
   normalizeCompleteParentList,
   podInitialWatchRawPath,
   podWatchRawPath,
   podWatchStateFromLists,
-  validatePodWatchStream
+  validatePodWatchStream,
+  signedControlOptions,
+  validateControlOperationLock,
+  monitorCapabilitySha256,
+  validateMonitorAuthority
 };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -38,28 +38,44 @@ FINAL_INCOMPLETE_MARKER=""
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
 
+# Selection is explicit and validated before the serialization Lease. A
+# half-pair, unsafe/missing existing keyring or unknown key never falls back.
+recovery_validate_backup_authority_selection || {
+  printf 'Checkpoint backup authority selection is invalid.\n' >&2
+  exit 2
+}
+CHECKPOINT_METADATA_VERSION=3
+if recovery_backup_authority_is_selected; then
+  set +x
+  CHECKPOINT_METADATA_VERSION=4
+  [[ "$CHECKPOINT_FORMAT" != freeze-bundle-v1 ]] || CHECKPOINT_FORMAT=freeze-bundle-v2
+elif [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ]]; then
+  printf 'freeze-bundle-v2 requires explicit checkpoint backup authority.\n' >&2
+  exit 2
+fi
+
 case "$CHECKPOINT_FORMAT" in
-  legacy | freeze-bundle-v1) ;;
+  legacy | freeze-bundle-v1 | freeze-bundle-v2) ;;
   *)
-    printf 'CHECKPOINT_FORMAT must be legacy or freeze-bundle-v1.\n' >&2
+    printf 'CHECKPOINT_FORMAT must be legacy, freeze-bundle-v1 or freeze-bundle-v2.\n' >&2
     exit 2
     ;;
 esac
 
 checkpoint_artifacts() {
-  if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
+  if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 || "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ]]; then
     recovery_freeze_bundle_artifacts "$TIMESTAMP"
   else
-    recovery_checkpoint_artifacts "$TIMESTAMP" 3
+    recovery_checkpoint_artifacts "$TIMESTAMP" "${CHECKPOINT_METADATA_VERSION:-3}"
   fi
 }
 
 checkpoint_validate_manifest() {
   local directory="$1"
-  if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
+  if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 || "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ]]; then
     recovery_validate_freeze_bundle_manifest "$directory" "$TIMESTAMP"
   else
-    recovery_validate_sha256_manifest "$directory" "$TIMESTAMP" 3
+    recovery_validate_sha256_manifest "$directory" "$TIMESTAMP" "${CHECKPOINT_METADATA_VERSION:-3}"
   fi
 }
 
@@ -94,6 +110,7 @@ DEPLOYMENT_RESUME_STARTED=(0 0 0 0 0)
 DEPLOYMENT_RESUME_RECEIPT_CLEARED=(0 0 0 0 0)
 BOT_PARENT_RESUME_ALREADY_COMMITTED=0
 RECOVERY_CONSUMER_CONTRACT_JSON=""
+RECOVERY_BACKUP_AUTHORITY_JSON=""
 PUBLISH_LOCK_OWNED=0
 OPERATION_LOCK_OWNED=0
 SERIALIZATION_LEASE_OWNED=0
@@ -144,6 +161,7 @@ CHECKPOINT_RUNNER_MODE=""
 CHECKPOINT_RUNNER_GENERATION=""
 CHECKPOINT_PROCESS_LOCAL_STRATEGY_SCOPE=strict-recreate
 CHECKPOINT_PROCESS_LOCAL_ROLLING=0
+CHECKPOINT_SIGNED_PROCESS_LOCAL_ROLLING=0
 CHECKPOINT_PROCESS_LOCAL_PARENT_PRELOCK_CONTRACT=""
 CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT=""
 CHECKPOINT_PROCESS_LOCAL_ROLLING_PRELOCK_CONTRACT=""
@@ -228,7 +246,7 @@ checkpoint_failure_context_is_safe() {
 }
 
 checkpoint_uses_freeze_admission_fence() {
-  [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 &&
+  [[ ( "$CHECKPOINT_FORMAT" == freeze-bundle-v1 || "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ) &&
      "$CHECKPOINT_RUNNER_MODE" == process-local ]]
 }
 
@@ -1323,10 +1341,10 @@ cleanup_checkpoint_final_claim() {
 
 verify_checkpoint_staging_directory() {
   local actual expected
-  if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
+  if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 || "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ]]; then
     recovery_verify_freeze_bundle_contents "$OUTPUT_DIR" "$TIMESTAMP" || return 1
   else
-    recovery_validate_sha256_manifest "$OUTPUT_DIR" "$TIMESTAMP" 3 &&
+    recovery_validate_sha256_manifest "$OUTPUT_DIR" "$TIMESTAMP" "${CHECKPOINT_METADATA_VERSION:-3}" &&
       recovery_checkpoint_metadata_is_acceptable \
         "$OUTPUT_DIR/checkpoint-metadata.json" "$TIMESTAMP" &&
       recovery_checkpoint_generation_is_acceptable "$OUTPUT_DIR" || return 1
@@ -1412,6 +1430,22 @@ capture_consumer_contracts() {
   local deployment contract uid resource_version replicas selector fingerprint
   local receipt_absent_resource_version
   local consumers_json='[]'
+  if recovery_backup_authority_is_selected; then
+    recovery_backup_authority_require_originals_exact || return 1
+    for deployment in "${CONSUMERS[@]}"; do
+      contract="$(jq -ce --arg name "$deployment" '.[] | select(.metadata.name==$name)' \
+        <<<"$RECOVERY_BACKUP_AUTHORITY_ORIGINALS_JSON" |
+        recovery_deployment_contract_from_json "$deployment")" || return 1
+      IFS=$'\t' read -r uid resource_version replicas selector fingerprint <<<"$contract"
+      DEPLOYMENT_UIDS+=("$uid")
+      DEPLOYMENT_RESOURCE_VERSIONS+=("$resource_version")
+      ORIGINAL_REPLICAS+=("$replicas")
+      DEPLOYMENT_SELECTORS+=("$selector")
+      DEPLOYMENT_FINGERPRINTS+=("$fingerprint")
+    done
+    recovery_consumer_contract_is_acceptable "$RECOVERY_CONSUMER_CONTRACT_JSON"
+    return
+  fi
   for deployment in "${CONSUMERS[@]}"; do
     contract="$(recovery_capture_deployment_contract "$deployment")" || return 1
     IFS=$'\t' read -r uid resource_version replicas selector fingerprint <<<"$contract"
@@ -1512,6 +1546,9 @@ checkpoint_require_original_zero_writer() {
 quiesce_writers() {
   local index rolling_scale_result rolling_zero_contract rolling_generation
   local -a remaining_order=(0 1 2 4)
+  if recovery_backup_authority_is_selected; then
+    recovery_backup_authority_require_originals_exact || return 1
+  fi
   WRITERS_MUTATED=1
   # Revoke the token-bearing parent first and wait for its Pod to disappear.
   # Legacy then UID-deletes issued runners under its event watcher. Durable-v2
@@ -1542,6 +1579,19 @@ quiesce_writers() {
   recovery_wait_for_no_pods "app=${DEPLOYMENT_SELECTORS[$index]}" \
     "deployment/${CONSUMERS[$index]}" 180s || return 1
   if [[ "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+    rolling_zero_contract="$(
+      recovery_capture_process_local_freeze_parent_boundary_exact zero \
+        "$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT" \
+        "$rolling_generation"
+    )" || return 1
+    DEPLOYMENT_RESOURCE_VERSIONS[index]="$(jq -er '.resource_version' \
+      <<<"$rolling_zero_contract")" || return 1
+  elif [[ "$CHECKPOINT_SIGNED_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+    # Signed positive parents use the new full-spec/receipt CAS, but retain
+    # the exact RollingUpdate HPA, ReplicaSet UID and observed-zero boundary
+    # before runner drain, backup streams or any controlled reopen.
+    rolling_generation="$(jq -er '.generation+1' \
+      <<<"$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT")" || return 1
     rolling_zero_contract="$(
       recovery_capture_process_local_freeze_parent_boundary_exact zero \
         "$CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT" \
@@ -2037,6 +2087,11 @@ resume_writers() {
       DEPLOYMENT_RESUME_STARTED[index]=1
       checkpoint_set_failure_context resume writer-rollout
       recovery_wait_for_deployment_rollout "$deployment" 300 || return 1
+      if [[ "$deployment" == bot-orchestrator && "$CHECKPOINT_SIGNED_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+        recovery_capture_process_local_freeze_parent_boundary_exact ready-one \
+          "$CHECKPOINT_PROCESS_LOCAL_ROLLING_PRELOCK_CONTRACT" \
+          "$(jq -er '.generation+2' <<<"$CHECKPOINT_PROCESS_LOCAL_ROLLING_PRELOCK_CONTRACT")" >/dev/null || return 1
+      fi
       if [[ "$deployment" == bot-orchestrator &&
             "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
         rolling_ready_contract="$(
@@ -2359,7 +2414,7 @@ command node "$SCRIPT_DIR/parse-local-values.mjs" "$VALUES_SOURCE_FILE" --valida
 checkpoint_runner_expected="$(
   checkpoint_runner_mode_from_values "$VALUES_SOURCE_FILE"
 )"
-if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 &&
+if [[ ( "$CHECKPOINT_FORMAT" == freeze-bundle-v1 || "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ) &&
       "$checkpoint_runner_expected" == process-local ]]; then
   CHECKPOINT_PROCESS_LOCAL_STRATEGY_SCOPE=freeze-checkpoint
 fi
@@ -2399,7 +2454,7 @@ CHECKPOINT_RUNNER_MODE="$(
   printf 'Checkpoint runner mode changed while binding immutable local inputs.\n' >&2
   exit 1
 }
-if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
+if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 || "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ]]; then
   [[ "$CHECKPOINT_RUNNER_MODE" == process-local ]] || {
     printf 'freeze-bundle-v1 is limited to the accepted process-local baseline.\n' >&2
     exit 1
@@ -2420,13 +2475,18 @@ if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
     printf 'Source cluster anchor UID is missing or malformed.\n' >&2
     exit 1
   }
+  checkpoint_freeze_parent_replicas="$(recovery_kubectl get deployment bot-orchestrator \
+    -n "$NAMESPACE" -o json | jq -er '.spec.replicas')" || exit 1
+  if [[ "$checkpoint_freeze_parent_replicas" != 0 ]] || ! recovery_backup_authority_is_selected; then
   CHECKPOINT_PROCESS_LOCAL_PARENT_PRELOCK_CONTRACT="$(
     recovery_capture_process_local_freeze_parent_contract_exact
   )" || exit 1
   checkpoint_parent_strategy="$(jq -er '.spec.strategy.type' \
     <<<"$CHECKPOINT_PROCESS_LOCAL_PARENT_PRELOCK_CONTRACT")" || exit 1
   if [[ "$checkpoint_parent_strategy" == RollingUpdate ]]; then
-    CHECKPOINT_PROCESS_LOCAL_ROLLING=1
+    if recovery_backup_authority_is_selected; then
+      CHECKPOINT_SIGNED_PROCESS_LOCAL_ROLLING=1
+    else CHECKPOINT_PROCESS_LOCAL_ROLLING=1; fi
     CHECKPOINT_PROCESS_LOCAL_ROLLING_PRELOCK_CONTRACT="$(
       recovery_capture_process_local_freeze_parent_boundary_exact ready-one
     )" || exit 1
@@ -2438,6 +2498,7 @@ if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
       exit 1
     }
   fi
+  fi
 fi
 RECOVERY_CHECKPOINT_STAMP="$TIMESTAMP"
 RECOVERY_DUMP_SHA256="$(printf '0%.0s' {1..64})"
@@ -2446,8 +2507,19 @@ acquire_checkpoint_serialization_lease
 recovery_require_operation_serialization
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
+if recovery_backup_authority_is_selected; then
+  if [[ "$CHECKPOINT_RUNNER_MODE" == kubernetes-pod ]]; then
+    CHECKPOINT_RUNNER_GENERATION=durable-v2
+  else
+    CHECKPOINT_RUNNER_GENERATION=legacy-absent
+  fi
+  recovery_backup_authority_prepare
+fi
 acquire_checkpoint_operation_lock
 recovery_require_operation_serialization
+if recovery_backup_authority_is_selected; then
+  recovery_backup_authority_require_originals_exact
+fi
 # Coordinated backup children revalidate these exported bindings against the
 # immutable lock. They are data-only identifiers, not local cleanup
 # capabilities; materialized paths are never inherited.
@@ -2467,7 +2539,8 @@ if [[ -n "$CHECKPOINT_PROCESS_LOCAL_PARENT_PRELOCK_CONTRACT" ]]; then
     exit 1
   }
 fi
-if [[ "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ]]; then
+if [[ "$CHECKPOINT_PROCESS_LOCAL_ROLLING" == 1 ||
+      "$CHECKPOINT_SIGNED_PROCESS_LOCAL_ROLLING" == 1 ]]; then
   CHECKPOINT_PROCESS_LOCAL_ROLLING_PARENT_CONTRACT="$(
     recovery_capture_process_local_freeze_parent_boundary_exact ready-one \
       "$CHECKPOINT_PROCESS_LOCAL_ROLLING_PRELOCK_CONTRACT" \
@@ -2507,7 +2580,7 @@ env VALUES_FILE="$VALUES_SOURCE_FILE" CAPTURE_STATE_FORMAT="$CHECKPOINT_FORMAT" 
 captured_runner_mode="$(jq -er '.bot_runner_runtime.mode' \
   "$OUTPUT_DIR/deployment-images.json")"
 CHECKPOINT_RUNNER_GENERATION="$(jq -er '
-  select(.schema_version == 4) |
+  select(.schema_version == 4 or .schema_version == 5) |
   .bot_runner_runtime.generation |
   select(. == "legacy-absent" or . == "durable-v2")
 ' "$OUTPUT_DIR/deployment-images.json")"
@@ -2520,6 +2593,9 @@ CHECKPOINT_RUNNER_GENERATION="$(jq -er '
 # snapshots, never this sibling directory. A failed copy remains invalid;
 # this receipt authorizes only a separately supervised abort-only recovery.
 persist_checkpoint_abort_receipt
+if recovery_backup_authority_is_selected; then
+  recovery_backup_authority_require_originals_exact
+fi
 
 if checkpoint_uses_freeze_admission_fence; then
   checkpoint_set_failure_context quiescence fence-create
@@ -2553,6 +2629,16 @@ if [[ "$CHECKPOINT_FORMAT" == legacy ]]; then
       writer_quiescence:{required:true,started_at_utc:$created_at_utc}
     }' >"$OUTPUT_DIR/checkpoint-metadata.json"
   chmod 600 "$OUTPUT_DIR/checkpoint-metadata.json"
+  if recovery_backup_authority_is_selected; then
+    metadata_tmp="$OUTPUT_DIR/.checkpoint-metadata.authority"
+    (umask 077; set -C; jq --arg authority "$RECOVERY_BACKUP_AUTHORITY_JSON" \
+      --argjson contract "$RECOVERY_CONSUMER_CONTRACT_JSON" '
+      .schema_version=4 | .provenance.generator="yenhubs-local-coordinated-checkpoint-v4" |
+      .backup_authority=$authority | .consumer_contract=$contract
+    ' "$OUTPUT_DIR/checkpoint-metadata.json" >"$metadata_tmp") 2>/dev/null
+    mv "$metadata_tmp" "$OUTPUT_DIR/checkpoint-metadata.json"
+    chmod 600 "$OUTPUT_DIR/checkpoint-metadata.json"
+  fi
 fi
 
 checkpoint_set_failure_context quiescence writers
@@ -2690,7 +2776,7 @@ checkpoint_set_failure_context storage-backup metadata
 SNAPSHOT_COMPLETED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 metadata_tmp="$OUTPUT_DIR/.checkpoint-metadata.next"
 [[ ! -e "$metadata_tmp" && ! -L "$metadata_tmp" ]]
-if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
+if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 || "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ]]; then
   dump_digest="$(recovery_sha256_digest "$OUTPUT_DIR/retdb-$TIMESTAMP.sql.gz")"
   storage_digest="$(recovery_sha256_digest "$OUTPUT_DIR/ret-storage-$TIMESTAMP.tar.gz")"
   dump_size="$(recovery_file_size_bytes "$OUTPUT_DIR/retdb-$TIMESTAMP.sql.gz")"
@@ -2719,6 +2805,16 @@ if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 ]]; then
       provenance:{generator:"yenhubs-freeze-bundle-v1",external_import:false},
       minimum_restore_version:1,publication_state:"complete"
     }' >"$metadata_tmp") 2>/dev/null
+  if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ]]; then
+    signed_metadata_tmp="$OUTPUT_DIR/.checkpoint-metadata.signed"
+    (umask 077; set -C; jq --arg authority "$RECOVERY_BACKUP_AUTHORITY_JSON" \
+      --argjson contract "$RECOVERY_CONSUMER_CONTRACT_JSON" '
+      .schema="freeze-bundle-v2" | .minimum_restore_version=2 |
+      .provenance.generator="yenhubs-freeze-bundle-v2" |
+      .backup_authority=$authority | .consumer_contract=$contract
+    ' "$metadata_tmp" >"$signed_metadata_tmp") 2>/dev/null
+    mv "$signed_metadata_tmp" "$metadata_tmp"
+  fi
 else
   (umask 077; set -C; jq --arg completed "$SNAPSHOT_COMPLETED_AT" \
     '.writer_quiescence.completed_at_utc = $completed' \

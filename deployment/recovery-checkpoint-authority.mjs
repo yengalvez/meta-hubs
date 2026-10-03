@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import {
+  createHash,
   createHmac,
   randomBytes,
   randomUUID,
@@ -20,6 +21,10 @@ import {
 export const CANONICAL_JSON_PROFILE = "canonical-json-v1";
 export const AUTHORITY_HMAC_PROFILE =
   "yenhubs-checkpoint-backup-authority-hmac-v1";
+export const AUTHORITY_HMAC_PROFILE_V2 =
+  "yenhubs-checkpoint-backup-authority-hmac-v2";
+export const CHECKPOINT_ABORT_JOURNAL_HMAC_PROFILE =
+  "yenhubs-checkpoint-abort-journal-hmac-v1";
 export const CHECKPOINT_BACKUP_LOCK_NAME = "yenhubs-recovery-operation-lock";
 export const KEY_RECORD_SCHEMA = "checkpoint-backup-key-record-v1";
 export const KEY_RECORD_STATUS = Object.freeze({
@@ -31,6 +36,14 @@ export const KEY_RECORD_STATUS = Object.freeze({
 
 const AUTHORITY_DOMAIN = Buffer.from(
   "yenhubs/checkpoint-backup-authority/v1\0",
+  "ascii"
+);
+const AUTHORITY_DOMAIN_V2 = Buffer.from(
+  "yenhubs/checkpoint-backup-authority/v2\0",
+  "ascii"
+);
+const ABORT_JOURNAL_DOMAIN = Buffer.from(
+  "yenhubs/checkpoint-abort-journal/v1\0",
   "ascii"
 );
 const KEY_RECORD_DOMAIN = Buffer.from(
@@ -301,7 +314,7 @@ function validateIdentity(value, code, expectedName) {
   }
 }
 
-function validateConsumer(value, expectedName) {
+function validateConsumer(value, expectedName, { minimumReplicas = 1 } = {}) {
   if (!exactKeys(value, [
     "name", "uid", "initial_resource_version", "initial_generation",
     "original_replicas", "selector"
@@ -316,7 +329,7 @@ function validateConsumer(value, expectedName) {
     minimum: 1
   });
   requiredSafeInteger(value.original_replicas, "authority_consumer_replicas", {
-    minimum: 1
+    minimum: minimumReplicas
   });
 }
 
@@ -379,14 +392,17 @@ function validateOperationFence(value, namespaceName, generation) {
   }
 }
 
-function validatePublicAuthority(value, { includeHmac }) {
+function validatePublicAuthority(value, { includeHmac, schemaVersion = 1 }) {
   const keys = [
     "schema_version", "operation_id", "namespace", "pvc", "hmac_profile",
     "hmac_key_id", "runner_generation", "operation_fence", "consumers"
   ];
   if (includeHmac) keys.push("authority_hmac_sha256");
-  if (!exactKeys(value, keys) || value.schema_version !== 1 ||
-      value.hmac_profile !== AUTHORITY_HMAC_PROFILE ||
+  if (![1, 2].includes(schemaVersion) || !exactKeys(value, keys) ||
+      value.schema_version !== schemaVersion ||
+      value.hmac_profile !== (schemaVersion === 2
+        ? AUTHORITY_HMAC_PROFILE_V2
+        : AUTHORITY_HMAC_PROFILE) ||
       !HEX_32.test(value.operation_id || "") ||
       !UUID_V4.test(value.hmac_key_id || "") ||
       !["legacy-absent", "durable-v2"].includes(value.runner_generation) ||
@@ -397,7 +413,9 @@ function validatePublicAuthority(value, { includeHmac }) {
   validateIdentity(value.namespace, "authority_namespace", value.namespace.name);
   validateIdentity(value.pvc, "authority_pvc", "ret-pvc");
   value.consumers.forEach((consumer, index) =>
-    validateConsumer(consumer, CONSUMER_NAMES[index])
+    validateConsumer(consumer, CONSUMER_NAMES[index], {
+      minimumReplicas: schemaVersion === 2 ? 0 : 1
+    })
   );
   validateOperationFence(
     value.operation_fence,
@@ -411,6 +429,16 @@ function validatePublicAuthority(value, { includeHmac }) {
     reject("authority_size");
   }
   return value;
+}
+
+function validatePublicAuthorityVersioned(value, { includeHmac }) {
+  if (!isRecord(value) || ![1, 2].includes(value.schema_version)) {
+    reject("authority_schema");
+  }
+  return validatePublicAuthority(value, {
+    includeHmac,
+    schemaVersion: value.schema_version
+  });
 }
 
 function publicAuthorityWithoutHmac(authority) {
@@ -526,16 +554,16 @@ export function parseKeyRecord(input, { expectedKeyId } = {}) {
   );
 }
 
-export function computeCheckpointBackupAuthorityHmac({
+function computeAuthorityHmac({
   keyBytes,
   lockBinding,
   publicAuthority,
   deploymentContracts
-}) {
+}, schemaVersion) {
   if (!Buffer.isBuffer(keyBytes) || keyBytes.length !== 32) {
     reject("authority_key");
   }
-  validatePublicAuthority(publicAuthority, { includeHmac: false });
+  validatePublicAuthority(publicAuthority, { includeHmac: false, schemaVersion });
   validateLockBinding(lockBinding, publicAuthority);
   validateDeploymentContracts(deploymentContracts, publicAuthority);
   const bodyBytes = Buffer.from(canonicalJsonV1({
@@ -545,12 +573,26 @@ export function computeCheckpointBackupAuthorityHmac({
   }), "utf8");
   try {
     return createHmac("sha256", keyBytes)
-      .update(AUTHORITY_DOMAIN)
+      .update(schemaVersion === 2 ? AUTHORITY_DOMAIN_V2 : AUTHORITY_DOMAIN)
       .update(bodyBytes)
       .digest("hex");
   } finally {
     bodyBytes.fill(0);
   }
+}
+
+export function computeCheckpointBackupAuthorityHmac({
+  keyBytes,
+  lockBinding,
+  publicAuthority,
+  deploymentContracts
+}) {
+  return computeAuthorityHmac({
+    keyBytes,
+    lockBinding,
+    publicAuthority,
+    deploymentContracts
+  }, 1);
 }
 
 export function createCheckpointBackupAuthority({
@@ -612,6 +654,262 @@ export function parseCheckpointBackupAuthority(input) {
     parseCanonicalJsonV1(input, { maximumBytes: AUTHORITY_MAX_BYTES }),
     { includeHmac: true }
   );
+}
+
+export function parseCheckpointBackupAuthorityVersioned(input) {
+  return validatePublicAuthorityVersioned(
+    parseCanonicalJsonV1(input, { maximumBytes: AUTHORITY_MAX_BYTES }),
+    { includeHmac: true }
+  );
+}
+
+function denseOwnArray(value, expectedLength) {
+  if (!Array.isArray(value) || value.length !== expectedLength) return false;
+  for (let index = 0; index < expectedLength; index += 1) {
+    if (!Object.hasOwn(value, index)) return false;
+  }
+  return true;
+}
+
+function validateVersionedAuthorityRequest(request, { create = false } = {}) {
+  const keys = [
+    "keyringPath", "keyId", "lockBinding", "deploymentContracts",
+    create ? "publicAuthority" : "authority"
+  ];
+  if (!create && isRecord(request) && Object.hasOwn(request, "consumerContract")) {
+    keys.push("consumerContract");
+  }
+  if (!exactKeys(request, keys)) reject("authority_request_schema");
+  const authority = create ? request.publicAuthority : request.authority;
+  if (!isRecord(authority) || !denseOwnArray(authority.consumers, CONSUMER_NAMES.length)) {
+    reject("authority_schema");
+  }
+  if (!denseOwnArray(request.deploymentContracts, CONSUMER_NAMES.length)) {
+    reject("authority_deployment_contracts");
+  }
+  validatePublicAuthority(authority, {
+    includeHmac: !create,
+    schemaVersion: create ? 2 : authority?.schema_version
+  });
+  if (request.keyId !== authority.hmac_key_id) reject("authority_key_id");
+  return authority;
+}
+
+function validateAuthorityConsumerContract(contract, authority) {
+  const consumerVersion = authority.schema_version === 1 ? 2 : 3;
+  if (!exactKeys(contract, [
+    "schema_version", "operation_id", "authority_sha256", "consumers"
+  ]) || contract.schema_version !== consumerVersion ||
+      contract.operation_id !== authority.operation_id ||
+      !HEX_64.test(contract.authority_sha256 || "") ||
+      !Array.isArray(contract.consumers)) {
+    reject("authority_consumer_contract_schema");
+  }
+  if (!denseOwnArray(contract.consumers, CONSUMER_NAMES.length)) {
+    reject("authority_consumer_contract_binding");
+  }
+  const digest = createHash("sha256")
+    .update(Buffer.from(canonicalJsonV1(authority), "utf8"))
+    .digest("hex");
+  if (contract.authority_sha256 !== digest ||
+      canonicalJsonV1(contract.consumers) !== canonicalJsonV1(authority.consumers)) {
+    reject("authority_consumer_contract_binding");
+  }
+}
+
+// Only explicitly selected, already-imported records may sign authority v2.
+// The existing key-record and keyring policies, and the v1 CLI, remain unchanged.
+export function createCheckpointBackupAuthorityV2(request) {
+  const publicAuthority = validateVersionedAuthorityRequest(request, { create: true });
+  const loaded = loadKeyRecordForAuthority(request.keyringPath, request.keyId);
+  let key;
+  try {
+    key = keyBuffer(loaded.record.key_base64);
+    const authority = {
+      ...publicAuthority,
+      authority_hmac_sha256: computeAuthorityHmac({
+        keyBytes: key,
+        lockBinding: request.lockBinding,
+        publicAuthority,
+        deploymentContracts: request.deploymentContracts
+      }, 2)
+    };
+    return validatePublicAuthority(authority, { includeHmac: true, schemaVersion: 2 });
+  } finally {
+    loaded.bytes.fill(0);
+    if (key) key.fill(0);
+  }
+}
+
+// Omitting consumerContract is a cryptographic primitive only. Operational
+// callers must supply it to authenticate the closed authority/consumer pair.
+export function validateCheckpointBackupAuthorityVersioned(request) {
+  const authority = validateVersionedAuthorityRequest(request);
+  const loaded = loadKeyRecordForAuthority(request.keyringPath, request.keyId);
+  let key;
+  try {
+    key = keyBuffer(loaded.record.key_base64);
+    const expected = Buffer.from(computeAuthorityHmac({
+      keyBytes: key,
+      lockBinding: request.lockBinding,
+      publicAuthority: publicAuthorityWithoutHmac(authority),
+      deploymentContracts: request.deploymentContracts
+    }, authority.schema_version), "hex");
+    const actual = Buffer.from(authority.authority_hmac_sha256, "hex");
+    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+      reject("authority_hmac");
+    }
+    if (Object.hasOwn(request, "consumerContract")) {
+      validateAuthorityConsumerContract(request.consumerContract, authority);
+    }
+    return authority;
+  } finally {
+    loaded.bytes.fill(0);
+    if (key) key.fill(0);
+  }
+}
+
+function validateDenseJsonArrays(value, depth = 0) {
+  if (depth > MAX_JSON_DEPTH) reject("abort_journal_schema");
+  if (Array.isArray(value)) {
+    if (!denseOwnArray(value, value.length)) reject("abort_journal_schema");
+    for (let index = 0; index < value.length; index += 1) {
+      validateDenseJsonArrays(value[index], depth + 1);
+    }
+  } else if (isRecord(value)) {
+    for (const key of Object.keys(value)) {
+      validateDenseJsonArrays(value[key], depth + 1);
+    }
+  }
+}
+
+function validateUnsignedAbortJournal(journal) {
+  if (!isRecord(journal) || journal.schema !== 3 ||
+      typeof journal.authoritySha256 !== "string" || !HEX_64.test(journal.authoritySha256) ||
+      Object.hasOwn(journal, "authentication")) {
+    reject("abort_journal_schema");
+  }
+  validateDenseJsonArrays(journal);
+}
+
+function validateAbortJournalRequest(request, { includeSeal = false } = {}) {
+  const keys = ["keyringPath", "keyId", "receiptSha256", "journal"];
+  if (includeSeal) keys.push("seal");
+  if (!exactKeys(request, keys)) reject("abort_journal_request_schema");
+  if (typeof request.keyId !== "string" || !UUID_V4.test(request.keyId)) reject("key_record_id");
+  if (typeof request.receiptSha256 !== "string" || !HEX_64.test(request.receiptSha256)) {
+    reject("abort_journal_receipt_sha256");
+  }
+}
+
+const ABORT_JOURNAL_ERROR_CODES = new Set([
+  "abort_journal_authentication", "abort_journal_receipt_sha256",
+  "abort_journal_request_schema", "abort_journal_schema",
+  "abort_journal_seal_authentication", "abort_journal_seal_schema",
+  "canonical_json_bytes", "canonical_json_cycle", "canonical_json_depth",
+  "canonical_json_duplicate_key", "canonical_json_limit", "canonical_json_not_canonical",
+  "canonical_json_number", "canonical_json_parse", "canonical_json_type", "canonical_json_utf8",
+  "key_record_file", "key_record_file_changed", "key_record_id", "key_record_key_base64",
+  "key_record_path", "key_record_schema", "key_record_vector", "key_record_vector_input",
+  "keyring_directory", "keyring_inventory", "keyring_path"
+]);
+
+function rejectUnexpectedAbortJournalError(error) {
+  let code = "abort_journal_authentication";
+  try {
+    const candidate = error?.code;
+    if (typeof candidate === "string" && ABORT_JOURNAL_ERROR_CODES.has(candidate)) {
+      code = candidate;
+    }
+  } catch {
+    // Caller-provided accessors are untrusted; never retain their thrown value.
+  }
+  // Reconstruct even allowed typed errors: message, properties and cause may be private.
+  reject(code);
+}
+
+function computeAbortJournalAuthentication(request) {
+  let journalBytes;
+  let bodyBytes;
+  let loaded;
+  let key;
+  try {
+    validateUnsignedAbortJournal(request.journal);
+    journalBytes = Buffer.from(canonicalJsonV1(request.journal), "utf8");
+    const journal = parseCanonicalJsonV1(journalBytes, {
+      maximumBytes: CLI_REQUEST_MAX_BYTES
+    });
+    validateUnsignedAbortJournal(journal);
+    loaded = loadKeyRecordForAuthority(request.keyringPath, request.keyId);
+    key = keyBuffer(loaded.record.key_base64);
+    bodyBytes = Buffer.from(canonicalJsonV1({
+      receipt_sha256: request.receiptSha256,
+      journal
+    }), "utf8");
+    return {
+      journalSha256: createHash("sha256").update(journalBytes).digest("hex"),
+      hmacSha256: createHmac("sha256", key)
+        .update(ABORT_JOURNAL_DOMAIN).update(bodyBytes).digest("hex")
+    };
+  } catch (error) {
+    rejectUnexpectedAbortJournalError(error);
+  } finally {
+    if (journalBytes) journalBytes.fill(0);
+    if (bodyBytes) bodyBytes.fill(0);
+    if (loaded) loaded.bytes.fill(0);
+    if (key) key.fill(0);
+  }
+}
+
+// This seal authenticates bytes only; the operational journal schema and its
+// terminal-state evidence must be independently validated by the Cloud caller.
+export function createCheckpointAbortJournalSeal(request) {
+  try {
+    validateAbortJournalRequest(request);
+    const authentication = computeAbortJournalAuthentication(request);
+    return {
+      schema_version: 1,
+      profile: CHECKPOINT_ABORT_JOURNAL_HMAC_PROFILE,
+      key_id: request.keyId,
+      receipt_sha256: request.receiptSha256,
+      journal_sha256: authentication.journalSha256,
+      hmac_sha256: authentication.hmacSha256
+    };
+  } catch (error) {
+    rejectUnexpectedAbortJournalError(error);
+  }
+}
+
+export function validateCheckpointAbortJournalSeal(request) {
+  try {
+    validateAbortJournalRequest(request, { includeSeal: true });
+    const { seal } = request;
+    if (!exactKeys(seal, [
+      "schema_version", "profile", "key_id", "receipt_sha256", "journal_sha256", "hmac_sha256"
+    ]) || seal.schema_version !== 1 || seal.profile !== CHECKPOINT_ABORT_JOURNAL_HMAC_PROFILE ||
+        seal.key_id !== request.keyId ||
+        typeof seal.receipt_sha256 !== "string" || !HEX_64.test(seal.receipt_sha256) ||
+        typeof seal.journal_sha256 !== "string" || !HEX_64.test(seal.journal_sha256) ||
+        typeof seal.hmac_sha256 !== "string" || !HEX_64.test(seal.hmac_sha256)) {
+      reject("abort_journal_seal_schema");
+    }
+    const authentication = computeAbortJournalAuthentication(request);
+    const receiptMatches = timingSafeEqual(
+      Buffer.from(seal.receipt_sha256, "hex"), Buffer.from(request.receiptSha256, "hex")
+    );
+    const journalMatches = timingSafeEqual(
+      Buffer.from(seal.journal_sha256, "hex"), Buffer.from(authentication.journalSha256, "hex")
+    );
+    const hmacMatches = timingSafeEqual(
+      Buffer.from(seal.hmac_sha256, "hex"), Buffer.from(authentication.hmacSha256, "hex")
+    );
+    if (!receiptMatches || !journalMatches || !hmacMatches) {
+      reject("abort_journal_seal_authentication");
+    }
+    return seal;
+  } catch (error) {
+    rejectUnexpectedAbortJournalError(error);
+  }
 }
 
 function resolvedPath(value, code) {
@@ -895,6 +1193,41 @@ function cliMain(argv) {
     cliOutput(inspectKeyRecord({ keyringPath: argv[2], keyId: argv[3] }));
     return;
   }
+  if (argv[0] === "authority" && ["create-v2", "validate-versioned"].includes(argv[1]) &&
+      argv.length === 4) {
+    const request = readCliRequest();
+    if (argv[1] === "create-v2" && exactKeys(request, [
+      "lock_binding", "public_authority", "deployment_contracts"
+    ])) {
+      cliOutput(createCheckpointBackupAuthorityV2({
+        keyringPath: argv[2],
+        keyId: argv[3],
+        lockBinding: request.lock_binding,
+        publicAuthority: request.public_authority,
+        deploymentContracts: request.deployment_contracts
+      }));
+      return;
+    }
+    if (argv[1] === "validate-versioned" && exactKeys(request, [
+      "lock_binding", "authority", "deployment_contracts", "consumer_contract"
+    ])) {
+      const authority = validateCheckpointBackupAuthorityVersioned({
+        keyringPath: argv[2],
+        keyId: argv[3],
+        lockBinding: request.lock_binding,
+        authority: request.authority,
+        deploymentContracts: request.deployment_contracts,
+        consumerContract: request.consumer_contract
+      });
+      cliOutput({
+        key_id: authority.hmac_key_id,
+        profile: authority.hmac_profile,
+        status: KEY_RECORD_STATUS.valid
+      });
+      return;
+    }
+    reject("arguments_invalid");
+  }
   if (argv[0] === "authority" && ["create", "validate"].includes(argv[1]) &&
       argv.length === 4) {
     const loaded = loadKeyRecordForAuthority(argv[2], argv[3]);
@@ -935,7 +1268,12 @@ function cliMain(argv) {
   reject("arguments_invalid");
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const nodeEvalOrPrint = process.execArgv.some(argument =>
+  argument === "-pe" || /^(?:-e|--eval|-p|--print)(?:=|$)/u.test(argument)
+);
+
+if (!nodeEvalOrPrint && process.argv[1] &&
+    path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     cliMain(process.argv.slice(2));
   } catch {

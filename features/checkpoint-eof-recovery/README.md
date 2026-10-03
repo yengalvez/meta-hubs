@@ -2,6 +2,50 @@
 
 Candidate dated 2026-09-26. Baselines: Hubs prod-2026-03-11 and Hubs CE 2.1.0. This changes operator-side backup/recovery tooling, not avatar bytes, application schemas or the accepted checkpoint format. Local tests are not a live recovery acceptance.
 
+## Versioned signed closure candidate (2026-10-03)
+
+The local candidate adds explicit authority2/consumer3/baseline4/receipt2 and
+metadata4/inventory5/freeze2 readers, rather than reinterpreting historical
+versions. Positive writers bind full spec and UID/RV/generation before the first
+pause and through resume/receipt removal; a writer originally at zero receives
+no PATCH, resume receipt or invented generation. Signed public projections are
+separate from private specs/key material; key selection is explicit and never
+creates or imports a key. Existing monitor/Lease/fence/consumer guards and
+30/10-second limits with the two-second cancellation reserve remain mandatory.
+
+Restore retains its own destination consumer1 and checkpoint-restore lock. It
+clears inherited backup key selectors only in its own process before loading
+the shared library; the parent environment and backup guards are unchanged.
+Destination original replicas come from a verified immutable ACTIVE-input
+snapshot, not a paused live scale or the source's authority. Generator/YAML
+failures use fixed diagnostics; input identity/content drift fails closed.
+
+New root regressions are registered once in the shared AUD-065 aggregate and
+its security inventory. Local focal results and directed reviews are not a
+frozen full, runtime restoration, three complete cycles or production acceptance.
+The combined historical/new SDK gate reached154/155; its single incorrect
+status-RV expectation was corrected and the affected two-case boundary passed.
+The candidate now implements explicit positional plan-authority/execute-authority
+CLI entrypoints with existing keyring/ID selection and receipt2, without API
+adapters, environment fallback or key creation. Static review is closed; the
+initial plan SyntaxError was reproduced as truncated synthetic transport and
+corrected only in the fixture. The former complete CLI gate was10/11 with one
+native90s timeout during progressing second execution/reentry. Closed-field
+measurement identified repeated private-reader process startup, not a proven
+historical multimedia cause. The clean publication reader now uses one dirfd
+helper instead of five, retaining four byte-read passes, inode/ancestor custody,
+fresh key loads and the historical reconciliation path for pending/link states.
+The unchanged1MiB request limit is checked before startup; oversized headers
+select the historical reader. Directed review closed both compatibility findings.
+Publication17/17 and key custody9/9 pass on these bytes. The previously failing
+fresh-process reentry case now passes in112686.617ms total: recovery itself
+77189.553ms, below the unchanged90s per-CLI limit, followed by mutation-free
+terminal replay. All observed processes have terminal metrics and no metric
+errors; fixture transport remains synthetic. This is not a new complete CLI
+suite, frozen full, operational latency acceptance or representative runtime cycle.
+Historical manual execution stays disabled; neither these APIs nor an ad-hoc
+invocation constitute an accepted operational reentry recipe.
+
 ## Local interpreter and scheduling harness (2026-10-02)
 
 Recovery requires Bash4.1+. Refuse unsupported interpreters before resetting
@@ -40,7 +84,13 @@ Transport loss invalidates the interrupted checkpoint. Never delete the old fail
 
 Supported initial state: the exact five writers are fully paused and the recovery fence is active. A parent originally at zero remains at zero; recovery never enables an optional module. Partial initial pause, legacy runtime, freeze format, unsupported identities and persistent API outage remain fail-closed. They are not covered by this runbook.
 
-## Operator sequence
+## Historical receipt1 operator sequence (frozen implementation only)
+
+The sequence below documents the older frozen implementation used for the
+historical abort-only incident. It is NOT an executable recipe for the new
+versioned candidate above: its new authority CLI is not yet functionally
+accepted, and receipt2 uses the authority-aware coordinator. Retain the source pinned by the incident; do not replace
+it with another candidate, infer execute authority or reuse the interrupted copy.
 
 Only use a frozen, reviewed source matching the pre-backup manifest and generator. Before a rollout from the older product contract, use the baseline-compatible backup source: the new product generator cannot reproduce the old deployment. Never weaken manifest verification to bridge that mismatch.
 
@@ -181,5 +231,12 @@ confirmed cause of that historic failure. Focused tests are wired into both
 the local security section and the existing CI workflow.
 
 Focused regressions cover capture-before-pause, source permissions/durability, EOF on reads/watch/CAS, expired or competing Leases, lost mutation responses, helper cleanup, interrupted recovery/reentry, foreign PVC consumers and original zero replicas. Run the real checkpoint shell entrypoint with the isolated recovery fixtures from a clean committed tree as well; unit adapters alone do not cover this hook.
+
+For a Lease-only change, the existing shell harness also accepts
+`YENHUBS_RECOVERY_TEST_FOCUS=serialization-lease-contract`. It runs the same
+original Lease block plus unchanged shared setup, and preserves that block's
+call in the full path. J92419 passed55 checks (45 shared and10 Lease) in18.94s;
+this is a measured local test, not a complete recovery or operational SLO.
+The mandatory final `verify-project.sh --full` is not replaced by focused runs.
 
 Relevant files: `deployment/create-checkpoint.sh`, `checkpoint-recovery-receipt.mjs`, `lib/recovery-safety.sh`, writer/quiescence watchers and Cloud `apply/recover-avatar-checkpoint.js`. No manual RBAC patch, generated-manifest edit, raw apply, image hotpatch or secret output is allowed. Reverting tooling before an operation is safe; during an incident keep the source/receipt/journal pinned until its state is reconciled. This runbook does not authorize discarding an uncertain receipt.

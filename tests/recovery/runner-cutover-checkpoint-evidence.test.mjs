@@ -6,6 +6,8 @@ import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import test from "node:test";
 
+import { canonicalJsonV1 } from "../../deployment/recovery-checkpoint-authority.mjs";
+
 import {
   KubectlEvidenceReader,
   PAIR_DEFINITIONS,
@@ -945,6 +947,53 @@ function legacyInventory() {
   return deploymentInventory("process-local");
 }
 
+function signedDeploymentInventory(mode, evidence, originalBotReplicas = 0) {
+  const inventory = deploymentInventory(mode, evidence);
+  inventory.schema_version = 5;
+  inventory.deployments.find(deployment => deployment.name === "bot-orchestrator").replicas = originalBotReplicas;
+  const names = ["bot-orchestrator", "coturn", "pgbouncer", "pgbouncer-t", "reticulum"];
+  const fence = evidence.admission.pairs?.recovery_operation_fence;
+  const namespaceFence = value => ({
+    name: value.name, uid: value.uid, initial_resource_version: value.resource_version,
+    phase: "Active", metadata_name_label: value.name
+  });
+  inventory.backup_authority = canonicalJsonV1({
+    schema_version: 2,
+    operation_id: evidence.checkpoint_operation_id,
+    namespace: { name: NAMESPACE, uid: NAMESPACE_UID },
+    pvc: { name: "ret-pvc", uid: "fixture-pvc-uid" },
+    hmac_profile: "yenhubs-checkpoint-backup-authority-hmac-v2",
+    hmac_key_id: "12345678-1234-4234-8234-123456789abc",
+    runner_generation: evidence.runtime_generation,
+    operation_fence: evidence.runtime_generation === "durable-v2" ? {
+      state: "dormant",
+      namespaces: {
+        parent: namespaceFence(evidence.namespaces.parent),
+        runner: namespaceFence(evidence.namespaces.runner)
+      },
+      policy: {
+        uid: fence.policy.uid, initial_resource_version: fence.policy.resource_version,
+        initial_generation: fence.policy.generation, spec_sha256: fence.policy.spec_sha256
+      },
+      binding: {
+        uid: fence.binding.uid, initial_resource_version: fence.binding.resource_version,
+        dormant_spec_sha256: sha256Canonical(recoveryOperationFencePair("dormant").binding.spec),
+        active_spec_sha256: sha256Canonical(recoveryOperationFencePair("active").binding.spec)
+      }
+    } : null,
+    consumers: names.map((name, index) => {
+      const deployment = inventory.deployments.find(value => value.name === name);
+      return {
+        name, uid: deployment.uid, initial_resource_version: `signed-rv-${index}`,
+        initial_generation: index + 1, original_replicas: deployment.replicas, selector: name
+      };
+    }),
+    // Synthetic public fixtures do not claim the original live HMAC proof.
+    authority_hmac_sha256: "f".repeat(64)
+  });
+  return inventory;
+}
+
 function runHelper(args, environment = process.env) {
   return spawnSync(process.execPath, [SCRIPT, ...args], {
     encoding: "utf8",
@@ -1579,6 +1628,179 @@ test("historical source verification accepts resource-version drift and addition
     /historical_live_mismatch/
   );
 });
+
+test("authority source mode alone accepts signed bot0 with its original active Role", () => {
+  const checkpointLive = durableLive({ fences: [exactGuard("fence")] });
+  const checkpoint = envelope(buildCheckpointEvidenceCore(checkpointLive, inputs(checkpointLive.manifest)));
+  const inventory = signedDeploymentInventory("kubernetes-pod", checkpoint, 0);
+  assert.equal(validateDeploymentInventory(inventory, checkpoint), inventory);
+  assert.equal(checkpoint.schema_version, 3);
+  assert.equal(checkpoint.journal.contract.schema_version, 2);
+  assert.equal(checkpoint.parent_deployment.replicas, 0);
+  const mode = "active-source-authority";
+  const options = {
+    "live-mode": mode,
+    "checkpoint-operation-id": OPERATION_ID,
+    "recovery-operation-fence-state": "dormant"
+  };
+  const contract = liveVerificationContract(options, undefined, inventory);
+  assert.equal(contract.expected_parent_replicas, 0);
+  const buildOptions = {
+    expectedParentReplicas: contract.expected_parent_replicas,
+    verificationMode: mode, checkpointEvidence: checkpoint, checkpointInventory: inventory
+  };
+  const activeLive = durableLive({ fences: [exactGuard("fence")], replicas: 0 });
+  advanceDurableResourceVersions(activeLive);
+  const active = buildCheckpointEvidenceCore(activeLive, historicalInputs(), buildOptions);
+  assert.equal(active.runner_role.contract_sha256, checkpoint.runner_role.contract_sha256);
+  assert.equal(verifyHistoricalSourceCore(active, checkpoint, mode, inventory), active);
+  assert.doesNotThrow(() => verifyManifestEpochBinding(mode, {}, inventory, checkpoint));
+  assert.throws(
+    () => buildCheckpointEvidenceCore(activeLive, historicalInputs(), verificationBuildOptions(checkpoint, "active-source")),
+    /parent_deployment_contract_invalid/
+  );
+  assert.throws(
+    () => verifyHistoricalSourceCore(active, checkpoint, "active-source"),
+    /historical_live_mismatch/
+  );
+  assert.throws(
+    () => buildCheckpointEvidenceCore(activeLive, historicalInputs(), verificationBuildOptions(checkpoint, "quiesced-source")),
+    /durable_source_runner_role_drift/
+  );
+  const inertLive = makeRunnerRoleInert(structuredClone(activeLive));
+  assert.throws(
+    () => buildCheckpointEvidenceCore(inertLive, historicalInputs(), buildOptions),
+    /durable_source_runner_role_drift/
+  );
+  for (const mutate of [
+    live => { live.runner_role.metadata.uid = "wrong-role-uid"; },
+    live => { live.runner_role.rules[0].verbs.push("update"); },
+    live => { live.guard_service_account.automountServiceAccountToken = false; },
+    live => { live.parent_deployment.spec.replicas = 1; },
+    live => { live.parent_deployment.metadata.uid = "wrong-parent-uid"; }
+  ]) {
+    const invalidLive = structuredClone(activeLive);
+    mutate(invalidLive);
+    assert.throws(() => buildCheckpointEvidenceCore(invalidLive, historicalInputs(), buildOptions));
+  }
+});
+
+test("authority source mode requires inventory5 and signed operational originals0/1 at every entry", () => {
+  const checkpointLive = durableLive({ fences: [exactGuard("fence")] });
+  const checkpoint = envelope(buildCheckpointEvidenceCore(checkpointLive, inputs(checkpointLive.manifest)));
+  const mode = "active-source-authority";
+  const options = {
+    "live-mode": mode, "checkpoint-operation-id": OPERATION_ID,
+    "recovery-operation-fence-state": "dormant"
+  };
+  for (const inventory of [null, deploymentInventory("kubernetes-pod", checkpoint)]) {
+    assert.throws(() => liveVerificationContract(options, undefined, inventory), /authority_inventory_required/);
+    assert.throws(() => buildCheckpointEvidenceCore(checkpointLive, historicalInputs(), {
+      expectedParentReplicas: 0, verificationMode: mode,
+      checkpointEvidence: checkpoint, checkpointInventory: inventory
+    }), /authority_inventory_required/);
+    assert.throws(() => verifyHistoricalSourceCore(checkpoint, checkpoint, mode, inventory), /authority_inventory_required/);
+    assert.throws(() => verifyManifestEpochBinding(mode, {}, inventory, checkpoint), /authority_inventory_required/);
+  }
+  const tooMany = signedDeploymentInventory("kubernetes-pod", checkpoint, 2);
+  assert.throws(() => validateDeploymentInventory(tooMany, checkpoint), /bot_replicas/);
+  assert.throws(() => liveVerificationContract(options, undefined, tooMany), /bot_replicas/);
+  const one = signedDeploymentInventory("kubernetes-pod", checkpoint, 1);
+  const activeLive = durableLive({ fences: [exactGuard("fence")], replicas: 1 });
+  const active = buildCheckpointEvidenceCore(activeLive, historicalInputs(), {
+    expectedParentReplicas: 1, verificationMode: mode,
+    checkpointEvidence: checkpoint, checkpointInventory: one
+  });
+  assert.equal(liveVerificationContract(options, undefined, one).expected_parent_replicas, 1);
+  assert.equal(verifyHistoricalSourceCore(active, checkpoint, mode, one), active);
+  const wrongOperation = { ...options, "checkpoint-operation-id": "1".repeat(32) };
+  assert.throws(() => liveVerificationContract(wrongOperation, undefined, one), /operation_mismatch/);
+  const untrusted = structuredClone(one);
+  untrusted.deployments.find(deployment => deployment.name === "hubs").containers[0].image =
+    `untrusted.invalid/hubs@sha256:${"8".repeat(64)}`;
+  assert.throws(() => buildCheckpointEvidenceCore(activeLive, historicalInputs(), {
+    expectedParentReplicas: 1, verificationMode: mode,
+    checkpointEvidence: checkpoint, checkpointInventory: untrusted
+  }), /deployment_inventory_evidence_mismatch:container_image/);
+  const oldZero = deploymentInventory("kubernetes-pod", checkpoint);
+  oldZero.deployments.find(deployment => deployment.name === "bot-orchestrator").replicas = 0;
+  assert.throws(() => validateDeploymentInventory(oldZero, checkpoint), /deployment_inventory_evidence_mismatch:parent_replicas/);
+});
+
+test("signed operation-fence correlation fixture binds exact public identities and canonical SPEC digests", () => {
+  for (const state of ["dormant", "active"]) {
+    const live = durableLive({ fences: [exactGuard("fence")], recoveryOperationFenceState: state });
+    const checkpoint = envelope(buildCheckpointEvidenceCore(live, inputs(live.manifest, state)));
+    const inventory = signedDeploymentInventory("kubernetes-pod", checkpoint, 0);
+    const authority = JSON.parse(inventory.backup_authority);
+    const fence = authority.operation_fence;
+    const runtime = inventory.bot_runner_runtime.control_plane;
+    const admission = checkpoint.admission.pairs.recovery_operation_fence;
+    const findCluster = kind => runtime.cluster_resources.find(value =>
+      value.api_version === "admissionregistration.k8s.io/v1" && value.kind === kind &&
+      value.name === RECOVERY_OPERATION_FENCE_POLICY_NAME
+    );
+    for (const key of ["parent", "runner"]) {
+      const namespace = runtime.namespaces.find(value =>
+        value.api_version === "v1" && value.kind === "Namespace" &&
+        value.name === checkpoint.namespaces[key].name
+      );
+      assert.equal(fence.namespaces[key].uid, namespace.uid);
+      assert.equal(fence.namespaces[key].uid, checkpoint.namespaces[key].uid);
+    }
+    assert.equal(fence.policy.uid, findCluster("ValidatingAdmissionPolicy").uid);
+    assert.equal(fence.policy.uid, admission.policy.uid);
+    assert.equal(fence.binding.uid, findCluster("ValidatingAdmissionPolicyBinding").uid);
+    assert.equal(fence.binding.uid, admission.binding.uid);
+    assert.equal(fence.policy.spec_sha256, admission.policy.spec_sha256);
+    assert.equal(fence.binding.dormant_spec_sha256,
+      sha256Canonical(recoveryOperationFencePair("dormant").binding.spec));
+    assert.equal(fence.binding.active_spec_sha256,
+      sha256Canonical(recoveryOperationFencePair("active").binding.spec));
+    assert.equal(fence.binding[`${state}_spec_sha256`], admission.binding.spec_sha256);
+    assert.equal(validateDeploymentInventory(inventory, checkpoint), inventory);
+  }
+});
+
+for (const [field, mutate] of [
+  ["parent namespace UID", fence => { fence.namespaces.parent.uid = "crossed-parent-namespace-uid"; }],
+  ["runner namespace UID", fence => { fence.namespaces.runner.uid = "crossed-runner-namespace-uid"; }],
+  ["policy UID", fence => { fence.policy.uid = "crossed-policy-uid"; }],
+  ["binding UID", fence => { fence.binding.uid = "crossed-binding-uid"; }],
+  ["policy SPEC SHA", fence => { fence.policy.spec_sha256 = "0".repeat(64); }],
+  ["dormant binding SPEC SHA", fence => { fence.binding.dormant_spec_sha256 = "0".repeat(64); }],
+  ["active binding SPEC SHA", fence => { fence.binding.active_spec_sha256 = "0".repeat(64); }]
+]) {
+  for (const entry of ["validator", "active-source-authority"]) {
+    test(`signed operation-fence correlation rejects crossed ${field} via ${entry}`, () => {
+      const live = durableLive({ fences: [exactGuard("fence")] });
+      const checkpoint = envelope(buildCheckpointEvidenceCore(live, inputs(live.manifest)));
+      const original = signedDeploymentInventory("kubernetes-pod", checkpoint, 0);
+      const inventory = structuredClone(original);
+      const authority = JSON.parse(inventory.backup_authority);
+      const publicBefore = structuredClone(authority);
+      delete publicBefore.operation_fence;
+      mutate(authority.operation_fence);
+      const publicAfter = structuredClone(authority);
+      delete publicAfter.operation_fence;
+      assert.deepEqual(publicAfter, publicBefore);
+      inventory.backup_authority = canonicalJsonV1(authority);
+      const { backup_authority: _originalAuthority, ...originalInventory } = original;
+      const { backup_authority: _crossedAuthority, ...unchangedInventory } = inventory;
+      assert.deepEqual(unchangedInventory, originalInventory);
+      const evidenceBefore = canonicalJson(checkpoint);
+      if (entry === "validator") {
+        assert.throws(() => validateDeploymentInventory(inventory, checkpoint), /operation_fence/);
+      } else {
+        assert.throws(() => buildCheckpointEvidenceCore(live, historicalInputs(), {
+          expectedParentReplicas: 0, verificationMode: "active-source-authority",
+          checkpointEvidence: checkpoint, checkpointInventory: inventory
+        }), /operation_fence/);
+      }
+      assert.equal(canonicalJson(checkpoint), evidenceBefore);
+    });
+  }
+}
 
 test("historical source rejects same-UID drift in guard SA, quota, policy, and Secret HMAC", () => {
   const checkpointLive = durableLive({ fences: [exactGuard("fence")] });

@@ -1487,6 +1487,15 @@ for aud065_test in \
   lease-release-failclosed.test.mjs \
   checkpoint-publication-order.test.mjs \
   recovery-checkpoint-authority.test.mjs \
+  checkpoint-backup-authority-v2.test.mjs \
+  checkpoint-abort-journal-seal.test.mjs \
+  checkpoint-authority-cli-v2.test.mjs \
+  checkpoint-authority-monitors.test.mjs \
+  checkpoint-backup-formats.test.mjs \
+  checkpoint-authority-producer.test.mjs \
+  checkpoint-authority-external-readers.test.mjs \
+  checkpoint-authority-recovery-cli.test.mjs \
+  stream-audit-result.test.mjs \
   checkpoint-writer-cas-contract.test.mjs \
   checkpoint-fixture-cas-parser.test.mjs \
   redacted-rollout-contract.test.mjs; do

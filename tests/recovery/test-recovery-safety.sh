@@ -7420,7 +7420,7 @@ run_durable_reconciled_profile_checkpoint_test() {
   [[ "$profile" == runner || "$profile" == intent ]] || return 2
   if [[ "$profile" == runner ]]; then
     expected_name="$RUNNER_FIXTURE_NAME"
-    expected_uid=runner-uid-1
+    expected_uid='runner-uid-1'
     expected_rv=pod-rv-12
   else
     expected_name="$RUNNER_INTENT_FIXTURE_NAME"
@@ -8921,7 +8921,7 @@ run_checkpoint_backup_child_guard_tests() {
   for generation in legacy-absent durable-v2; do
     if [[ "$generation" == durable-v2 ]]; then
       deployments_json="$KUBERNETES_DEPLOYMENTS_JSON"
-      generation_profile=fence-stable
+      generation_profile='fence-stable'
       generation_inventory="$DURABLE_RESTORE_CHECKPOINT/deployment-images.json"
     else
       deployments_json="$LEGACY_DEPLOYMENTS_JSON"
@@ -11442,7 +11442,7 @@ run_checkpoint_resume_fixture() {
       values="$VALUES_FIXTURE"
       deployments="$KUBERNETES_DEPLOYMENTS_JSON"
       runner_namespace=present
-      runner_profile=fence-stable
+      runner_profile='fence-stable'
       # Direct monitor tests intentionally use the active binding fixture, but
       # every durable checkpoint must model the real dormant starting state.
       seed_recovery_operation_fence_binding_state dormant || return 1
@@ -13114,6 +13114,220 @@ run_storage_helper_contract_tests() {
         "$(cat "$KUBECTL_LOG")"
     fi
   done
+}
+
+run_serialization_lease_contract_tests() {
+reset_stub
+# Lease capabilities are local to the sourcing process; poisoned inherited
+# paths/PIDs must be discarded without touching their targets.
+lease_poison_stop="$TMP_DIR/lease-poison-stop"
+lease_poison_failure="$TMP_DIR/lease-poison-failure"
+printf 'sentinel-stop\n' >"$lease_poison_stop"
+printf 'sentinel-failure\n' >"$lease_poison_failure"
+# shellcheck disable=SC2016
+expect_success 'serialization Lease process capabilities reject environment poisoning' \
+  env RECOVERY_SERIALIZATION_LEASE_HOLDER=root-recovery:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa \
+    RECOVERY_SERIALIZATION_LEASE_UID=poison-uid RECOVERY_SERIALIZATION_LEASE_REQUIRED=1 \
+    RECOVERY_SERIALIZATION_HEARTBEAT_PID=999999 \
+    RECOVERY_SERIALIZATION_HEARTBEAT_STOP="$lease_poison_stop" \
+    RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE="$lease_poison_failure" \
+    RECOVERY_SERIALIZATION_PARENT_PID=999998 bash -c '
+      source "$1"
+      [[ -z "$RECOVERY_SERIALIZATION_LEASE_HOLDER" &&
+         -z "$RECOVERY_SERIALIZATION_LEASE_UID" &&
+         "$RECOVERY_SERIALIZATION_LEASE_REQUIRED" == 0 &&
+         -z "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" &&
+         -z "$RECOVERY_SERIALIZATION_HEARTBEAT_STOP" &&
+         -z "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE" &&
+         -z "$RECOVERY_SERIALIZATION_PARENT_PID" ]]
+      [[ "$(cat "$2")" == sentinel-stop && "$(cat "$3")" == sentinel-failure ]]
+    ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" \
+      "$lease_poison_stop" "$lease_poison_failure"
+
+# Root and Cloud share this strict Kubernetes MicroTime/metadata shape. Null is
+# not treated as absence for any optional metadata collection.
+# shellcheck disable=SC2016
+expect_success 'serialization Lease validator enforces exact shared MicroTime and null contract' \
+  bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    valid="$(jq -cn '\''
+      {apiVersion:"coordination.k8s.io/v1",kind:"Lease",
+       metadata:{name:"yenhubs-operation-serialization",namespace:"hcce",
+         uid:"lease-uid",resourceVersion:"lease-rv-1",
+         labels:{"yenhubs.org/operation-serialization":"deployment-recovery"}},
+       spec:{holderIdentity:"root-recovery:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+         leaseDurationSeconds:120,leaseTransitions:0,
+         acquireTime:"2026-07-18T00:00:00.000000Z",
+         renewTime:"2026-07-18T00:00:00.000000Z"}}
+    '\'')"
+    recovery_serialization_lease_json_is_valid "$valid"
+    for filter in \
+      ".metadata.deletionTimestamp = null" \
+      ".metadata.annotations = null" \
+      ".metadata.ownerReferences = null" \
+      ".metadata.finalizers = null" \
+      ".spec.acquireTime = \"2026-07-18T00:00:00Z\"" \
+      ".spec.renewTime = \"2026-07-18T00:00:00.000Z\"" \
+      ".spec.renewTime = \"2026-07-18T00:00:00.000000000Z\""; do
+      if recovery_serialization_lease_json_is_valid "$(jq -c "$filter" <<<"$valid")"; then
+        exit 1
+      fi
+    done
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
+reset_stub
+# shellcheck disable=SC2016
+expect_success 'serialization Lease acquires, revalidates and CAS-releases without deletion' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context RECOVERY_LEASE_HEARTBEAT_SECONDS=1 bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_acquire_operation_serialization root-recovery
+    recovery_require_operation_serialization
+    grep -Fq -- "--request-timeout=45s get lease yenhubs-operation-serialization -n hcce -o json" "$3"
+    [[ "$RECOVERY_SERIALIZATION_LEASE_HOLDER" =~ ^root-recovery: ]]
+    recovery_release_operation_serialization
+    jq -e '\''(.metadata | has("deletionTimestamp") | not) and
+      (.spec | keys | sort) == ["leaseDurationSeconds","leaseTransitions"]'\'' \
+      "$2" >/dev/null
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" \
+    "$STUB_STATE_DIR/serialization-lease.json" "$KUBECTL_LOG"
+
+reset_stub
+seed_serialization_lease
+lease_replace_payload="$TMP_DIR/concurrent-lease-replace.json"
+role_replace_payload="$TMP_DIR/concurrent-role-replace.json"
+lease_replace_output="$TMP_DIR/concurrent-lease-output.json"
+role_replace_output="$TMP_DIR/concurrent-role-output.json"
+cp "$STUB_STATE_DIR/serialization-lease.json" "$lease_replace_payload"
+jq -cn '
+  {apiVersion:"rbac.authorization.k8s.io/v1",kind:"Role",
+   metadata:{name:"bot-orchestrator-runner-pods",namespace:"hcce-bot-runners",
+     uid:"runner-role-uid",resourceVersion:"runner-role-rv-1",annotations:{
+       "yenhubs.org/runner-activation-phase":"active",
+       "yenhubs.org/bot-runner-recovery-phase":"restore-fence"}},rules:[]}
+' >"$role_replace_payload"
+STUB_MODE=replace-payload-concurrency kubectl --context fixture-context \
+  --request-timeout=30s replace -f - -o json \
+  <"$lease_replace_payload" >"$lease_replace_output" &
+# shellcheck disable=SC2031 # PID is captured in the owning top-level shell.
+lease_replace_pid=$!
+STUB_MODE=replace-payload-concurrency kubectl --context fixture-context \
+  --request-timeout=30s replace -f - -o json \
+  <"$role_replace_payload" >"$role_replace_output" &
+# shellcheck disable=SC2031 # PID is captured in the owning top-level shell.
+role_replace_pid=$!
+if wait "$lease_replace_pid"; then lease_replace_status=0; else lease_replace_status=$?; fi
+if wait "$role_replace_pid"; then role_replace_status=0; else role_replace_status=$?; fi
+if [[ "$lease_replace_status" == 0 && "$role_replace_status" == 0 ]] &&
+   jq -e '.kind == "Lease" and .metadata.resourceVersion == "lease-rv-2"' \
+     "$lease_replace_output" >/dev/null &&
+   jq -e '.kind == "Role" and .metadata.resourceVersion == "runner-role-rv-2"' \
+     "$role_replace_output" >/dev/null &&
+   [[ "$(cat "$STUB_STATE_DIR/runner-role-rv")" == 2 ]] &&
+   ! find "$STUB_STATE_DIR" -maxdepth 1 -name 'replace-payload.*' \
+     -print -quit | grep -q .; then
+  pass 'replace fixture isolates concurrent Lease heartbeat and resource CAS payloads'
+else
+  fail 'replace fixture isolates concurrent Lease heartbeat and resource CAS payloads' \
+    "lease-status=$lease_replace_status role-status=$role_replace_status $(cat "$KUBECTL_LOG")"
+fi
+
+reset_stub
+seed_serialization_lease \
+  cloud-apply:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa \
+  "$(date -u '+%Y-%m-%dT%H:%M:%S.000000Z')" 4
+# shellcheck disable=SC2016
+expect_failure 'active Cloud apply Lease excludes root recovery before mutation' \
+  'Another deployment or recovery operation owns' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
+    NAMESPACE=hcce
+    source "$1"
+    recovery_acquire_operation_serialization root-recovery
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
+reset_stub
+seed_serialization_lease \
+  cloud-apply:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa \
+  2000-01-01T00:00:00.000000Z 4
+# shellcheck disable=SC2016
+expect_success 'stale Cloud apply Lease is taken over only through resourceVersion CAS' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
+    set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_acquire_operation_serialization root-recovery
+    [[ "$(jq -r .spec.leaseTransitions "$2")" == 5 ]]
+    recovery_release_operation_serialization
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" \
+    "$STUB_STATE_DIR/serialization-lease.json"
+
+reset_stub
+seed_serialization_lease \
+  cloud-apply:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa \
+  2000-01-01T00:00:00.000000Z 4
+# shellcheck disable=SC2016
+expect_failure 'serialization Lease takeover rejects a lost resourceVersion CAS' \
+  'takeover lost its resourceVersion CAS' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context STUB_MODE=lease-cas-conflict bash -c '
+    NAMESPACE=hcce
+    source "$1"
+    recovery_acquire_operation_serialization root-recovery
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
+reset_stub
+# shellcheck disable=SC2016
+expect_failure 'serialization Lease ownership loss is detected before further mutation' '' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context STUB_MODE=lease-holder-lost bash -c '
+    NAMESPACE=hcce
+    source "$1"
+    recovery_acquire_operation_serialization root-recovery
+    trap '\''recovery_release_operation_serialization >/dev/null 2>&1 || :'\'' EXIT
+    recovery_require_operation_serialization
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
+# These calls deliberately place the supervisor under an `if`, matching the
+# coordinator callsites where Bash disables implicit errexit inside functions.
+# Both Lease boundaries must therefore propagate failure explicitly.
+# shellcheck disable=SC2016
+expect_failure 'supervised stream rejects Lease loss before launching kubectl under a conditional caller' '' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
+    set -Eeuo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    recovery_process_start_identity() { printf "fixture-start\n"; }
+    recovery_process_identity_is_live() { :; }
+    recovery_require_operation_serialization() { return 1; }
+    if recovery_kubectl_stream_supervised 1 5 get namespace hcce -o json; then
+      exit 0
+    else
+      exit 1
+    fi
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
+# shellcheck disable=SC2016
+expect_failure 'supervised stream cannot overwrite final Lease loss with a successful kubectl status' '' \
+  env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
+    set -Eeuo pipefail
+    NAMESPACE=hcce
+    source "$1"
+    LEASE_CALLS=0
+    recovery_process_start_identity() { printf "fixture-start\n"; }
+    recovery_process_identity_is_live() { :; }
+    recovery_require_operation_serialization() {
+      LEASE_CALLS=$((LEASE_CALLS + 1))
+      [[ "$LEASE_CALLS" == 1 ]]
+    }
+    kill() { return 1; }
+    if recovery_kubectl_stream_supervised 1 5 get namespace hcce -o json; then
+      exit 0
+    else
+      exit 1
+    fi
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+
 }
 
 run_parent_death_stream_test() {
@@ -15074,7 +15288,7 @@ initialize_restore_fence_test_context() {
   VALUES_FILE="$RESTORE_VALUES_FIXTURE"
   STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON"
   STUB_RUNNER_NAMESPACE=present
-  STUB_RUNNER_POD_PROFILE=fence-stable
+  STUB_RUNNER_POD_PROFILE='fence-stable'
   export VALUES_FILE STUB_DEPLOYMENTS_JSON STUB_RUNNER_NAMESPACE \
     STUB_RUNNER_POD_PROFILE
   reset_stub
@@ -15448,6 +15662,11 @@ run_storage_helper_pod_snapshot_race_test() (
     "$final_list_path" >/dev/null || return 1
   [[ ! -e "$STUB_STATE_DIR/storage-helper-pod-live.json" ]]
 )
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == serialization-lease-contract ]]; then
+  run_serialization_lease_contract_tests
+  recovery_finish_focus 'Focused serialization Lease contract'
+fi
 
 if recovery_focus_selected freeze-cluster-ha-shape; then
   ha_values="$TMP_DIR/freeze-cluster-ha-values.yaml"
@@ -18046,216 +18265,7 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-process-local ]]; then
   exit 0
 fi
 
-reset_stub
-# Lease capabilities are local to the sourcing process; poisoned inherited
-# paths/PIDs must be discarded without touching their targets.
-lease_poison_stop="$TMP_DIR/lease-poison-stop"
-lease_poison_failure="$TMP_DIR/lease-poison-failure"
-printf 'sentinel-stop\n' >"$lease_poison_stop"
-printf 'sentinel-failure\n' >"$lease_poison_failure"
-# shellcheck disable=SC2016
-expect_success 'serialization Lease process capabilities reject environment poisoning' \
-  env RECOVERY_SERIALIZATION_LEASE_HOLDER=root-recovery:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa \
-    RECOVERY_SERIALIZATION_LEASE_UID=poison-uid RECOVERY_SERIALIZATION_LEASE_REQUIRED=1 \
-    RECOVERY_SERIALIZATION_HEARTBEAT_PID=999999 \
-    RECOVERY_SERIALIZATION_HEARTBEAT_STOP="$lease_poison_stop" \
-    RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE="$lease_poison_failure" \
-    RECOVERY_SERIALIZATION_PARENT_PID=999998 bash -c '
-      source "$1"
-      [[ -z "$RECOVERY_SERIALIZATION_LEASE_HOLDER" &&
-         -z "$RECOVERY_SERIALIZATION_LEASE_UID" &&
-         "$RECOVERY_SERIALIZATION_LEASE_REQUIRED" == 0 &&
-         -z "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" &&
-         -z "$RECOVERY_SERIALIZATION_HEARTBEAT_STOP" &&
-         -z "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE" &&
-         -z "$RECOVERY_SERIALIZATION_PARENT_PID" ]]
-      [[ "$(cat "$2")" == sentinel-stop && "$(cat "$3")" == sentinel-failure ]]
-    ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" \
-      "$lease_poison_stop" "$lease_poison_failure"
-
-# Root and Cloud share this strict Kubernetes MicroTime/metadata shape. Null is
-# not treated as absence for any optional metadata collection.
-# shellcheck disable=SC2016
-expect_success 'serialization Lease validator enforces exact shared MicroTime and null contract' \
-  bash -c '
-    set -euo pipefail
-    NAMESPACE=hcce
-    source "$1"
-    valid="$(jq -cn '\''
-      {apiVersion:"coordination.k8s.io/v1",kind:"Lease",
-       metadata:{name:"yenhubs-operation-serialization",namespace:"hcce",
-         uid:"lease-uid",resourceVersion:"lease-rv-1",
-         labels:{"yenhubs.org/operation-serialization":"deployment-recovery"}},
-       spec:{holderIdentity:"root-recovery:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-         leaseDurationSeconds:120,leaseTransitions:0,
-         acquireTime:"2026-07-18T00:00:00.000000Z",
-         renewTime:"2026-07-18T00:00:00.000000Z"}}
-    '\'')"
-    recovery_serialization_lease_json_is_valid "$valid"
-    for filter in \
-      ".metadata.deletionTimestamp = null" \
-      ".metadata.annotations = null" \
-      ".metadata.ownerReferences = null" \
-      ".metadata.finalizers = null" \
-      ".spec.acquireTime = \"2026-07-18T00:00:00Z\"" \
-      ".spec.renewTime = \"2026-07-18T00:00:00.000Z\"" \
-      ".spec.renewTime = \"2026-07-18T00:00:00.000000000Z\""; do
-      if recovery_serialization_lease_json_is_valid "$(jq -c "$filter" <<<"$valid")"; then
-        exit 1
-      fi
-    done
-  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
-
-reset_stub
-# shellcheck disable=SC2016
-expect_success 'serialization Lease acquires, revalidates and CAS-releases without deletion' \
-  env EXPECTED_KUBE_CONTEXT=fixture-context RECOVERY_LEASE_HEARTBEAT_SECONDS=1 bash -c '
-    set -euo pipefail
-    NAMESPACE=hcce
-    source "$1"
-    recovery_acquire_operation_serialization root-recovery
-    recovery_require_operation_serialization
-    grep -Fq -- "--request-timeout=45s get lease yenhubs-operation-serialization -n hcce -o json" "$3"
-    [[ "$RECOVERY_SERIALIZATION_LEASE_HOLDER" =~ ^root-recovery: ]]
-    recovery_release_operation_serialization
-    jq -e '\''(.metadata | has("deletionTimestamp") | not) and
-      (.spec | keys | sort) == ["leaseDurationSeconds","leaseTransitions"]'\'' \
-      "$2" >/dev/null
-  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" \
-    "$STUB_STATE_DIR/serialization-lease.json" "$KUBECTL_LOG"
-
-reset_stub
-seed_serialization_lease
-lease_replace_payload="$TMP_DIR/concurrent-lease-replace.json"
-role_replace_payload="$TMP_DIR/concurrent-role-replace.json"
-lease_replace_output="$TMP_DIR/concurrent-lease-output.json"
-role_replace_output="$TMP_DIR/concurrent-role-output.json"
-cp "$STUB_STATE_DIR/serialization-lease.json" "$lease_replace_payload"
-jq -cn '
-  {apiVersion:"rbac.authorization.k8s.io/v1",kind:"Role",
-   metadata:{name:"bot-orchestrator-runner-pods",namespace:"hcce-bot-runners",
-     uid:"runner-role-uid",resourceVersion:"runner-role-rv-1",annotations:{
-       "yenhubs.org/runner-activation-phase":"active",
-       "yenhubs.org/bot-runner-recovery-phase":"restore-fence"}},rules:[]}
-' >"$role_replace_payload"
-STUB_MODE=replace-payload-concurrency kubectl --context fixture-context \
-  --request-timeout=30s replace -f - -o json \
-  <"$lease_replace_payload" >"$lease_replace_output" &
-# shellcheck disable=SC2031 # PID is captured in the owning top-level shell.
-lease_replace_pid=$!
-STUB_MODE=replace-payload-concurrency kubectl --context fixture-context \
-  --request-timeout=30s replace -f - -o json \
-  <"$role_replace_payload" >"$role_replace_output" &
-# shellcheck disable=SC2031 # PID is captured in the owning top-level shell.
-role_replace_pid=$!
-if wait "$lease_replace_pid"; then lease_replace_status=0; else lease_replace_status=$?; fi
-if wait "$role_replace_pid"; then role_replace_status=0; else role_replace_status=$?; fi
-if [[ "$lease_replace_status" == 0 && "$role_replace_status" == 0 ]] &&
-   jq -e '.kind == "Lease" and .metadata.resourceVersion == "lease-rv-2"' \
-     "$lease_replace_output" >/dev/null &&
-   jq -e '.kind == "Role" and .metadata.resourceVersion == "runner-role-rv-2"' \
-     "$role_replace_output" >/dev/null &&
-   [[ "$(cat "$STUB_STATE_DIR/runner-role-rv")" == 2 ]] &&
-   ! find "$STUB_STATE_DIR" -maxdepth 1 -name 'replace-payload.*' \
-     -print -quit | grep -q .; then
-  pass 'replace fixture isolates concurrent Lease heartbeat and resource CAS payloads'
-else
-  fail 'replace fixture isolates concurrent Lease heartbeat and resource CAS payloads' \
-    "lease-status=$lease_replace_status role-status=$role_replace_status $(cat "$KUBECTL_LOG")"
-fi
-
-reset_stub
-seed_serialization_lease \
-  cloud-apply:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa \
-  "$(date -u '+%Y-%m-%dT%H:%M:%S.000000Z')" 4
-# shellcheck disable=SC2016
-expect_failure 'active Cloud apply Lease excludes root recovery before mutation' \
-  'Another deployment or recovery operation owns' \
-  env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
-    NAMESPACE=hcce
-    source "$1"
-    recovery_acquire_operation_serialization root-recovery
-  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
-
-reset_stub
-seed_serialization_lease \
-  cloud-apply:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa \
-  2000-01-01T00:00:00.000000Z 4
-# shellcheck disable=SC2016
-expect_success 'stale Cloud apply Lease is taken over only through resourceVersion CAS' \
-  env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
-    set -euo pipefail
-    NAMESPACE=hcce
-    source "$1"
-    recovery_acquire_operation_serialization root-recovery
-    [[ "$(jq -r .spec.leaseTransitions "$2")" == 5 ]]
-    recovery_release_operation_serialization
-  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" \
-    "$STUB_STATE_DIR/serialization-lease.json"
-
-reset_stub
-seed_serialization_lease \
-  cloud-apply:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa \
-  2000-01-01T00:00:00.000000Z 4
-# shellcheck disable=SC2016
-expect_failure 'serialization Lease takeover rejects a lost resourceVersion CAS' \
-  'takeover lost its resourceVersion CAS' \
-  env EXPECTED_KUBE_CONTEXT=fixture-context STUB_MODE=lease-cas-conflict bash -c '
-    NAMESPACE=hcce
-    source "$1"
-    recovery_acquire_operation_serialization root-recovery
-  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
-
-reset_stub
-# shellcheck disable=SC2016
-expect_failure 'serialization Lease ownership loss is detected before further mutation' '' \
-  env EXPECTED_KUBE_CONTEXT=fixture-context STUB_MODE=lease-holder-lost bash -c '
-    NAMESPACE=hcce
-    source "$1"
-    recovery_acquire_operation_serialization root-recovery
-    trap '\''recovery_release_operation_serialization >/dev/null 2>&1 || :'\'' EXIT
-    recovery_require_operation_serialization
-  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
-
-# These calls deliberately place the supervisor under an `if`, matching the
-# coordinator callsites where Bash disables implicit errexit inside functions.
-# Both Lease boundaries must therefore propagate failure explicitly.
-# shellcheck disable=SC2016
-expect_failure 'supervised stream rejects Lease loss before launching kubectl under a conditional caller' '' \
-  env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
-    set -Eeuo pipefail
-    NAMESPACE=hcce
-    source "$1"
-    recovery_process_start_identity() { printf "fixture-start\n"; }
-    recovery_process_identity_is_live() { :; }
-    recovery_require_operation_serialization() { return 1; }
-    if recovery_kubectl_stream_supervised 1 5 get namespace hcce -o json; then
-      exit 0
-    else
-      exit 1
-    fi
-  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
-
-# shellcheck disable=SC2016
-expect_failure 'supervised stream cannot overwrite final Lease loss with a successful kubectl status' '' \
-  env EXPECTED_KUBE_CONTEXT=fixture-context bash -c '
-    set -Eeuo pipefail
-    NAMESPACE=hcce
-    source "$1"
-    LEASE_CALLS=0
-    recovery_process_start_identity() { printf "fixture-start\n"; }
-    recovery_process_identity_is_live() { :; }
-    recovery_require_operation_serialization() {
-      LEASE_CALLS=$((LEASE_CALLS + 1))
-      [[ "$LEASE_CALLS" == 1 ]]
-    }
-    kill() { return 1; }
-    if recovery_kubectl_stream_supervised 1 5 get namespace hcce -o json; then
-      exit 0
-    else
-      exit 1
-    fi
-  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
+run_serialization_lease_contract_tests
 
 run_parent_death_stream_test
 

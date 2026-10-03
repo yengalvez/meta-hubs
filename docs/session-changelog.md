@@ -1,5 +1,145 @@
 # Session Changelog
 
+## 2026-10-03 · Versioned checkpoint authority closure, local candidate
+
+Final freeze preparation: Cloud7ab6146 contains only the reviewed recovery/
+manifest contracts and their tests; its tree is clean. The nine new root tests
+are registered once in AUD-065/security and covered by full input bindings.
+The serialization-lease-contract selector preserves the original inline Lease
+body byte for byte and its full position. W65734 passes55 checks (45 shared,
+10 Lease); independent extraction review is CLOSED. Port to J preserves its
+existing CAS/parser and publication-order fixture deltas: exact inverse80a35d83,
+new test075ab308. Native J92419 passes55/55,0fail in18.94s including common
+setup, with sources unchanged and fixtures retained intentionally. No full,
+equivalent decomposition, representative Kubernetes, SLO or production acceptance
+is inferred from this bounded access. Root finalizer/full remain required.
+ShellCheck74751 then rejected only four unquoted literal assignments already
+present in HEAD. Quoting those exact values preserves their semantics; primary
+inverse06078c reconstructs the entire prior harness after removing extraction
+and those four quotes. Current testa487b9dd, body262f569b unchanged; syntax/diff
+pass and ShellCheck36098 finishes0. This is a static fixture correction, not
+a multimedia regression or a repeated functional gate.
+
+Explicit authority2/consumer3/baseline4/receipt2 and public metadata4/inventory5/
+freeze2 keep historical readers separate. Existing key selection is mandatory;
+full specs/private signer inputs remain in memory/stdin, not public projections.
+Positive writer phases are generation-bound; original-zero writers have no
+PATCH, resume receipt or synthetic generation. Shared guard families and limits
+are unchanged. Root dispatch gate35814 passed5/5; producer45670 passed14/14.
+The latter invocation did not exclude five prior cases as intended; preserve
+the fourteen actual results instead of reporting nine or hiding the repetition.
+
+Restore inherited selectors were reproduced by30d7c7:0PASS/3FAIL,362.593ms,
+actual selected:true and no setup error. Only a process-local unset of both
+selectors before source fixes the destination consumer1/checkpoint-restore route;
+64617 passed11/11,2266.883ms with parent environment and backup guards intact.
+Both directed external-reader findings and the three root operational findings
+are closed by inspection. New regressions are wired once through AUD-065; the
+security inventory gate passes60 checks after supplying existing test dependencies
+via NODE_PATH. Its first run failed before the inventory on missing express,
+not a product or backup failure. No package installation was needed.
+
+The immutable target snapshot/parser gate40560 passed54/54; its input-race and
+warning regressions were red first. Combined Cloud historical/new gate45648
+subsequently terminated; exact reconciliation is recorded below. Earlier
+Gitleaks root/Cloud scans report no leaks on their then-current sources, not
+future CLI/test/tool deltas. ShellCheck found two unquoted runner-quiescence
+literals already in HEAD; their bounded correction was held until terminal.
+No runtime/cycle/production or full acceptance is transferred from these tests.
+
+The eighth regression covers the selected explicit authority CLI contract via
+the real generator/manifest/capture/HMAC and fresh CLI processes, replacing only
+kubectl transport. Independent review found and closed two test-only gaps:
+legacy execute arities4/6 and typed receipt1 rejection before a missing packet
+can mask fallback. Final test SHA0e43532d; primary syntax88ea29 passes. Added
+once to AUD065 and its inventory (sixteen simple counts); syntax/diff pass.
+Functional RED and product CLI implementation remain pending Cloud terminal.
+The fixture's immediate readiness, empty Pods and reduced inventory do not prove
+Kubernetes, controllers, concurrency or complete operational cycles.
+
+Cloud observation remains one unchanged attempt45648. Read-only process metadata
+and a1s sample find repeated synchronous child execution; fixed key custody
+loads account for ten Python processes per authentication/seal with a single
+normal key. This is a confirmed cost source, not the determined total cause or
+a v2-specific defect. The observer is cell463 after446's finite live timeout;
+no source edit, cancellation, restart or production diagnosis was performed.
+
+Terminal reconciliation:45648 exited1,154/155,0skips,3157687.094ms; all ten
+imported hashes agree when recaptured from J. An initial wrong-cwd recapture
+was rejected, not treated as source drift. The only failed oracle confused
+legal positive paused status RV before planning with later packet drift.
+Test-only correction30ff89c2 and a positive binding case; focused two-case
+primary71237 exits0, directed review/counts pending. Two shell literals receive
+quotes only after that old gate terminated; ShellCheck68943 exits0.
+
+CLI50488 exits1,0/7 due to setup, not meaningful product RED. A bounded actual
+generator probe d17291 identifies missing yaml because its closed child env
+dropped NODE_PATH. Test-only preparation correction is assigned; no product
+CLI change or environment credential inheritance. One-shot synthetic custody
+measurement85340 exits0:1062.152/1072.899/1059.793ms, sources unchanged; does
+not identify the complete Cloud latency or demonstrate an operational SLO.
+Focused RV result confirmed2/2,0skips,12018.363ms and independent CLOSED;
+test30ff89c2/engine8030bb4a. CLI fixture preparation63e374d3 fixes module/PATH
+visibility without credential inheritance. red2 17121 still exits1,1/7:
+generator succeeds but capture reports a generic setup failure. Diagnose a fresh
+single positive with a closed code/frame before meaningful RED or product edits.
+Fresh capture63619 identifies cluster_identity_changed; test-only identity binding
+and multiline diagnostic P2 are fixed in ab6c5a6e. Native-prefix/frame ambiguity
+review CLOSED. Meaningful RED53013 reaches the current manual_execute_disabled_plan_only
+after actual capture,0/1,5389.460ms. Only runRecoveryCli now adds positional
+plan-authority5/execute-authority6 with explicit existing keyring/ID, receipt2
+and the complete authority coordinator. No adapters/env/key fallback or legacy
+execution. Unique primaryGREEN60230 runs on engine768dac1f/testab6c5a6e;
+functional closure, directed review and final gates remain pending.
+
+Subsequent CLI transport probe95481b proved synthetic stdout truncation
+(32118 expected/8192 received/status0). Test-only flush fix69949f passes2/2;
+complete Lists/RV fixture allows fresh plan77987 to pass1/1. Whole CLI29271
+then exits1:10/11,0skips,206425.525ms. Only fresh-process reentry times out
+during its second execution; public API trace confirms progress, not terminal
+or a proven busy-loop. No deadline enlargement or production cause inferred.
+Two unsupported-scope List negatives reproduce false empty absence (0/2);
+minimal fixture rejection is being verified separately from the timeout.
+
+W typed private stream-audit result and NUL closure passed55 cases, native57
+and legacy53 without weakening oracle113 or limits. Exact mechanical port
+changes only invoke/run in this candidate; remaining library bytes preserve
+their snapshot and test remains byte-identical. Primary J45267 exits0:55/55,
+0skips,49894.766ms, lib98f6d96/test67bbc113 stable. Registered once in AUD065
+and inventory. This is not a frozen full or runtime cycle acceptance.
+
+One opt-in closed-field spawn-cost observer is prepared for the failed reentry,
+with native90s unchanged. Append failure was RED and corrected to preserve
+native result/error while marking measurement invalid; directed P2 recheck
+CLOSED. No keys, argv, stdin, output, API objects or env values are recorded.
+
+03/10: the measured reentry timeout is now closed by a source delta, not a
+larger timeout. Clean private reads consolidate5→1 helper while retaining
+four byte-read passes, fresh K+1 keyring reads, full inode/ancestor custody,
+request bounds and historical pending/link reconciliation. Directed P2/P3
+compatibility rechecks CLOSED. Publication17/17 (26152.789ms) and key custody9/9
+(18661.955ms) pass on reader2847dc00/helper6ddc783a. The exact lost-response
+CLI case18293 exits0:1/1,0skips,112686.617ms total; planning6420.596ms,
+interrupted execution18246.961ms/status1, recovery77189.553ms/status0 and
+terminal replay7370.361ms/status0. Native90s unchanged; replay makes no API
+mutation and four invocations use distinct real CLI processes. All1485 observed
+processes have terminal records,0metricerrors and none live at metadata-only
+readback. Synthetic API fixture retained deliberately; no runtime/full/SLO or
+historical multimedia cause inferred. Canonical PLAN/DOC retain exact gate IDs.
+
+GREEN60230 is terminal exit1 (native6dd76c):8tests,4PASS/4FAIL,47994.089ms.
+Every failure stops in verifiedPlan with a redacted SyntaxError; execution and
+reentry are not reached. Four negative/diagnostic cases pass. Directed static
+CLI review is CLOSED, not functional acceptance. Diagnose the exact parser via
+the existing synthetic transport before changing production code or rerunning
+the full eight cases. No active source-consuming job remains in J.
+
+Primary transport-only probe95481b proves the synthetic GET policy is truncated:
+expected32118/received8192 bytes,child status0,invalid JSON,one GET/zero writes.
+The stub exits immediately after asynchronous stdout.write; the actual Cloud
+parser161 reports the SyntaxError. Repair is confined to the test transport and
+a byte-exact large-response regression, not the product or API guards.
+
 ## 2026-10-03 · Admit protected scalar CAS shapes in the existing simulator
 
 Frozen whole-entrypoint focus33702/b1a77c reached its simulated writer pause

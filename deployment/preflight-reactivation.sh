@@ -183,6 +183,30 @@ check_registry_image() {
   esac
 }
 
+reactivation_checkpoint_source_evidence_mode() {
+  local metadata_path="$1" inventory_path="$2" versions
+  recovery_require_regular_direct_file "$metadata_path" &&
+    recovery_require_regular_direct_file "$inventory_path" || return 1
+  versions="$(jq -er --slurpfile metadata "$metadata_path" '
+    select(($metadata | length) == 1) |
+    [$metadata[0].schema_version, .schema_version] | @tsv
+  ' "$inventory_path")" || return 1
+  case "$versions" in
+    $'3\t4') printf 'active-source\n' ;;
+    $'4\t5')
+      # Public correlation supplements, never replaces, the mandatory full
+      # inventory/materialization/live validators or original live HMAC gate.
+      jq -jnSc --slurpfile metadata "$metadata_path" \
+        --slurpfile inventory "$inventory_path" '
+        if ($metadata | length) == 1 and ($inventory | length) == 1
+        then {metadata:$metadata[0],inventory:$inventory[0]} else error("binding") end
+      ' | node "$SCRIPT_DIR/checkpoint-backup-formats.mjs" validate-binding || return 1
+      printf 'active-source-authority\n'
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 run_cold_rebind_preflight() {
   local receipt_path="${FREEZE_RECEIPT_PATH:-}" stamp bundle_copy
   printf 'YenHubs cold-rebind target preflight (read-only)\n\n'
@@ -191,17 +215,18 @@ run_cold_rebind_preflight() {
   done
   if [[ ! -d "$BACKUP_DIR" || -L "$BACKUP_DIR" ]] ||
      recovery_path_has_symlink_component "$BACKUP_DIR"; then
-    fail 'BACKUP_DIR no es un freeze-bundle-v1 directo'
+    fail 'BACKUP_DIR no es un freeze-bundle versionado directo'
   elif ! stamp="$(jq -er '.stamp | select(type == "string" and
       test("^[0-9]{8}-[0-9]{6}$"))' \
       "$BACKUP_DIR/checkpoint-metadata.json" 2>/dev/null)"; then
     fail 'El bundle no contiene un stamp valido'
   elif recovery_materialize_checkpoint \
       "$BACKUP_DIR/retdb-$stamp.sql.gz" "$SCRIPT_DIR/validate-checkpoint.sh" &&
-      [[ "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 ]]; then
-    pass 'freeze-bundle-v1 materializado y rehasheado en privado'
+      [[ "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v1 ||
+         "$RECOVERY_CHECKPOINT_METADATA_SCHEMA" == freeze-bundle-v2 ]]; then
+    pass 'Freeze-bundle versionado materializado y rehasheado en privado'
   else
-    fail 'El freeze-bundle-v1 no supera materializacion e integridad conjunta'
+    fail 'El freeze-bundle no supera materializacion e integridad conjunta'
   fi
   if recovery_private_values_file_is_acceptable "$receipt_path" &&
      [[ -n "${RECOVERY_CHECKPOINT_METADATA_COPY:-}" ]] &&
@@ -278,6 +303,7 @@ CHECKPOINT_VALID=false
 checkpoint_generation=""
 checkpoint_pvc_uid=""
 CHECKPOINT_INVENTORY_PATH=""
+CHECKPOINT_SOURCE_EVIDENCE_MODE=""
 RUNNER_EVIDENCE_INPUTS_VALID=false
 if [[ -z "$BACKUP_DIR" ]]; then
   fail "BACKUP_DIR debe señalar explicitamente el checkpoint de este rollout"
@@ -294,8 +320,10 @@ else
   elif ! recovery_checkpoint_metadata_is_acceptable \
     "$metadata_path" "$(jq -r '.stamp // empty' "$metadata_path" 2>/dev/null)" ||
        ! metadata_json="$(jq -ce '
-    select(.schema_version == 3) |
-    select(.provenance == {generator:"yenhubs-local-coordinated-checkpoint-v3",external_import:false}) |
+    select((.schema_version == 3 and
+      .provenance == {generator:"yenhubs-local-coordinated-checkpoint-v3",external_import:false}) or
+      (.schema_version == 4 and
+      .provenance == {generator:"yenhubs-local-coordinated-checkpoint-v4",external_import:false})) |
     select(.stamp | type == "string" and test("^[0-9]{8}-[0-9]{6}$")) |
     select(.created_at_epoch | type == "number" and floor == .) |
     select(.kube_context | type == "string" and length > 0) |
@@ -305,7 +333,7 @@ else
     select(.runtime_generation == "legacy-absent" or .runtime_generation == "durable-v2") |
     select(.runner_cutover_evidence_sha256 | type == "string" and test("^[a-f0-9]{64}$"))
   ' "$metadata_path" 2>/dev/null)"; then
-    fail "checkpoint-metadata.json no es schema 3 con evidencia runner obligatoria para este rollout"
+    fail "checkpoint-metadata.json no conserva un schema 3/4 explicito con evidencia runner obligatoria"
   else
     checkpoint_stamp="$(printf '%s' "$metadata_json" | jq -r '.stamp')"
     checkpoint_epoch="$(printf '%s' "$metadata_json" | jq -r '.created_at_epoch')"
@@ -329,13 +357,13 @@ else
       metadata_path="$RECOVERY_CHECKPOINT_METADATA_COPY"
       CHECKPOINT_INVENTORY_PATH="$RECOVERY_DEPLOYMENT_INVENTORY_COPY"
       metadata_json="$(jq -ce '
-        select(.schema_version == 3) |
-        select(.provenance == {
-          generator:"yenhubs-local-coordinated-checkpoint-v3",
-          external_import:false
-        })
+        select((.schema_version == 3 and .provenance == {
+          generator:"yenhubs-local-coordinated-checkpoint-v3",external_import:false
+        }) or (.schema_version == 4 and .provenance == {
+          generator:"yenhubs-local-coordinated-checkpoint-v4",external_import:false
+        }))
       ' "$metadata_path")" || {
-        fail "El snapshot privado del checkpoint no conserva su metadata schema 3"
+        fail "El snapshot privado del checkpoint no conserva su metadata versionada"
         metadata_json=""
       }
       if [[ -n "$metadata_json" ]]; then
@@ -374,7 +402,9 @@ else
       fail "El UID de namespace fijado no coincide con el checkpoint"
     fi
     if recovery_deployment_inventory_is_acceptable \
-      "$CHECKPOINT_INVENTORY_PATH" "$checkpoint_namespace" "$checkpoint_namespace_uid"; then
+      "$CHECKPOINT_INVENTORY_PATH" "$checkpoint_namespace" "$checkpoint_namespace_uid" &&
+       CHECKPOINT_SOURCE_EVIDENCE_MODE="$(reactivation_checkpoint_source_evidence_mode \
+         "$metadata_path" "$CHECKPOINT_INVENTORY_PATH")"; then
       pass "Inventario de Deployments exacto, unico y fijado por digest"
     else
       fail "El inventario de Deployments no cumple el contrato exacto"
@@ -643,7 +673,7 @@ if [[ "$KUBE_TARGET_VERIFIED" == true ]]; then
         fail "No hay inputs privados para verificar la evidencia durable live"
       elif recovery_verify_runner_cutover_evidence_live \
         "$VALUES_FILE" "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY" \
-        "$CHECKPOINT_INVENTORY_PATH" dormant "" active-source; then
+        "$CHECKPOINT_INVENTORY_PATH" dormant "" "$CHECKPOINT_SOURCE_EVIDENCE_MODE"; then
         pass "Evidencia durable, journal, RBAC y fences coinciden con el origen live"
       else
         fail "La evidencia durable live no coincide con el checkpoint"
@@ -780,7 +810,7 @@ if [[ "$CHECKPOINT_VALID" == true && "$KUBE_TARGET_VERIFIED" == true &&
        { [[ "$RUNNER_EVIDENCE_INPUTS_VALID" == true ]] &&
          recovery_verify_runner_cutover_evidence_live \
            "$VALUES_FILE" "$RECOVERY_RUNNER_CUTOVER_EVIDENCE_COPY" \
-           "$CHECKPOINT_INVENTORY_PATH" dormant "" active-source; }; then
+           "$CHECKPOINT_INVENTORY_PATH" dormant "" "$CHECKPOINT_SOURCE_EVIDENCE_MODE"; }; then
       FINAL_LIVE_CONTRACT_VALID=true
     else
       fail "La evidencia durable cambió durante el preflight"

@@ -34,5 +34,15 @@ node "$ROOT_DIR/tests/scripts/redacted-rollout-contract.test.mjs"
 node --test "$ROOT_DIR/tests/scripts/lease-release-failclosed.test.mjs"
 node --test "$ROOT_DIR/tests/scripts/checkpoint-publication-order.test.mjs"
 node --test "$ROOT_DIR/tests/scripts/recovery-checkpoint-authority.test.mjs"
+node --test --test-concurrency=1 \
+  "$ROOT_DIR/tests/scripts/checkpoint-backup-authority-v2.test.mjs" \
+  "$ROOT_DIR/tests/scripts/checkpoint-abort-journal-seal.test.mjs" \
+  "$ROOT_DIR/tests/scripts/checkpoint-authority-cli-v2.test.mjs" \
+  "$ROOT_DIR/tests/scripts/checkpoint-authority-monitors.test.mjs" \
+  "$ROOT_DIR/tests/scripts/checkpoint-backup-formats.test.mjs" \
+  "$ROOT_DIR/tests/scripts/checkpoint-authority-producer.test.mjs" \
+  "$ROOT_DIR/tests/scripts/checkpoint-authority-external-readers.test.mjs" \
+  "$ROOT_DIR/tests/scripts/checkpoint-authority-recovery-cli.test.mjs"
+node --test "$ROOT_DIR/tests/scripts/stream-audit-result.test.mjs"
 node --test "$ROOT_DIR/tests/scripts/checkpoint-writer-cas-contract.test.mjs"
 node --test "$ROOT_DIR/tests/scripts/checkpoint-fixture-cas-parser.test.mjs"

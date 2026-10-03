@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { isDeepStrictEqual } from "node:util";
 
 import { parseLocalValuesSource } from "./parse-local-values.mjs";
+import { validateSignedCheckpointInventory } from "./checkpoint-backup-formats.mjs";
 
 const require = createRequire(import.meta.url);
 const {
@@ -71,6 +72,7 @@ const RECOVERY_OPERATION_FENCE_STATES = Object.freeze(["dormant", "active"]);
 const LIVE_VERIFICATION_MODES = Object.freeze({
   checkpoint: 0,
   "active-source": 1,
+  "active-source-authority": null,
   "quiesced-source": 0,
   "quiesced-target": 0,
   "quiesced-active-target": 0,
@@ -368,6 +370,22 @@ const TRUSTED_IMAGE_REPOSITORIES = Object.freeze({
 
 function fail(code) {
   throw new Error(code);
+}
+
+function sourceVerificationMode(mode) {
+  return mode.endsWith("-source") || mode === "active-source-authority";
+}
+
+function activeVerificationMode(mode) {
+  return mode === "active-source" || mode === "active-target" ||
+    mode === "active-source-authority";
+}
+
+function modeParentReplicas(mode, inventory, evidence = null) {
+  if (mode !== "active-source-authority") return LIVE_VERIFICATION_MODES[mode];
+  if (inventory?.schema_version !== 5) fail("checkpoint_evidence_authority_inventory_required");
+  if (evidence !== null) validateDeploymentInventory(inventory, evidence);
+  return validateSignedCheckpointInventory(inventory).originalBotReplicas;
 }
 
 function exactKeys(value, keys) {
@@ -1821,7 +1839,8 @@ export function buildCheckpointEvidenceCore(
   {
     expectedParentReplicas = 0,
     verificationMode = "checkpoint",
-    checkpointEvidence = null
+    checkpointEvidence = null,
+    checkpointInventory = null
   } = {}
 ) {
   const expectedRecoveryOperationFenceState = recoveryOperationFenceState(
@@ -1829,7 +1848,7 @@ export function buildCheckpointEvidenceCore(
   );
   if (![0, 1].includes(expectedParentReplicas) ||
       !Object.hasOwn(LIVE_VERIFICATION_MODES, verificationMode) ||
-      LIVE_VERIFICATION_MODES[verificationMode] !== expectedParentReplicas) {
+      modeParentReplicas(verificationMode, checkpointInventory, checkpointEvidence) !== expectedParentReplicas) {
     fail("parent_deployment_replica_contract_invalid");
   }
   const historicalMode = verificationMode !== "checkpoint";
@@ -1988,7 +2007,7 @@ export function buildCheckpointEvidenceCore(
     runner_role_binding: runnerRoleBinding,
     journal: durableJournalEvidence(live.journal_config_map, journal),
     admission,
-    quiescence: verificationMode === "active-source" || verificationMode === "active-target"
+    quiescence: activeVerificationMode(verificationMode)
       ? activeRunnerInventoryEvidence(live.runner_pods)
       : quiescenceEvidence(live.runner_pods)
   };
@@ -2237,12 +2256,12 @@ function recoveryOperationFenceCoreIsBound(core) {
     );
 }
 
-export function verifyHistoricalSourceCore(current, checkpointEvidence, mode) {
-  const expectedReplicas = LIVE_VERIFICATION_MODES[mode];
+export function verifyHistoricalSourceCore(current, checkpointEvidence, mode, checkpointInventory = null) {
   if (!Object.hasOwn(LIVE_VERIFICATION_MODES, mode) || mode === "checkpoint") {
     fail("checkpoint_evidence_live_mode_invalid");
   }
   validateEvidenceEnvelope(checkpointEvidence);
+  const expectedReplicas = modeParentReplicas(mode, checkpointInventory, checkpointEvidence);
   const targetMode = mode.endsWith("-target");
   const checkpoint = coreFromEnvelope(checkpointEvidence);
   const namespacesMatch = isDeepStrictEqual(
@@ -2289,7 +2308,7 @@ export function verifyHistoricalSourceCore(current, checkpointEvidence, mode) {
     ) || !fencesPreserveHistoricalSubset(
       current?.quiescence,
       checkpoint.quiescence,
-      mode === "active-source" || mode === "active-target"
+      activeVerificationMode(mode)
     )
   ) {
     fail("checkpoint_evidence_historical_live_mismatch");
@@ -2305,7 +2324,7 @@ function liveVerificationMode(options) {
   return mode;
 }
 
-export function liveVerificationContract(options, currentOperationId) {
+export function liveVerificationContract(options, currentOperationId, checkpointInventory = null) {
   const mode = liveVerificationMode(options);
   const expectedRecoveryOperationFenceState = recoveryOperationFenceState(
     options["recovery-operation-fence-state"]
@@ -2322,9 +2341,15 @@ export function liveVerificationContract(options, currentOperationId) {
       fail("checkpoint_evidence_operation_binding_missing");
     }
   }
+  const expectedParentReplicas = modeParentReplicas(mode, checkpointInventory);
+  if (mode === "active-source-authority" &&
+      validateSignedCheckpointInventory(checkpointInventory).authority.operation_id !==
+        expectedCheckpointOperationId) {
+    fail("checkpoint_evidence_operation_mismatch");
+  }
   return {
     mode,
-    expected_parent_replicas: LIVE_VERIFICATION_MODES[mode],
+    expected_parent_replicas: expectedParentReplicas,
     expected_checkpoint_operation_id: expectedCheckpointOperationId,
     expected_recovery_operation_fence_state: expectedRecoveryOperationFenceState
   };
@@ -2898,7 +2923,7 @@ function durableControlPlaneIsExact(controlPlane, evidence) {
     }) && exactIdentityList(controlPlane.cluster_resources, clusterResources);
 }
 
-function trustedDeploymentInventoryFailure(deployments, mode, expectedParentUid) {
+function trustedDeploymentInventoryFailure(deployments, mode, expectedParentUid, expectedParentReplicas = 1) {
   if (!Array.isArray(deployments) || deployments.length !== EXPECTED_DEPLOYMENTS.length) {
     return "deployment_count";
   }
@@ -2948,19 +2973,41 @@ function trustedDeploymentInventoryFailure(deployments, mode, expectedParentUid)
   const parent = byName.get("bot-orchestrator");
   if (!isDeepStrictEqual(pairs.sort(), expectedPairs)) return "container_pairs";
   if (parent.uid !== expectedParentUid) return "parent_uid";
-  if (parent.replicas !== 1) return "parent_replicas";
+  if (parent.replicas !== expectedParentReplicas) return "parent_replicas";
   return null;
+}
+
+function signedOperationFenceMatchesEvidence(authority, evidence) {
+  if (authority.runner_generation === "legacy-absent") return true;
+  const fence = authority.operation_fence;
+  const admission = evidence.admission.pairs.recovery_operation_fence;
+  const bindingHashes = {
+    dormant: recoveryOperationFenceBindingSpecSha256(authority.namespace.name, "dormant"),
+    active: recoveryOperationFenceBindingSpecSha256(authority.namespace.name, "active")
+  };
+  return fence.namespaces.parent.uid === evidence.namespaces.parent.uid &&
+    fence.namespaces.runner.uid === evidence.namespaces.runner.uid &&
+    fence.policy.uid === admission.policy.uid && fence.binding.uid === admission.binding.uid &&
+    fence.policy.spec_sha256 === admission.policy.spec_sha256 &&
+    fence.binding.dormant_spec_sha256 === bindingHashes.dormant &&
+    fence.binding.active_spec_sha256 === bindingHashes.active &&
+    fence.binding[`${evidence.recovery_operation_fence_state}_spec_sha256`] ===
+      admission.binding.spec_sha256;
 }
 
 export function validateDeploymentInventory(inventory, evidence) {
   validateEvidenceEnvelope(evidence);
+  const signedBinding = inventory?.schema_version === 5
+    ? validateSignedCheckpointInventory(inventory)
+    : null;
   if (!exactKeys(inventory, [
     "bot_runner_runtime",
     "deployments",
     "namespace",
     "namespace_uid",
-    "schema_version"
-  ]) || inventory.schema_version !== 4 ||
+    "schema_version",
+    ...(signedBinding === null ? [] : ["backup_authority"])
+  ]) || (inventory.schema_version !== 4 && inventory.schema_version !== 5) ||
       inventory.namespace !== evidence.namespaces.parent.name ||
       inventory.namespace_uid !== evidence.namespaces.parent.uid ||
       !exactKeys(inventory.bot_runner_runtime, [
@@ -2974,6 +3021,10 @@ export function validateDeploymentInventory(inventory, evidence) {
   }
   if (inventory.bot_runner_runtime.generation !== evidence.runtime_generation) {
     fail("deployment_inventory_evidence_mismatch:runtime_generation");
+  }
+  if (signedBinding !== null &&
+      signedBinding.authority.operation_id !== evidence.checkpoint_operation_id) {
+    fail("deployment_inventory_evidence_mismatch:operation_id");
   }
   const runtime = inventory.bot_runner_runtime;
   const legacy = runtime.generation === "legacy-absent" &&
@@ -2991,10 +3042,14 @@ export function validateDeploymentInventory(inventory, evidence) {
   if (!legacy && !durable) {
     fail("deployment_inventory_evidence_mismatch:runtime_contract");
   }
+  if (signedBinding !== null && !signedOperationFenceMatchesEvidence(signedBinding.authority, evidence)) {
+    fail("deployment_inventory_evidence_mismatch:operation_fence");
+  }
   const deploymentFailure = trustedDeploymentInventoryFailure(
     inventory.deployments,
     runtime.mode,
-    evidence.parent_deployment.uid
+    evidence.parent_deployment.uid,
+    signedBinding === null ? 1 : signedBinding.originalBotReplicas
   );
   if (deploymentFailure !== null) {
     fail(`deployment_inventory_evidence_mismatch:${deploymentFailure}`);
@@ -3261,7 +3316,8 @@ export function verifyManifestEpochBinding(mode, inputs, inventory, evidence) {
   if (!Object.hasOwn(LIVE_VERIFICATION_MODES, mode)) {
     fail("checkpoint_evidence_live_mode_invalid");
   }
-  if (mode.endsWith("-source")) return;
+  if (mode === "active-source-authority") modeParentReplicas(mode, inventory, evidence);
+  if (sourceVerificationMode(mode)) return;
   const targetMode = mode.endsWith("-target");
   if (targetMode && evidence.runtime_generation !== "durable-v2") {
     fail("runner_target_generation_invalid");
@@ -3317,7 +3373,7 @@ function captureCommand(options) {
 function verifyCommand(options) {
   const evidence = canonicalEvidenceFile(options.evidence);
   const mode = liveVerificationMode(options);
-  const sourceMode = mode.endsWith("-source");
+  const sourceMode = sourceVerificationMode(mode);
   const targetMode = mode.endsWith("-target");
   if ((sourceMode && options.manifest) || (targetMode && !options.manifest)) {
     fail("checkpoint_evidence_manifest_mode_invalid");
@@ -3328,7 +3384,10 @@ function verifyCommand(options) {
     expectedRecoveryOperationFenceState: options["recovery-operation-fence-state"]
   });
   try {
-    const verification = liveVerificationContract(options, inputs.operation_id);
+    const signedInventory = mode === "active-source-authority"
+      ? verifyInventory(options.inventory, evidence)
+      : null;
+    const verification = liveVerificationContract(options, inputs.operation_id, signedInventory);
     if (inputs.expected_recovery_operation_fence_state !==
         verification.expected_recovery_operation_fence_state) {
       fail("recovery_operation_fence_state_invalid");
@@ -3336,7 +3395,7 @@ function verifyCommand(options) {
     if (evidence.checkpoint_operation_id !== verification.expected_checkpoint_operation_id) {
       fail("checkpoint_evidence_operation_mismatch");
     }
-    const inventory = verifyInventory(options.inventory, evidence);
+    const inventory = signedInventory || verifyInventory(options.inventory, evidence);
     verifyManifestEpochBinding(mode, inputs, inventory, evidence);
     const reader = new KubectlEvidenceReader(inputs.expected_kube_context, inputs.namespace);
     const firstLive = reader.collect(
@@ -3351,7 +3410,8 @@ function verifyCommand(options) {
     const buildOptions = {
       expectedParentReplicas: verification.expected_parent_replicas,
       verificationMode: mode,
-      checkpointEvidence: mode === "checkpoint" ? null : evidence
+      checkpointEvidence: mode === "checkpoint" ? null : evidence,
+      checkpointInventory: mode === "active-source-authority" ? inventory : null
     };
     const first = buildCheckpointEvidenceCore(firstLive, inputs, buildOptions);
     const second = buildCheckpointEvidenceCore(
@@ -3370,7 +3430,7 @@ function verifyCommand(options) {
       fail("checkpoint_evidence_live_mismatch");
     }
     if (verification.mode !== "checkpoint") {
-      verifyHistoricalSourceCore(second, evidence, verification.mode);
+      verifyHistoricalSourceCore(second, evidence, verification.mode, inventory);
     }
   } finally {
     if (Buffer.isBuffer(inputs.cutover_key)) inputs.cutover_key.fill(0);

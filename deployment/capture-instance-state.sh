@@ -21,6 +21,9 @@ CAPTURE_STATE_FORMAT="${CAPTURE_STATE_FORMAT:-legacy}"
 VALUES_SOURCE_FILE="${VALUES_FILE:-$SCRIPT_DIR/input-values.local.yaml}"
 VALUES_FILE=""
 CAPTURE_PROCESS_LOCAL_SCOPE="${RECOVERY_CHECKPOINT_CAPTURE_PROCESS_LOCAL_SCOPE:-strict-recreate}"
+PARENT_BACKUP_STAMP="${RECOVERY_CHECKPOINT_STAMP:-}"
+PARENT_BACKUP_DUMP="${RECOVERY_DUMP_SHA256:-}"
+PARENT_BACKUP_STORAGE="${RECOVERY_STORAGE_SHA256:-}"
 # shellcheck source=deployment/lib/recovery-safety.sh
 source "$SCRIPT_DIR/lib/recovery-safety.sh"
 # shellcheck source=deployment/lib/git-provenance.sh
@@ -28,9 +31,18 @@ source "$SCRIPT_DIR/lib/git-provenance.sh"
 # shellcheck source=deployment/lib/reactivation-gate-functions.sh
 source "$SCRIPT_DIR/lib/reactivation-gate-functions.sh"
 reactivation_install_cleanup_traps ""
+recovery_validate_backup_authority_selection || exit 2
+if recovery_backup_authority_is_selected; then
+  [[ -n "${RECOVERY_BACKUP_AUTHORITY_JSON:-}" &&
+     -n "${RECOVERY_CONSUMER_CONTRACT_JSON:-}" ]] || exit 2
+  recovery_consumer_contract_is_acceptable "$RECOVERY_CONSUMER_CONTRACT_JSON" || exit 2
+  RECOVERY_CHECKPOINT_STAMP="$PARENT_BACKUP_STAMP"
+  RECOVERY_DUMP_SHA256="$PARENT_BACKUP_DUMP"
+  RECOVERY_STORAGE_SHA256="$PARENT_BACKUP_STORAGE"
+fi
 
 case "$CAPTURE_STATE_FORMAT" in
-  legacy | freeze-bundle-v1) ;;
+  legacy | freeze-bundle-v1 | freeze-bundle-v2) ;;
   *)
     printf 'CAPTURE_STATE_FORMAT must be legacy or freeze-bundle-v1.\n' >&2
     exit 2
@@ -57,6 +69,9 @@ yenhubs_require_clean_source_tree "$ROOT_DIR" || {
 }
 
 recovery_require_cluster_identity
+if recovery_backup_authority_is_selected; then
+  recovery_require_pvc_identity ret-pvc
+fi
 
 if [[ ! -f "$VALUES_SOURCE_FILE" || -L "$VALUES_SOURCE_FILE" ]] ||
    ! reactivation_values_file_is_private "$VALUES_SOURCE_FILE" ||
@@ -187,7 +202,7 @@ fi
 mkdir -p "$OUTPUT_DIR"
 chmod 700 "$OUTPUT_DIR"
 
-if [[ "$CAPTURE_STATE_FORMAT" == freeze-bundle-v1 ]]; then
+if [[ "$CAPTURE_STATE_FORMAT" == freeze-bundle-v1 || "$CAPTURE_STATE_FORMAT" == freeze-bundle-v2 ]]; then
   output_files=(git-state.json deployment-images.json \
     external-config-redacted.json infrastructure-recipe.json)
 else
@@ -207,7 +222,7 @@ captured_at_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 root_commit="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 hubs_commit="$(git -C "$ROOT_DIR/hubs" rev-parse HEAD)"
 hubs_cloud_commit="$(git -C "$ROOT_DIR/hubs-cloud" rev-parse HEAD)"
-if [[ "$CAPTURE_STATE_FORMAT" == freeze-bundle-v1 ]]; then
+if [[ "$CAPTURE_STATE_FORMAT" == freeze-bundle-v1 || "$CAPTURE_STATE_FORMAT" == freeze-bundle-v2 ]]; then
   hubs_gitlink="$(git -C "$ROOT_DIR" ls-tree HEAD hubs | awk '{print $3}')"
   hubs_cloud_gitlink="$(git -C "$ROOT_DIR" ls-tree HEAD hubs-cloud | awk '{print $3}')"
   [[ "$root_commit" =~ ^[a-f0-9]{40}$ && "$hubs_commit" =~ ^[a-f0-9]{40}$ &&
@@ -303,7 +318,7 @@ if [[ "$runtime_bot_runner_count" == "0" ]]; then
     printf 'Process-local bot runtime has partial Kubernetes runner bindings.\n' >&2
     exit 1
   fi
-  if [[ "$CAPTURE_STATE_FORMAT" == freeze-bundle-v1 &&
+  if [[ ( "$CAPTURE_STATE_FORMAT" == freeze-bundle-v1 || "$CAPTURE_STATE_FORMAT" == freeze-bundle-v2 ) &&
         "${RECOVERY_CHECKPOINT_CAPTURE_RUNNER_MODE:-}" == process-local ]]; then
     if ! recovery_require_live_process_local_freeze_checkpoint_exact \
         "$VALUES_SOURCE_FILE" "$CAPTURE_STATE_FORMAT" process-local; then
@@ -457,6 +472,28 @@ printf '%s' "$deployments_json" | jq \
       }
     ] | sort_by(.name)
   }' >"$OUTPUT_DIR/deployment-images.json"
+if recovery_backup_authority_is_selected; then
+  signed_deployments="$(jq -ce '[.items[]|select(.metadata.name=="bot-orchestrator" or
+    .metadata.name=="coturn" or .metadata.name=="pgbouncer" or
+    .metadata.name=="pgbouncer-t" or .metadata.name=="reticulum")]|sort_by(.metadata.name)' \
+    <<<"$deployments_json")" || exit 1
+  signed_deployments="$(printf '%s\n' "$signed_deployments" | jq -cs . |
+    recovery_backup_authority_transform originals "$NAMESPACE")" || exit 1
+  jq -e --argjson authority "$RECOVERY_BACKUP_AUTHORITY_JSON" '
+    all(.[]; . as $d | any($authority.consumers[];
+      .name==$d.metadata.name and .uid==$d.metadata.uid and
+      .initial_resource_version==$d.metadata.resourceVersion and
+      .initial_generation==$d.metadata.generation and .original_replicas==$d.spec.replicas))
+  ' <<<"$signed_deployments" >/dev/null || exit 1
+  signed_lock="$(recovery_kubectl get configmap "$RECOVERY_OPERATION_LOCK_NAME" -n "$NAMESPACE" -o json)" || exit 1
+  recovery_operation_lock_json_is_exact "$signed_lock" || exit 1
+  recovery_backup_authority_validate_specs "$signed_lock" "$signed_deployments" || exit 1
+  inventory_next="$OUTPUT_DIR/.deployment-images.authority"
+  (umask 077; set -C; jq --arg authority "$RECOVERY_BACKUP_AUTHORITY_JSON" \
+    '.schema_version=5 | .backup_authority=$authority' \
+    "$OUTPUT_DIR/deployment-images.json" >"$inventory_next") 2>/dev/null
+  mv "$inventory_next" "$OUTPUT_DIR/deployment-images.json"
+fi
 recovery_deployment_inventory_is_acceptable \
   "$OUTPUT_DIR/deployment-images.json" "$NAMESPACE" "$RECOVERY_NAMESPACE_UID" \
   "$EXPECTED_IMAGES_JSON" "$BOT_RUNNER_IMAGE" || {
@@ -464,7 +501,7 @@ recovery_deployment_inventory_is_acceptable \
   exit 1
 }
 
-if [[ "$CAPTURE_STATE_FORMAT" == freeze-bundle-v1 ]]; then
+if [[ "$CAPTURE_STATE_FORMAT" == freeze-bundle-v1 || "$CAPTURE_STATE_FORMAT" == freeze-bundle-v2 ]]; then
   for required_variable in \
     FREEZE_DNS_PROVIDER FREEZE_SMTP_PROVIDER FREEZE_ROOM_ID FREEZE_SCENE_ID \
     FREEZE_SPOKE_PROJECT_ID FREEZE_RESPONSIBLE_OWNER \

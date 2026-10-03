@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Strictly offline readiness gate for recreating a hibernated client. It reads
-# one freeze-bundle-v1, its separately protected receipt and the local private
+# one explicitly versioned freeze bundle, its protected receipt and private
 # values file. It never calls kubectl, doctl, a registry or any mutating API.
 
 set -uo pipefail
@@ -27,6 +27,29 @@ source "$SCRIPT_DIR/lib/git-provenance.sh"
 failures=0
 pass() { printf 'PASS  %s\n' "$1"; }
 fail() { printf 'FAIL  %s\n' "$1"; failures=$((failures + 1)); }
+
+greenfield_checkpoint_public_binding_is_acceptable() {
+  local metadata_path="$1" inventory_path="$2" versions
+  recovery_require_regular_direct_file "$metadata_path" &&
+    recovery_require_regular_direct_file "$inventory_path" || return 1
+  versions="$(jq -er --slurpfile metadata "$metadata_path" '
+    select(($metadata | length) == 1) |
+    [$metadata[0].schema, .schema_version] | @tsv
+  ' "$inventory_path")" || return 1
+  case "$versions" in
+    $'freeze-bundle-v1\t4') return 0 ;;
+    $'freeze-bundle-v2\t5')
+      # The full nine-file/topology/custody checks below remain mandatory.
+      # Offline public correlation cannot authenticate the original HMAC.
+      jq -jnSc --slurpfile metadata "$metadata_path" \
+        --slurpfile inventory "$inventory_path" '
+        if ($metadata | length) == 1 and ($inventory | length) == 1
+        then {metadata:$metadata[0],inventory:$inventory[0]} else error("binding") end
+      ' | node "$SCRIPT_DIR/checkpoint-backup-formats.mjs" validate-binding
+      ;;
+    *) return 1 ;;
+  esac
+}
 
 printf 'YenHubs greenfield reactivation preflight (offline)\n\n'
 
@@ -86,10 +109,12 @@ if [[ -n "$BUNDLE_DIR" ]] &&
    stamp="$(jq -er '.stamp | select(type == "string" and
      test("^[0-9]{8}-[0-9]{6}$"))' \
      "$BUNDLE_DIR/checkpoint-metadata.json" 2>/dev/null)" &&
-   recovery_verify_freeze_bundle_directory "$BUNDLE_DIR" "$stamp"; then
-  pass 'freeze-bundle-v1 completo, exacto y rehasheado'
+   recovery_verify_freeze_bundle_directory "$BUNDLE_DIR" "$stamp" &&
+   greenfield_checkpoint_public_binding_is_acceptable \
+     "$BUNDLE_DIR/checkpoint-metadata.json" "$BUNDLE_DIR/deployment-images.json"; then
+  pass 'Freeze-bundle versionado completo, exacto y rehasheado'
 else
-  fail 'freeze-bundle-v1 invalido o incompleto'
+  fail 'Freeze-bundle invalido, cruzado o incompleto'
 fi
 
 if [[ -n "$BUNDLE_DIR" && -n "$RECEIPT_PATH" ]] &&
