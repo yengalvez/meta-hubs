@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import cp from "node:child_process";
 import { spawnSync } from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -403,4 +405,299 @@ test("CLI is silent, idempotent and never overwrites a different final", t => {
   assert.equal(mismatch.stdout, "");
   assert.equal(mismatch.stderr, "private artifact publication failed closed\n");
   assert.deepEqual(fs.readFileSync(state.outputPath), bytes);
+});
+
+test("stable private read uses one dirfd helper and stays fresh", t => {
+  const state = fixture(t, "stable-read-fresh");
+  const first = Buffer.from("first-synthetic-private-read\n", "utf8");
+  const second = Buffer.from("other-synthetic-private-read\n", "utf8");
+  fs.writeFileSync(state.outputPath, first, { mode: 0o600, flag: "wx" });
+  fs.chmodSync(state.outputPath, 0o600);
+  const before = fs.lstatSync(state.outputPath);
+  assert.equal(before.mode & 0o7777, 0o600);
+  assert.equal(before.nlink, 1);
+  assert.equal(fs.lstatSync(state.root).mode & 0o7777, 0o700);
+  assert.deepEqual(fs.readdirSync(state.root), ["artifact.json"]);
+
+  const originalSpawnSync = cp.spawnSync;
+  let helpers = 0;
+  cp.spawnSync = function (executable, ...args) {
+    if (typeof executable === "string" &&
+        /^python(?:[0-9.]+)?$/iu.test(path.basename(executable))) {
+      helpers += 1;
+    }
+    return originalSpawnSync.call(this, executable, ...args);
+  };
+  try {
+    syncBuiltinESMExports();
+    assert.deepEqual(readPublishedPrivateArtifact({
+      outputPath: state.outputPath,
+      maximumBytes: MAXIMUM
+    }), first);
+    const firstHelpers = helpers;
+
+    fs.writeFileSync(state.outputPath, second, { mode: 0o600, flag: "w" });
+    const after = fs.lstatSync(state.outputPath);
+    assert.equal(after.dev, before.dev);
+    assert.equal(after.ino, before.ino);
+    assert.equal(after.mode & 0o7777, 0o600);
+    assert.deepEqual(readPublishedPrivateArtifact({
+      outputPath: state.outputPath,
+      maximumBytes: MAXIMUM
+    }), second);
+    assert.equal(firstHelpers, 1);
+    assert.equal(helpers - firstHelpers, 1);
+  } finally {
+    cp.spawnSync = originalSpawnSync;
+    syncBuiltinESMExports();
+  }
+  assert.deepEqual(fs.readdirSync(state.root), ["artifact.json"]);
+});
+
+function directorySnapshot(directory) {
+  const value = fs.lstatSync(directory, { bigint: true });
+  return { dev: value.dev, ino: value.ino, uid: value.uid, mode: value.mode, nlink: value.nlink };
+}
+
+function withInstrumentedCleanRead(mode, callback) {
+  const helperPath = path.join(ROOT, "deployment/private-dirfd-ops.py");
+  const prefix = "private-artifact-test-counters:";
+  const source = String.raw`
+import json
+import os
+import runpy
+import sys
+
+mode = ${JSON.stringify(mode)}
+helper_path = sys.argv[1]
+counts = {"loaderReached": False, "leafReads": 0, "exactReads": 0,
+          "replacementReads": 0, "swapPerformed": False}
+captured = {}
+
+class LoaderStop(BaseException):
+    pass
+
+def stop_before_main(frame, event, argument):
+    if (event == "call" and frame.f_code.co_name == "main"
+            and frame.f_code.co_filename == helper_path):
+        captured["main"] = frame.f_globals["main"]
+        raise LoaderStop()
+    return stop_before_main
+
+status = 1
+try:
+    previous_trace = sys.gettrace()
+    sys.settrace(stop_before_main)
+    try:
+        runpy.run_path(helper_path)
+    except LoaderStop:
+        pass
+    finally:
+        sys.settrace(previous_trace)
+    main = captured.get("main")
+    if main is None:
+        raise SystemExit(1)
+    counts["loaderReached"] = True
+    namespace = main.__globals__
+    real_leaf = namespace["read_leaf_with_stat"]
+    real_exact = namespace["exact_read"]
+    replacement_identity = None
+    if mode == "swap":
+        replacement = os.stat("replacement-candidate.json", dir_fd=3, follow_symlinks=False)
+        replacement_identity = (replacement.st_dev, replacement.st_ino)
+
+    def counted_exact(fd, size):
+        counts["exactReads"] += 1
+        value = os.fstat(fd)
+        if (value.st_dev, value.st_ino) == replacement_identity:
+            counts["replacementReads"] += 1
+        return real_exact(fd, size)
+
+    def counted_leaf(fd, name, maximum, links, allow_empty=False):
+        counts["leafReads"] += 1
+        result = real_leaf(fd, name, maximum, links, allow_empty)
+        if mode == "swap" and counts["leafReads"] == 1:
+            os.rename(name, "original-preserved.json", src_dir_fd=fd, dst_dir_fd=fd)
+            os.rename("replacement-candidate.json", name, src_dir_fd=fd, dst_dir_fd=fd)
+            counts["swapPerformed"] = True
+        if mode == "foreign" and counts["leafReads"] == 1:
+            foreign = os.open("foreign-unrelated.json",
+                              os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                              0o600, dir_fd=4)
+            os.fchmod(foreign, 0o600)
+            with os.fdopen(foreign, "wb") as opened:
+                opened.write(b"foreign-unrelated-synthetic-bytes\n")
+                opened.flush()
+                os.fsync(opened.fileno())
+        return result
+
+    namespace["exact_read"] = counted_exact
+    namespace["read_leaf_with_stat"] = counted_leaf
+    main()
+    status = 0
+except SystemExit as error:
+    status = error.code if isinstance(error.code, int) else 1
+except BaseException:
+    status = 1
+finally:
+    sys.stderr.write(${JSON.stringify(prefix)} + json.dumps(counts, separators=(",", ":")) + "\n")
+raise SystemExit(status)
+`;
+  const originalSpawnSync = cp.spawnSync;
+  const observations = [];
+  let helpers = 0;
+  cp.spawnSync = function (executable, argv, options) {
+    if (executable !== "python3" || argv[0] !== "-I" || argv[1] !== helperPath) {
+      return originalSpawnSync.call(this, executable, argv, options);
+    }
+    helpers += 1;
+    const input = options.input;
+    const action = JSON.parse(input.subarray(0, input.indexOf(0x0a)).toString("utf8")).action;
+    if (action !== "read-clean") {
+      return originalSpawnSync.call(this, executable, argv, options);
+    }
+    const result = originalSpawnSync.call(this, executable, ["-I", "-c", source, helperPath], options);
+    let counters;
+    let countersClosed = false;
+    try {
+      const stderr = result.stderr.toString("utf8");
+      if (stderr.startsWith(prefix) && stderr.endsWith("\n")) {
+        counters = JSON.parse(stderr.slice(prefix.length, -1));
+        countersClosed = Object.keys(counters).sort().join(",") ===
+          "exactReads,leafReads,loaderReached,replacementReads,swapPerformed" &&
+          typeof counters.loaderReached === "boolean" && typeof counters.swapPerformed === "boolean" &&
+          [counters.exactReads, counters.leafReads, counters.replacementReads].every(value =>
+            Number.isSafeInteger(value) && value >= 0
+          );
+      }
+    } catch { /* Record only the closed counters, never helper content. */ }
+    observations.push({
+      status: result.status, signal: result.signal,
+      stdoutBytes: Buffer.isBuffer(result.stdout) ? result.stdout.length : -1,
+      counters, countersClosed
+    });
+    return result;
+  };
+  try {
+    syncBuiltinESMExports();
+    callback({ observations, helpers: () => helpers });
+  } finally {
+    cp.spawnSync = originalSpawnSync;
+    syncBuiltinESMExports();
+  }
+}
+
+test("one real clean helper retains all four exact_read passes", { concurrency: false }, t => {
+  const state = fixture(t, "four-passes");
+  const staging = path.join(state.root, "staging");
+  fs.mkdirSync(staging, { mode: 0o700 });
+  const bytes = Buffer.from("four-pass-synthetic-private-bytes\n", "utf8");
+  fs.writeFileSync(state.outputPath, bytes, { flag: "wx", mode: 0o600 });
+  fs.chmodSync(state.outputPath, 0o600);
+  const parentBefore = directorySnapshot(state.root);
+  const stagingBefore = directorySnapshot(staging);
+  withInstrumentedCleanRead("count", ({ observations, helpers }) => {
+    assert.deepEqual(readPublishedPrivateArtifact({
+      outputPath: state.outputPath, stagingDirectoryPath: staging, maximumBytes: MAXIMUM
+    }), bytes);
+    assert.equal(helpers(), 1);
+    assert.equal(observations.length, 1);
+    assert.deepEqual(observations[0], {
+      status: 0, signal: null, stdoutBytes: bytes.length, countersClosed: true,
+      counters: { loaderReached: true, leafReads: 2, exactReads: 4, replacementReads: 0, swapPerformed: false }
+    });
+  });
+  assert.deepEqual(directorySnapshot(state.root), parentBefore);
+  assert.deepEqual(directorySnapshot(staging), stagingBefore);
+  assert.deepEqual(fs.readdirSync(staging), []);
+  assert.deepEqual(fs.readdirSync(state.root).sort(), ["artifact.json", "staging"]);
+});
+
+test("clean helper rejects a same-size inode swap before reading the replacement", { concurrency: false }, t => {
+  const state = fixture(t, "read-inode-swap");
+  const staging = path.join(state.root, "staging");
+  const candidatePath = path.join(state.root, "replacement-candidate.json");
+  const originalPath = path.join(state.root, "original-preserved.json");
+  fs.mkdirSync(staging, { mode: 0o700 });
+  const original = Buffer.from("original-synthetic-private-bytes\n", "utf8");
+  const replacement = Buffer.from("intruder-synthetic-private-bytes\n", "utf8");
+  assert.equal(original.length, replacement.length);
+  fs.writeFileSync(state.outputPath, original, { flag: "wx", mode: 0o600 });
+  fs.writeFileSync(candidatePath, replacement, { flag: "wx", mode: 0o600 });
+  fs.chmodSync(state.outputPath, 0o600);
+  fs.chmodSync(candidatePath, 0o600);
+  const originalBefore = fs.lstatSync(state.outputPath, { bigint: true });
+  const replacementBefore = fs.lstatSync(candidatePath, { bigint: true });
+  assert.notEqual(originalBefore.ino, replacementBefore.ino);
+  assert.equal(originalBefore.mode & 0o7777n, 0o600n);
+  assert.equal(replacementBefore.mode & 0o7777n, 0o600n);
+  const parentBefore = directorySnapshot(state.root);
+  const stagingBefore = directorySnapshot(staging);
+  withInstrumentedCleanRead("swap", ({ observations, helpers }) => {
+    expectCode(() => readPublishedPrivateArtifact({
+      outputPath: state.outputPath, stagingDirectoryPath: staging, maximumBytes: MAXIMUM
+    }), "private_artifact_changed");
+    assert.equal(helpers(), 1);
+    assert.equal(observations.length, 1);
+    assert.deepEqual(observations[0], {
+      status: 1, signal: null, stdoutBytes: 0, countersClosed: true,
+      counters: { loaderReached: true, leafReads: 1, exactReads: 2, replacementReads: 0, swapPerformed: true }
+    });
+  });
+  assert.deepEqual(directorySnapshot(state.root), parentBefore);
+  assert.deepEqual(directorySnapshot(staging), stagingBefore);
+  assert.deepEqual(fs.readdirSync(staging), []);
+  assert.deepEqual(fs.readdirSync(state.root).sort(), ["artifact.json", "original-preserved.json", "staging"]);
+  assert.deepEqual(fs.readFileSync(originalPath), original);
+  assert.deepEqual(fs.readFileSync(state.outputPath), replacement);
+  const preserved = fs.lstatSync(originalPath, { bigint: true });
+  const current = fs.lstatSync(state.outputPath, { bigint: true });
+  for (const field of ["dev", "ino", "uid", "mode", "nlink", "size", "mtimeNs"]) {
+    assert.equal(preserved[field], originalBefore[field]);
+    assert.equal(current[field], replacementBefore[field]);
+  }
+});
+
+test("clean read tolerates a new unrelated staging file and preserves it", { concurrency: false }, t => {
+  const state = fixture(t, "unrelated-staging-file");
+  const staging = path.join(state.root, "staging");
+  const foreignName = "foreign-unrelated.json";
+  const foreignPath = path.join(staging, foreignName);
+  fs.mkdirSync(staging, { mode: 0o700 });
+  const bytes = Buffer.from("compatible-synthetic-private-bytes\n", "utf8");
+  fs.writeFileSync(state.outputPath, bytes, { flag: "wx", mode: 0o600 });
+  fs.chmodSync(state.outputPath, 0o600);
+  const targetBefore = fs.lstatSync(state.outputPath, { bigint: true });
+  assert.equal(targetBefore.nlink, 1n);
+  const parentBefore = directorySnapshot(state.root);
+  const stagingBefore = directorySnapshot(staging);
+  assert.equal(foreignName.startsWith(".artifact.json.pending-"), false);
+  assert.deepEqual(fs.readdirSync(staging), []);
+  withInstrumentedCleanRead("foreign", ({ observations, helpers }) => {
+    assert.deepEqual(readPublishedPrivateArtifact({
+      outputPath: state.outputPath, stagingDirectoryPath: staging, maximumBytes: MAXIMUM
+    }), bytes);
+    assert.equal(helpers(), 1);
+    assert.equal(observations.length, 1);
+    assert.deepEqual(observations[0], {
+      status: 0, signal: null, stdoutBytes: bytes.length, countersClosed: true,
+      counters: { loaderReached: true, leafReads: 2, exactReads: 4, replacementReads: 0, swapPerformed: false }
+    });
+  });
+  assert.deepEqual(directorySnapshot(state.root), parentBefore);
+  const stagingAfter = directorySnapshot(staging);
+  for (const field of ["dev", "ino", "uid", "mode"]) {
+    assert.equal(stagingAfter[field], stagingBefore[field]);
+  }
+  assert.deepEqual(fs.readdirSync(staging), [foreignName]);
+  assert.deepEqual(fs.readdirSync(state.root).sort(), ["artifact.json", "staging"]);
+  assert.equal(fs.readFileSync(foreignPath, "utf8"), "foreign-unrelated-synthetic-bytes\n");
+  const foreign = fs.lstatSync(foreignPath, { bigint: true });
+  assert.equal(foreign.nlink, 1n);
+  assert.equal(foreign.mode & 0o7777n, 0o600n);
+  assert.equal(foreign.uid, targetBefore.uid);
+  const targetAfter = fs.lstatSync(state.outputPath, { bigint: true });
+  for (const field of ["dev", "ino", "uid", "mode", "nlink", "size", "mtimeNs", "ctimeNs"]) {
+    assert.equal(targetAfter[field], targetBefore[field]);
+  }
 });

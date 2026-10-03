@@ -13,8 +13,11 @@ import { fileURLToPath } from "node:url";
 const FILE_MODE = 0o600;
 const DIRECTORY_MODE = 0o700;
 const MAX_CLI_BYTES = 64 * 1024 * 1024;
+const MAX_HELPER_REQUEST_BYTES = 1024 * 1024;
 const PYTHON = "python3";
 const HELPER_MISSING = 44;
+const HELPER_INVALID = 45;
+const HELPER_CLEAN_FALLBACK = 46;
 const PENDING_DOMAIN = Buffer.from("yenhubs-private-artifact-pending-v1\0", "utf8");
 const DIRFD_HELPER = fileURLToPath(new URL("./private-dirfd-ops.py", import.meta.url));
 
@@ -159,20 +162,25 @@ function decodedHelperStat(value) {
   return result;
 }
 
-function runDirfdHelper(parent, staging, action, args = {}, {
-  input = Buffer.alloc(0),
-  maximumOutput = 1024 * 1024,
-  allowMissing = false
-} = {}) {
-  if (!fs.existsSync(DIRFD_HELPER)) {
-    reject("private_artifact_filesystem_unsupported");
-  }
-  const request = JSON.stringify({
+function dirfdRequest(parent, staging, action, args) {
+  return JSON.stringify({
     action,
     args,
     target: helperDirectoryIdentity(parent),
     staging: helperDirectoryIdentity(staging)
   });
+}
+
+function runDirfdHelper(parent, staging, action, args = {}, {
+  input = Buffer.alloc(0),
+  maximumOutput = 1024 * 1024,
+  allowMissing = false,
+  allowCleanFallback = false
+} = {}) {
+  if (!fs.existsSync(DIRFD_HELPER)) {
+    reject("private_artifact_filesystem_unsupported");
+  }
+  const request = dirfdRequest(parent, staging, action, args);
   const helperInput = Buffer.concat([Buffer.from(`${request}\n`, "utf8"), input]);
   let result;
   try {
@@ -187,6 +195,11 @@ function runDirfdHelper(parent, staging, action, args = {}, {
     helperInput.fill(0);
   }
   if (allowMissing && result.status === HELPER_MISSING) return undefined;
+  if (action === "read-clean" && !result.error && !result.signal &&
+      Buffer.isBuffer(result.stdout) && result.stdout.length === 0) {
+    if (allowCleanFallback && result.status === HELPER_CLEAN_FALLBACK) return undefined;
+    if (result.status === HELPER_INVALID) reject("private_artifact_invalid");
+  }
   if (result.error?.code === "ENOENT") reject("private_artifact_filesystem_unsupported");
   if (result.error || result.signal || result.status !== 0 || !Buffer.isBuffer(result.stdout)) {
     reject("private_artifact_changed");
@@ -302,7 +315,49 @@ function digest(bytes) {
   return createHash("sha256").update(bytes).digest();
 }
 
+function readCleanPublishedArtifact(parent, maximumBytes, staging) {
+  assertBothParentsStable(parent, staging);
+  const ancestors = directory => directory.components.map(component => ({
+    path: component.path,
+    ...helperStatIdentity(component.stat, { complete: true }),
+    kind: component.stat.isFile() ? "file" : component.stat.isDirectory() ? "directory" : "other"
+  }));
+  const args = {
+    name: parent.basename,
+    maximum: maximumBytes,
+    targetAncestors: ancestors(parent),
+    stagingAncestors: ancestors(staging)
+  };
+  // Long but valid path chains must still use the historical reader, rather
+  // than exceed the helper's unchanged bounded stdin protocol.
+  if (Buffer.byteLength(dirfdRequest(parent, staging, "read-clean", args), "utf8") + 1 >
+      MAX_HELPER_REQUEST_BYTES) {
+    assertBothParentsStable(parent, staging);
+    return undefined;
+  }
+  const result = runDirfdHelper(parent, staging, "read-clean", args, {
+    maximumOutput: maximumBytes, allowCleanFallback: true
+  });
+  if (result === undefined) {
+    assertBothParentsStable(parent, staging);
+    return undefined;
+  }
+  try {
+    assertBothParentsStable(parent, staging);
+    if (result.length === 0 || result.length > maximumBytes) {
+      reject("private_artifact_changed");
+    }
+    return Buffer.from(result);
+  } finally {
+    result.fill(0);
+  }
+}
+
 function stableRead(parent, maximumBytes, staging = parent) {
+  // Consolidate only the clean path. The helper keeps both double reads and
+  // every intervening custody check; pending/link cuts use the old reconciler.
+  const clean = readCleanPublishedArtifact(parent, maximumBytes, staging);
+  if (clean !== undefined) return clean;
   reconcilePublishedArtifact(parent, maximumBytes, staging);
   try {
     assertParentStable(parent);

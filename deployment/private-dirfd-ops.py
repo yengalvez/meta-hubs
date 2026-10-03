@@ -12,6 +12,8 @@ import sys
 
 
 MISSING = 44
+INVALID = 45
+CLEAN_FALLBACK = 46
 MAX_REQUEST_BYTES = 1024 * 1024
 RENAME_NOREPLACE = 1
 RENAME_EXCL = 0x00000004
@@ -438,6 +440,87 @@ def path_still_names_directory(directory_path, expected):
     )
 
 
+def clean_read_ancestors_ok(components):
+    if not isinstance(components, list) or not components:
+        return False
+    for expected in components:
+        component_path = expected.get("path")
+        if (
+            not isinstance(component_path, str)
+            or not os.path.isabs(component_path)
+            or "\x00" in component_path
+        ):
+            return False
+        value = os.stat(component_path, follow_symlinks=False)
+        if (
+            stat.S_ISLNK(value.st_mode)
+            or value.st_dev != int(expected["dev"])
+            or value.st_ino != int(expected["ino"])
+            or value.st_uid != int(expected["uid"])
+            or value.st_mode != int(expected["mode"])
+            or stat_value(value)["kind"] != expected["kind"]
+        ):
+            return False
+    return True
+
+
+def clean_published_read(request, args, name):
+    maximum = args["maximum"]
+    if isinstance(maximum, bool) or not isinstance(maximum, int) or not 1 <= maximum <= 64 * 1024 * 1024:
+        die()
+
+    def custody():
+        if (
+            not directory_ok(3, request["target"])
+            or not directory_ok(4, request["staging"])
+            or not clean_read_ancestors_ok(args["targetAncestors"])
+            or not clean_read_ancestors_ok(args["stagingAncestors"])
+        ):
+            die()
+
+    def inventory():
+        custody()
+        names = sorted(os.listdir(4))
+        if len(json.dumps(names, separators=(",", ":")).encode("utf-8")) > 4 * 1024 * 1024:
+            die()
+        return names
+
+    custody()
+    before = stat_optional(3, name)
+    names = inventory()
+    pending_prefix = f".{name}.pending-"
+    # Absence, invalid leaves and link/pending cuts are not clean reads. Let the
+    # unchanged reconciler decide them, including authenticated orphan recovery.
+    if before is not None and not private_file(before, maximum, (1, 2)):
+        die(INVALID)
+    if before is None or before.st_nlink == 2 or any(item.startswith(pending_prefix) for item in names):
+        custody()
+        die(CLEAN_FALLBACK)
+
+    custody()
+    first, first_stat = read_leaf_with_stat(3, name, maximum, (1,))
+    custody()
+    reconciled = os.stat(name, dir_fd=3, follow_symlinks=False)
+    if not private_file(reconciled, maximum, (1,)) or not same(before, reconciled) or not same(first_stat, reconciled):
+        die()
+    custody()
+    second, second_stat = read_leaf_with_stat(3, name, maximum, (1,))
+    custody()
+    if not same(reconciled, second_stat) or not hmac.compare_digest(first, second):
+        die()
+    # Other publishers may add unrelated leaves in the same private staging
+    # directory. Only a pending candidate for this target changes this path.
+    late_pending = any(item.startswith(pending_prefix) for item in inventory())
+    custody()
+    final_stat = os.stat(name, dir_fd=3, follow_symlinks=False)
+    if not same(second_stat, final_stat):
+        die()
+    custody()
+    if late_pending:
+        die(CLEAN_FALLBACK)
+    sys.stdout.buffer.write(second)
+
+
 def main():
     request_line = sys.stdin.buffer.readline(MAX_REQUEST_BYTES + 1)
     if (
@@ -460,7 +543,9 @@ def main():
     if name is not None and not leaf(name):
         die()
 
-    if action == "stat":
+    if action == "read-clean":
+        clean_published_read(request, args, name)
+    elif action == "stat":
         try:
             value = os.stat(name, dir_fd=selected, follow_symlinks=False)
         except FileNotFoundError:
