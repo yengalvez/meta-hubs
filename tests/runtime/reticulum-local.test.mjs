@@ -98,7 +98,7 @@ test("creator browser routes only to the real action consumer and projected publ
   const wrapper = fs.readFileSync(new URL("./profile-ui-browser.mjs", import.meta.url), "utf8");
   const entry = fs.readFileSync(new URL("./profile-media-browser-entry.js", import.meta.url), "utf8");
   const fixture = fs.readFileSync(new URL("./reticulum-ui-socket.exs", import.meta.url), "utf8");
-  assert.match(wrapper, /consumerEntry\s*=\s*\(?connection\)?\s*=>\s*isNormalGlb\(connection\)\s*\?\s*normalGlbEntry\s*:\s*isCreator\(connection\)\s*\?\s*creatorEntry\s*:\s*ownFiles\[1\]/);
+  assert.match(wrapper, /consumerEntry\s*=\s*\(?connection\)?\s*=>\s*isAvaturn\(connection\)\s*\?\s*avaturnEntry\s*:\s*isNormalGlb\(connection\)\s*\?\s*normalGlbEntry\s*:\s*isCreator\(connection\)\s*\?\s*creatorEntry\s*:\s*ownFiles\[1\]/);
   assert.match(wrapper, /const creatorEntry = "tests\/runtime\/profile-media-browser-entry.js"/);
   assert.match(wrapper, /const normalGlbEntry = "tests\/runtime\/profile-glb-editor-entry.js"/);
   assert.match(wrapper, /const ownFiles = \[\s*"tests\/runtime\/profile-ui-browser.mjs",\s*"tests\/runtime\/profile-ui-browser-entry.js"/);
@@ -128,7 +128,7 @@ test("creator build keeps backend public config through the normal production mo
   assert.match(wrapper, /const hasCreatorConfig = \(connection\) => isCreator\(connection\) \|\| isNormalGlb\(connection\)/);
   assert.match(wrapper, /const isCreator = \(connection\) =>\s*connection\?\.kind === "reticulum-profile-creator-socket"/);
   assert.match(wrapper, /const isNormalGlb = \(connection\) =>\s*connection\?\.kind === "reticulum-profile-normal-glb"/);
-  assert.equal(/const buildMode = hasCreatorConfig\(connection\) \? "production" : "development"/.test(wrapper), true, "only MediaBrowser/normal-GLB use production; RoomSettings remains development");
+  assert.equal(/const buildMode = hasCreatorConfig\(connection\) \? "production" : "development"/.test(wrapper), true, "backend-config consumers use production; RoomSettings remains development");
   assert.equal(/require\(path.join\(hubs, "webpack.config.js"\)\)\(\s*\{\},\s*\{ mode: buildMode \}/.test(wrapper), true, "factory and webpack mode must agree");
   assert.equal(/config.mode = buildMode/.test(wrapper), true, "compiled mode must agree");
   assert.doesNotMatch(wrapper, /loadAppConfig:\s*true|localDev:\s*true|fetchAppConfigAndEnvironmentVars\(/);
@@ -227,7 +227,7 @@ test("normal GLB native owner lifetime covers finite observation without a sandb
   const bootstrap = fs.readFileSync(new URL("./reticulum-local.exs", import.meta.url), "utf8");
   const fixture = fs.readFileSync(new URL("./reticulum-ui-socket.exs", import.meta.url), "utf8");
   const runner = fs.readFileSync(new URL("./reticulum-local.mjs", import.meta.url), "utf8");
-  const ownerConfig = /if profile == "profile-creator-socket" and System.get_env\("RET_LOCAL_CONSUMER_ENTRY"\) == "normal-glb" do[\s\S]*?Application.put_env\(\s*:ret,\s*Ret.Repo,\s*Application.fetch_env!\(:ret, Ret.Repo\)\s*\|> Keyword.put\(:ownership_timeout, 120_000 \+ 300_000 \+ 15_000\)\s*\)\s*end/;
+  const ownerConfig = /if profile == "profile-creator-socket" and\s*System.get_env\("RET_LOCAL_CONSUMER_ENTRY"\) in \["normal-glb", "avaturn-save"\] do[\s\S]*?Application.put_env\(\s*:ret,\s*Ret.Repo,\s*Application.fetch_env!\(:ret, Ret.Repo\)\s*\|> Keyword.put\(:ownership_timeout, 120_000 \+ 300_000 \+ 15_000\)\s*\)\s*end/;
   const selected = bootstrap.match(ownerConfig);
   assert.ok(selected, "finite pool override must be guarded by both native profile and selected consumer");
   assert.ok(selected.index < bootstrap.indexOf("Application.ensure_all_started(:ret)"), "owner lifetime must be configured before the Repo pool starts");

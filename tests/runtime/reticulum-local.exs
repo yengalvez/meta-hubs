@@ -55,7 +55,8 @@ if ui_socket do
            length(Enum.uniq([port, http_port, browser_port])) == 3,
          do: raise("exact distinct owned loopback origins required")
 
-  if profile == "profile-creator-socket" and System.get_env("RET_LOCAL_CONSUMER_ENTRY") == "normal-glb" do
+  if profile == "profile-creator-socket" and
+       System.get_env("RET_LOCAL_CONSUMER_ENTRY") in ["normal-glb", "avaturn-save"] do
     # :auto retains committed SQL across independent HTTP/peer connections.
     # Configure its owner lifetime BEFORE Repo starts; do not add a sandbox
     # checkout/transaction or extend any native observation/STOP deadline.

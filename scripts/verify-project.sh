@@ -619,6 +619,7 @@ run_security() {
   node --test "$ROOT_DIR/tests/recovery/native-checkpoint-source.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/native-checkpoint-restore.test.mjs"
   node --test "$ROOT_DIR/tests/runtime/reticulum-local.test.mjs"
+  node --test "$ROOT_DIR/tests/runtime/reticulum-avaturn-save.test.mjs" "$ROOT_DIR/tests/runtime/avaturn-save-sql-boundary.test.mjs"
   node --test "$ROOT_DIR/tests/runtime/bot-transport-local.test.mjs"
   node --test "$ROOT_DIR/tests/runtime/sql-http-local.test.mjs"
   node --test "$ROOT_DIR/tests/runtime/catalog-dataset.test.mjs"

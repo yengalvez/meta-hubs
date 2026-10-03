@@ -12,7 +12,9 @@ defmodule Ret.LocalUiSocket do
     profile = System.fetch_env!("RET_LOCAL_PROFILE")
     creator_mode = profile == "profile-creator-socket"
     normal_glb = System.get_env("RET_LOCAL_CONSUMER_ENTRY") == "normal-glb"
+    avaturn_save = System.get_env("RET_LOCAL_CONSUMER_ENTRY") == "avaturn-save"
     bootstrap_name = cond do
+      avaturn_save -> "avaturn-save-socket-bootstrap.json"
       normal_glb -> "normal-glb-socket-bootstrap.json"
       creator_mode -> "creator-socket-bootstrap.json"
       true -> "ui-socket-bootstrap.json"
@@ -25,8 +27,10 @@ defmodule Ret.LocalUiSocket do
              stat.type == :directory and rem(stat.mode, 0o1000) == 0o700,
            do: raise("private UI bootstrap target required")
     if normal_glb and not creator_mode, do: raise("normal GLB requires creator-only native ceiling")
+    if avaturn_save and not creator_mode, do: raise("Avaturn save requires creator-only native ceiling")
 
     if normal_glb, do: bind_normal_glb_storage!(work, http_port)
+    if avaturn_save, do: bind_normal_glb_storage!(work, http_port)
 
     source = %{
       root: System.fetch_env!("RET_LOCAL_SOURCE_ROOT"),
@@ -81,6 +85,18 @@ defmodule Ret.LocalUiSocket do
         kind: "reticulum-profile-normal-glb", mode: "normal-glb",
         auth_bootstrap: "local-native-guardian", auth_email: email,
         # Preserve the native PostgreSQL int64, like AvatarView's owner field.
+        account_id: Integer.to_string(account.account_id),
+        reticulum_origin: native_origin, storage_origin: native_origin
+      })
+    else
+      context
+    end
+
+    context = if avaturn_save do
+      native_origin = "http://127.0.0.1:#{http_port}"
+      Map.merge(context, %{
+        kind: "reticulum-profile-avaturn-save", mode: "avaturn-save",
+        auth_bootstrap: "local-native-guardian", auth_email: email,
         account_id: Integer.to_string(account.account_id),
         reticulum_origin: native_origin, storage_origin: native_origin
       })

@@ -8,7 +8,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { browserOrigin, validateCreatorBootstrap, validateNormalGlbBootstrap, compiledCanarySourcePaths } from "./reticulum-local.mjs";
+import { browserOrigin, validateCreatorBootstrap, validateNormalGlbBootstrap, validateAvaturnBootstrap, avaturnSaveContentSecurityPolicy, compiledCanarySourcePaths } from "./reticulum-local.mjs";
 
 const root = fs.realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
 const hubs = path.join(root, "hubs");
@@ -16,23 +16,30 @@ const expectedHubs = "dd176f6ed318ffc724efcd930803ca972058e782";
 const expectedCloud = "2c0b53d591d5547438812d27507bc1b3e1ae6f41";
 const creatorEntry = "tests/runtime/profile-media-browser-entry.js";
 const normalGlbEntry = "tests/runtime/profile-glb-editor-entry.js";
+const avaturnEntry = "tests/runtime/profile-avaturn-editor-entry.js";
+const sdkEntry = "hubs/node_modules/@avaturn/sdk/dist/index.js";
 const ownFiles = [
   "tests/runtime/profile-ui-browser.mjs",
   "tests/runtime/profile-ui-browser-entry.js",
   "tests/runtime/reticulum-local.mjs",
   creatorEntry,
   normalGlbEntry,
+  avaturnEntry,
   "tests/runtime/reticulum-ui-socket.exs",
 ];
 const isCreator = (connection) =>
   connection?.kind === "reticulum-profile-creator-socket";
 const isNormalGlb = (connection) =>
   connection?.kind === "reticulum-profile-normal-glb";
-const hasCreatorConfig = (connection) => isCreator(connection) || isNormalGlb(connection);
+const isAvaturn = (connection) =>
+  connection?.kind === "reticulum-profile-avaturn-save";
+const hasCreatorConfig = (connection) => isCreator(connection) || isNormalGlb(connection) || isAvaturn(connection);
 const consumerEntry = (connection) =>
-  isNormalGlb(connection) ? normalGlbEntry : isCreator(connection) ? creatorEntry : ownFiles[1];
+  isAvaturn(connection) ? avaturnEntry : isNormalGlb(connection) ? normalGlbEntry : isCreator(connection) ? creatorEntry : ownFiles[1];
 const canaryKind = (connection) =>
-  isNormalGlb(connection)
+  isAvaturn(connection)
+    ? "avaturn-save-local-browser-canary"
+    : isNormalGlb(connection)
     ? "normal-glb-local-browser-canary"
     : isCreator(connection)
     ? "media-browser-local-browser-canary"
@@ -129,6 +136,24 @@ function connectedSource() {
   return heads;
 }
 
+function installedAvaturnSdk() {
+  const packagePath = "hubs/node_modules/@avaturn/sdk/package.json";
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, packagePath), "utf8"));
+  const declared = JSON.parse(fs.readFileSync(path.join(hubs, "package.json"), "utf8"));
+  const lock = JSON.parse(fs.readFileSync(path.join(hubs, "package-lock.json"), "utf8"));
+  if (manifest.name !== "@avaturn/sdk" || manifest.version !== "1.1.4" ||
+      manifest.exports?.default !== "./dist/index.js" || declared.dependencies?.["@avaturn/sdk"] !== "1.1.4" ||
+      lock.packages?.["node_modules/@avaturn/sdk"]?.version !== "1.1.4")
+    fail("avaturn_installed_sdk_pin_mismatch");
+  const sources = [packagePath, sdkEntry].map(relative => {
+    const file = path.join(root, relative);
+    if (fs.realpathSync(file) !== file || !fs.lstatSync(file).isFile())
+      fail("avaturn_installed_sdk_not_local_regular_file");
+    return { path: relative, bytes: fs.statSync(file).size, sha256: sha(file) };
+  });
+  return { version: "1.1.4", sources, sha256: digest(sources) };
+}
+
 function readBootstrap(file, copied = false) {
   const actual = fs.realpathSync(file),
     stat = fs.lstatSync(file),
@@ -143,7 +168,7 @@ function readBootstrap(file, copied = false) {
     (parent.mode & 0o777) !== 0o700 ||
     stat.size > 8192 ||
     (!copied &&
-      !/^\/private\/tmp\/ynret-local-[^/]+\/(ui|creator|normal-glb)-socket-bootstrap\.json$/.test(
+      !/^\/private\/tmp\/ynret-local-[^/]+\/(ui|creator|normal-glb|avaturn-save)-socket-bootstrap\.json$/.test(
         actual,
       ))
   )
@@ -154,7 +179,9 @@ function readBootstrap(file, copied = false) {
   } catch {
     fail("invalid_native_bootstrap");
   }
-  if (isNormalGlb(value)) {
+  if (isAvaturn(value)) {
+    validateAvaturnBootstrap(value);
+  } else if (isNormalGlb(value)) {
     validateNormalGlbBootstrap(value);
   } else if (isCreator(value)) {
     validateCreatorBootstrap(value);
@@ -181,7 +208,9 @@ function readBootstrap(file, copied = false) {
   if (
     !copied &&
     path.basename(actual) !==
-      (isNormalGlb(value)
+      (isAvaturn(value)
+        ? "avaturn-save-socket-bootstrap.json"
+        : isNormalGlb(value)
         ? "normal-glb-socket-bootstrap.json"
         : isCreator(value)
         ? "creator-socket-bootstrap.json"
@@ -213,7 +242,7 @@ function connectionForReceipt(scratch, receipt) {
   const value = readBootstrap(file, true);
   if (
     value.browser_origin !== receipt.browserOrigin ||
-    (!isNormalGlb(value) && value.ws_url !== receipt.wsUrl) ||
+    (!isNormalGlb(value) && !isAvaturn(value) && value.ws_url !== receipt.wsUrl) ||
     value.backend_pid !== receipt.backendPid
   )
     fail("bootstrap_receipt_mismatch");
@@ -298,6 +327,9 @@ async function buildWorker(directory) {
       fail("build_worker_environment_not_allowlisted");
     const before = frozenSource();
     const connection = connectionForReceipt(scratch, receipt);
+    const sdkBefore = isAvaturn(connection) ? installedAvaturnSdk() : null;
+    if (sdkBefore && digest(sdkBefore) !== digest(receipt.avaturnSdk))
+      fail("avaturn_sdk_changed_before_build");
     if (before.sourceSha256 !== receipt.sourceSha256)
       fail("source_changed_before_build");
     if (
@@ -384,6 +416,17 @@ async function buildWorker(directory) {
           "</style>",
           ".profile-media-controls{position:fixed;bottom:12px;left:12px;right:12px;z-index:2147483647;background:#101a2d;padding:12px;border:1px solid #526078;border-radius:8px}.profile-media-controls h1{font-size:18px}.profile-media-controls p{margin:6px 0}.profile-media-controls button{margin-right:8px;padding:8px}</style>",
         );
+    if (isAvaturn(connection)) {
+      const native = connection.reticulum_origin;
+      template = template
+        .replace(/(<meta http-equiv="Content-Security-Policy" content=")[^"]*(">)/,
+          `$1${avaturnSaveContentSecurityPolicy(connection)}$2`)
+        .replace("Canary local RoomSettings", "Canary local AvatarEditor Avaturn")
+        .replace("</head>",
+          `<meta name="env:reticulum_server" content="${new URL(native).host}"><meta name="env:reticulum_server_protocol" content="http:"><meta name="env:cors_proxy_server" content=""><meta name="env:thumbnail_server" content=""><meta name="env:uploads_host" content=""><meta name="env:non_cors_proxy_domains" content="127.0.0.1"><script src="/public-app-config.js"></script></head>`)
+        .replace("</style>",
+          ".profile-avaturn-controls{padding:12px;border:1px solid #526078}.profile-avaturn-controls button{margin:8px;padding:8px}.profile-avaturn-editor{height:1000px;position:relative}</style>");
+    }
     config.plugins.push(
       new webpack.DefinePlugin({
         __RETICULUM_UI_BOOTSTRAP__: JSON.stringify(connection),
@@ -416,6 +459,8 @@ async function buildWorker(directory) {
     const after = frozenSource();
     if (before.sourceSha256 !== after.sourceSha256)
       fail("source_changed_during_build");
+    if (sdkBefore && digest(sdkBefore) !== digest(installedAvaturnSdk()))
+      fail("avaturn_sdk_changed_during_build");
     const summary = stats.toJson({
       all: false,
       errorsCount: true,
@@ -424,6 +469,7 @@ async function buildWorker(directory) {
     });
     if (stats.hasErrors()) fail("webpack_compilation_failed");
     const sourcePaths = new Set(before.sources.map((source) => source.path));
+    if (sdkBefore) for (const source of sdkBefore.sources) sourcePaths.add(source.path);
     // ForkTsChecker adds its entire tsconfig corpus to fileDependencies. Only
     // actual compilation module resources prove consumer inclusion/exclusion.
     const compiledSourcePaths = compiledCanarySourcePaths(stats.compilation, root, sourcePaths);
@@ -431,7 +477,7 @@ async function buildWorker(directory) {
       entryFile,
       "hubs/src/utils/hub-channel.js",
       "hubs/src/utils/configs.js",
-      ...(isNormalGlb(connection)
+      ...(isNormalGlb(connection) || isAvaturn(connection)
         ? [
             "hubs/src/react-components/avatar-editor.js",
             "hubs/src/react-components/avatar-preview.js",
@@ -450,6 +496,16 @@ async function buildWorker(directory) {
     ]) {
       if (!compiledSourcePaths.includes(file))
         fail("real_canary_consumer_missing_from_build");
+    }
+    if (isAvaturn(connection)) {
+      for (const file of [
+        "hubs/src/react-components/avaturn-creator.js",
+        "hubs/src/utils/avaturn-sdk.js",
+        "hubs/src/utils/avaturn-utils.js",
+        sdkEntry,
+      ]) {
+        if (!compiledSourcePaths.includes(file)) fail("real_avaturn_sdk_consumer_missing_from_build");
+      }
     }
     if (isCreator(connection)) {
       for (const file of [
@@ -486,6 +542,7 @@ async function buildWorker(directory) {
       artifacts,
       artifactsSha256: digest(artifacts),
       browserAcceptance: "NOT_RUN",
+      ...(isAvaturn(connection) ? { browser_acceptance: "NOT_RECORDED" } : {}),
       fullAcceptance: false,
     });
   } catch (error) {
@@ -503,6 +560,7 @@ async function buildWorker(directory) {
 function build(bootstrapFile) {
   const before = frozenSource();
   const connection = bootstrapFile ? readBootstrap(bootstrapFile) : null;
+  const sdk = isAvaturn(connection) ? installedAvaturnSdk() : null;
   const temporary = fs.realpathSync(os.tmpdir());
   if (within(root, temporary)) fail("scratch_parent_inside_checkout");
   const scratch = fs.mkdtempSync(
@@ -532,13 +590,27 @@ function build(bootstrapFile) {
       ? {
           bootstrapSha256: sha(copiedBootstrap),
           browserOrigin: connection.browser_origin,
-          ...(isNormalGlb(connection) ? { consumerEntry: "normal-glb", authBootstrap: "local-native-guardian", externalLogin: "NOT_RUN" } : { wsUrl: connection.ws_url }),
+          ...(isAvaturn(connection)
+            ? { consumerEntry: "avaturn-save", authBootstrap: "local-native-guardian", externalLogin: "NOT_RUN", avaturnSdk: sdk,
+                providerFrameOrigin: "https://virtualmente.avaturn.dev", externalExportDownload: "NOT_ALLOWLISTED" }
+            : isNormalGlb(connection) ? { consumerEntry: "normal-glb", authBootstrap: "local-native-guardian", externalLogin: "NOT_RUN" } : { wsUrl: connection.ws_url }),
           backendPid: connection.backend_pid,
           backendSource: connection.source,
         }
       : {}),
     seams: connection
-      ? isNormalGlb(connection)
+      ? isAvaturn(connection)
+        ? [
+            "local-synthetic-SQL-account-and-Guardian-token",
+            "real-Store-singleton-and-AuthChannel-handleAuthCredentials-only",
+            "real-AvatarEditor-mode-avaturn-and-AvaturnCreator-installed-SDK-1.1.4",
+            "owned-provider-iframe-Next-only-no-local-GLB-picker-or-export-injection",
+            "native-Endpoint-and-Storage-same-owned-loopback",
+            "committed-SQL-module-OFF-and-real-socket-disconnect-no-client-setter",
+            "provider-login-and-export-NOT_RUN-by-build",
+            "external-export-download-origin-not-inferred-or-allowlisted",
+          ]
+        : isNormalGlb(connection)
         ? [
             "local-synthetic-SQL-account-and-Guardian-token",
             "real-Store-singleton-and-AuthChannel-handleAuthCredentials-only",
@@ -565,6 +637,7 @@ function build(bootstrapFile) {
           "synthetic-room-data",
         ],
     browserAcceptance: "NOT_RUN",
+    ...(isAvaturn(connection) ? { browser_acceptance: "NOT_RECORDED" } : {}),
     fullAcceptance: false,
   });
   const log = fs.openSync(logFile, "wx", 0o600);
@@ -611,6 +684,7 @@ function build(bootstrapFile) {
       receiptSha256: sha(receiptFile),
       sourceSha256: before.sourceSha256,
       browserAcceptance: "NOT_RUN",
+      ...(isAvaturn(connection) ? { browser_acceptance: "NOT_RECORDED" } : {}),
     }) + "\n",
   );
   if (!succeeded) process.exitCode = 1;
@@ -626,6 +700,7 @@ async function serve(directory, port) {
       "room-settings-local-browser-canary",
       "media-browser-local-browser-canary",
       "normal-glb-local-browser-canary",
+      "avaturn-save-local-browser-canary",
     ].includes(receipt.kind) ||
     receipt.version !== 1 ||
     receipt.status !== "BUILD_SUCCEEDED" ||
@@ -635,6 +710,8 @@ async function serve(directory, port) {
   )
     fail("current_successful_build_required");
   const connection = connectionForReceipt(scratch, receipt);
+  if (isAvaturn(connection) && digest(installedAvaturnSdk()) !== digest(receipt.avaturnSdk))
+    fail("avaturn_sdk_changed_before_serve");
   if (connection && port !== Number(new URL(connection.browser_origin).port))
     fail("exact_linked_browser_port_required");
   const output = fs.realpathSync(path.join(scratch, "out"));
@@ -727,6 +804,7 @@ async function serve(directory, port) {
     artifactsSha256: receipt.artifactsSha256,
     sourceSha256: receipt.sourceSha256,
     browserAcceptance: "NOT_RUN",
+    ...(isAvaturn(connection) ? { browser_acceptance: "NOT_RECORDED" } : {}),
     fullAcceptance: false,
     mode: connection ? "connected" : "disconnected",
   };

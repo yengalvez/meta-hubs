@@ -161,6 +161,42 @@ missing/duplicated cases, skips, failures or unexpected excluded counts fail.
 The interruption oracle also requires the provider test client to receive the
 request; an early HTTP403 alone is not proof of an in-flight boundary.
 
+### Real Avaturn save observation (separate opt-in route)
+
+`--avaturn-save-browser` uses the existing native runner arguments, finite
+SQL/socket lifecycle and an exact private `avaturn-save-socket-bootstrap.json`.
+Freeze the candidate first. Build/serve with that bootstrap using the same
+`profile-ui-browser.mjs` commands. This route mounts the real AvatarEditor,
+Guardian/Store, SDK1.1.4 and only the owned `https://virtualmente.avaturn.dev`
+iframe. Export must come from its real Next action, not a local GLB picker,
+fabricated SDK event or callback. No new account, photo, terms or cost.
+An external export/download origin is blocked; observe the safe origin-only
+CSP dependency and resolve authority explicitly, never wildcard the policy.
+
+For the native in-flight fault, run the separate peer against that SAME owned
+scratch (not a production server or port5432):
+
+```sh
+node tests/runtime/avaturn-save-sql-boundary.mjs --work /private/tmp/ynret-local-<owned-suffix> \
+  --pg-bin /opt/homebrew/Cellar/postgresql@14/14.23/bin
+```
+
+Keep stdin open. Peer `ARM` → `ARMED` locks only `ret0.avatars` in its own
+transaction. Perform real browser Save; require `BLOCKED_INSERT`. Native
+runner `CREATOR_OFF` commits policy through AppConfig and the real socket;
+observe revocation before peer `RELEASE`. Require no stale onSave callback
+after the real backend completion. Do not unmount the editor on OFF to hide
+that callback. A separately saved SID reloads via AvatarEditor/private-glb
+and its real API/model preview while creator OFF, not via a new provider.
+Peer `STOP` must confirm its actual exit/rollback; native STOP and static
+server shutdown remain mandatory. The peer has a hard ceiling≤120s and
+releases only its own transaction on EOF/error/deadline/signals.
+
+Pure contract tests are registered in security/CI. They cannot accept provider
+login/export, SQL blocking, OFF, browser save/reload or cleanup. Both native
+and build receipts remain NOT_RECORDED until primary observation; this is not
+six complete installations, Kubernetes, production, a full gate or an SLO.
+
 The separate `--chat-concurrent` canary has two NEW tests: a held synthetic
 reply delivered with the current fence, and a real concurrent SQL chat-OFF
 transaction that must finish before that reply is released. Its distinct
