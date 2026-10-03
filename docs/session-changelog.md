@@ -2761,3 +2761,11 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   Evidencia primaria en DOC/fiabilidad-perfiles-runtime-2026-10-01.md del root
   canónico; recibos NOT_RUN/NOT_RECORDED conservados, no se falsifican. No son
   editor/import/escena/proveedor/Kubernetes/seis perfiles/ciclos/SLO/full.
+
+### 2026-10-03 · Medición del pace del fixture de restauración
+
+- Sólo TEST: el modo de perfil registra inicio/fin de cada sleep1 del WATCH
+  sintético con PID y timestamp, en el directorio propio fuera de stub-state.
+  Predicado, sleep, launcher, guardas, plazos y oráculos intactos. No se elimina
+  ninguna espera ni se declara ahorro; medición del foco existente antes de
+  elegir una optimización. La ejecución integral de J sigue separada.

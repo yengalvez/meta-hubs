@@ -1843,7 +1843,15 @@ if [[ "${STUB_MONITOR_WATCH_PACE:-0}" == 1 &&
   # only the durable parent-guard fixture so its two long-lived monitors do not
   # spin thousands of synthetic rounds and starve the child's first complete
   # quiescence sweep. Production still uses the real API watch duration.
+  if [[ "${YENHUBS_RECOVERY_TEST_PROFILE:-0}" == 1 ]]; then
+    printf 'start\t%s\t%s\n' "${BASHPID:-$$}" "${EPOCHREALTIME:-unavailable}" \
+      >>"${STUB_STATE_DIR%/*}/monitor-watch-pace.metrics"
+  fi
   sleep 1
+  if [[ "${YENHUBS_RECOVERY_TEST_PROFILE:-0}" == 1 ]]; then
+    printf 'end\t%s\t%s\n' "${BASHPID:-$$}" "${EPOCHREALTIME:-unavailable}" \
+      >>"${STUB_STATE_DIR%/*}/monitor-watch-pace.metrics"
+  fi
 fi
 # The checkpoint-evidence helper uses kubectl's namespace prefix and the
 # plural Pods resource. Normalize those read-only forms to the long-standing
