@@ -208,8 +208,9 @@ export function boundaryPsqlOptions(context) {
 export function createBoundaryPeer(context, spawnProcess = spawn) {
   const options = boundaryPsqlOptions(context);
   const child = spawnProcess(context.psql, options.args, { env: options.env, stdio: ["pipe", "pipe", "ignore"], detached: false });
+  const ownCloseCancellation = Object.freeze({});
   let pending, buffer = "", closed = false, closing = false, closePromise, outputBytes = 0, transportFailed = false;
-  const rejectPending = () => { if (pending) { clearTimeout(pending.timer); pending.reject(new Error("owned_peer_transport_failed")); pending = undefined; } };
+  const rejectPending = reason => { if (pending) { clearTimeout(pending.timer); pending.reject(reason ?? new Error("owned_peer_transport_failed")); pending = undefined; } };
   const exited = new Promise(resolve => {
     child.once("error", () => { transportFailed = true; rejectPending(); });
     child.once("close", (code, signal) => { closed = true; rejectPending(); resolve({ exited: true, clean: code === 0 && !signal && !transportFailed }); });
@@ -230,6 +231,7 @@ export function createBoundaryPeer(context, spawnProcess = spawn) {
     }
   });
   return {
+    isOwnCloseCancellation(reason) { return reason === ownCloseCancellation; },
     request(event) {
       if (closed || closing || pending || transportFailed) return Promise.reject(new Error("owned_peer_unavailable"));
       if (!["ARMED", "POLL", "RELEASED"].includes(event)) return Promise.reject(new Error("invalid_owned_peer_operation"));
@@ -242,7 +244,7 @@ export function createBoundaryPeer(context, spawnProcess = spawn) {
     },
     close() {
       if (closePromise) return closePromise;
-      closing = true; rejectPending();
+      closing = true; rejectPending(ownCloseCancellation);
       closePromise = (async () => {
         // Always roll back THIS connection; never cancel/terminate another peer.
         if (!closed) child.stdin.end("ROLLBACK;\n\\quit\n");
@@ -294,7 +296,11 @@ async function main() {
           state = "BLOCKED";
           emit({ event: "BLOCKED_INSERT", genuine_statement: true, same_owned_database: true, own_relation_blocker: true });
         } else poll = setTimeout(observe, boundaryLimits.pollMs);
-      } catch { await finish(true); }
+      } catch (error) {
+        // Suppress only this peer's opaque cancellation created by close().
+        // Any other rejection remains a failure, even if STOP already started.
+        if (!finishing || !peer?.isOwnCloseCancellation(error)) await finish(true);
+      }
     };
     const command = async name => {
       if (finishing) return;

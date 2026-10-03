@@ -34,6 +34,37 @@ function fakeTransport({ autoExit = true } = {}) {
   };
 }
 
+function realLifecycle(transport) {
+  // Execute literal current main() closures, NOT a replica of their behavior.
+  // Only process I/O/exit and the psql child are simulated. Native context,
+  // stdin registration, SQL execution, provider and browser never run here.
+  const source = fs.readFileSync(new URL("./avaturn-save-sql-boundary.mjs", import.meta.url), "utf8");
+  const body = source.slice(source.indexOf("async function main() {"));
+  const extract = (begin, end) => {
+    const start = body.indexOf(begin), stop = body.indexOf(end, start + begin.length);
+    assert.ok(start >= 0 && stop > start, "real lifecycle anchors must remain exact");
+    return body.slice(start, stop);
+  };
+  const header = extract("  const started =", "  const finish =");
+  const finish = extract("  const finish = (failure = false) => {", "\n  try {\n    const args =");
+  const observe = extract("    const observe = async () => {", "    const command = async name => {");
+  const command = extract("    const command = async name => {", "    total = setTimeout(");
+  const events = [], unitProcess = {
+    ppid: 2, exitCode: 0, stdin: { pause() {} },
+    stdout: { write(line) { events.push(JSON.parse(line)); } }
+  };
+  // This pure shape validation is not native-context/identity proof.
+  const unitContext = { ...context, recheck() { validateBoundaryContext(this); } };
+  const peer = createBoundaryPeer(unitContext, transport.spawnProcess);
+  const factory = new Function("peerTransport", "contextData", "process", "scope", "boundaryLimits", "boundaryTransition", "createBoundaryPeer", [
+    header, finish, observe, command,
+    'peer = peerTransport; context = contextData; state = "ARMED";',
+    "return { observe, command };"
+  ].join("\n"));
+  const lifecycle = factory(peer, unitContext, unitProcess, "process-transport-lifecycle-oracle", boundaryLimits, boundaryTransition, createBoundaryPeer);
+  return { ...lifecycle, events, unitProcess };
+}
+
 test("explicit finite owned macOS target only", () => {
   assert.deepEqual(boundaryArguments(["--work", work, "--pg-bin", pgBin]), { work, pgBin });
   for (const args of [[], ["--work", "/tmp/ynret-local-Abc123", "--pg-bin", pgBin],
@@ -191,6 +222,57 @@ test("cleanup during an in-flight observation discards output without inventing 
   fake.respond(pollReply({ blocked_insert: true }));
   await rejected;
   assert.deepEqual(await closing, { exited: true, clean: true });
+});
+
+test("lifecycle oracle: STOP during pending POLL remains clean", async () => {
+  const transport = fakeTransport({ autoExit: false }), lifecycle = realLifecycle(transport);
+  const observing = lifecycle.observe();
+  assert.equal(transport.writes.length, 1, "the real observer is awaiting its POLL transport");
+  const stopping = lifecycle.command("STOP");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(lifecycle.events.length, 0, "STOP still requires a real child close event");
+  transport.child.emit("close", 0, null);
+  await Promise.all([observing, stopping]);
+  assert.equal(lifecycle.events.length, 1);
+  assert.equal(lifecycle.events[0].event, "STOPPED");
+  assert.equal(lifecycle.events[0].owned_peer_exited, true);
+  assert.equal(lifecycle.events[0].graceful_rollback_exit, true);
+  assert.equal(lifecycle.unitProcess.exitCode, 0);
+  assert.deepEqual(transport.kills, []);
+});
+
+test("lifecycle oracle: POLL failure before STOP remains FAIL", async () => {
+  const transport = fakeTransport({ autoExit: false }), lifecycle = realLifecycle(transport);
+  const observing = lifecycle.observe();
+  assert.equal(transport.writes.length, 1);
+  // Unexpected connection exit rejects the real request before STOP begins.
+  // Its clean exit is NOT evidence the pending observation succeeded.
+  transport.child.emit("close", 0, null);
+  await observing;
+  await lifecycle.command("STOP");
+  assert.equal(lifecycle.events.length, 1);
+  assert.equal(lifecycle.events[0].event, "FAIL");
+  assert.equal(lifecycle.events[0].failed_check, "blocked-insert-observation");
+  assert.equal(lifecycle.events[0].owned_peer_exited, true);
+  assert.equal(lifecycle.events[0].graceful_rollback_exit, true);
+  assert.equal(lifecycle.unitProcess.exitCode, 1);
+  assert.deepEqual(transport.kills, []);
+});
+
+test("lifecycle oracle: unexpected POLL close then immediate STOP remains FAIL", async () => {
+  const transport = fakeTransport({ autoExit: false }), lifecycle = realLifecycle(transport);
+  const observing = lifecycle.observe();
+  assert.equal(transport.writes.length, 1);
+  transport.child.emit("close", 0, null);
+  // Deliberately no await: STOP starts before the rejected POLL's catch runs.
+  const stopping = lifecycle.command("STOP");
+  await Promise.all([observing, stopping]);
+  assert.equal(lifecycle.events.length, 1);
+  assert.equal(lifecycle.events[0].event, "FAIL");
+  assert.equal(lifecycle.events[0].owned_peer_exited, true);
+  assert.equal(lifecycle.events[0].graceful_rollback_exit, true);
+  assert.equal(lifecycle.unitProcess.exitCode, 1);
+  assert.deepEqual(transport.kills, []);
 });
 
 test("a private/unexpected transport reply fails closed, is not relayed, and closes only its own process", async () => {
