@@ -7338,7 +7338,7 @@ STUB
 
 run_checkpoint_dormant_fence_aba_tests() {
   local output_root="$1" only_mode="${2:-}" mode output expected marker checkpoint_stamp
-  local all_zero published_valid resume_patch_count lock_delete_count
+  local all_zero published_valid unpublished_clean resume_patch_count lock_delete_count
   local -a modes=(checkpoint-dormant-fence-aba-before-first-resume
     checkpoint-dormant-fence-aba-before-lock-release)
   mkdir -p "$output_root"
@@ -7374,12 +7374,21 @@ run_checkpoint_dormant_fence_aba_tests() {
         "$ROOT_DIR/deployment/create-checkpoint.sh" "$output"
 
     published_valid=false
-    checkpoint_stamp="$(jq -er '.stamp' "$output/checkpoint-metadata.json" 2>/dev/null || :)"
-    if [[ -n "$checkpoint_stamp" && ! -e "$output/.yenhubs-incomplete" ]] &&
-       bash -c 'source "$1"; recovery_verify_checkpoint_directory "$2" "$3"' \
-         _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$output" \
-         "$checkpoint_stamp" >/dev/null 2>&1; then
-      published_valid=true
+    unpublished_clean=false
+    if [[ "$mode" == checkpoint-dormant-fence-aba-before-first-resume ]]; then
+      if [[ ! -e "$output" && ! -L "$output" &&
+            ! -e "$output.yenhubs-publish-lock" &&
+            ! -L "$output.yenhubs-publish-lock" ]]; then
+        unpublished_clean=true
+      fi
+    else
+      checkpoint_stamp="$(jq -er '.stamp' "$output/checkpoint-metadata.json" 2>/dev/null || :)"
+      if [[ -n "$checkpoint_stamp" && ! -e "$output/.yenhubs-incomplete" ]] &&
+         bash -c 'source "$1"; recovery_verify_checkpoint_directory "$2" "$3"' \
+           _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$output" \
+           "$checkpoint_stamp" >/dev/null 2>&1; then
+        published_valid=true
+      fi
     fi
     all_zero=true
     for writer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
@@ -7393,20 +7402,26 @@ run_checkpoint_dormant_fence_aba_tests() {
       'delete --raw=/api/v1/namespaces/hcce/configmaps/yenhubs-recovery-operation-lock' \
       "$KUBECTL_LOG" || :)"
 
-    if [[ -e "$marker" && "$published_valid" == true &&
+    if [[ -e "$marker" &&
           -e "$STUB_STATE_DIR/restore-lock.yaml" && "$lock_delete_count" == 0 ]] &&
        recovery_operation_fence_binding_state_is dormant \
          recovery-operation-fence-binding-rv-5 &&
        [[ "$(cat "$STUB_STATE_DIR/recovery-operation-fence-binding-replace-count" 2>/dev/null || :)" == 2 ]] &&
        { { [[ "$mode" == checkpoint-dormant-fence-aba-before-first-resume &&
+              "$unpublished_clean" == true &&
               "$all_zero" == true && "$resume_patch_count" == 0 ]]; } ||
-         { [[ "$mode" == checkpoint-dormant-fence-aba-before-lock-release ]] &&
+         { [[ "$mode" == checkpoint-dormant-fence-aba-before-lock-release &&
+              "$published_valid" == true ]] &&
               checkpoint_all_writers_at 1 &&
               [[ "$resume_patch_count" == 5 ]]; }; }; then
-      pass "$mode retains the exact published checkpoint and lock at its safe writer boundary"
+      if [[ "$mode" == checkpoint-dormant-fence-aba-before-first-resume ]]; then
+        pass "$mode rejects before resume without publishing a checkpoint and retains the lock with all writers stopped"
+      else
+        pass "$mode retains the exact published checkpoint and lock at its safe writer boundary"
+      fi
     else
       fail "$mode dormant ABA fail-closed state" \
-        "observed=$([[ -e "$marker" ]] && printf yes || printf no) published=$published_valid zero=$all_zero resumes=$resume_patch_count lock_deletes=$lock_delete_count output=$LAST_OUTPUT"
+        "observed=$([[ -e "$marker" ]] && printf yes || printf no) published=$published_valid unpublished_clean=$unpublished_clean zero=$all_zero resumes=$resume_patch_count lock_deletes=$lock_delete_count output=$LAST_OUTPUT"
     fi
   done
 }
