@@ -8,7 +8,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { browserOrigin, validateCreatorBootstrap } from "./reticulum-local.mjs";
+import { browserOrigin, validateCreatorBootstrap, compiledCanarySourcePaths } from "./reticulum-local.mjs";
 
 const root = fs.realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
 const hubs = path.join(root, "hubs");
@@ -393,10 +393,9 @@ async function buildWorker(directory) {
     });
     if (stats.hasErrors()) fail("webpack_compilation_failed");
     const sourcePaths = new Set(before.sources.map((source) => source.path));
-    const compiledSourcePaths = [...stats.compilation.fileDependencies]
-      .map((file) => path.relative(root, file).split(path.sep).join("/"))
-      .filter((file) => sourcePaths.has(file))
-      .sort();
+    // ForkTsChecker adds its entire tsconfig corpus to fileDependencies. Only
+    // actual compilation module resources prove consumer inclusion/exclusion.
+    const compiledSourcePaths = compiledCanarySourcePaths(stats.compilation, root, sourcePaths);
     for (const file of [
       entryFile,
       "hubs/src/utils/hub-channel.js",

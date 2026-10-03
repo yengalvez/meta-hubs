@@ -36,6 +36,27 @@ export function creatorSocketCommand(line) {
   return JSON.parse(line).command;
 }
 
+export function compiledCanarySourcePaths(compilation, root, sourcePaths) {
+  if (!compilation?.modules || typeof compilation.modules[Symbol.iterator] !== "function" ||
+      !path.isAbsolute(root) || !(sourcePaths instanceof Set)) reject("invalid_canary_module_graph");
+  const seen = new Set(), files = new Set();
+  const visit = module => {
+    if (!module || typeof module !== "object" || seen.has(module)) return;
+    seen.add(module);
+    if (typeof module.resource === "string" && path.isAbsolute(module.resource)) {
+      // Webpack includes loader queries/fragments in resource; compare the
+      // actual source pathname, not a checker dependency or decorated identifier.
+      const resourcePath = module.resource.split(/[?#]/, 1)[0];
+      const relative = path.relative(root, resourcePath).split(path.sep).join("/");
+      if (sourcePaths.has(relative)) files.add(relative);
+    }
+    if (module.modules && typeof module.modules[Symbol.iterator] === "function")
+      for (const nested of module.modules) visit(nested);
+  };
+  for (const module of compilation.modules) visit(module);
+  return [...files].sort();
+}
+
 export function validateCreatorBootstrap(value) {
   const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
   const keys = (value, expected) => object(value) && Object.keys(value).sort().join(",") === expected;

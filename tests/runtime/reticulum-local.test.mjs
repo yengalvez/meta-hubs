@@ -5,7 +5,47 @@ import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { networkProfile, assertPostmaster, runtimeCases, browserOrigin, uiSocketCommand, creatorSocketCommand, validateCreatorBootstrap, inspectHexArchive, writeUiSocketLog } from "./reticulum-local.mjs";
+import { networkProfile, assertPostmaster, runtimeCases, browserOrigin, uiSocketCommand, creatorSocketCommand, validateCreatorBootstrap, compiledCanarySourcePaths, inspectHexArchive, writeUiSocketLog } from "./reticulum-local.mjs";
+
+test("creator compilation guard ignores checker-only files but keeps real resources", () => {
+  const root = path.resolve("/synthetic-canary-root");
+  const entry = "tests/runtime/profile-media-browser-entry.js", media = "hubs/src/react-components/media-browser.js";
+  const sdk = "hubs/src/utils/avaturn-sdk.js", files = new Set([entry, media, sdk]);
+  const compilation = {
+    fileDependencies: new Set([...files].map(file => path.join(root, file))),
+    modules: new Set([{ resource: path.join(root, entry) }, { resource: path.join(root, media) }]),
+  };
+  assert.deepEqual(compiledCanarySourcePaths(compilation, root, files), [media, entry].sort());
+  const wrapper = fs.readFileSync(new URL("./profile-ui-browser.mjs", import.meta.url), "utf8");
+  assert.match(wrapper, /compiledCanarySourcePaths\(stats\.compilation, root, sourcePaths\)/);
+  assert.doesNotMatch(wrapper, /\.\.\.stats\.compilation\.fileDependencies/);
+  assert.match(wrapper, /creator_canary_must_not_include_editor_or_sdk/);
+});
+
+test("creator compilation guard detects forbidden resources inside concatenated modules", () => {
+  const root = path.resolve("/synthetic-canary-root");
+  for (const file of ["hubs/src/utils/avaturn-sdk.js", "hubs/src/react-components/avaturn-creator.js", "hubs/src/react-components/avatar-editor.js"]) {
+    const nested = { resource: path.join(root, file) }, parent = { modules: new Set([nested]) };
+    nested.modules = new Set([parent]); // A repeated/cyclic reference cannot hide a resource or loop.
+    assert.deepEqual(compiledCanarySourcePaths({ modules: new Set([parent]) }, root, new Set([file])), [file]);
+  }
+  for (const compilation of [null, {}, { modules: {} }])
+    assert.throws(() => compiledCanarySourcePaths(compilation, root, new Set()), /invalid_canary_module_graph/);
+});
+
+test("creator compilation guard normalizes query and fragment on actual resources", () => {
+  const root = path.resolve("/synthetic-canary-root");
+  const required = "hubs/src/react-components/media-browser.js";
+  const forbidden = ["hubs/src/utils/avaturn-sdk.js", "hubs/src/react-components/avaturn-creator.js", "hubs/src/react-components/avatar-editor.js"];
+  for (const file of [required, ...forbidden]) {
+    for (const suffix of ["?canary", "#fragment", "?canary#fragment"]) {
+      const nested = { resource: path.join(root, file) + suffix };
+      const parent = { modules: new Set([nested]) };
+      nested.modules = new Set([parent]);
+      assert.deepEqual(compiledCanarySourcePaths({ modules: new Set([parent]) }, root, new Set([file])), [file]);
+    }
+  }
+});
 
 test("creator socket mode and commands stay separate from the accepted UI observation", () => {
   assert.deepEqual(runtimeCases("--profile-creator-socket"), [{ profile: "profile-creator-socket", count: 0 }]);

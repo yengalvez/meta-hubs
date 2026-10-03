@@ -2740,3 +2740,10 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   freeze y observación nativa/browser/cleanup todavía pendientes. No son
   aceptación del editor, importación, seis perfiles, full o producción; la
   entrada RoomSettings previamente aceptada se conserva sin cambios.
+- Primer build nativo falla cerrado porque ForkTsChecker añade todo src a
+  fileDependencies, no porque el consumidor importe SDK/editor. Se mantienen
+  checker, módulos reales y nombres prohibidos; el guard inspecciona recursos
+  del grafo de módulos, incluidos concatenados/ciclos y queries/fragments,
+  con tres regresiones dirigidas. El caso de sufijos reproduce el hallazgo
+  antes del arreglo y pasa después; recheck focal independiente cerrado.
+  La observación fallida se detuvo normalmente y PG/BEAM propios se limpiaron.
