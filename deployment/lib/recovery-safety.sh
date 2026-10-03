@@ -6363,11 +6363,19 @@ recovery_exact_ready_deployment_pod_info() {
 
 recovery_capture_deployment_contract() {
   local deployment_name="$1"
-  local deployment_json
+  local +x deployment_json
   [[ "$deployment_name" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
   deployment_json="$(
     recovery_kubectl get deployment "$deployment_name" -n "$NAMESPACE" -o json
   )" || return 1
+  recovery_deployment_contract_from_json "$deployment_name" <<<"$deployment_json"
+}
+
+# Parse the unchanged five-field public contract from a previously captured
+# JSON object on stdin. The full Deployment must not become an argv payload.
+recovery_deployment_contract_from_json() {
+  local deployment_name="$1"
+  [[ "$deployment_name" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
   jq -er --arg name "$deployment_name" --arg namespace "$NAMESPACE" '
     select(.apiVersion == "apps/v1" and .kind == "Deployment") |
     select(.metadata.name == $name) |
@@ -6386,7 +6394,7 @@ recovery_capture_deployment_contract() {
       .spec.selector.matchLabels.app,
       ({selector:.spec.selector, strategy:(.spec.strategy // {}), template:.spec.template} | @base64)
     ] | @tsv
-  ' <<<"$deployment_json"
+  '
 }
 
 recovery_require_deployment_contract() {
@@ -7115,13 +7123,44 @@ recovery_clear_checkpoint_resume_receipt() {
   ' <<<"$response"
 }
 
-# Change the replica count of one previously captured Deployment through the
-# full Deployment endpoint with server-side compare-and-set guards.  Never use
-# deployments/scale here: AUD078 permanently denies that subresource because
-# it cannot carry the durable parent-fence contract.  The global operation lock
-# and the immutable part of the Deployment are revalidated immediately before
-# and after the mutation. The new resourceVersion is printed so callers can
-# chain further exact mutations.
+# Compare one mutation response/readback to the same UID/RV-bound capture,
+# including every spec field except the deliberately changed replica count.
+recovery_deployment_scale_transition_is_exact() {
+  local deployment_name="$1" expected_uid="$2" old_resource_version="$3"
+  local desired_replicas="$4" expected_selector="$5" expected_fingerprint="$6"
+  local expected_generation="$7" resume_operation_id="${8:-}"
+  # Exactly two JSON objects arrive on stdin: the UID/RV-bound capture and
+  # one API response/readback. Do not pass full specs via --argjson or files.
+  jq -se --arg name "$deployment_name" --arg namespace "$NAMESPACE" \
+    --arg uid "$expected_uid" --arg old_rv "$old_resource_version" \
+    --argjson replicas "$desired_replicas" --arg selector "$expected_selector" \
+    --arg fingerprint "$expected_fingerprint" --arg receipt "$resume_operation_id" \
+    --argjson generation "$expected_generation" '
+    length == 2 and
+    (.[0] as $before | .[1] as $after |
+      ($before.spec | type == "object") and
+      $before.metadata.uid == $uid and $before.metadata.resourceVersion == $old_rv and
+      $after.apiVersion == "apps/v1" and $after.kind == "Deployment" and
+      $after.metadata.name == $name and $after.metadata.namespace == $namespace and
+      $after.metadata.uid == $uid and ($after.metadata.deletionTimestamp // null) == null and
+      ($after.metadata.resourceVersion | type == "string" and length > 0 and . != $old_rv) and
+      $after.metadata.generation == $generation and $after.spec.replicas == $replicas and
+      $after.spec.selector.matchLabels.app == $selector and
+      $after.spec.template.metadata.labels.app == $selector and
+      ({selector:$after.spec.selector,strategy:($after.spec.strategy // {}),
+        template:$after.spec.template} | @base64) == $fingerprint and
+      ($after.spec | del(.replicas)) == ($before.spec | del(.replicas)) and
+      (if $receipt == "" then true else
+        $after.metadata.annotations["yenhubs.org/checkpoint-resume-operation"] == $receipt
+      end))
+  ' >/dev/null 2>&1
+}
+
+# Change the replica count through the full Deployment endpoint with CAS.
+# Never use deployments/scale: AUD078 permanently denies that subresource.
+# Keep the global guards and bind complete spec/generation to the same capture.
+# Generation advances only for a replica change, not a metadata-only receipt.
+# Print only the new resourceVersion for callers chaining exact mutations.
 recovery_scale_deployment_exact() {
   local deployment_name="$1"
   local expected_uid="$2"
@@ -7133,13 +7172,18 @@ recovery_scale_deployment_exact() {
   local resume_operation_id="${8:-}"
   local before_contract uid resource_version replicas selector fingerprint
   local after_contract after_uid after_resource_version after_replicas after_selector after_fingerprint
-  local patch receipt_operation patched_json live_json annotations_json
+  local generation expected_generation
+  local +x before_json after_json patched_json patch receipt_operation
   [[ "$expected_replicas" =~ ^[0-9]+$ && "$desired_replicas" =~ ^[0-9]+$ &&
      -n "$expected_resource_version" &&
      ( -z "$resume_operation_id" || "$resume_operation_id" =~ ^[a-f0-9]{32}$ ) ]] || return 2
   recovery_require_operation_serialization || return 1
   recovery_require_operation_lock || return 1
-  before_contract="$(recovery_capture_deployment_contract "$deployment_name")" || return 1
+  [[ "$deployment_name" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
+  before_json="$(recovery_kubectl get deployment "$deployment_name" \
+    -n "$NAMESPACE" -o json)" || return 1
+  before_contract="$(recovery_deployment_contract_from_json "$deployment_name" \
+    <<<"$before_json")" || return 1
   IFS=$'\t' read -r uid resource_version replicas selector fingerprint <<<"$before_contract"
   [[ "$uid" == "$expected_uid" && "$resource_version" == "$expected_resource_version" &&
      "$replicas" == "$expected_replicas" && "$selector" == "$expected_selector" &&
@@ -7147,38 +7191,45 @@ recovery_scale_deployment_exact() {
     printf 'Deployment contract changed before scaling %s.\n' "$deployment_name" >&2
     return 1
   }
+  generation="$(jq -er '
+    select((.metadata.deletionTimestamp // null) == null) |
+    .metadata.generation | select(type == "number" and floor == . and . >= 1)
+  ' <<<"$before_json")" || return 1
+  expected_generation="$generation"
+  if [[ "$expected_replicas" != "$desired_replicas" ]]; then
+    expected_generation="$(jq -ner --argjson generation "$generation" \
+      '$generation + 1')" || return 1
+  fi
   receipt_operation='null'
   if [[ -n "$resume_operation_id" ]]; then
-    live_json="$(recovery_kubectl get deployment "$deployment_name" \
-      -n "$NAMESPACE" -o json)" || return 1
     jq -e --arg uid "$expected_uid" --arg rv "$expected_resource_version" \
       --argjson replicas "$expected_replicas" '
       .metadata.uid == $uid and .metadata.resourceVersion == $rv and
       .spec.replicas == $replicas and
       (((.metadata.annotations // {}) |
         has("yenhubs.org/checkpoint-resume-operation")) | not)
-    ' >/dev/null <<<"$live_json" || return 1
-    annotations_json="$(jq -c '.metadata.annotations // null' <<<"$live_json")" || return 1
-    receipt_operation="$(jq -cn --argjson annotations "$annotations_json" \
-      --arg operation_id "$resume_operation_id" '
-      if $annotations == null then
+    ' >/dev/null <<<"$before_json" || return 1
+    receipt_operation="$(jq -c --arg operation_id "$resume_operation_id" '
+      if .metadata.annotations == null then
         {op:"add",path:"/metadata/annotations",
           value:{"yenhubs.org/checkpoint-resume-operation":$operation_id}}
       else
         {op:"add",path:"/metadata/annotations/yenhubs.org~1checkpoint-resume-operation",
           value:$operation_id}
       end
-    ')" || return 1
+    ' <<<"$before_json")" || return 1
   fi
   patch="$(jq -cn \
     --arg uid "$expected_uid" \
     --arg resource_version "$expected_resource_version" \
+    --argjson generation "$generation" \
     --argjson expected_replicas "$expected_replicas" \
     --argjson desired_replicas "$desired_replicas" \
     --argjson receipt_operation "$receipt_operation" '
     ([
       {op:"test",path:"/metadata/uid",value:$uid},
       {op:"test",path:"/metadata/resourceVersion",value:$resource_version},
+      {op:"test",path:"/metadata/generation",value:$generation},
       {op:"test",path:"/spec/replicas",value:$expected_replicas}
     ] + (if $receipt_operation == null then [] else [$receipt_operation] end) + [
       {op:"replace",path:"/spec/replicas",value:$desired_replicas}
@@ -7186,26 +7237,16 @@ recovery_scale_deployment_exact() {
   ')" || return 1
   patched_json="$(recovery_kubectl_mutate patch deployment "$deployment_name" \
     -n "$NAMESPACE" --type=json --patch="$patch" -o json)" || return 1
-  jq -e --arg name "$deployment_name" --arg namespace "$NAMESPACE" \
-    --arg uid "$expected_uid" --arg old_rv "$expected_resource_version" \
-    --argjson replicas "$desired_replicas" --arg selector "$expected_selector" \
-    --arg fingerprint "$expected_fingerprint" --arg receipt "$resume_operation_id" '
-    .apiVersion == "apps/v1" and .kind == "Deployment" and
-    .metadata.name == $name and .metadata.namespace == $namespace and
-    .metadata.uid == $uid and (.metadata.deletionTimestamp // null) == null and
-    (.metadata.resourceVersion | type == "string" and length > 0 and . != $old_rv) and
-    .spec.replicas == $replicas and
-    .spec.selector.matchLabels.app == $selector and
-    .spec.template.metadata.labels.app == $selector and
-    ({selector:.spec.selector,strategy:(.spec.strategy // {}),
-      template:.spec.template} | @base64) == $fingerprint and
-    (if $receipt == "" then true else
-      .metadata.annotations["yenhubs.org/checkpoint-resume-operation"] == $receipt
-    end)
-  ' >/dev/null <<<"$patched_json" || return 1
+  printf '%s\n%s\n' "$before_json" "$patched_json" |
+    recovery_deployment_scale_transition_is_exact "$deployment_name" "$expected_uid" \
+      "$expected_resource_version" "$desired_replicas" "$expected_selector" \
+      "$expected_fingerprint" "$expected_generation" "$resume_operation_id" || return 1
   recovery_require_operation_serialization || return 1
   recovery_require_operation_lock || return 1
-  after_contract="$(recovery_capture_deployment_contract "$deployment_name")" || return 1
+  after_json="$(recovery_kubectl get deployment "$deployment_name" \
+    -n "$NAMESPACE" -o json)" || return 1
+  after_contract="$(recovery_deployment_contract_from_json "$deployment_name" \
+    <<<"$after_json")" || return 1
   IFS=$'\t' read -r after_uid after_resource_version after_replicas after_selector after_fingerprint \
     <<<"$after_contract"
   [[ "$after_uid" == "$expected_uid" &&
@@ -7217,12 +7258,10 @@ recovery_scale_deployment_exact() {
     printf 'Deployment contract changed while scaling %s.\n' "$deployment_name" >&2
     return 1
   }
-  if [[ -n "$resume_operation_id" ]]; then
-    recovery_capture_checkpoint_resume_receipt_contract \
-      "$deployment_name" "$expected_uid" "$desired_replicas" \
-      "$expected_selector" "$expected_fingerprint" "$resume_operation_id" \
-      >/dev/null || return 1
-  fi
+  printf '%s\n%s\n' "$before_json" "$after_json" |
+    recovery_deployment_scale_transition_is_exact "$deployment_name" "$expected_uid" \
+      "$expected_resource_version" "$desired_replicas" "$expected_selector" \
+      "$expected_fingerprint" "$expected_generation" "$resume_operation_id" || return 1
   printf '%s\n' "$after_resource_version"
 }
 

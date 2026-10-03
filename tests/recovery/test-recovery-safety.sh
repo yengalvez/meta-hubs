@@ -16420,7 +16420,7 @@ PERSISTENT_VOLUME_SIZE: 10Gi
 YAML
   chmod 600 "$freeze_values"
   reset_stub
-  expect_success 'freeze checkpoint publishes the exact v1 bundle and then resumes writers' \
+  expect_success 'freeze checkpoint resumes writers before publishing the exact v1 bundle' \
     env ALLOW_CHECKPOINT_DOWNTIME=1 CHECKPOINT_FORMAT=freeze-bundle-v1 \
     CLIENT_INSTANCE_ID=fixture-client-001 \
     FREEZE_DNS_PROVIDER=fixture-dns FREEZE_SMTP_PROVIDER=fixture-smtp \
@@ -16440,11 +16440,11 @@ YAML
     source "$1"
     recovery_verify_freeze_bundle_directory "$2" "$3"
   ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$freeze_output" "$STAMP"
-  if [[ -e "$STUB_STATE_DIR/checkpoint-publication-before-resume" &&
-        ! -e "$STUB_STATE_DIR/checkpoint-resume-before-publication" ]]; then
-    pass 'freeze publication is complete before the first writer resumes'
+  if [[ ! -e "$STUB_STATE_DIR/checkpoint-publication-before-resume" &&
+        -e "$STUB_STATE_DIR/checkpoint-resume-before-publication" ]]; then
+    pass 'freeze publication remains incomplete throughout writer resume'
   else
-    fail 'freeze publication precedes writer resume' "$(cat "$KUBECTL_LOG")"
+    fail 'freeze writer resume precedes complete publication' "$(cat "$KUBECTL_LOG")"
   fi
   if [[ "$(find "$freeze_output" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" == 9 ]] &&
      ! grep -R -Fq 'fixture-secret-sentinel' "$freeze_output"; then

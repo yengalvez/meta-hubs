@@ -1485,6 +1485,9 @@ for aud065_test in \
   bot-image-pull-config.test.mjs \
   capture-process-local-baseline.test.mjs \
   lease-release-failclosed.test.mjs \
+  checkpoint-publication-order.test.mjs \
+  recovery-checkpoint-authority.test.mjs \
+  checkpoint-writer-cas-contract.test.mjs \
   redacted-rollout-contract.test.mjs; do
   [[ "$(grep -Fc "/$aud065_test\"" "$aud065_aggregate")" == 1 ]] || \
     aud065_inventory_ok=false

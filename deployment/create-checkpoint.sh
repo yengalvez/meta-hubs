@@ -2817,15 +2817,29 @@ checkpoint_set_failure_context precommit layout
 actual_with_marker="$(find "$FINAL_OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print |
   while IFS= read -r path; do basename "$path"; done | LC_ALL=C sort)"
 [[ "$actual_with_marker" == "$expected_with_marker" ]]
-# Marker deletion is the final publication operation. All fallible validation
-# has already completed while cleanup still owns the claim.
+
+# Resume under the existing terminal monitor/fence contract while the claim
+# remains cleanup-owned and incomplete. A failed CAS/rollout or post-resume
+# validation must not leave an apparently complete checkpoint behind.
+checkpoint_set_failure_context resume preflight
+resume_writers
+checkpoint_set_failure_context precommit serialization
+recovery_require_operation_serialization
+checkpoint_set_failure_context precommit operation-lock
+recovery_require_operation_lock
+checkpoint_set_failure_context precommit checksum
+checkpoint_validate_manifest "$FINAL_OUTPUT_DIR"
+checkpoint_set_failure_context precommit layout
+actual_with_marker="$(find "$FINAL_OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print |
+  while IFS= read -r path; do basename "$path"; done | LC_ALL=C sort)"
+[[ "$actual_with_marker" == "$expected_with_marker" ]]
+# Marker deletion is the final publication operation. Writer resume and the
+# post-resume validation completed while cleanup still owned the claim.
 checkpoint_set_failure_context publication commit-marker
 commit_final_output_directory
 checkpoint_set_failure_context publication staging-cleanup
 cleanup_checkpoint_staging_directory
 
-checkpoint_set_failure_context resume preflight
-resume_writers
 checkpoint_set_failure_context lock-release operation-lock
 release_lock_if_safe
 checkpoint_set_failure_context serialization-release lease

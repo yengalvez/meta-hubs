@@ -1,5 +1,75 @@
 # Session Changelog
 
+## 2026-10-03 · Bind writer CAS response and readback to the complete captured spec
+
+Primary focal RED5d24b5 reached its positive before rejecting the assertion;
+baseline1606a4/51fb35 on Bash5.3: exit1,2PASS/6FAIL/0skips,1.400s. The real
+generic scaler accepted revisionHistoryLimit or generation drift confined to
+PATCH response or GET readback, including a fabricated G+1 for replicas0→0.
+The scaler now retains one UID/RV-bound full JSON capture, reuses the unchanged
+five-field parser, tests generation alongside UID/RV/replicas in JSON Patch,
+and validates both API stages against the complete spec except replicas and
+the exact expected generation. G+1 applies only when replicas change; an
+unchanged count permits metadata/receipt and RV advance with generation stable.
+Receipt checks reuse these exact snapshots instead of additional partial GETs.
+Full JSON remains in explicitly non-exported locals and stdin, never new full
+spec argv/environment/artifact fields. The focal fixture also probes inherited
+export attributes and raw spec argv, with synthetic values only. Consumer1,
+five public fields/fingerprint, current callers, artifact formats and accepted
+Lease/monitor/guard/reentry/receipt contracts are unchanged. The new test is
+registered once in the AUD-065 aggregate and security inventory. Primary GREEN
+446356: exit0,9/9/0skips,1.610s in Bash5.3. Independent focal source review
+found no material P0–P3 findings; the reviewer did not run tests. The added
+privacy case first failed8/9 (633353/013b09): safe diagnostic d9cd71 identified
+private-json-argv then invalid-patch from the synthetic API peer's own validator,
+not product transport. Only that peer's jq call became command jq; the product
+wrapper and all JSON Patch predicates remained. Targeted dedf01 then passed1/1
+before the common-fixture nine-case rerun. ShellCheck0a2be9 and supported Bash5
+syntax/diff7bd178 passed. Frozen whole-entrypoint validation remains pending.
+Guards/API/signals
+are closed stubs and continuation sentinels are synthetic: no Kubernetes, HMAC
+authority, real streams, caller BASE skip or five-writer acceptance is claimed.
+
+## 2026-10-03 · Restore the typed historical authority primitive, not its activation
+
+New deployment/recovery-checkpoint-authority.mjs and its focal test are byte
+identical to6d2b0f94 (primary cmp0f4911). Existing private artifact publication
+API is reused unchanged. Primary2ecf9e/66260c: exit0,9/9,0skips,35.127s;
+canonical vectors/closed parser, complete-spec HMAC redaction, explicit keyring
+import, candidate refusal, collisions and pre/post-link crash reconciliation.
+All keys/specs/paths are synthetic fixtures, not active private inputs. One
+normal/security inventory registration. Authority1 rejects originalreplicas0
+by design; BASE-cero requires its separate versioned adapter, not weakening
+this reader. No backup/lock/monitor/Cloud/receipt activation by this primitive;
+joint integration remains pending. Independent compatibility review found no
+material P0–P3 findings and confirmed the current publisher's historical blob;
+it did not execute tests or accept activation/BASE compatibility.
+
+## 2026-10-03 · Keep checkpoint publication incomplete through writer resume
+
+Isolated I1738f427 retains the accepted Lease delta and unchanged Hubs2a3d7ab/
+Cloudcb15414. Primary focal RED05bfa2/588ee0:0PASS/3FAIL,4.009s; the actual
+terminal entry passed its manifest check. Resume observed marker0/abandoned
+claim, failed resume7 left that state, and bytes changed during resume still
+returned0. Earlier b98a2f stopped on fixture syntax before entry and is not
+product RED evidence. The terminal now retains marker and private claim
+capability through the existing resume_writers and repeats serialization,
+operation-lock, SHA and exact-layout checks after resume before committing.
+All prior terminal monitor/fence and pre-resume guards remain; no stopped/
+zero-writer guard is added after resume, no timing window/reentry changes.
+One focal test is registered once in the AUD-065 aggregate/security inventory.
+The actual claim/commit, SHA validators, capability cleanup and ERR/EXIT run
+on private synthetic fixtures; resume, cluster and monitor peers are stubs.
+Persistent resume failure exposes the existing two bounded recovery attempts,
+not hidden success. These tests do not prove five real CAS/rollouts, payload
+content, backup streams or Kubernetes. Child executes syntax/diff only;
+Primary775860/7c4ee0 GREEN: exit0,3/3,0skips,4.474s. Independent focal review
+found no material P0–P3 findings; no test execution by the reviewer. Existing
+freeze detector unchanged; its expectation now retains incomplete publication
+through all observed resumes, with syntax/diffa2fa42 and ShellCheck069e00
+exit0. Focused full-checkpoint execution remains pending on a frozen clean
+candidate, not a dirty tree bypass. No Lease source, Cloud or live acceptance.
+
 ## 2026-10-03 · Fail closed before serialization Lease release
 
 Isolated lease-release checkout on1deb0ce with unchanged Hubs2a3d7ab and
