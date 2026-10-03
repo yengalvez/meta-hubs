@@ -43,6 +43,35 @@ sql_http =
 
 stop_drain = profile == "sql-http-stop-drain"
 catalog = profile in ["catalog-dataset", "catalog-graph-dataset"]
+ui_socket = profile == "profile-ui-socket"
+
+if ui_socket do
+  origin = System.fetch_env!("RET_LOCAL_BROWSER_ORIGIN")
+  http_port = System.fetch_env!("RET_LOCAL_UI_HTTP_PORT") |> String.to_integer()
+  browser_port = URI.parse(origin).port
+
+  unless Regex.match?(~r/^http:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/, origin) and
+           browser_port in 1024..65535 and http_port in 1024..65535 and
+           length(Enum.uniq([port, http_port, browser_port])) == 3,
+         do: raise("exact distinct owned loopback origins required")
+
+  Application.put_env(:ret, Ret.ProductModules, bots: true, ai: true, avaturn: false)
+
+  Application.put_env(
+    :ret,
+    RetWeb.Endpoint,
+    Application.fetch_env!(:ret, RetWeb.Endpoint)
+    |> Keyword.put(:server, true)
+    |> Keyword.put(:load_from_system_env, false)
+    |> Keyword.put(:http, ip: {127, 0, 0, 1}, port: http_port)
+    |> Keyword.put(:url, host: "127.0.0.1", port: http_port, scheme: "http")
+    |> Keyword.put(:allowed_origins, origin)
+  )
+
+  # Never emit Phoenix join payloads containing the synthetic account JWT.
+  Logger.configure(level: :warning)
+  Application.put_env(:phoenix, :filter_parameters, ["auth_token", "session_token", "perms_token", "token"])
+end
 
 if catalog do
   Application.put_env(:ret, Ret.ProductModules, bots: false, ai: false, avaturn: false)
@@ -108,7 +137,7 @@ profiles = %{
 
 unless profile == "existing-tests" or avaturn_runtime or chat_focus or chat_concurrent or
          config_cache or sql_http or
-         catalog do
+         catalog or ui_socket do
   modules = Map.fetch!(profiles, profile)
 
   Application.put_env(
@@ -134,6 +163,14 @@ Mix.Task.run("ecto.create", ["--quiet"])
 Mix.Task.run("ecto.migrate", [])
 File.mkdir_p!("storage/test")
 {:ok, _} = Application.ensure_all_started(:ret)
+
+if ui_socket do
+  Ecto.Adapters.SQL.Sandbox.mode(Ret.Repo, :auto)
+  Code.require_file(Path.join(__DIR__, "reticulum-ui-socket.exs"))
+  # The fixture halts only after explicit STOP and Endpoint shutdown; no ExUnit PASS.
+  raise "UI observation returned without explicit shutdown"
+end
+
 Code.require_file("test/test_helper.exs")
 ExUnit.configure(autorun: false)
 

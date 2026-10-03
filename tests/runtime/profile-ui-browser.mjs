@@ -1,5 +1,5 @@
 // Opt-in build/serve of one RoomSettings browser canary. No browser acceptance,
-// SQL/socket integration, provider, scene, Avaturn or production is inferred.
+// Build success never implies SQL/socket/browser acceptance or production.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -8,13 +8,16 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { browserOrigin } from "./reticulum-local.mjs";
 
 const root = fs.realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
 const hubs = path.join(root, "hubs");
 const expectedHubs = "dd176f6ed318ffc724efcd930803ca972058e782";
+const expectedCloud = "2c0b53d591d5547438812d27507bc1b3e1ae6f41";
 const ownFiles = [
   "tests/runtime/profile-ui-browser.mjs",
   "tests/runtime/profile-ui-browser-entry.js",
+  "tests/runtime/reticulum-local.mjs",
 ];
 const publicConfigFiles = new Set([
   "webpack.config.js",
@@ -90,6 +93,101 @@ function frozenSource() {
   };
 }
 
+function connectedSource() {
+  const heads = {};
+  for (const [name, directory] of [
+    ["root", root],
+    ["hubs", hubs],
+    ["cloud", path.join(root, "hubs-cloud")],
+  ]) {
+    if (
+      git(directory, ["status", "--porcelain=v1", "--untracked-files=normal"])
+    )
+      fail("connected_source_not_frozen");
+    heads[name] = git(directory, ["rev-parse", "HEAD"]).trim();
+  }
+  if (heads.hubs !== expectedHubs || heads.cloud !== expectedCloud)
+    fail("connected_source_heads_mismatch");
+  return heads;
+}
+
+function readBootstrap(file, copied = false) {
+  const actual = fs.realpathSync(file),
+    stat = fs.lstatSync(file),
+    parent = fs.lstatSync(path.dirname(actual));
+  if (
+    actual !== path.resolve(file) ||
+    !stat.isFile() ||
+    stat.uid !== process.getuid() ||
+    (stat.mode & 0o777) !== 0o600 ||
+    !parent.isDirectory() ||
+    parent.uid !== process.getuid() ||
+    (parent.mode & 0o777) !== 0o700 ||
+    stat.size > 8192 ||
+    (!copied &&
+      !/^\/private\/tmp\/ynret-local-[^/]+\/ui-socket-bootstrap\.json$/.test(
+        actual,
+      ))
+  )
+    fail("private_native_bootstrap_required");
+  let value;
+  try {
+    value = JSON.parse(fs.readFileSync(actual, "utf8"));
+  } catch {
+    fail("invalid_native_bootstrap");
+  }
+  if (
+    !value ||
+    Object.keys(value).sort().join(",") !==
+      "auth_token,backend_pid,browser_origin,hub_sid,kind,schema,source,ws_url" ||
+    value.schema !== 1 ||
+    value.kind !== "reticulum-profile-ui-socket" ||
+    typeof value.hub_sid !== "string" ||
+    !/^[A-Za-z0-9]{7}$/.test(value.hub_sid) ||
+    typeof value.auth_token !== "string" ||
+    !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(
+      value.auth_token,
+    ) ||
+    !Number.isInteger(value.backend_pid) ||
+    value.backend_pid < 2 ||
+    typeof value.ws_url !== "string" ||
+    !/^ws:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}\/socket$/.test(value.ws_url) ||
+    !value.source ||
+    Object.keys(value.source).sort().join(",") !== "cloud,hubs,root"
+  )
+    fail("invalid_native_bootstrap");
+  browserOrigin(value.browser_origin);
+  const ws = new URL(value.ws_url);
+  if (
+    Number(ws.port) < 1024 ||
+    Number(ws.port) > 65535 ||
+    ws.port === new URL(value.browser_origin).port ||
+    JSON.stringify(Object.entries(value.source).sort()) !==
+      JSON.stringify(Object.entries(connectedSource()).sort())
+  )
+    fail("bootstrap_source_or_ports_mismatch");
+  try {
+    process.kill(value.backend_pid, 0);
+  } catch {
+    fail("native_backend_not_alive");
+  }
+  return value;
+}
+
+function connectionForReceipt(scratch, receipt) {
+  if (receipt.mode !== "connected") return null;
+  const file = path.join(scratch, "connected-bootstrap.json");
+  if (sha(file) !== receipt.bootstrapSha256) fail("bootstrap_hash_mismatch");
+  const value = readBootstrap(file, true);
+  if (
+    value.browser_origin !== receipt.browserOrigin ||
+    value.ws_url !== receipt.wsUrl ||
+    value.backend_pid !== receipt.backendPid
+  )
+    fail("bootstrap_receipt_mismatch");
+  return value;
+}
+
 function scratchDirectory(directory) {
   const actual = fs.realpathSync(directory);
   const stat = fs.lstatSync(actual);
@@ -150,7 +248,8 @@ async function buildWorker(directory) {
   try {
     // Darwin injects this locale hint at exec even with an explicit env array.
     // Remove that OS-only addition; all supplied build keys stay exact.
-    if (process.platform === "darwin") delete process.env.__CF_USER_TEXT_ENCODING;
+    if (process.platform === "darwin")
+      delete process.env.__CF_USER_TEXT_ENCODING;
     const allowedEnvironment = cleanBuildEnvironment(scratch);
     if (
       Object.keys(process.env).length !==
@@ -161,6 +260,7 @@ async function buildWorker(directory) {
     )
       fail("build_worker_environment_not_allowlisted");
     const before = frozenSource();
+    const connection = connectionForReceipt(scratch, receipt);
     if (before.sourceSha256 !== receipt.sourceSha256)
       fail("source_changed_before_build");
     if (
@@ -206,9 +306,17 @@ async function buildWorker(directory) {
         !(plugin instanceof CopyWebpackPlugin),
     );
     config.plugins.push(
+      new webpack.DefinePlugin({
+        __RETICULUM_UI_BOOTSTRAP__: JSON.stringify(connection),
+      }),
       new HtmlWebpackPlugin({
         filename: "index.html",
-        templateContent: html,
+        templateContent: connection
+          ? html.replace(
+              "connect-src 'none'",
+              `connect-src ${connection.ws_url}/websocket`,
+            )
+          : html,
         scriptLoading: "defer",
       }),
     );
@@ -285,8 +393,9 @@ async function buildWorker(directory) {
   }
 }
 
-function build() {
+function build(bootstrapFile) {
   const before = frozenSource();
+  const connection = bootstrapFile ? readBootstrap(bootstrapFile) : null;
   const temporary = fs.realpathSync(os.tmpdir());
   if (within(root, temporary)) fail("scratch_parent_inside_checkout");
   const scratch = fs.mkdtempSync(
@@ -297,6 +406,8 @@ function build() {
   const receiptFile = path.join(scratch, "build-receipt.json"),
     logFile = path.join(scratch, "build.log");
   const env = cleanBuildEnvironment(scratch);
+  const copiedBootstrap = path.join(scratch, "connected-bootstrap.json");
+  if (connection) json(copiedBootstrap, connection);
   // No inherited NODE_OPTIONS/NODE_PATH, dotenv, credentials, proxy or app-config endpoints.
   json(receiptFile, {
     kind: "room-settings-local-browser-canary",
@@ -308,11 +419,27 @@ function build() {
     ...before,
     node: process.version,
     environmentKeys: Object.keys(env).sort(),
-    seams: [
-      "unconnected-Phoenix-trigger",
-      "local-credential-store",
-      "synthetic-room-data",
-    ],
+    mode: connection ? "connected" : "disconnected",
+    ...(connection
+      ? {
+          bootstrapSha256: sha(copiedBootstrap),
+          browserOrigin: connection.browser_origin,
+          wsUrl: connection.ws_url,
+          backendPid: connection.backend_pid,
+          backendSource: connection.source,
+        }
+      : {}),
+    seams: connection
+      ? [
+          "local-synthetic-account-and-room",
+          "SQL-transitions-through-product-setter-not-raw-periodic",
+          "RoomSettings-submit-disabled",
+        ]
+      : [
+          "unconnected-Phoenix-trigger",
+          "local-credential-store",
+          "synthetic-room-data",
+        ],
     browserAcceptance: "NOT_RUN",
     fullAcceptance: false,
   });
@@ -379,6 +506,9 @@ async function serve(directory, port) {
     receipt.sourceSha256 !== frozenSource().sourceSha256
   )
     fail("current_successful_build_required");
+  const connection = connectionForReceipt(scratch, receipt);
+  if (connection && port !== Number(new URL(connection.browser_origin).port))
+    fail("exact_linked_browser_port_required");
   const output = fs.realpathSync(path.join(scratch, "out"));
   if (!within(scratch, output)) fail("output_outside_owned_scratch");
   const artifacts = artifactInventory(output);
@@ -402,6 +532,13 @@ async function serve(directory, port) {
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("Referrer-Policy", "no-referrer");
+    if (
+      connection &&
+      request.headers.host !== new URL(connection.browser_origin).host
+    ) {
+      response.writeHead(421).end();
+      return;
+    }
     if (
       !["GET", "HEAD"].includes(request.method) ||
       !request.url.startsWith("/")
@@ -463,6 +600,7 @@ async function serve(directory, port) {
     sourceSha256: receipt.sourceSha256,
     browserAcceptance: "NOT_RUN",
     fullAcceptance: false,
+    mode: connection ? "connected" : "disconnected",
   };
   json(serverReceipt, state);
   process.stdout.write(
@@ -503,6 +641,12 @@ async function serve(directory, port) {
 try {
   const [command, directory, ...rest] = process.argv.slice(2);
   if (command === "build" && directory === undefined) build();
+  else if (
+    command === "build" &&
+    directory === "--bootstrap" &&
+    rest.length === 1
+  )
+    build(rest[0]);
   else if (command === "--build-worker" && directory && rest.length === 0)
     await buildWorker(directory);
   else if (

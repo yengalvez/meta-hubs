@@ -1,5 +1,20 @@
 # Session Changelog
 
+## 2026-10-03 · Prepare a connected local profile UI observation
+
+Add an opt-in native SQL/AppConfig → PubSub → Phoenix socket → RoomSettings
+observation, with one synthetic local account/room, exact loopback origin,
+private bootstrap, verified existing Hex archive and stdin-only transitions.
+Keep the disconnected canary and all product sources unchanged. The browser
+uses real joins, including separate invalid/missing-token controls; no SQL
+buttons, fabricated connected events, scene/provider or six-profile acceptance.
+
+Primary structural checks found a closed-origin error-label defect and review
+found uncaught private-log errors. Catch both log callbacks, retain failure,
+stop owned PG before diagnostic writes in the new mode, and add stdout ENOSPC
+and stderr EIO controls. Five focused structural cases pass; native backend,
+build/browser and final full acceptance remain separate required evidence.
+
 ## 2026-10-03 · Assemble authority and live-profile integration candidate
 
 Reuse the idle I worktree on a new `codex/reliability-integration-20261003`

@@ -59,6 +59,52 @@ acceptance. No SQL/socket/provider/scene or other UI consumer is covered. The
 loopback server uses no proxy, rejects writes and closes with SIGINT/SIGTERM,
 recording STOPPED; do not leave it running after the browser check.
 
+For the separate SQL→PubSub→real Phoenix→RoomSettings observation, freeze the
+candidate root and both submodules first. Use the same native runner with an
+explicit existing Hex archive (no installer/network in this mode):
+
+```sh
+node tests/runtime/reticulum-local.mjs --profile-ui-socket \
+  --pg-bin /opt/homebrew/opt/postgresql@14/bin \
+  --cache-reticulum <matching-existing-Reticulum-cache> \
+  --browser-origin http://127.0.0.1:18443 \
+  --hex-cache <verified-existing-hex-2.5.1-archive>
+```
+
+Keep its stdin handle open. After `RET_UI_SOCKET` READY, use only the returned
+private bootstrap path (never print its JSON/JWT). Build and serve separately:
+
+```sh
+node tests/runtime/profile-ui-browser.mjs build --bootstrap <private-bootstrap-path>
+node tests/runtime/profile-ui-browser.mjs serve <scratch-from-build-receipt> --port 18443
+```
+
+Open `http://127.0.0.1:18443/` in the internal browser. Require valid JOINED,
+invalid-token and missing-token DENIED on separate real sockets, and initial BASE controls hidden.
+Edit the room name and retain a reference to the mounted form. Write these exact
+JSON lines to the **native runner stdin handle**, one at a time after observing
+each browser result; the browser has no profile-transition buttons:
+
+```json
+{"command":"BOTS_AI"}
+{"command":"BASE"}
+```
+
+`SQL_APPLIED` confirms committed boolean object wrappers, not the browser result.
+Observe bot/chat controls appearing then disappearing without losing the name
+or form identity. Send BOTS_AI once more, observe ON, then use “Cerrar socket
+real”; require controls hidden after the real disconnect (no fabricated event).
+Stop the static server with SIGINT/SIGTERM and write `{"command":"STOP"}` to
+the native handle. Require its OBSERVATION_STOPPED receipt, Endpoint/BEAM PID
+absence and owned PG cleanup. EOF, interruption, malformed input or the five
+minute observation deadline fails; no observation path emits PASS. Retain the
+private diagnostic scratch on failures; do not print raw logs/bootstrap/bundle.
+
+This covers one local account/sala (`scene:nil`), required-account join denial,
+production AppConfig setters and transport, with synthetic RoomSettings data and
+disabled submit. It does not cover Avaturn, scene/WebRTC, raw-SQL periodic
+detection, six profiles, providers, public deployment or final acceptance.
+
 For the distinct existing chat-delivery boundary, use `--chat-canary`: it runs
 only the chat-OFF-during-response case plus the positive delivery/fence control.
 After that method sample passes, `--chat-boundaries` runs only the other five
@@ -131,6 +177,10 @@ Do not install/change a global toolchain or assume another host has this target.
 Hex stays at 2.5.1 using Mix's official signed-CSV/SHA512 installer in this
 private Mix home; only that preparation phase has installer network access,
 before PG/app start. No user Mix/Hex configuration or provider credentials.
+The new `--profile-ui-socket` branch instead requires the already materialized
+archive: owner/type/version and its pinned 133-file manifest are checked before
+scratch/PG effects, then checked again after private copying. This is artifact
+identity evidence, not an attestation of the archive's original download.
 
 Runtime network confinement uses the host's existing `sandbox-exec` (macOS
 deprecated facility, **not portable CI or general filesystem isolation**).

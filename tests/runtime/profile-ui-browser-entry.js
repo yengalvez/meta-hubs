@@ -1,6 +1,6 @@
-// One real RoomSettings consumer; event delivery and room data are local seams.
-// No socket connect/join, application bootstrap, SDK, avatar rendering or writes.
-import React, { useState } from "react";
+// One real RoomSettings consumer. The optional private bootstrap joins only
+// the runner's local synthetic room; neither mode loads a scene or provider.
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { IntlProvider } from "react-intl";
 import { Socket } from "phoenix";
@@ -9,9 +9,30 @@ import { RoomSettingsSidebar } from "../../hubs/src/react-components/room/RoomSe
 import messages from "../../hubs/src/assets/locales/es.json";
 import "../../hubs/src/react-components/styles/global.scss";
 
-const store = { state: { credentials: {} }, addEventListener() {} };
-const hub = new HubChannel(store, "profile-ui-canary");
-const transport = new Socket("/socket").channel("hub:profile-ui-canary", {});
+const bootstrap =
+  typeof __RETICULUM_UI_BOOTSTRAP__ === "undefined"
+    ? null
+    : __RETICULUM_UI_BOOTSTRAP__;
+if (bootstrap && window.location.origin !== bootstrap.browser_origin)
+  throw new Error("local_bootstrap_origin_mismatch");
+const store = {
+  state: { credentials: bootstrap ? { token: bootstrap.auth_token } : {} },
+  addEventListener() {},
+};
+const hubSid = bootstrap ? bootstrap.hub_sid : "profile-ui-canary";
+const hub = new HubChannel(store, hubSid);
+const socket = new Socket(bootstrap ? bootstrap.ws_url : "/socket");
+const transport = socket.channel(
+  `hub:${hubSid}`,
+  bootstrap
+    ? {
+        profile: { displayName: "Canary local" },
+        context: {},
+        auth_token: bootstrap.auth_token,
+      }
+    : {},
+);
+// Bind the production consumer before connect/join and the initial push.
 hub.setChannel(transport);
 
 const room = {
@@ -34,6 +55,86 @@ const noAction = () => {};
 
 function ProfileCanary() {
   const [delivered, setDelivered] = useState({ profile: "BASE", events: 0 });
+  const [connection, setConnection] = useState({
+    join: "PENDING",
+    invalidToken: "PENDING",
+    missingToken: "PENDING",
+    socket: "NOT_CONNECTED",
+  });
+  useEffect(() => {
+    if (!bootstrap) return undefined;
+    const update = (patch) =>
+      setConnection((previous) => ({ ...previous, ...patch }));
+    const ref = transport.on("product_modules_changed", (capabilities) => {
+      setDelivered((previous) => ({
+        profile:
+          capabilities.bots_enabled === true
+            ? capabilities.ai_enabled === true
+              ? "BOTS + IA"
+              : "BOTS"
+            : "BASE",
+        events: previous.events + 1,
+      }));
+    });
+    const openRef = socket.onOpen(() => update({ socket: "CONNECTED" }));
+    const closeRef = socket.onClose(() => update({ socket: "CLOSED" }));
+    const errorRef = socket.onError(() => update({ socket: "ERROR" }));
+    socket.connect();
+    transport
+      .join(10000)
+      .receive("ok", () => update({ join: "JOINED" }))
+      .receive("error", () => update({ join: "DENIED" }))
+      .receive("timeout", () => update({ join: "TIMEOUT" }));
+
+    // A distinct real socket tests required-account denial. It is deliberately
+    // never attached to HubChannel/configs, so it cannot revoke the valid join.
+    const deniedSocket = new Socket(bootstrap.ws_url);
+    const deniedChannel = deniedSocket.channel(`hub:${hubSid}`, {
+      profile: { displayName: "Invalid local token" },
+      context: {},
+      auth_token: "invalid-local-ui-token",
+    });
+    const finishDenied = (status) => {
+      update({ invalidToken: status });
+      deniedSocket.disconnect();
+    };
+    deniedSocket.connect();
+    deniedChannel
+      .join(10000)
+      .receive("ok", () => finishDenied("UNEXPECTED_JOIN"))
+      .receive("error", (response) =>
+        finishDenied(
+          response.reason === "join_denied" ? "DENIED" : "OTHER_ERROR",
+        ),
+      )
+      .receive("timeout", () => finishDenied("TIMEOUT"));
+    const missingSocket = new Socket(bootstrap.ws_url);
+    const missingChannel = missingSocket.channel(`hub:${hubSid}`, {
+      profile: { displayName: "Missing local token" },
+      context: {},
+    });
+    const finishMissing = (status) => {
+      update({ missingToken: status });
+      missingSocket.disconnect();
+    };
+    missingSocket.connect();
+    missingChannel
+      .join(10000)
+      .receive("ok", () => finishMissing("UNEXPECTED_JOIN"))
+      .receive("error", (response) =>
+        finishMissing(
+          response.reason === "join_denied" ? "DENIED" : "OTHER_ERROR",
+        ),
+      )
+      .receive("timeout", () => finishMissing("TIMEOUT"));
+    return () => {
+      transport.off("product_modules_changed", ref);
+      socket.off([openRef, closeRef, errorRef]);
+      deniedSocket.disconnect();
+      missingSocket.disconnect();
+      socket.disconnect();
+    };
+  }, []);
   function deliver(bots, ai) {
     transport.trigger("product_modules_changed", {
       bots_enabled: bots,
@@ -59,39 +160,60 @@ function ProfileCanary() {
       React.createElement(
         "p",
         null,
-        "Canary local: canal sin conexión y datos de sala sintéticos. No prueba SQL, servidor, Avaturn ni escena.",
+        bootstrap
+          ? "Canary conectado: SQL/PubSub/Phoenix locales y RoomSettings real. Cuenta y sala sintéticas; no prueba Avaturn, escena ni producción."
+          : "Canary local: canal sin conexión y datos de sala sintéticos. No prueba SQL, servidor, Avaturn ni escena.",
       ),
-      React.createElement(
-        "div",
-        { className: "profile-canary-buttons" },
-        React.createElement(
-          "button",
-          {
-            type: "button",
-            id: "profile-base",
-            onClick: () => deliver(false, false),
-          },
-          "1. BASE",
-        ),
-        React.createElement(
-          "button",
-          {
-            type: "button",
-            id: "profile-bots-ai",
-            onClick: () => deliver(true, true),
-          },
-          "2. BOTS + IA",
-        ),
-        React.createElement(
-          "button",
-          {
-            type: "button",
-            id: "profile-base-again",
-            onClick: () => deliver(false, false),
-          },
-          "3. Volver a BASE",
-        ),
-      ),
+      bootstrap
+        ? React.createElement(
+            "div",
+            { className: "profile-canary-buttons" },
+            React.createElement(
+              "button",
+              {
+                type: "button",
+                id: "profile-disconnect",
+                onClick: () => socket.disconnect(),
+              },
+              "Cerrar socket real",
+            ),
+            React.createElement(
+              "output",
+              { id: "profile-connection", "aria-live": "polite" },
+              `Join válido: ${connection.join}; token inválido: ${connection.invalidToken}; token ausente: ${connection.missingToken}; socket: ${connection.socket}. Transiciones solo por SQL del runner.`,
+            ),
+          )
+        : React.createElement(
+            "div",
+            { className: "profile-canary-buttons" },
+            React.createElement(
+              "button",
+              {
+                type: "button",
+                id: "profile-base",
+                onClick: () => deliver(false, false),
+              },
+              "1. BASE",
+            ),
+            React.createElement(
+              "button",
+              {
+                type: "button",
+                id: "profile-bots-ai",
+                onClick: () => deliver(true, true),
+              },
+              "2. BOTS + IA",
+            ),
+            React.createElement(
+              "button",
+              {
+                type: "button",
+                id: "profile-base-again",
+                onClick: () => deliver(false, false),
+              },
+              "3. Volver a BASE",
+            ),
+          ),
       React.createElement(
         "output",
         { id: "profile-delivered", "aria-live": "polite" },

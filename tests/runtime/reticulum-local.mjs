@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import net from "node:net";
 import crypto from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { prepareCatalogDataset } from "./catalog-dataset.mjs";
 
@@ -14,10 +14,139 @@ const cloud = path.join(root, "hubs-cloud");
 const source = path.join(cloud, relativeRet);
 const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
 const reject = code => { throw new Error(code); };
+const hexManifest = "68883cfc9367253fe7cf762a68c588013023d2a9985aa847083203801fcb861d";
+
+export function browserOrigin(value) {
+  if (typeof value !== "string" || !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/.test(value)) reject("exact_browser_origin_required");
+  let url;
+  try { url = new URL(value); } catch { reject("exact_browser_origin_required"); }
+  if (url.origin !== value || Number(url.port) < 1024 || Number(url.port) > 65535) reject("exact_browser_origin_required");
+  return value;
+}
+
+export function uiSocketCommand(line) {
+  if (typeof line !== "string" || Buffer.byteLength(line) > 128 ||
+      !/^\s*\{\s*"command"\s*:\s*"(BASE|BOTS_AI|STOP)"\s*\}\s*$/.test(line)) reject("invalid_ui_socket_command");
+  return JSON.parse(line).command;
+}
+
+export function inspectHexArchive(directory) {
+  const actual = fs.realpathSync(directory);
+  if (actual !== path.resolve(directory)) reject("hex_archive_symlink_not_allowed");
+  const rows = [];
+  const walk = (file, relative) => {
+    const stat = fs.lstatSync(file);
+    if (stat.uid !== process.getuid() || stat.isSymbolicLink()) reject("unowned_hex_archive");
+    if (stat.isDirectory()) {
+      for (const name of fs.readdirSync(file)) walk(path.join(file, name), relative ? `${relative}/${name}` : name);
+    } else if (stat.isFile()) rows.push({ path: relative, sha256: sha(fs.readFileSync(file)), bytes: stat.size });
+    else reject("hex_archive_not_regular");
+  };
+  walk(actual, "");
+  if (!/\{vsn,\s*"2\.5\.1"\}/.test(fs.readFileSync(path.join(actual, "hex-2.5.1/ebin/hex.app"), "utf8"))) reject("hex_archive_version_mismatch");
+  rows.sort((a, b) => a.path.localeCompare(b.path, "en"));
+  const manifest = sha(rows.map(row => `${row.path}\0${row.sha256}\0${row.bytes}\n`).join(""));
+  if (manifest !== hexManifest || rows.length !== 133 || rows.reduce((total, row) => total + row.bytes, 0) !== 1549651) reject("hex_archive_manifest_mismatch");
+  return { directory: actual, manifest, files: rows.length, bytes: 1549651, version: "2.5.1" };
+}
+
+async function privatePort(excluded = []) {
+  const chosen = await new Promise((resolve, fail) => {
+    const server = net.createServer(); server.once("error", fail);
+    server.listen({ host: "127.0.0.1", port: 0 }, () => {
+      const port = server.address().port;
+      server.close(error => error ? fail(error) : resolve(port));
+    });
+  });
+  return excluded.includes(chosen) ? privatePort(excluded) : chosen;
+}
+
+export function writeUiSocketLog(log, bytes, onFailure) {
+  try { fs.writeSync(log, bytes); return true; }
+  catch { onFailure("ui_socket_private_log_write_failed"); return false; }
+}
+
+// This is a finite observation handle, not an ExUnit/browser acceptance gate.
+async function observeUiSocket({ root, work, log, env, application, pgPort, mix }) {
+  const child = spawn("/usr/bin/sandbox-exec", ["-p", networkProfile(pgPort), mix, "run", "--no-start", "--no-compile",
+    path.join(root, "tests/runtime/reticulum-local.exs")], { cwd: application, env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+  let ready = false, stopped = false, stopRequested = false, backendPid, failure, input = "", output = "";
+  const fail = code => {
+    if (failure) return;
+    failure = code;
+    if (!child.stdin.destroyed) child.stdin.end();
+    try { process.kill(-child.pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") failure = "ui_socket_signal_failed"; }
+  };
+  let deadline = setTimeout(() => fail("ui_socket_startup_timeout"), 120000);
+  const onInput = bytes => {
+    input += bytes.toString("utf8");
+    if (Buffer.byteLength(input) > 1024) return fail("invalid_ui_socket_command");
+    while (input.includes("\n")) {
+      const index = input.indexOf("\n"), line = input.slice(0, index); input = input.slice(index + 1);
+      try {
+        const command = uiSocketCommand(line);
+        if (!ready || stopRequested) reject("ui_socket_not_accepting_commands");
+        child.stdin.write(JSON.stringify({ command }) + "\n");
+        if (command === "STOP") { stopRequested = true; child.stdin.end(); clearTimeout(deadline); deadline = setTimeout(() => fail("ui_socket_stop_timeout"), 15000); }
+      } catch (error) { fail(error.message); }
+    }
+  };
+  const onEof = () => { if (!stopRequested) fail("ui_socket_input_eof_without_stop"); };
+  const onSignal = () => fail("ui_socket_observation_interrupted");
+  const onOutputError = () => fail("ui_socket_output_pipe_failed");
+  process.stdin.on("data", onInput); process.stdin.once("end", onEof);
+  process.once("SIGINT", onSignal); process.once("SIGTERM", onSignal);
+  process.stdout.on("error", onOutputError);
+  child.stdin.on("error", () => fail("ui_socket_input_pipe_failed"));
+  child.stderr.on("data", bytes => writeUiSocketLog(log, bytes, fail));
+  child.stdout.on("data", bytes => {
+    if (!writeUiSocketLog(log, bytes, fail)) return;
+    output += bytes.toString("utf8");
+    if (Buffer.byteLength(output) > 65536) return fail("ui_socket_output_not_framed");
+    while (output.includes("\n")) {
+      const index = output.indexOf("\n"), line = output.slice(0, index); output = output.slice(index + 1);
+      if (!line.startsWith("RET_UI_SOCKET:")) continue;
+      try {
+        const event = JSON.parse(line.slice("RET_UI_SOCKET:".length));
+        if (event.phase === "READY" && Object.keys(event).sort().join(",") === "bootstrap,phase,pid" &&
+            event.bootstrap === path.join(work, "ui-socket-bootstrap.json") && Number.isInteger(event.pid) && event.pid > 1 && !ready) {
+          backendPid = event.pid; ready = true; clearTimeout(deadline);
+          deadline = setTimeout(() => fail("ui_socket_observation_deadline"), 300000);
+        } else if (event.phase === "SQL_APPLIED" && Object.keys(event).sort().join(",") === "phase,profile" && ["BASE", "BOTS_AI"].includes(event.profile) && ready) {
+          // No browser assertion is inferred from committed wrappers.
+        } else if (event.phase === "STOPPED" && Object.keys(event).join(",") === "phase" && stopRequested) stopped = true;
+        else reject("invalid_ui_socket_marker");
+        process.stdout.write(`RET_UI_SOCKET:${JSON.stringify(event)}\n`);
+      } catch { fail("invalid_ui_socket_marker"); }
+    }
+  });
+  let killTimer;
+  const pollFailure = setInterval(() => {
+    if (failure && !killTimer) killTimer = setTimeout(() => {
+      try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") failure = "ui_socket_kill_failed"; }
+    }, 5000);
+  }, 100);
+  let code, signal;
+  try {
+    [code, signal] = await new Promise((resolve, fail) => { child.once("error", fail); child.once("close", (...result) => resolve(result)); });
+  } finally {
+    clearTimeout(deadline); clearTimeout(killTimer); clearInterval(pollFailure);
+    process.stdin.off("data", onInput); process.stdin.off("end", onEof); process.stdin.pause();
+    process.off("SIGINT", onSignal); process.off("SIGTERM", onSignal);
+    process.stdout.off("error", onOutputError);
+  }
+  for (const pid of new Set([child.pid, backendPid].filter(Boolean))) {
+    try { process.kill(pid, 0); reject("ui_socket_owned_process_still_alive"); }
+    catch (error) { if (error.code !== "ESRCH") throw error; }
+  }
+  if (failure || code !== 0 || signal || !ready || !stopRequested || !stopped) reject(failure || "ui_socket_observation_not_stopped");
+  return { status: "OBSERVATION_STOPPED", backend_pid: backendPid, cleanup_pid_absent: true, browser_acceptance: "NOT_RECORDED" };
+}
 
 export function runtimeCases(mode) {
   switch (mode) {
     case "--run": return [{ profile: "existing-tests", count: 5 }];
+    case "--profile-ui-socket": return [{ profile: "profile-ui-socket", count: 0 }];
     case "--avaturn-runtime": return [{ profile: "avaturn-runtime", count: 5 }];
     case "--profiles": return ["base", "base-avaturn", "bots", "bots-avaturn", "bots-ai", "bots-ai-avaturn"].map(profile => ({ profile, count: 1 }));
     case "--chat-canary": return [{ profile: "chat-canary", count: 2 }];
@@ -64,11 +193,12 @@ async function main() {
   let work, log, env, data, pgBin, port, epoch, attempted = false, identity;
   let phase = "arguments", outcome = "FAIL", tests = 0;
   const metrics = {}, started = performance.now();
-  let catalog, catalogSourceBefore, catalogSourceAfter;
+  let catalog, catalogSourceBefore, catalogSourceAfter, socketMode = false, socketSourceBefore, socketSourceAfter, hexArchive;
   const catalogSourceSnapshot = () => Object.fromEntries([".", "hubs", "hubs-cloud"].map(name => {
     const repository = path.join(root, name);
     const read = args => {
-      const result = spawnSync("/usr/bin/git", ["-C", repository, ...args], { encoding: "utf8" });
+      const result = spawnSync("/usr/bin/git", ["-C", repository, ...args], { encoding: "utf8",
+        env: { PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_OPTIONAL_LOCKS: "0" } });
       if (result.error || result.signal || result.status !== 0) reject("catalog_source_read_failed");
       return result.stdout.trim();
     };
@@ -79,6 +209,9 @@ async function main() {
     if (work) fs.writeFileSync(path.join(work, "summary.json"), JSON.stringify({
       scope: "native-synthetic-reticulum-not-kubernetes-or-production", phase,
       outcome, tests, metrics, elapsed_ms: Math.round(performance.now() - started),
+      ...(socketMode ? { mode: "profile-ui-socket", browser_acceptance: "NOT_RECORDED", full_acceptance: false,
+        socket_source_before: socketSourceBefore, socket_source_after: socketSourceAfter,
+        hex_archive: hexArchive && { manifest: hexArchive.manifest, files: hexArchive.files, bytes: hexArchive.bytes, version: hexArchive.version } } : {}),
       ...(catalogSourceBefore ? { catalog_source_before: catalogSourceBefore, catalog_source_after: catalogSourceAfter } : {})
     }, null, 2) + "\n", { mode: 0o600 });
   };
@@ -90,18 +223,27 @@ async function main() {
   const run = (command, argv, options = {}) => {
     const result = spawnSync(command, argv, { env, cwd: options.cwd || work,
       encoding: "utf8", timeout: options.timeout || 120000, maxBuffer: 8 * 1024 * 1024,
-      stdio: ["ignore", options.capture ? "pipe" : log, log] });
+      stdio: ["ignore", options.capture ? "pipe" : options.discardLog ? "ignore" : log,
+        options.discardLog ? "ignore" : log] });
     if (result.error || result.signal || result.status !== 0) reject(`command_failed_${phase}`);
     return result.stdout || "";
   };
   try {
     const integrated = ["--sql-http-canary", "--sql-http-reentry", "--sql-http-stop-drain", "--sql-http-periodic"].includes(args[0]);
     const catalogMode = ["--catalog-dataset", "--catalog-graph-dataset"].includes(args[0]);
-    if (args.length !== (integrated || catalogMode ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
+    socketMode = args[0] === "--profile-ui-socket";
+    if (args.length !== (socketMode ? 9 : integrated || catalogMode ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
         (integrated && args[5] !== "--cache-bot-orchestrator") ||
         (catalogMode && args[5] !== "--catalog-receipts") ||
+        (socketMode && (args[5] !== "--browser-origin" || args[7] !== "--hex-cache")) ||
         process.platform !== "darwin") reject("explicit_native_target_required");
     cases = runtimeCases(args[0]);
+    if (socketMode) {
+      browserOrigin(args[6]); hexArchive = inspectHexArchive(args[8]);
+      socketSourceBefore = catalogSourceSnapshot();
+      if (socketSourceBefore.hubs !== "dd176f6ed318ffc724efcd930803ca972058e782" ||
+          socketSourceBefore["hubs-cloud"] !== "2c0b53d591d5547438812d27507bc1b3e1ae6f41") reject("ui_socket_source_not_frozen");
+    }
     pgBin = fs.realpathSync(args[2]); const cache = fs.realpathSync(args[4]);
     for (const name of ["mix.exs", "mix.lock", "config/config.exs", "config/test.exs", "config/runtime.exs"]) {
       if (sha(fs.readFileSync(path.join(source, name))) !== sha(fs.readFileSync(path.join(cache, name)))) reject("cache_source_mismatch");
@@ -150,11 +292,14 @@ async function main() {
     // load on OTP27. Keep the SAME Hex version, using Mix's signed-CSV/SHA512
     // official installer ONLY in this private Mix home, before starting PG.
     // No user config, provider credentials or global software is changed.
-    step("materialize-pinned-hex-private-home", () => run(path.join(elixir, "mix"), ["local.hex", "2.5.1", "--force"]));
-    port = await new Promise((resolve, fail) => {
-      const server = net.createServer(); server.once("error", fail);
-      server.listen({ host: "127.0.0.1", port: 0 }, () => { const chosen = server.address().port; server.close(error => error ? fail(error) : resolve(chosen)); });
+    if (socketMode) step("copy-verified-existing-hex-private-home", () => {
+      const archive = path.join(work, "mix/archives/hex-2.5.1");
+      fs.mkdirSync(path.dirname(archive), { mode: 0o700 });
+      fs.cpSync(hexArchive.directory, archive, { recursive: true, dereference: false });
+      if (inspectHexArchive(archive).manifest !== hexArchive.manifest || inspectHexArchive(hexArchive.directory).manifest !== hexArchive.manifest) reject("hex_archive_changed_during_copy");
     });
+    else step("materialize-pinned-hex-private-home", () => run(path.join(elixir, "mix"), ["local.hex", "2.5.1", "--force"]));
+    port = await privatePort(socketMode ? [Number(new URL(args[6]).port)] : []);
     data = path.join(work, "database"); const credential = crypto.randomBytes(32).toString("hex");
     const pwfile = path.join(work, "password"); fs.writeFileSync(pwfile, credential + "\n", { mode: 0o600 });
     epoch = Math.floor(Date.now() / 1000);
@@ -169,6 +314,12 @@ async function main() {
       if (answer !== `${data}|profile_test`) reject("database_identity_mismatch");
     });
     env.RET_LOCAL_DATA = data; env.RET_LOCAL_PORT = String(port); env.RET_LOCAL_CREDENTIAL = credential;
+    if (socketMode) {
+      env.RET_LOCAL_UI_HTTP_PORT = String(await privatePort([port, Number(new URL(args[6]).port)]));
+      env.RET_LOCAL_BROWSER_ORIGIN = args[6]; env.RET_LOCAL_UI_BOOTSTRAP = path.join(work, "ui-socket-bootstrap.json");
+      env.RET_LOCAL_SOURCE_ROOT = socketSourceBefore["."]; env.RET_LOCAL_SOURCE_HUBS = socketSourceBefore.hubs;
+      env.RET_LOCAL_SOURCE_CLOUD = socketSourceBefore["hubs-cloud"];
+    }
     if (catalog) env.RET_LOCAL_CATALOG_INPUT = catalog.input;
     const isolated = argv => run("/usr/bin/sandbox-exec", ["-p", networkProfile(port), ...argv], { cwd: application, timeout: 240000 });
     step("compile-current-reticulum-offline", () => isolated([path.join(elixir, "mix"), "compile", "--warnings-as-errors", "--no-deps-check"]));
@@ -176,7 +327,13 @@ async function main() {
       // One fresh OS/BEAM process per installation. Application env swaps in
       // a surviving supervisor would not prove that omitted children stay OFF.
       env.RET_LOCAL_PROFILE = profile;
-      if (["sql-http-canary", "sql-http-reentry", "sql-http-stop-drain", "sql-http-periodic"].includes(profile)) {
+      if (profile === "profile-ui-socket") {
+        phase = "backend-profile-ui-socket"; writeReceipt(); process.stdout.write(`RET_LOCAL_STAGE:${phase}\n`);
+        metrics.ui_socket = await observeUiSocket({ root, work, log, env, application, pgPort: port, mix: path.join(elixir, "mix") });
+        socketSourceAfter = catalogSourceSnapshot();
+        if (JSON.stringify(socketSourceAfter) !== JSON.stringify(socketSourceBefore)) reject("ui_socket_source_changed");
+        continue;
+      } else if (["sql-http-canary", "sql-http-reentry", "sql-http-stop-drain", "sql-http-periodic"].includes(profile)) {
         const { runSqlHttpCanary } = await import("./sql-http-local.mjs");
         phase = `backend-${profile}`; writeReceipt();
         process.stdout.write(`RET_LOCAL_STAGE:${phase}\n`);
@@ -217,25 +374,40 @@ async function main() {
       };
       step("capture-owned-catalog-sql-and-source-identity", captureOwnedCatalogDump);
     }
-    outcome = "PASS";
+    outcome = socketMode ? "OBSERVATION_STOPPED" : "PASS";
   } catch (error) {
     process.stderr.write(`RET_LOCAL_FAIL:${phase}:${/^[a-z0-9_-]+$/.test(error.message) ? error.message : "inspect_private_log"}\n`);
     process.exitCode = 1;
   } finally {
     if (attempted) {
       try {
-        step("stop-owned-database", () => {
+        const stopOwnedDatabase = () => {
           if (identity !== undefined && assertPostmaster(work, data, port, epoch) !== identity) reject("changed_postmaster_identity");
           if (identity === undefined && !fs.existsSync(path.join(data, "postmaster.pid"))) return;
           identity ??= assertPostmaster(work, data, port, epoch);
-          run(path.join(pgBin, "pg_ctl"), ["-D", data, "-w", "stop", "-m", "fast"]);
+          run(path.join(pgBin, "pg_ctl"), ["-D", data, "-w", "stop", "-m", "fast"], { discardLog: socketMode });
           let alive = true; try { process.kill(identity, 0); } catch (error) { if (error.code === "ESRCH") alive = false; else throw error; }
           if (alive || fs.existsSync(path.join(data, "postmaster.pid"))) reject("owned_database_not_stopped");
-        });
+        };
+        if (socketMode) {
+          // Diagnostic storage must not prevent the already-owned PG cleanup.
+          phase = "stop-owned-database";
+          const before = performance.now();
+          try { stopOwnedDatabase(); }
+          finally { metrics[phase] = Math.round(performance.now() - before); }
+        } else step("stop-owned-database", stopOwnedDatabase);
       } catch { outcome = "FAIL"; process.exitCode = 1; process.stderr.write("RET_LOCAL_FAIL:owned-database-stop\n"); }
     }
-    phase = "terminal"; writeReceipt(); if (log !== undefined) fs.closeSync(log);
-    if (work) process.stdout.write(`RET_LOCAL_RESULT:${outcome}:tests=${tests}:scratch=${work}\n`);
+    phase = "terminal";
+    if (socketMode) {
+      try { writeReceipt(); }
+      catch { outcome = "FAIL"; process.exitCode = 1; process.stderr.write("RET_LOCAL_FAIL:terminal-receipt-write\n"); }
+      if (log !== undefined) {
+        try { fs.closeSync(log); }
+        catch { outcome = "FAIL"; process.exitCode = 1; process.stderr.write("RET_LOCAL_FAIL:terminal-log-close\n"); }
+      }
+    } else { writeReceipt(); if (log !== undefined) fs.closeSync(log); }
+    if (work && !process.stdout.destroyed) process.stdout.write(`RET_LOCAL_RESULT:${outcome}:tests=${tests}:scratch=${work}\n`);
   }
 }
 

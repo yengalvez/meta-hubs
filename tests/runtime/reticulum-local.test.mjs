@@ -4,7 +4,83 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
-import { networkProfile, assertPostmaster, runtimeCases } from "./reticulum-local.mjs";
+import { EventEmitter } from "node:events";
+import { networkProfile, assertPostmaster, runtimeCases, browserOrigin, uiSocketCommand, inspectHexArchive, writeUiSocketLog } from "./reticulum-local.mjs";
+
+for (const stream of ["stdout", "stderr"]) {
+  test(`UI socket ${stream} log failure remains a closed callback result`, () => {
+    const original = fs.writeSync;
+    const pipe = new EventEmitter(), failures = [];
+    let forwarded = false;
+    fs.writeSync = () => { const error = new Error("synthetic log failure"); error.code = stream === "stdout" ? "ENOSPC" : "EIO"; throw error; };
+    try {
+      pipe.on("data", bytes => {
+        if (!writeUiSocketLog(123, bytes, code => failures.push(code))) return;
+        forwarded = true;
+      });
+      assert.doesNotThrow(() => pipe.emit("data", Buffer.from("synthetic fixture output\n")));
+      assert.deepEqual(failures, ["ui_socket_private_log_write_failed"]);
+      assert.equal(forwarded, false);
+      const runner = fs.readFileSync(new URL("./reticulum-local.mjs", import.meta.url), "utf8");
+      assert.match(runner, /child.stderr.on\("data", bytes => writeUiSocketLog\(log, bytes, fail\)\)/);
+      assert.match(runner, /if \(!writeUiSocketLog\(log, bytes, fail\)\) return/);
+      assert.match(runner, /if \(socketMode\) \{\s*\/\/ Diagnostic storage[\s\S]*?try \{ stopOwnedDatabase\(\); \}/);
+    } finally { fs.writeSync = original; }
+  });
+}
+
+test("UI socket is one explicit observation, never a replay of native tests", () => {
+  assert.deepEqual(runtimeCases("--profile-ui-socket"), [{ profile: "profile-ui-socket", count: 0 }]);
+  const runner = fs.readFileSync(new URL("./reticulum-local.mjs", import.meta.url), "utf8");
+  const bootstrap = fs.readFileSync(new URL("./reticulum-local.exs", import.meta.url), "utf8");
+  const fixture = fs.readFileSync(new URL("./reticulum-ui-socket.exs", import.meta.url), "utf8");
+  assert.ok(runner.indexOf("hexArchive = inspectHexArchive(args[8])") < runner.indexOf('work = fs.mkdtempSync'));
+  assert.match(runner, /if \(socketMode\) step\("copy-verified-existing-hex-private-home"/);
+  assert.match(runner, /else step\("materialize-pinned-hex-private-home"/);
+  assert.match(runner, /outcome = socketMode \? "OBSERVATION_STOPPED" : "PASS"/);
+  assert.match(runner, /ui_socket_input_eof_without_stop/);
+  assert.match(runner, /ui_socket_observation_deadline/);
+  assert.match(runner, /ui_socket_owned_process_still_alive/);
+  assert.match(bootstrap, /Keyword.put\(:allowed_origins, origin\)/);
+  assert.match(bootstrap, /if ui_socket do\n  Ecto.Adapters.SQL.Sandbox.mode\(Ret.Repo, :auto\)/);
+  assert.match(fixture, /Hub.changeset\(nil,/);
+  assert.match(fixture, /AppConfig.set_config_value\("features\|require_account_for_join", true\)/);
+  assert.match(fixture, /%AppConfig\{value: %\{"value" => \^enabled\}\}/);
+  assert.match(fixture, /Application.stop\(:ret\)/);
+  assert.doesNotMatch(fixture, /Endpoint\.broadcast\s*\(|ExUnit\.run\s*\(|bot_access_key|entered|HTTPoison/);
+});
+
+test("socket origin and stdin commands have a closed local schema", () => {
+  assert.equal(browserOrigin("http://127.0.0.1:18443"), "http://127.0.0.1:18443");
+  for (const value of [undefined, "http://localhost:18443", "http://127.0.0.1:80", "http://127.0.0.1:65536", "http://127.0.0.1:18443/", "https://127.0.0.1:18443", "http://127.0.0.1:18443?token=x", "http://user@127.0.0.1:18443", "*"]) {
+    assert.throws(() => browserOrigin(value), /exact_browser_origin_required/);
+  }
+  for (const command of ["BASE", "BOTS_AI", "STOP"]) assert.equal(uiSocketCommand(JSON.stringify({ command })), command);
+  for (const line of ['{"command":"BASE","other":1}', '{"command":"BASE","command":"STOP"}', '{"command":"ON"}', '{"command":"BOTS\\u005fAI"}', "[]", "", " ".repeat(129)]) {
+    assert.throws(() => uiSocketCommand(line), /invalid_ui_socket_command/);
+  }
+  assert.throws(() => inspectHexArchive(path.join(os.tmpdir(), `missing-hex-${process.pid}`)), /ENOENT/);
+});
+
+test("connected browser binds a private bootstrap and never exposes SQL buttons", () => {
+  const source = fs.readFileSync(new URL("./profile-ui-browser.mjs", import.meta.url), "utf8");
+  const entry = fs.readFileSync(new URL("./profile-ui-browser-entry.js", import.meta.url), "utf8");
+  assert.match(source, /exact_linked_browser_port_required/);
+  assert.match(source, /bootstrap_hash_mismatch/);
+  assert.match(source, /connected_source_not_frozen/);
+  assert.match(source, /connect-src \$\{connection.ws_url\}\/websocket/);
+  assert.match(source, /__RETICULUM_UI_BOOTSTRAP__:\s*JSON.stringify\(connection\)/);
+  assert.match(entry, /hub.setChannel\(transport\)/);
+  assert.match(entry, /socket.connect\(\)/);
+  assert.match(entry, /transport\s*\.join\(10000\)/);
+  assert.match(entry, /deniedChannel\s*\.join\(10000\)/);
+  assert.match(entry, /missingChannel\s*\.join\(10000\)/);
+  assert.match(entry, /missingToken: status/);
+  assert.match(entry, /response.reason === "join_denied"/);
+  assert.match(entry, /onClick: \(\) => socket.disconnect\(\)/);
+  assert.match(entry, /bootstrap\s*\?\s*React.createElement\(\s*"div"/);
+  assert.doesNotMatch(entry, /configs\.set|hub.configureProductModules|fetch\(/);
+});
 
 test("avaturn runtime selects only the five new native capability cases", () => {
   assert.deepEqual(runtimeCases("--avaturn-runtime"), [{ profile: "avaturn-runtime", count: 5 }]);
