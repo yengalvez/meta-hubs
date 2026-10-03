@@ -1,5 +1,32 @@
 # Session Changelog
 
+## 2026-10-03 · Fail closed before serialization Lease release
+
+Isolated lease-release checkout on1deb0ce with unchanged Hubs2a3d7ab and
+Cloudcb15414. Primary focused RED5d73d1:0PASS/12FAIL in Bash5.3; a valid,
+fresh owned Lease proved GET/replace occurred after ambiguous heartbeat
+identity/join/failure, with local authority and failure evidence discarded.
+Release now stops before all remote calls on those boundaries and retains
+its process-local capabilities. Only join0 plus an empty regular failure
+marker grants an explicit clean-stop capability; empty PID/start never does.
+Remote-read/CAS failure may reenter using that capability, while rechecking
+the marker and the exact existing UID/RV/transitions/holder/freshness gates.
+Heartbeat start and successful release invalidate the clean-stop capability.
+One focal test is registered in the existing AUD-065 aggregate and security
+inventory; stubs perform no real PID lookup, signal, join or cluster call.
+Primary focused GREEN:a5a420/757ea4 exit0,27/27 each in Bash5.3/3.2,
+1.216/1.105s. Independent focal source review found no material issues;
+actual heartbeat startup/signals/API remain outside these closed stubs.
+ShellCheck2870a7, Node syntax299b1d, supported full Bash5 syntaxeb2b24,
+diff118fac and Gitleaks580fec10.95MB/0leaks passed. Only the extracted
+closure and two shell entrypoints are Bash3-compatible: full-lib syntax
+6c1d04 failed2 at1941; unchanged HEAD baseline2f15e0 failed2 at1940.
+The library requires Bash>=4.1; no unrelated compatibility fix is inferred.
+Registration301752 is one normal/CI aggregate call; an earlier lookup
+79f3ae failed ENOENT for an incorrect workflow path, not a product failure.
+No full/recovery-suite, DB, deployment or live acceptance is inferred;
+no30/10s/2s window, recovery/publication/HMAC or cleanup-pattern change.
+
 ## 2026-10-03 · Add two explicit native STOP subfrontiers
 
 Separate S checkout from b677, with identical Hubs2a3d7ab/Cloudcb15414.

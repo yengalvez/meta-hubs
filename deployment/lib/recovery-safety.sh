@@ -80,6 +80,7 @@ RECOVERY_SERIALIZATION_HEARTBEAT_PID=""
 RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY=""
 RECOVERY_SERIALIZATION_HEARTBEAT_STOP=""
 RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE=""
+RECOVERY_SERIALIZATION_HEARTBEAT_STOPPED_CLEANLY=0
 RECOVERY_SERIALIZATION_PARENT_PID=""
 RECOVERY_SERIALIZATION_PARENT_START_IDENTITY=""
 RECOVERY_SERIALIZATION_ADOPTED=0
@@ -7418,8 +7419,9 @@ EOF
     RECOVERY_SERIALIZATION_LEASE_REQUIRED RECOVERY_SERIALIZATION_PARENT_PID \
     RECOVERY_SERIALIZATION_PARENT_START_IDENTITY
   if ! recovery_start_operation_serialization_heartbeat; then
-    # Ownership was acquired but no heartbeat capability exists. Clear the
-    # holder immediately by CAS; never return with an invisible live owner.
+    # Release only after a proven clean heartbeat stop. If startup failed
+    # before that proof, retain ownership for protected reconciliation/expiry
+    # rather than clearing an ambiguous owner by CAS.
     recovery_release_operation_serialization >/dev/null 2>&1 || :
     return 1
   fi
@@ -7464,6 +7466,7 @@ recovery_renew_operation_serialization() {
 recovery_start_operation_serialization_heartbeat() {
   local interval="${RECOVERY_LEASE_HEARTBEAT_SECONDS:-20}" sleeper_pid=""
   local sleeper_start_identity="" heartbeat_start_identity=""
+  RECOVERY_SERIALIZATION_HEARTBEAT_STOPPED_CLEANLY=0
   [[ "$interval" =~ ^([1-9]|[12][0-9]|30)$ ]] || return 2
   RECOVERY_SERIALIZATION_HEARTBEAT_STOP="$(mktemp \
     "${TMPDIR:-/tmp}/yenhubs-lease-stop.XXXXXX")" || return 1
@@ -7599,25 +7602,43 @@ recovery_require_operation_serialization_stream() {
 }
 
 recovery_release_operation_serialization() {
-  local lease_json released transitions release_status=0
+  local lease_json released transitions
   [[ "$RECOVERY_SERIALIZATION_LEASE_REQUIRED" == 1 ]] || return 0
   [[ "$RECOVERY_SERIALIZATION_ADOPTED" == 0 ]] || return 2
+  [[ -f "$RECOVERY_SERIALIZATION_HEARTBEAT_STOP" &&
+     ! -L "$RECOVERY_SERIALIZATION_HEARTBEAT_STOP" &&
+     -f "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE" &&
+     ! -L "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE" ]] || return 1
   if [[ "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" =~ ^[1-9][0-9]*$ ]]; then
-    printf 'stop\n' >"$RECOVERY_SERIALIZATION_HEARTBEAT_STOP"
+    [[ -n "$RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY" ]] || return 1
+    printf 'stop\n' >"$RECOVERY_SERIALIZATION_HEARTBEAT_STOP" || return 1
     if recovery_process_identity_is_live \
       "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" \
       "$RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY"; then
       kill -TERM "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" 2>/dev/null || :
-      if ! wait "$RECOVERY_SERIALIZATION_HEARTBEAT_PID"; then release_status=1; fi
+      wait "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" || return 1
     elif kill -0 "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" 2>/dev/null; then
       # The PID belongs to another process. Never signal or wait on it.
-      release_status=1
-    elif ! wait "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" 2>/dev/null; then
-      release_status=1
+      return 1
+    else
+      wait "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" 2>/dev/null || return 1
     fi
+    [[ -f "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE" &&
+       ! -L "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE" &&
+       ! -s "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE" ]] || return 1
+    # Only a successful join with no failure grants retry authority. Empty
+    # PID/start fields alone can never prove that the heartbeat stopped cleanly.
+    RECOVERY_SERIALIZATION_HEARTBEAT_STOPPED_CLEANLY=1
+    RECOVERY_SERIALIZATION_HEARTBEAT_PID=""
+    RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY=""
+  elif [[ -n "$RECOVERY_SERIALIZATION_HEARTBEAT_PID" ||
+          -n "$RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY" ]]; then
+    return 1
   fi
-  RECOVERY_SERIALIZATION_HEARTBEAT_PID=""
-  RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY=""
+  [[ "$RECOVERY_SERIALIZATION_HEARTBEAT_STOPPED_CLEANLY" == 1 &&
+     -f "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE" &&
+     ! -L "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE" &&
+     ! -s "$RECOVERY_SERIALIZATION_HEARTBEAT_FAILURE" ]] || return 1
   lease_json="$(recovery_kubectl get lease "$RECOVERY_SERIALIZATION_LEASE_NAME" \
     -n "$NAMESPACE" -o json)" || return 1
   recovery_owned_serialization_lease_json_is_exact "$lease_json" || return 1
@@ -7640,6 +7661,7 @@ recovery_release_operation_serialization() {
   RECOVERY_SERIALIZATION_LEASE_REQUIRED=0
   RECOVERY_SERIALIZATION_LEASE_HOLDER=""
   RECOVERY_SERIALIZATION_LEASE_UID=""
+  RECOVERY_SERIALIZATION_HEARTBEAT_STOPPED_CLEANLY=0
   RECOVERY_SERIALIZATION_ADOPTED=0
   RECOVERY_SERIALIZATION_ADOPTED_PARENT_PID=""
   RECOVERY_SERIALIZATION_ADOPTED_PARENT_START_IDENTITY=""
@@ -7647,7 +7669,7 @@ recovery_release_operation_serialization() {
     RECOVERY_SERIALIZATION_LEASE_HOLDER RECOVERY_SERIALIZATION_LEASE_UID \
     RECOVERY_SERIALIZATION_HEARTBEAT_PID \
     RECOVERY_SERIALIZATION_HEARTBEAT_START_IDENTITY
-  [[ "$release_status" == 0 ]]
+  return 0
 }
 
 recovery_materialized_legacy_runner_binding_is_valid() {
