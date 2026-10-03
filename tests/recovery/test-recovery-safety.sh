@@ -1801,9 +1801,9 @@ if [[ "$request_timeout" == "--request-timeout=20s" &&
   set -- get "$resource" "$5" -n hcce -o json
 fi
 joined="$*"
-# Read-only default Namespace responses need none of the large stateful fake
+# Read-only default Namespace and raw policy responses need no stateful fake
 # dispatch below. Keep the original parser/log/provenance above, read fresh
-# JSON on every call, and retain the entire old route for all fault modes,
+# input on every call, and retain the entire old route for all fault modes,
 # Watch/LIST requests and nonexact argument shapes. This is test plumbing only.
 if [[ -z "${STUB_MODE:-}" ]]; then
   case "$joined" in
@@ -1814,6 +1814,12 @@ if [[ -z "${STUB_MODE:-}" ]]; then
         {"kubernetes.io/metadata.name": .metadata.name})' \
         "$RUNNER_EVIDENCE_LIVE_DIR/namespace-$fast_namespace.json"
       exit 0
+      ;;
+    "get --raw /apis/admissionregistration.k8s.io/v1/validatingadmissionpolicies/recovery-operation-pod-fence.yenhubs.org")
+      if [[ "$#" == 3 && "${1:-}" == get && "${2:-}" == --raw ]]; then
+        cat "$RECOVERY_OPERATION_FENCE_POLICY_FIXTURE"
+        exit 0
+      fi
       ;;
   esac
 fi
