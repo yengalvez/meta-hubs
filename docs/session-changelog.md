@@ -3173,3 +3173,13 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
 - Se añaden ambas regresiones puras al gate security y workflow; el footprint
   reticulum incluye binder/lector/test importados por el harness. Sin
   aceptación heredada, normal+full consecutivos, build o cambio productivo.
+
+## 2026-10-04 — Formato de la regresión Reticulum BASE
+
+- `mix format --check-formatted` señaló únicamente `product_modules_test.exs`.
+  Se formateó la llamada anónima de la regresión BASE, sin cambiar conducta.
+- Equivalencia del AST sin metadata de posición y el check de formato completo
+  pasaron con Elixir1.18.4/OTP27, sin PostgreSQL ni red externa. El compilador
+  público existente se reutiliza sólo en el entorno privado de pruebas.
+- Nuevo pin Cloud requiere conciliar recibos por bytes y un full exacto nuevo;
+  no hereda aceptación integral ni altera producción o guardas de copia.
