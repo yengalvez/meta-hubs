@@ -39,6 +39,7 @@ node --test --test-concurrency=1 \
   "$ROOT_DIR/tests/scripts/checkpoint-abort-journal-seal.test.mjs" \
   "$ROOT_DIR/tests/scripts/checkpoint-authority-cli-v2.test.mjs" \
   "$ROOT_DIR/tests/scripts/checkpoint-authority-monitors.test.mjs" \
+  "$ROOT_DIR/tests/scripts/checkpoint-monitor-authority-shell.test.mjs" \
   "$ROOT_DIR/tests/scripts/checkpoint-backup-formats.test.mjs" \
   "$ROOT_DIR/tests/scripts/checkpoint-authority-producer.test.mjs" \
   "$ROOT_DIR/tests/scripts/checkpoint-authority-external-readers.test.mjs" \

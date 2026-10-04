@@ -1,5 +1,20 @@
 # Session Changelog
 
+## 2026-10-04 · Align signed monitor authority at the Bash/Node boundary
+
+The real Bash constructors included a selected backup authority that the common
+shell comparator rejected; unsigned controls passed while both signed monitors
+failed. The comparator now requires that exact pair only in the signed backup
+mode, rejecting missing/unselected/partial/mismatched or extra fields. A second
+cross-language regression covers the durable capability digest including the
+selection, as required by the existing Node watcher. Private-read, hashes, READY,
+PID/start identity, fence/Lease and timing guards are not weakened. This is a
+local signed-startup compatibility correction, not evidence explaining the
+historical PGSQL expiry, a full gate or a new production acceptance.
+Combined focused gate: 37/37, no skips. Directed review closed the test's Bash
+selection mismatch; its two actual shell cases also pass with an explicit
+supported interpreter despite BASH pointing to macOS's unsupported Bash3.2.
+
 ## 2026-10-04 · Bind long verification receipts to their consumed script test
 
 Adding an unrelated UI unit reproduced recovery/H5 invalidation in both Bash

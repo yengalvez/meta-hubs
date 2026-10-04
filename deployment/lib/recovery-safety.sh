@@ -1123,13 +1123,23 @@ recovery_monitor_authority_common_is_exact() {
     --arg lease_name "${RECOVERY_SERIALIZATION_LEASE_NAME:-}" \
     --arg lease_uid "${RECOVERY_SERIALIZATION_LEASE_UID:-}" \
     --arg lease_holder "${RECOVERY_SERIALIZATION_LEASE_HOLDER:-}" \
+    --arg backup_keyring "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" \
+    --arg backup_key_id "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" \
     --arg authority "$authority_path" \
     --arg failure "$failure_marker" --arg ready "$ready_marker" \
     --arg progress "$progress_marker" '
-    (keys | sort) == ["context","hashes","kind","lease","namespace",
+    (keys | sort) == (["context","hashes","kind","lease","namespace",
       "namespace_uid","operation_id","operation_lock","operation_owner",
       "paths","pid","runtime_generation","schema_version",
-      "start_identity"] and
+      "start_identity"] +
+      (if $backup_keyring == "" and $backup_key_id == "" then []
+       else ["backup_authority"] end) | sort) and
+    (if $backup_keyring == "" and $backup_key_id == "" then true else
+      $operation_owner == "checkpoint-backup" and
+      ($backup_keyring | startswith("/")) and
+      ($backup_key_id | test("^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$")) and
+      .backup_authority == {keyring_path:$backup_keyring,key_id:$backup_key_id}
+    end) and
     .schema_version == 1 and .kind == $kind and .pid == $pid and
     .start_identity == $start_identity and .context == $context and
     .namespace == $namespace and .namespace_uid == $namespace_uid and
@@ -12032,7 +12042,9 @@ recovery_durable_runner_monitor_control_capability_sha256() {
   ' "$control_baseline_path" >/dev/null || return 1
   capability_json="$(jq -cS \
     --arg durable_sha "$durable_baseline_sha256" \
-    --arg control_sha "$control_baseline_sha256" '
+    --arg control_sha "$control_baseline_sha256" \
+    --arg backup_keyring "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" \
+    --arg backup_key_id "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" '
     {schema_version:1,context:.context,
      parent_namespace:.recovery_operation_fence.namespaces.parent,
      runner_namespace:.recovery_operation_fence.namespaces.runner,
@@ -12041,7 +12053,9 @@ recovery_durable_runner_monitor_control_capability_sha256() {
      policy:.recovery_operation_fence.policy,
      binding:.recovery_operation_fence.binding,
      durable_fence_baseline_sha256:$durable_sha,
-     control_baseline_sha256:$control_sha}
+     control_baseline_sha256:$control_sha} +
+     (if $backup_keyring=="" and $backup_key_id=="" then {} else
+       {backup_authority:{keyring_path:$backup_keyring,key_id:$backup_key_id}} end)
   ' "$control_baseline_path")" || return 1
   printf '%s' "$capability_json" | recovery_sha256_bytes
 }

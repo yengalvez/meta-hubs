@@ -9,6 +9,14 @@ coverage. No input, toolchain, cleanup or final-full acceptance guard is waived.
 
 ## Versioned signed closure candidate (2026-10-03)
 
+Monitor envelopes remain schema1. Signed backup envelopes require the exact
+selected keyring path/UUID pair; unsigned envelopes must not accept that field.
+The Bash parent and Node durable watcher must hash the same capability including
+that selection. No key is created or read by the metadata comparator. Private
+file/hash/READY/process identity checks and cryptographic resource verification
+remain independent and mandatory. Focused shell/cross-language regressions do
+not replace watcher startup, representative Kubernetes recovery or exact full.
+
 The local candidate adds explicit authority2/consumer3/baseline4/receipt2 and
 metadata4/inventory5/freeze2 readers, rather than reinterpreting historical
 versions. Positive writers bind full spec and UID/RV/generation before the first

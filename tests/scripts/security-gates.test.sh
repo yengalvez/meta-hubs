@@ -1491,6 +1491,7 @@ for aud065_test in \
   checkpoint-abort-journal-seal.test.mjs \
   checkpoint-authority-cli-v2.test.mjs \
   checkpoint-authority-monitors.test.mjs \
+  checkpoint-monitor-authority-shell.test.mjs \
   checkpoint-backup-formats.test.mjs \
   checkpoint-authority-producer.test.mjs \
   checkpoint-authority-external-readers.test.mjs \
