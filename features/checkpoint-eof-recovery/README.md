@@ -2,6 +2,11 @@
 
 Candidate dated 2026-09-26. Baselines: Hubs prod-2026-03-11 and Hubs CE 2.1.0. This changes operator-side backup/recovery tooling, not avatar bytes, application schemas or the accepted checkpoint format. Local tests are not a live recovery acceptance.
 
+The recovery/H5 receipt footprint includes the consumed external admission-fence
+test, rather than unrelated `tests/scripts` units. New harness dependencies must
+extend that footprint and its regression; static/security retain whole-tree
+coverage. No input, toolchain, cleanup or final-full acceptance guard is waived.
+
 ## Versioned signed closure candidate (2026-10-03)
 
 The local candidate adds explicit authority2/consumer3/baseline4/receipt2 and

@@ -164,6 +164,11 @@ Reglas de resolucion:
    HEAD como sustitutos del contenido. Un error de huella anterior/posterior
    rechaza la sección. Cambiar el helper común invalida sus recibos: renovar
    los que indique el verificador, sin relabelar la evidencia anterior.
+   Recovery/H5 ligan el harness, deployment y sus dependencias declaradas,
+   incluido el test externo de admission-fence, no todos los tests de interfaz.
+   Un nuevo test usado por ese harness debe extender el mapa de inputs y su
+   regresión `verification-recovery-inputs.test.mjs`; static/security conservan
+   el árbol completo. Esta precisión no sustituye el full del candidato final.
 
    Exportar `BASE_ASSETS_PATH` y `RETICULUM_SERVER` para compilar Hubs/Admin.
    Su recibo liga presencia y hash de ambos valores, sin imprimirlos. El driver

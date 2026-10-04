@@ -115,10 +115,13 @@ INPUTS
       printf 'cloud\t.github/scripts/runtime-image-build-receipt.mjs\ncloud\t.github/scripts/runtime-image-build-receipt.test.mjs\ncloud\t.github/workflows/runtime-images-build-push.yml\n'
       ;;
     recovery | h5)
+      # Keep the external admission-fence unit bound for both entry points,
+      # including an inherited recovery focus. Other script tests run only in
+      # security; new runtime test dependencies must extend this footprint.
       cat <<'INPUTS'
 root	deployment
 root	tests/recovery
-root	tests/scripts
+root	tests/scripts/freeze-checkpoint-admission-fence.test.mjs
 root	scripts/test-aud065.sh
 root	scripts/verify-gitlinks.sh
 cloud	community-edition/apply
@@ -630,6 +633,7 @@ run_security() {
   bash "$ROOT_DIR/tests/scripts/verify-project-sections.test.sh"
   node --test "$ROOT_DIR/tests/scripts/verification-hubs-build-env.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/verification-input-batch.test.mjs"
+  node --test "$ROOT_DIR/tests/scripts/verification-recovery-inputs.test.mjs"
   "$ROOT_DIR/tests/scripts/security-gates.test.sh"
   "$ROOT_DIR/scripts/test-aud065.sh"
 }

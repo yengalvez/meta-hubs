@@ -1,5 +1,15 @@
 # Session Changelog
 
+## 2026-10-04 · Bind long verification receipts to their consumed script test
+
+Adding an unrelated UI unit reproduced recovery/H5 invalidation in both Bash
+5.3 and 3.2. The footprint now binds the external admission-fence unit, keeping
+deployment, recovery harness and Cloud inputs intact and static/security broad.
+Seven focused tests pass, including relevant byte, deletion and executable-bit
+changes; the new regression is registered in security and CI. This avoids an
+unnecessary future rerun, not the known PGSQL failure or full/SLO acceptance.
+Do not relabel previous receipts; final exact full remains required.
+
 ## 2026-10-03 · Restore the BASE transport fixture context
 
 Native finish73894 on4e43bc1 passed static, then stopped in security at the

@@ -181,6 +181,7 @@ jobs:
           node --test tests/scripts/recovery-harness-profile.test.mjs
           node --test tests/scripts/recovery-namespace-fast-path.test.mjs
           node --test tests/scripts/pgsql-guard-round-native.test.mjs
+          node --test tests/scripts/verification-recovery-inputs.test.mjs
           node --test tests/recovery/native-checkpoint-source.test.mjs
           node --test tests/recovery/native-checkpoint-restore.test.mjs
           node --test tests/runtime/reticulum-local.test.mjs
