@@ -2307,6 +2307,22 @@ child validates the parent writer capability, the parent durable capability and
 its own local DB/PVC guard; a generic live PID or replayed/swapped capability
 cannot satisfy this contract.
 
+The runner-absence Pod WATCH must be launched through
+`recovery_start_no_managed_bot_runner_watch`, not as a standalone Node CLI.
+Its capability binds the real caller BASHPID and native start identity before
+any Pod LIST. Two native peers in its isolated PGID supervise the caller and
+each other independently of Node, including blocked LIST/WATCH and Node
+SIGSTOP. Caller loss, individual peer loss/STOP or unauthorized socket EOF
+publishes the fixed failure with positional writes and fsync, then revokes
+that exact pinned group; no recycled positive-PID fallback is allowed.
+READY still requires the first complete closed round for both namespaces.
+Normal discard/handoff requires reciprocal completion ACK, authorized EOF
+and the actual Node exit; A reaps B before retiring. Verify group absence
+including zombies on each target host: the final orphan still needs the host
+reaper. This is not a guarantee against simultaneous loss of both peers,
+stopping the entire PGID or an OS/storage failure. Pod LIST/RV/event coverage,
+the final 61/65-second window and the 30/10/2-second stream budgets are unchanged.
+
 Immediately before opening each stream, every guard must publish a complete
 successful sweep with a monotonic counter strictly newer than the value just
 observed. Progress is written through an owner-only temporary file and atomic

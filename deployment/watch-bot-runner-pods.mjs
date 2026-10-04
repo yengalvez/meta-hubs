@@ -28,6 +28,7 @@ const RUNNER_NAME = /^bot-runner-[a-f0-9]{16}-[a-f0-9]{8}$/;
 const ROOM_KEY = /^[a-f0-9]{20}$/;
 const UUID_V4 = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const activeChildren = new Set();
+let ownerControlFd;
 
 function fail(code) {
   const error = new Error(code);
@@ -36,7 +37,7 @@ function fail(code) {
 }
 
 function exactArguments(argv) {
-  if (![12, 14].includes(argv.length)) fail("arguments");
+  if (![18, 20].includes(argv.length)) fail("arguments");
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
@@ -44,7 +45,7 @@ function exactArguments(argv) {
     if (
       ![
         "--context", "--namespace", "--runner-namespace", "--stop", "--failure", "--ready",
-        "--progress"
+        "--progress", "--owner-pid", "--owner-start-identity", "--owner-control-fd"
       ].includes(key) ||
       !value || values.has(key)
     ) fail("arguments");
@@ -52,11 +53,22 @@ function exactArguments(argv) {
   }
   if (values.size !== argv.length / 2) fail("arguments");
   for (const required of [
-    "--context", "--namespace", "--runner-namespace", "--stop", "--failure", "--ready"
+    "--context", "--namespace", "--runner-namespace", "--stop", "--failure", "--ready",
+    "--owner-pid", "--owner-start-identity", "--owner-control-fd"
   ]) {
     if (!values.has(required)) fail("arguments");
   }
-  if ((argv.length === 14) !== values.has("--progress")) fail("arguments");
+  if ((argv.length === 20) !== values.has("--progress")) fail("arguments");
+  const ownerPid = values.get("--owner-pid");
+  const ownerIdentity = values.get("--owner-start-identity");
+  const controlFd = values.get("--owner-control-fd");
+  if (!/^[1-9][0-9]*$/.test(ownerPid) || Number(ownerPid) > 2147483647) fail("owner_pid");
+  if (!/^(linux:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}:[0-9]+|darwin:[1-9][0-9]*:[0-9]{1,6})$/.test(ownerIdentity)) {
+    fail("owner_identity");
+  }
+  if (!/^[1-9][0-9]*$/.test(controlFd) || Number(controlFd) < 3 || Number(controlFd) > 2147483647) {
+    fail("owner_control_fd");
+  }
   if (!/^[A-Za-z0-9_.:@/-]{1,253}$/.test(values.get("--context"))) fail("context");
   if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(values.get("--namespace"))) fail("namespace");
   if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(values.get("--runner-namespace"))) {
@@ -67,6 +79,31 @@ function exactArguments(argv) {
     if (!path.isAbsolute(values.get(marker))) fail("marker_path");
   }
   return values;
+}
+
+function ownerControlExchange(message, expectedReply) {
+  // This private socket is kept blocking deliberately. Two reciprocal native
+  // guardians revoke the pinned group on owner/peer loss even if Node is
+  // blocked here, in a synchronous LIST, or in a WATCH descendant.
+  const bytes = Buffer.from(`${message}\n`, "ascii");
+  if (fs.writeSync(ownerControlFd, bytes) !== bytes.length) fail("owner_control");
+  let reply = "";
+  const byte = Buffer.alloc(1);
+  while (reply.length <= 16) {
+    if (fs.readSync(ownerControlFd, byte, 0, 1, null) !== 1) fail("owner_control");
+    reply += byte.toString("ascii");
+    if (reply.endsWith("\n")) break;
+  }
+  if (reply !== `${expectedReply}\n`) fail("owner_control");
+}
+
+function bindOwnerControl(args) {
+  if (process.ppid !== Number(args.get("--owner-pid"))) fail("owner_parent");
+  ownerControlFd = Number(args.get("--owner-control-fd"));
+  if (!fs.fstatSync(ownerControlFd).isSocket()) fail("owner_control");
+  ownerControlExchange(
+    `start:${args.get("--owner-pid")}:${args.get("--owner-start-identity")}`, "ready"
+  );
 }
 
 function object(value) {
@@ -559,6 +596,26 @@ function writeMarker(markerPath, value) {
   }
 }
 
+function writeFailureMarker(markerPath) {
+  let descriptor;
+  try {
+    descriptor = openMarker(markerPath, fs.constants.O_WRONLY);
+    const bytes = Buffer.from("runner_watch_failed\n", "ascii");
+    // Native peers publish the same frame through their pinned descriptor.
+    // Never empty their durable failure before this writer could be killed.
+    if (fs.writeSync(descriptor, bytes, 0, bytes.length, 0) !== bytes.length) fail("marker_write");
+    fs.ftruncateSync(descriptor, bytes.length);
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+  } catch (error) {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch {}
+    }
+    if (error?.code === "marker_contract") throw error;
+    fail("marker_write");
+  }
+}
+
 function writeProgressMarker(markerPath, value) {
   const nextPath = `${markerPath}.next`;
   let descriptor;
@@ -753,6 +810,7 @@ async function watchBoundaryStable({
 
 async function main() {
   const args = exactArguments(process.argv.slice(2));
+  bindOwnerControl(args);
   const kubectl = process.env.KUBECTL_BIN || "kubectl";
   const context = args.get("--context");
   const namespace = args.get("--namespace");
@@ -814,6 +872,12 @@ async function main() {
 async function runCli() {
   try {
     await main();
+    // Both native peers must authorize completion. Closing this capability
+    // confirms that ACK, but the peers remain until our real native exit;
+    // a stopped Node cannot silently orphan itself by closing the socket.
+    ownerControlExchange("complete", "complete");
+    fs.closeSync(ownerControlFd);
+    ownerControlFd = undefined;
   } catch (error) {
     if (process.env.YENHUBS_WATCH_TEST_DEBUG === "1") {
       process.stderr.write(
@@ -826,7 +890,13 @@ async function runCli() {
       try { return exactArguments(process.argv.slice(2)); } catch { return null; }
     })();
     if (args) {
-      try { writeMarker(args.get("--failure"), "runner_watch_failed"); } catch {}
+      try { writeFailureMarker(args.get("--failure")); } catch {}
+    }
+    if (ownerControlFd !== undefined) {
+      // EOF is fail-closed, never a successful retirement. The guardian also
+      // kills descendants that ignored Node's cooperative TERM above.
+      try { fs.closeSync(ownerControlFd); } catch {}
+      ownerControlFd = undefined;
     }
     process.exitCode = 1;
   }
@@ -839,8 +909,10 @@ export {
   durableInventoryFromPodList,
   durableRunnerListRawPath,
   durableRunnerWatchRawPath,
+  exactArguments,
   prepareDurableRunnerWatchHandoff,
-  readDurableFenceBaseline
+  readDurableFenceBaseline,
+  writeFailureMarker
 };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

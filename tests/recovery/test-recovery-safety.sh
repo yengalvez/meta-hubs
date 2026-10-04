@@ -19553,7 +19553,8 @@ reset_stub
 # empty. A polling monitor would pass; the resourceVersion watch must fail.
 # shellcheck disable=SC2016
 expect_success 'runner ADDED+DELETED between empty LISTs is remembered fail-closed' \
-  env EXPECTED_KUBE_CONTEXT=fixture-context STUB_MODE=runner-watch-transient bash -c '
+  env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
+  EXPECTED_RET_PVC_UID=fixture-pvc-uid STUB_MODE=runner-watch-transient bash -c '
     set -euo pipefail
     NAMESPACE=hcce
     source "$1"
@@ -19562,72 +19563,84 @@ expect_success 'runner ADDED+DELETED between empty LISTs is remembered fail-clos
     ready_path="$(mktemp "${TMPDIR:-/tmp}/runner-transient-ready.XXXXXX")"
     chmod 600 "$stop_path" "$failure_path" "$ready_path"
     trap '\''rm -f -- "$stop_path" "$failure_path" "$ready_path"'\'' EXIT
-    if node "$2" --context fixture-context --namespace hcce \
-      --runner-namespace hcce-bot-runners --stop "$stop_path" \
-      --failure "$failure_path" --ready "$ready_path"; then
+    watcher_pid="" watcher_identity=""
+    if recovery_start_no_managed_bot_runner_watch \
+      "$stop_path" "$failure_path" "$ready_path" watcher_pid watcher_identity; then
+      recovery_discard_no_managed_bot_runner_watch "$stop_path" "$watcher_pid" "$watcher_identity"
       exit 1
     fi
     [[ "$(<"$failure_path")" == runner_watch_failed ]]
     recovery_require_no_managed_bot_runner_pods
-  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" \
-  "$ROOT_DIR/deployment/watch-bot-runner-pods.mjs"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
 
 reset_stub
 # shellcheck disable=SC2016
 expect_success 'parent orchestrator-SA Pod event without labels is remembered fail-closed' \
   env EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
   STUB_MODE=runner-watch-parent-service-account bash -c '
     set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
     stop_path="$(mktemp "${TMPDIR:-/tmp}/runner-sa-stop.XXXXXX")"
     failure_path="$(mktemp "${TMPDIR:-/tmp}/runner-sa-failure.XXXXXX")"
     ready_path="$(mktemp "${TMPDIR:-/tmp}/runner-sa-ready.XXXXXX")"
     chmod 600 "$stop_path" "$failure_path" "$ready_path"
     trap '\''rm -f -- "$stop_path" "$failure_path" "$ready_path"'\'' EXIT
-    if node "$1" --context fixture-context --namespace hcce \
-      --runner-namespace hcce-bot-runners --stop "$stop_path" \
-      --failure "$failure_path" --ready "$ready_path"; then
+    watcher_pid="" watcher_identity=""
+    if recovery_start_no_managed_bot_runner_watch \
+      "$stop_path" "$failure_path" "$ready_path" watcher_pid watcher_identity; then
+      recovery_discard_no_managed_bot_runner_watch "$stop_path" "$watcher_pid" "$watcher_identity"
       exit 1
     fi
     [[ "$(<"$failure_path")" == runner_watch_failed ]]
-  ' _ "$ROOT_DIR/deployment/watch-bot-runner-pods.mjs"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
 
 reset_stub
 # shellcheck disable=SC2016
 expect_success 'unlabelled Pod event in runner namespace is remembered fail-closed' \
   env EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
   STUB_MODE=runner-watch-runner-unlabeled bash -c '
     set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
     stop_path="$(mktemp "${TMPDIR:-/tmp}/runner-unlabelled-stop.XXXXXX")"
     failure_path="$(mktemp "${TMPDIR:-/tmp}/runner-unlabelled-failure.XXXXXX")"
     ready_path="$(mktemp "${TMPDIR:-/tmp}/runner-unlabelled-ready.XXXXXX")"
     chmod 600 "$stop_path" "$failure_path" "$ready_path"
     trap '\''rm -f -- "$stop_path" "$failure_path" "$ready_path"'\'' EXIT
-    if node "$1" --context fixture-context --namespace hcce \
-      --runner-namespace hcce-bot-runners --stop "$stop_path" \
-      --failure "$failure_path" --ready "$ready_path"; then
+    watcher_pid="" watcher_identity=""
+    if recovery_start_no_managed_bot_runner_watch \
+      "$stop_path" "$failure_path" "$ready_path" watcher_pid watcher_identity; then
+      recovery_discard_no_managed_bot_runner_watch "$stop_path" "$watcher_pid" "$watcher_identity"
       exit 1
     fi
     [[ "$(<"$failure_path")" == runner_watch_failed ]]
-  ' _ "$ROOT_DIR/deployment/watch-bot-runner-pods.mjs"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
 
 reset_stub
 # shellcheck disable=SC2016
 expect_success 'legacy component-only runner event is remembered fail-closed' \
   env EXPECTED_KUBE_CONTEXT=fixture-context \
+  EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
   STUB_MODE=runner-watch-component-only bash -c '
     set -euo pipefail
+    NAMESPACE=hcce
+    source "$1"
     stop_path="$(mktemp "${TMPDIR:-/tmp}/runner-component-stop.XXXXXX")"
     failure_path="$(mktemp "${TMPDIR:-/tmp}/runner-component-failure.XXXXXX")"
     ready_path="$(mktemp "${TMPDIR:-/tmp}/runner-component-ready.XXXXXX")"
     chmod 600 "$stop_path" "$failure_path" "$ready_path"
     trap '\''rm -f -- "$stop_path" "$failure_path" "$ready_path"'\'' EXIT
-    if node "$1" --context fixture-context --namespace hcce \
-      --runner-namespace hcce-bot-runners --stop "$stop_path" \
-      --failure "$failure_path" --ready "$ready_path"; then
+    watcher_pid="" watcher_identity=""
+    if recovery_start_no_managed_bot_runner_watch \
+      "$stop_path" "$failure_path" "$ready_path" watcher_pid watcher_identity; then
+      recovery_discard_no_managed_bot_runner_watch "$stop_path" "$watcher_pid" "$watcher_identity"
       exit 1
     fi
     [[ "$(<"$failure_path")" == runner_watch_failed ]]
-  ' _ "$ROOT_DIR/deployment/watch-bot-runner-pods.mjs"
+  ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh"
 
 TAMPERED="$TMP_DIR/checkpoint-tampered-pair"; cp -R "$GOOD_CHECKPOINT" "$TAMPERED"; printf mutation >>"$TAMPERED/retdb-$STAMP.sql.gz"
 run_restore_target_mode_tests

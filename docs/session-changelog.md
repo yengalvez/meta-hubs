@@ -3196,3 +3196,21 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   Hash equivalente y cleanup con aserción fallida se probaron sobre el AST
   exacto. No acepta todavía los tests integrados ni el full de este candidato.
 - No egress, cambios productivos, nuevas dependencias ni guardas omitidas.
+
+## 2026-10-04 — Propietario nativo del WATCH de recuperación
+
+- Una reproducción aislada con los bytes anteriores probó que SIGKILL del
+  caller dejaba WATCH vivo y sin fallo; su cleanup protegido cerró el PGID.
+  No determina la causa histórica de la sesión cuyo resultado desapareció.
+- El helper liga BASHPID/identidad nativa y instala dos peers recíprocos en
+  el grupo propio. Revocan ante pérdida de caller/peer aunque Node esté
+  bloqueado o SIGSTOP; el retiro normal requiere ACK/EOF/salida real y reap B.
+- La revisión dirigida corrigió deadline de pruebas y publicación del fallo:
+  ningún escritor vacía el frame durable del otro antes de escribir a offset0.
+  LIST/RV/events/readiness y todos los límites/guardas existentes se conservan.
+- La cadena14741 pasó11 regresiones nativas en137,5s y runner-identity en19,7s
+  sobre su freeze; la corrección posterior de publicación Node requiere su
+  regresión y los recibos exactos nuevos. Su focal posterior pasó4/4 en115ms;
+  ShellCheck/Gitleaks y revisión dirigida cerraron los hallazgos. Ambas
+  regresiones quedan en security local y CI. No hay full heredado ni prueba Linux.
+- No hubo clúster, backup real, build, rollout o cambios de datos/permisos.

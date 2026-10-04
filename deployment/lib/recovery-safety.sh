@@ -10750,6 +10750,9 @@ recovery_start_no_managed_bot_runner_watch() {
   local started_pid="" started_identity="" ready_value="" marker_path
   local runner_namespace="" runner_namespaces="" attempt=0
   local watcher_stable_seconds="" watcher_test_mode=""
+  # BASHPID must be captured outside command substitution: $$ can name an
+  # ancestor, and BASHPID inside $(...) would identify the probe subshell.
+  local owner_pid="$BASHPID" owner_start_identity=""
   local -a watcher_args=() marker_paths=("$stop_path" "$failure_path" "$ready_path")
   [[ "$pid_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
      "$identity_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
@@ -10768,6 +10771,7 @@ recovery_start_no_managed_bot_runner_watch() {
   [[ -f "$watcher_path" && ! -L "$watcher_path" ]] || return 1
   command -v python3 >/dev/null 2>&1 || return 127
   [[ -n "${EXPECTED_KUBE_CONTEXT:-}" && -n "${NAMESPACE:-}" ]] || return 1
+  owner_start_identity="$(recovery_process_start_identity "$owner_pid")" || return 1
   if ! runner_namespaces="$(recovery_runner_namespaces)"; then
     return 1
   fi
@@ -10785,6 +10789,8 @@ recovery_start_no_managed_bot_runner_watch() {
     --stop "$stop_path"
     --failure "$failure_path"
     --ready "$ready_path"
+    --owner-pid "$owner_pid"
+    --owner-start-identity "$owner_start_identity"
   )
   if [[ -n "$progress_path" ]]; then
     watcher_args+=(--progress "$progress_path")
@@ -10800,11 +10806,314 @@ recovery_start_no_managed_bot_runner_watch() {
       export RECOVERY_TEST_STABLE_ABSENCE_SECONDS="$watcher_stable_seconds"
     fi
     exec python3 -I -c '
+import ctypes
 import os
+import pathlib
+import select
+import signal
+import socket
+import stat
 import sys
-os.setsid()
-os.execvp(sys.argv[1], sys.argv[1:])
-' node "${watcher_args[@]}"
+import time
+
+owner_pid, owner_identity, failure_path = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+failure_fd = None
+
+class ProcBsdInfo(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_uint32) for name in (
+        "flags", "status", "xstatus", "pid", "ppid", "uid", "gid", "ruid", "rgid",
+        "svuid", "svgid", "rfu"
+    )] + [("comm", ctypes.c_char * 16), ("name", ctypes.c_char * 32)] + [
+        (name, ctypes.c_uint32) for name in ("nfiles", "pgid", "pjobc", "tdev", "tpgid")
+    ] + [("nice", ctypes.c_int32), ("seconds", ctypes.c_uint64),
+         ("microseconds", ctypes.c_uint64)]
+
+def native_info(pid):
+    if sys.platform.startswith("linux"):
+        entry = pathlib.Path(f"/proc/{pid}")
+        text = (entry / "stat").read_text(encoding="ascii")
+        closing = text.rfind(")")
+        fields = text[closing + 2:].split()
+        if closing < 0 or len(fields) < 20 or fields[0] in ("Z", "X") or not fields[19].isdigit():
+            raise RuntimeError("process_identity")
+        if entry.stat().st_uid != os.getuid():
+            raise RuntimeError("process_uid")
+        boot = pathlib.Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+        return (f"linux:{boot}:{fields[19]}", int(fields[1]), int(fields[2]),
+                fields[0] in ("T", "t"))
+    if sys.platform == "darwin":
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        libproc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                                       ctypes.c_void_p, ctypes.c_int]
+        libproc.proc_pidinfo.restype = ctypes.c_int
+        info = ProcBsdInfo()
+        if libproc.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
+            raise RuntimeError("process_identity")
+        if (info.pid != pid or info.uid != os.getuid() or info.status == 5 or
+                info.seconds <= 0 or info.microseconds >= 1_000_000):
+            raise RuntimeError("process_identity")
+        return (f"darwin:{info.seconds}:{info.microseconds}", info.ppid, info.pgid,
+                info.status == 4)
+    raise RuntimeError("platform")
+
+def native_identity(pid):
+    return native_info(pid)[0]
+
+def peer_is_live(pid, identity, parent):
+    try:
+        info = native_info(pid)
+        return (info[0] == identity and info[2:] == (group, False) and
+                (parent is None or info[1] == parent))
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+def owner_is_live():
+    try:
+        return native_identity(owner_pid) == owner_identity
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+def same_marker(left, right):
+    return (left.st_dev, left.st_ino, left.st_uid, left.st_mode) == (
+        right.st_dev, right.st_ino, right.st_uid, right.st_mode
+    )
+
+def record_failure():
+    if failure_fd is None:
+        return
+    opened = os.fstat(failure_fd)
+    named = os.lstat(failure_path)
+    if not same_marker(opened, named) or not same_marker(opened, failure_identity):
+        raise RuntimeError("failure_marker_identity")
+    # Both peers can revoke concurrently. Positional writes must not share
+    # the inherited descriptor offset and append a duplicate failure frame.
+    if os.pwrite(failure_fd, b"runner_watch_failed\n", 0) != 20:
+        raise RuntimeError("failure_marker_write")
+    os.ftruncate(failure_fd, 20)
+    os.fsync(failure_fd)
+
+try:
+    named = os.lstat(failure_path)
+    failure_fd = os.open(failure_path, os.O_WRONLY | os.O_NOFOLLOW)
+    failure_identity = os.fstat(failure_fd)
+    if (not same_marker(named, failure_identity) or not stat.S_ISREG(failure_identity.st_mode) or
+            failure_identity.st_uid != os.getuid() or stat.S_IMODE(failure_identity.st_mode) != 0o600 or
+            failure_identity.st_size != 0):
+        raise RuntimeError("failure_marker_contract")
+    if os.getppid() != owner_pid or not owner_is_live():
+        raise RuntimeError("owner_startup")
+    os.setsid()
+    group = os.getpid()
+    leader_identity = native_identity(group)
+    parent_socket, guardian_socket = socket.socketpair()
+    guardian_pid = os.fork()
+    if guardian_pid == 0:
+        parent_socket.close()
+        # This live member pins its OWN session/PGID, so revocation never
+        # falls back to a positive PID that might have been recycled.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        null_fd = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(null_fd, fd)
+        os.close(null_fd)
+        def revoke():
+            try:
+                record_failure()
+            finally:
+                if os.getpgrp() == group:
+                    os.killpg(group, signal.SIGTERM)
+                    time.sleep(0.1)
+                    os.killpg(group, signal.SIGKILL)
+            os._exit(1)
+        def leader_is_live():
+            try:
+                info = native_info(group)
+            except (OSError, ValueError, RuntimeError):
+                return False
+            # Node SIGSTOP is precisely a case these native peers must cover.
+            # A different identity, parent or group is never a normal exit.
+            if info[:3] != (leader_identity, owner_pid, group):
+                revoke()
+            return True
+        buffers = {}
+        def receive_frame(channel):
+            chunk = channel.recv(512)
+            if not chunk:
+                if buffers.get(channel, b""):
+                    revoke()
+                return b""
+            buffer = buffers.get(channel, b"") + chunk
+            if len(buffer) > 256:
+                revoke()
+            if b"\n" not in buffer:
+                buffers[channel] = buffer
+                return None
+            message, remainder = buffer.split(b"\n", 1)
+            if remainder:
+                revoke()
+            buffers[channel] = b""
+            return message
+        try:
+            if os.getpgrp() != group or os.getppid() != group:
+                revoke()
+            primary_pid = os.getpid()
+            primary_identity = native_identity(primary_pid)
+            primary_peer, secondary_peer = socket.socketpair()
+            secondary_pid = os.fork()
+            if secondary_pid == 0:
+                # B must not retain A/Node endpoints: only A can observe the
+                # real Node EOF, while B independently supervises A itself.
+                guardian_socket.close()
+                primary_peer.close()
+                if os.getpgrp() != group or os.getppid() != primary_pid:
+                    revoke()
+                secondary_peer.sendall(b"ready\n")
+                completing = False
+                retiring = False
+                while True:
+                    leader_live = leader_is_live()
+                    # Only an authorized, real Node exit permits the known
+                    # primary to be reparented; its identity/group stay exact.
+                    parent = None if completing and not leader_live else group
+                    if not peer_is_live(primary_pid, primary_identity, parent):
+                        # Re-read across the native exit/reparent boundary;
+                        # never relax identity/group or an in-flight parent.
+                        if (not completing or leader_is_live() or
+                                not peer_is_live(primary_pid, primary_identity, None)):
+                            revoke()
+                    # Once completion was mutually authorized, a real Node
+                    # exit can precede normal owner wait/EXIT cleanup.
+                    # Until then, neither owner nor leader loss means success.
+                    if not leader_live and not completing:
+                        revoke()
+                    if not owner_is_live() and (not completing or leader_is_live()):
+                        revoke()
+                    if not select.select([secondary_peer], [], [], 0.05)[0]:
+                        continue
+                    message = receive_frame(secondary_peer)
+                    if message is None:
+                        continue
+                    if not message:
+                        revoke()
+                    if not completing and message == b"complete" and leader_live and owner_is_live():
+                        completing = True
+                        secondary_peer.sendall(b"complete\n")
+                    elif completing and not retiring and message == b"retire" and not leader_is_live():
+                        retiring = True
+                        secondary_peer.sendall(b"retired\n")
+                    elif retiring and message == b"reap" and not leader_is_live():
+                        secondary_peer.close()
+                        os._exit(0)
+                    else:
+                        revoke()
+            secondary_peer.close()
+            secondary_identity = native_identity(secondary_pid)
+            started = False
+            peer_ready = False
+            requested_start = False
+            completing = False
+            completion_acknowledged = False
+            node_closed = False
+            retiring = False
+            startup_deadline = time.monotonic() + 10
+            while True:
+                if not peer_is_live(secondary_pid, secondary_identity, primary_pid):
+                    # Only A can reap B. Unexpected exit is still failure,
+                    # including a child that exited zero without retirement.
+                    os.waitpid(secondary_pid, os.WNOHANG)
+                    revoke()
+                leader_live = leader_is_live()
+                channels = [primary_peer] + ([] if node_closed else [guardian_socket])
+                for channel in select.select(channels, [], [], 0.05)[0]:
+                    message = receive_frame(channel)
+                    if message is None:
+                        continue
+                    if channel is guardian_socket:
+                        if message == b"" and completion_acknowledged:
+                            node_closed = True
+                            guardian_socket.close()
+                        elif not message:
+                            revoke()
+                        elif (not requested_start and
+                              message == f"start:{owner_pid}:{owner_identity}".encode("ascii")):
+                            requested_start = True
+                        elif started and not completing and message == b"complete":
+                            if not leader_live or not owner_is_live():
+                                revoke()
+                            completing = True
+                            primary_peer.sendall(b"complete\n")
+                        else:
+                            revoke()
+                    elif not peer_ready and message == b"ready":
+                        peer_ready = True
+                    elif completing and not completion_acknowledged and message == b"complete":
+                        if not leader_is_live() or not owner_is_live():
+                            revoke()
+                        completion_acknowledged = True
+                        guardian_socket.sendall(b"complete\n")
+                    elif retiring and message == b"retired":
+                        primary_peer.sendall(b"reap\n")
+                        # B is our actual, unreaped child. Reap its exact exit
+                        # status without adopting or signalling a positive PID.
+                        while True:
+                            reaped, status = os.waitpid(secondary_pid, os.WNOHANG)
+                            if reaped:
+                                if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+                                    revoke()
+                                os._exit(0)
+                            if not peer_is_live(secondary_pid, secondary_identity, primary_pid):
+                                # A normal zombie is reaped by the next exact
+                                # waitpid; a stopped/live mismatch is failure.
+                                reaped, status = os.waitpid(secondary_pid, os.WNOHANG)
+                                if not reaped or not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+                                    revoke()
+                                os._exit(0)
+                            time.sleep(0.05)
+                    else:
+                        revoke()
+                leader_live = leader_is_live()
+                if not leader_live:
+                    if not completion_acknowledged or not node_closed:
+                        revoke()
+                    if not retiring:
+                        retiring = True
+                        primary_peer.sendall(b"retire\n")
+                    continue
+                if not owner_is_live() or os.getppid() != group:
+                    # Node may have exited between the preceding probe and
+                    # its owner immediately completing wait/EXIT. Only the
+                    # already-ACKed, EOF-confirmed native exit permits this.
+                    if not completion_acknowledged or not node_closed or leader_is_live():
+                        revoke()
+                    if not retiring:
+                        retiring = True
+                        primary_peer.sendall(b"retire\n")
+                    continue
+                if not started and time.monotonic() >= startup_deadline:
+                    revoke()
+                if peer_ready and requested_start and not started:
+                    started = True
+                    guardian_socket.sendall(b"ready\n")
+        except (OSError, ValueError, RuntimeError):
+            revoke()
+    guardian_socket.close()
+    os.close(failure_fd)
+    failure_fd = None
+    parent_socket.set_inheritable(True)
+    if os.getppid() != owner_pid or not owner_is_live():
+        # EOF makes the already-bound guardian durably fail and revoke.
+        parent_socket.close()
+        raise RuntimeError("owner_startup")
+    arguments = sys.argv[4:] + ["--owner-control-fd", str(parent_socket.fileno())]
+    os.execvp(arguments[0], arguments)
+except (OSError, ValueError, RuntimeError):
+    try:
+        record_failure()
+    except (OSError, RuntimeError):
+        pass
+    raise SystemExit(1)
+' "$owner_pid" "$owner_start_identity" "$failure_path" node "${watcher_args[@]}"
   ) &
   started_pid=$!
   started_identity="$(recovery_process_start_identity "$started_pid")" || {
