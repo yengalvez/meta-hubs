@@ -295,55 +295,108 @@ verification_common_toolchain_material() {
   printf 'git='; git --version 2>/dev/null || true
 }
 
+verification_toolchain_advisories() {
+  tool_version_or_missing node --version
+  tool_version_or_missing npm --version
+  tool_version_or_missing curl --version
+  tool_version_or_missing jq --version
+  tool_version_or_missing mise --version
+  tool_version_or_missing mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- elixir --version
+  tool_version_or_missing mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- mix --version
+}
+
+verification_toolchain_static() {
+  tool_version_or_missing actionlint -version
+  tool_version_or_missing shellcheck --version
+  tool_version_or_missing gitleaks version
+  tool_version_or_missing node --version
+  tool_version_or_missing npm --version
+}
+
+verification_toolchain_security() {
+  tool_version_or_missing node --version
+  tool_version_or_missing npm --version
+}
+
+verification_toolchain_recovery() {
+  tool_version_or_missing node --version
+  tool_version_or_missing jq --version
+}
+
+verification_toolchain_hubs() {
+  tool_version_or_missing node --version
+  tool_version_or_missing npm --version
+}
+
+verification_toolchain_browser_capacity() {
+  tool_version_or_missing node --version
+  tool_version_or_missing npm --version
+}
+
+verification_toolchain_h5() {
+  tool_version_or_missing node --version
+  tool_version_or_missing jq --version
+}
+
+verification_toolchain_hcce() {
+  tool_version_or_missing node --version
+  tool_version_or_missing npm --version
+}
+
+verification_toolchain_bot_orchestrator() {
+  tool_version_or_missing node --version
+  tool_version_or_missing npm --version
+}
+
+verification_toolchain_dialog() {
+  tool_version_or_missing node --version
+  tool_version_or_missing npm --version
+}
+
+verification_toolchain_photomnemonic() {
+  tool_version_or_missing node --version
+  tool_version_or_missing npm --version
+}
+
+verification_toolchain_coturn() {
+  tool_version_or_missing shellcheck --version
+}
+
+verification_toolchain_spoke() {
+  tool_version_or_missing node --version
+  tool_version_or_missing npm --version
+}
+
+verification_toolchain_reticulum() {
+  tool_version_or_missing node --version
+  tool_version_or_missing mise --version
+  tool_version_or_missing mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- elixir --version
+  tool_version_or_missing mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- mix --version
+}
+
+verification_toolchain_composition() {
+  tool_version_or_missing node --version
+  tool_version_or_missing npm --version
+}
+
+verification_section_toolchain_provider() {
+  case "$1" in
+    advisories | static | security | recovery | hubs | browser-capacity | h5 | hcce | bot-orchestrator | dialog | photomnemonic | coturn | spoke | reticulum | composition)
+      local provider="verification_toolchain_${1//-/_}"
+      declare -F "$provider" >/dev/null || return 2
+      printf '%s\n' "$provider"
+      ;;
+    *) return 2 ;;
+  esac
+}
+
 verification_section_toolchain_sha256() {
-  local section="$1"
+  local section="$1" provider
   {
-    verification_common_toolchain_material
+    verification_common_toolchain_material || return 1
     printf 'section=%s\n' "$section"
-    case "$section" in
-      advisories)
-        tool_version_or_missing node --version
-        tool_version_or_missing npm --version
-        tool_version_or_missing curl --version
-        tool_version_or_missing jq --version
-        tool_version_or_missing mise --version
-        tool_version_or_missing mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- elixir --version
-        tool_version_or_missing mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- mix --version
-        ;;
-      static)
-        tool_version_or_missing actionlint -version
-        tool_version_or_missing shellcheck --version
-        tool_version_or_missing gitleaks version
-        tool_version_or_missing node --version
-        tool_version_or_missing npm --version
-        ;;
-      security | browser-capacity | hcce | bot-orchestrator | dialog | photomnemonic | spoke)
-        tool_version_or_missing node --version
-        tool_version_or_missing npm --version
-        ;;
-      recovery | h5)
-        tool_version_or_missing node --version
-        tool_version_or_missing jq --version
-        ;;
-      coturn)
-        tool_version_or_missing shellcheck --version
-        ;;
-      reticulum)
-        tool_version_or_missing node --version
-        tool_version_or_missing mise --version
-        tool_version_or_missing mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- elixir --version
-        tool_version_or_missing mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- mix --version
-        ;;
-      composition)
-        tool_version_or_missing node --version
-        tool_version_or_missing npm --version
-        ;;
-      hubs)
-        tool_version_or_missing node --version
-        tool_version_or_missing npm --version
-        ;;
-      *) return 2 ;;
-    esac
+    provider="$(verification_section_toolchain_provider "$section")" || return 2
+    "$provider"
   } | sha256_stream
 }
 
@@ -376,15 +429,20 @@ verification_common_harness_material() {
     verification_emit_input_batch \
     verification_repository_input_material \
     verification_section_input_sha256 \
+    verification_section_toolchain_provider \
     verification_section_toolchain_sha256 \
     write_pass_receipt
 }
 
 verification_section_harness_material() {
-  local section="$1"
-  verification_common_harness_material
+  local section="$1" provider
+  verification_common_harness_material || return 1
   printf 'section=%s\n' "$section"
-  verification_section_inputs "$section"
+  verification_section_inputs "$section" || return 2
+  provider="$(verification_section_toolchain_provider "$section")" || return 2
+  # Providers call only tool_version_or_missing, already in the common
+  # footprint. Their command bodies belong solely to their own section.
+  declare -f "$provider" || return 2
   case "$section" in
     advisories) declare -f require_command run_advisories ;;
     static) declare -f require_command run_static ;;
@@ -492,7 +550,8 @@ section_receipt_path() {
 
 receipt_is_current() {
   local section="$1" receipt="$2" expected_input="$3"
-  local finished now max_age log_path
+  local finished now max_age log_path harness_sha toolchain_sha log_sha
+  [[ "$expected_input" =~ ^[0-9a-f]{64}$ ]] || return 1
   [[ -f "$receipt" && ! -L "$receipt" ]] || return 1
   [[ "$(portable_file_mode "$receipt")" == 600 ]] || return 1
   [[ "$(portable_file_owner "$receipt")" == "$(id -u)" ]] || return 1
@@ -500,14 +559,20 @@ receipt_is_current() {
   [[ "$(receipt_value "$receipt" schema)" == "$VERIFY_RECEIPT_SCHEMA" ]] || return 1
   [[ "$(receipt_value "$receipt" section)" == "$section" ]] || return 1
   [[ "$(receipt_value "$receipt" input_sha256)" == "$expected_input" ]] || return 1
-  [[ "$(receipt_value "$receipt" harness_sha256)" == "$(verification_section_harness_sha256 "$section")" ]] || return 1
-  [[ "$(receipt_value "$receipt" toolchain_sha256)" == "$(verification_section_toolchain_sha256 "$section")" ]] || return 1
+  harness_sha="$(verification_section_harness_sha256 "$section")" || return 1
+  [[ "$harness_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  [[ "$(receipt_value "$receipt" harness_sha256)" == "$harness_sha" ]] || return 1
+  toolchain_sha="$(verification_section_toolchain_sha256 "$section")" || return 1
+  [[ "$toolchain_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  [[ "$(receipt_value "$receipt" toolchain_sha256)" == "$toolchain_sha" ]] || return 1
   [[ "$(receipt_value "$receipt" status)" == passed ]] || return 1
   [[ "$(receipt_value "$receipt" cleanup)" == passed ]] || return 1
   log_path="${receipt%.receipt}.log"
   [[ -f "$log_path" && ! -L "$log_path" ]] || return 1
   [[ "$(portable_file_mode "$log_path")" == 600 ]] || return 1
-  [[ "$(receipt_value "$receipt" log_sha256)" == "$(sha256_file "$log_path")" ]] || return 1
+  log_sha="$(sha256_file "$log_path")" || return 1
+  [[ "$log_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  [[ "$(receipt_value "$receipt" log_sha256)" == "$log_sha" ]] || return 1
   if [[ "$section" == advisories ]]; then
     finished="$(receipt_value "$receipt" finished_epoch)"
     now="$(date +%s)"
@@ -557,7 +622,14 @@ known_verification_processes_are_absent() {
 
 write_pass_receipt() {
   local section="$1" input_sha="$2" log_path="$3" started="$4" finished="$5"
-  local receipt receipt_dir next
+  local receipt receipt_dir next harness_sha toolchain_sha log_sha
+  [[ "$input_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  harness_sha="$(verification_section_harness_sha256 "$section")" || return 1
+  [[ "$harness_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  toolchain_sha="$(verification_section_toolchain_sha256 "$section")" || return 1
+  [[ "$toolchain_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  log_sha="$(sha256_file "$log_path")" || return 1
+  [[ "$log_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
   receipt="$(section_receipt_path "$section" "$input_sha")"
   receipt_dir="${receipt%/*}"
   mkdir -p "$receipt_dir"
@@ -567,14 +639,14 @@ write_pass_receipt() {
     printf 'schema=%s\n' "$VERIFY_RECEIPT_SCHEMA"
     printf 'section=%s\n' "$section"
     printf 'input_sha256=%s\n' "$input_sha"
-    printf 'harness_sha256=%s\n' "$(verification_section_harness_sha256 "$section")"
-    printf 'toolchain_sha256=%s\n' "$(verification_section_toolchain_sha256 "$section")"
+    printf 'harness_sha256=%s\n' "$harness_sha"
+    printf 'toolchain_sha256=%s\n' "$toolchain_sha"
     printf 'root_head=%s\n' "$(git -C "$ROOT_DIR" rev-parse HEAD)"
     printf 'hubs_head=%s\n' "$(git -C "$ROOT_DIR/hubs" rev-parse HEAD)"
     printf 'cloud_head=%s\n' "$(git -C "$ROOT_DIR/hubs-cloud" rev-parse HEAD)"
     printf 'started_epoch=%s\n' "$started"
     printf 'finished_epoch=%s\n' "$finished"
-    printf 'log_sha256=%s\n' "$(sha256_file "$log_path")"
+    printf 'log_sha256=%s\n' "$log_sha"
     printf 'status=passed\n'
     printf 'cleanup=passed\n'
   } >"$next"

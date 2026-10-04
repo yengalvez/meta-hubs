@@ -81,7 +81,7 @@ fi
 
 if (
   # shellcheck disable=SC2030 # The policy is intentionally local to this fixture.
-  YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE=fixture-policy
+  YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE="fixture-policy"
   export YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE
   # shellcheck disable=SC2329 # Invoked by run_reticulum's command array.
   sandbox-exec() {
@@ -253,6 +253,230 @@ if verify_creator_chat_input_binding; then
   pass_test 'Reticulum binds the exact cross-source oracle and every Hubs input without invalidating Dialog'
 else
   fail_test 'Reticulum binds the exact cross-source oracle and every Hubs input without invalidating Dialog'
+fi
+
+verify_section_toolchain_providers() {
+  (
+    local section target provider definition material index other status shared
+    local harness_before=() toolchain_before=()
+    # Closed tooling: exercise real providers, footprint and hash algorithms;
+    # never execute a tool, section, receipt, cache or runtime fixture here.
+    # shellcheck disable=SC2329 # Invoked indirectly by each real provider.
+    tool_version_or_missing() { printf '%s\n' "$*"; }
+    verification_common_toolchain_material() { printf 'closed-common-toolchain\n'; }
+    expected_provider_commands() {
+      case "$1" in
+        advisories)
+          printf '%s\n' 'node --version' 'npm --version' 'curl --version' 'jq --version' 'mise --version' \
+            'mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- elixir --version' \
+            'mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- mix --version'
+          ;;
+        static)
+          printf '%s\n' 'actionlint -version' 'shellcheck --version' 'gitleaks version' 'node --version' 'npm --version'
+          ;;
+        security | hubs | browser-capacity | hcce | bot-orchestrator | dialog | photomnemonic | spoke | composition)
+          printf '%s\n' 'node --version' 'npm --version'
+          ;;
+        recovery | h5) printf '%s\n' 'node --version' 'jq --version' ;;
+        coturn) printf '%s\n' 'shellcheck --version' ;;
+        reticulum)
+          printf '%s\n' 'node --version' 'mise --version' \
+            'mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- elixir --version' \
+            'mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- mix --version'
+          ;;
+        *) return 2 ;;
+      esac
+    }
+    for section in "${VERIFY_FULL_SECTIONS[@]}"; do
+      provider="$(verification_section_toolchain_provider "$section")" || return 1
+      [[ "$("$provider")" == "$(expected_provider_commands "$section")" ]] || return 1
+      toolchain_before[${#toolchain_before[@]}]="$(verification_section_toolchain_sha256 "$section")"
+      [[ "${toolchain_before[${#toolchain_before[@]}-1]}" == "$(
+        { verification_common_toolchain_material; printf 'section=%s\n' "$section"; expected_provider_commands "$section"; } | sha256_stream
+      )" ]] || return 1
+      harness_before[${#harness_before[@]}]="$(verification_section_harness_sha256 "$section")"
+      material="$(verification_section_harness_material "$section")" || return 1
+      [[ "$material" == *"$(declare -f "$provider")"* &&
+         "$material" == *"$(declare -f tool_version_or_missing)"* ]] || return 1
+      for other in "${VERIFY_FULL_SECTIONS[@]}"; do
+        [[ "$other" == "$section" ]] && continue
+        [[ "$material" != *"$(declare -f "$(verification_section_toolchain_provider "$other")")"* ]] || return 1
+      done
+    done
+
+    # A provider command/source edit affects exactly its own toolchain and
+    # harness, including Reticulum; never invalidate Dialog by association.
+    for target in "${VERIFY_FULL_SECTIONS[@]}"; do
+      provider="$(verification_section_toolchain_provider "$target")" || return 1
+      definition="$(declare -f "$provider")" || return 1
+      eval "$provider() { tool_version_or_missing section-only-change '$target'; }"
+      index=0
+      for section in "${VERIFY_FULL_SECTIONS[@]}"; do
+        if [[ "$section" == "$target" ]]; then
+          [[ "${toolchain_before[index]}" != "$(verification_section_toolchain_sha256 "$section")" &&
+             "${harness_before[index]}" != "$(verification_section_harness_sha256 "$section")" ]] || return 1
+        else
+          [[ "${toolchain_before[index]}" == "$(verification_section_toolchain_sha256 "$section")" &&
+             "${harness_before[index]}" == "$(verification_section_harness_sha256 "$section")" ]] || return 1
+        fi
+        index=$((index + 1))
+      done
+      eval "$definition"
+
+      # Missing providers fail closed even in a conditional caller, while
+      # unrelated sections retain exactly their original footprint/hash.
+      unset -f "$provider"
+      if verification_section_toolchain_sha256 "$target" >/dev/null; then return 1; else status=$?; fi
+      [[ "$status" == 2 ]] || return 1
+      if verification_section_harness_sha256 "$target" >/dev/null; then return 1; else status=$?; fi
+      [[ "$status" == 2 ]] || return 1
+      index=0
+      for section in "${VERIFY_FULL_SECTIONS[@]}"; do
+        if [[ "$section" != "$target" ]]; then
+          [[ "${toolchain_before[index]}" == "$(verification_section_toolchain_sha256 "$section")" &&
+             "${harness_before[index]}" == "$(verification_section_harness_sha256 "$section")" ]] || return 1
+        fi
+        index=$((index + 1))
+      done
+      eval "$definition"
+    done
+
+    # Changes to the dispatcher, hashing algorithm or shared helpers remain
+    # common. A no-output code edit must invalidate every harness, even when
+    # tool versions/commands happen to produce the same bytes.
+    for shared in verification_section_toolchain_provider verification_section_toolchain_sha256 \
+      verification_common_toolchain_material tool_version_or_missing; do
+      definition="$(declare -f "$shared")" || return 1
+      eval "$(printf '%s\n' "$definition" | sed '2s/{/{ : shared_footprint_change;/')"
+      index=0
+      for section in "${VERIFY_FULL_SECTIONS[@]}"; do
+        [[ "${toolchain_before[index]}" == "$(verification_section_toolchain_sha256 "$section")" &&
+           "${harness_before[index]}" != "$(verification_section_harness_sha256 "$section")" ]] || return 1
+        index=$((index + 1))
+      done
+      eval "$definition"
+    done
+    definition="$(declare -f tool_version_or_missing)"
+    # shellcheck disable=SC2329 # Invoked indirectly by each real provider.
+    tool_version_or_missing() { printf 'changed-version:%s\n' "$*"; }
+    index=0
+    for section in "${VERIFY_FULL_SECTIONS[@]}"; do
+      [[ "${toolchain_before[index]}" != "$(verification_section_toolchain_sha256 "$section")" &&
+         "${harness_before[index]}" != "$(verification_section_harness_sha256 "$section")" ]] || return 1
+      index=$((index + 1))
+    done
+    eval "$definition"
+
+    for shared in tool_version_or_missing verification_common_toolchain_material verification_section_toolchain_provider; do
+      definition="$(declare -f "$shared")" || return 1
+      unset -f "$shared"
+      for section in "${VERIFY_FULL_SECTIONS[@]}"; do
+        if verification_section_toolchain_sha256 "$section" >/dev/null 2>&1; then return 1; fi
+        if verification_section_harness_sha256 "$section" >/dev/null 2>&1; then return 1; fi
+      done
+      eval "$definition"
+    done
+    for section in '' unknown reticulum-extra RETICULUM '../reticulum' 'reticulum; true'; do
+      if verification_section_toolchain_provider "$section" >/dev/null; then return 1; else status=$?; fi
+      [[ "$status" == 2 ]] || return 1
+      if verification_section_toolchain_sha256 "$section" >/dev/null; then return 1; else status=$?; fi
+      [[ "$status" == 2 ]] || return 1
+      if verification_section_harness_sha256 "$section" >/dev/null; then return 1; else status=$?; fi
+      [[ "$status" == 2 ]] || return 1
+    done
+  )
+}
+
+if verify_section_toolchain_providers; then
+  pass_test 'all original toolchains stay exact; provider edits isolate receipts and shared/missing helpers fail closed'
+else
+  fail_test 'all original toolchains stay exact; provider edits isolate receipts and shared/missing helpers fail closed'
+fi
+
+verify_receipt_fingerprint_consumers() {
+  (
+    local fixture fault input receipt log_path valid status
+    fixture="$(mktemp -d "${TEST_TMP_DIR:-${TMPDIR:-/tmp}}/yenhubs-fingerprint-consumers.XXXXXX")" || return 1
+    chmod 700 "$fixture"
+    # Standalone focal invocations retain only their owned TEMP fixture. The
+    # full test's existing outer TEMP trap owns cleanup when run in that suite.
+    printf 'FINGERPRINT_CONSUMER_FIXTURE=%s\n' "$fixture"
+    # shellcheck disable=SC2329 # Probed tools are invoked through real providers.
+    tool_version_or_missing() { printf '%s\n' "$*"; }
+    verification_common_toolchain_material() { printf 'closed-common-toolchain\n'; }
+    valid="$(printf 'owned-valid-fingerprint' | sha256_stream)"
+
+    # A valid receipt must still publish and read through conditional callers.
+    VERIFY_EVIDENCE_DIR="$fixture/control"
+    input="$(printf 'owned-valid-input' | sha256_stream)"
+    receipt="$(section_receipt_path dialog "$input")"
+    log_path="${receipt%.receipt}.log"
+    mkdir -p "${receipt%/*}"
+    chmod 700 "$VERIFY_EVIDENCE_DIR" "${receipt%/*}"
+    printf 'owned-conditional-receipt-control\n' >"$log_path"
+    chmod 600 "$log_path"
+    if write_pass_receipt dialog "$input" "$log_path" 1 1; then :; else return 1; fi
+    if receipt_is_current dialog "$receipt" "$input"; then :; else return 1; fi
+
+    seed_owned_failed_fingerprint_receipt() {
+      local harness toolchain log_hash
+      # Deliberately preserve emitted bytes despite failure only to model a
+      # legacy/forged receipt. Neither publication consumer is used to seed it.
+      if harness="$(verification_section_harness_sha256 dialog)"; then :; else :; fi
+      if toolchain="$(verification_section_toolchain_sha256 dialog)"; then :; else :; fi
+      if log_hash="$(sha256_file "$log_path")"; then :; else :; fi
+      printf '%s\n' "schema=$VERIFY_RECEIPT_SCHEMA" 'section=dialog' "input_sha256=$input" \
+        "harness_sha256=$harness" "toolchain_sha256=$toolchain" \
+        'root_head=owned-fixture' 'hubs_head=owned-fixture' 'cloud_head=owned-fixture' \
+        'started_epoch=1' 'finished_epoch=1' "log_sha256=$log_hash" 'status=passed' 'cleanup=passed' >"$receipt"
+      chmod 600 "$receipt"
+    }
+
+    for fault in missing-provider failing-common-helper \
+      harness-failure harness-malformed harness-empty \
+      toolchain-failure toolchain-malformed toolchain-empty \
+      log-failure log-malformed log-empty input-malformed; do
+      (
+        VERIFY_EVIDENCE_DIR="$fixture/$fault"
+        input="$(printf 'owned-input-%s' "$fault" | sha256_stream)"
+        [[ "$fault" != input-malformed ]] || input=not-a-sha256
+        receipt="$(section_receipt_path dialog "$input")"
+        log_path="${receipt%.receipt}.log"
+        mkdir -p "${receipt%/*}"
+        chmod 700 "$VERIFY_EVIDENCE_DIR" "${receipt%/*}"
+        printf 'owned-conditional-receipt-fault\n' >"$log_path"
+        chmod 600 "$log_path"
+        case "$fault" in
+          missing-provider) unset -f verification_toolchain_dialog ;;
+          failing-common-helper)
+            verification_common_toolchain_material() { printf 'partial-common-toolchain\n'; return 2; }
+            ;;
+          harness-failure) verification_section_harness_sha256() { printf '%s\n' "$valid"; return 2; } ;;
+          harness-malformed) verification_section_harness_sha256() { printf 'not-a-sha256\n'; } ;;
+          harness-empty) verification_section_harness_sha256() { :; } ;;
+          toolchain-failure) verification_section_toolchain_sha256() { printf '%s\n' "$valid"; return 2; } ;;
+          toolchain-malformed) verification_section_toolchain_sha256() { printf 'not-a-sha256\n'; } ;;
+          toolchain-empty) verification_section_toolchain_sha256() { :; } ;;
+          log-failure) sha256_file() { printf '%s\n' "$valid"; return 2; } ;;
+          log-malformed) sha256_file() { printf 'not-a-sha256\n'; } ;;
+          log-empty) sha256_file() { :; } ;;
+        esac
+        if write_pass_receipt dialog "$input" "$log_path" 1 1; then return 1; else status=$?; fi
+        [[ "$status" == 1 && ! -e "$receipt" && ! -e "$receipt.next.$$" ]] || return 1
+        seed_owned_failed_fingerprint_receipt
+        # Its failed value equals the producer's emitted bytes: rejecting it
+        # must depend on producer status/format, not a coincidental mismatch.
+        if receipt_is_current dialog "$receipt" "$input"; then return 1; else status=$?; fi
+        [[ "$status" == 1 ]] || return 1
+      ) || return 1
+    done
+  )
+}
+
+if verify_receipt_fingerprint_consumers; then
+  pass_test 'both conditional receipt consumers reject failed or malformed fingerprints before publication or reuse'
+else
+  fail_test 'both conditional receipt consumers reject failed or malformed fingerprints before publication or reuse'
 fi
 
 if (

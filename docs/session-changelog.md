@@ -1,5 +1,18 @@
 # Session Changelog
 
+## 2026-10-04 · Bind toolchain providers and reject failed receipt fingerprints
+
+Extract the original fifteen toolchain command lists into section providers.
+Each section binds its selected provider; dispatcher and shared helper changes
+remain common. Static/security/composition retain their legitimate whole-file
+inputs. The migration invalidates old common harness receipts once; it does
+not relabel them or promise that every unrelated receipt remains reusable.
+Reject failed, empty or malformed fingerprints at both receipt consumers,
+including conditional callers, before publication or reuse. Directed controls
+preserve valid receipts and cover twelve rejection cases; installed/system
+Bash controls and independent source review passed. No general/full suite,
+real receipt-cache change, runtime or production effect occurred.
+
 ## 2026-10-04 · Preserve independent creator events across the chat client
 
 Reticulum forwards creator event provenance instead of aliasing it to general
