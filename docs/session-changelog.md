@@ -1,5 +1,20 @@
 # Session Changelog
 
+## 2026-10-04 · Prove the native signed-monitor startup and teardown boundary
+
+Extend the existing durable-monitor fixture, without changing product code or
+adding a second CI entrypoint. Real Bash starters and Node watchers pass3/3:
+signed positive lifecycle, changed-key refusal, and an external timeout after
+both READY markers with a child retaining wrapper pipes. The timeout preserves
+native143 and discards both monitors without positive final evidence; owned
+processes and groups are absent. Thirteen affected unsigned/default regressions
+also pass. Independent directed review is CLOSED; syntax and diff checks pass.
+The fixture's formerly fixed Lease now has owner-driven atomic renewal history,
+causally consumed by GET/LIST/WATCH. Execution and cleanup have separate finite
+deadlines and retain failures. The attested fixture join is30s; production300s,
+guard limits, library and submodule pins are unchanged. This local proof does
+not explain historical PGSQL expiry or accept Kubernetes/full/SLO/production.
+
 ## 2026-10-04 · Align signed monitor authority at the Bash/Node boundary
 
 The real Bash constructors included a selected backup authority that the common

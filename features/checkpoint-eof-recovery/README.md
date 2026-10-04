@@ -17,6 +17,17 @@ file/hash/READY/process identity checks and cryptographic resource verification
 remain independent and mandatory. Focused shell/cross-language regressions do
 not replace watcher startup, representative Kubernetes recovery or exact full.
 
+The existing durable-monitor fixture now exercises both complete Bash starters
+and real Node watchers together: signed READY/progress/final/join, rejection of
+a changed key selection, and an external timeout with retained wrapper pipes.
+The owner renews the synthetic Lease; GET/LIST/WATCH only consume its causal
+history. Three native cases and thirteen affected unsigned/default cases pass.
+The timeout must retain native143, discard both monitors without positive final
+evidence, and close all owned processes by identity. This lane uses the real
+attested 30-second fixture join override, not the production 300-second join.
+It proves local startup/teardown compatibility, not historical PGSQL causation,
+representative Kubernetes recovery, operational SLOs or the exact final full.
+
 The local candidate adds explicit authority2/consumer3/baseline4/receipt2 and
 metadata4/inventory5/freeze2 readers, rather than reinterpreting historical
 versions. Positive writers bind full spec and UID/RV/generation before the first
