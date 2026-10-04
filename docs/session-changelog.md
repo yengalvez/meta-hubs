@@ -3183,3 +3183,16 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   público existente se reutiliza sólo en el entorno privado de pruebas.
 - Nuevo pin Cloud requiere conciliar recibos por bytes y un full exacto nuevo;
   no hereda aceptación integral ni altera producción o guardas de copia.
+
+## 2026-10-04 — Pruebas Reticulum portables y DNS aislado
+
+- SHA-1 del test GLB usa `:crypto`, sin depender de `sha1sum`; la salida
+  transformada vive en un directorio temporal propio con cleanup tras fallos.
+- El resolver admite servidor DNS en su configuración existente; el valor
+  por defecto, filtrado de direcciones y timeout/protocolo quedan intactos.
+  Los tests conservan URLs/resultados y consultan un peer UDP loopback real,
+  incluyendo NXDOMAIN, IP privada por hostname y control de dirección pública.
+- La revisión focal corrigió la expectativa de doble lookup del fallback.
+  Hash equivalente y cleanup con aserción fallida se probaron sobre el AST
+  exacto. No acepta todavía los tests integrados ni el full de este candidato.
+- No egress, cambios productivos, nuevas dependencias ni guardas omitidas.
