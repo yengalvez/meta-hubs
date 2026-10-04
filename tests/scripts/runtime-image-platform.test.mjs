@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import test from "node:test";
 import {
   PROCESS_LOCAL_IMAGE_PULL_CONTRACTS,
+  verifyGhcrPullAccess,
   verifyProcessLocalValuesRuntimeImages
 } from "../../deployment/verify-bot-image-pull-config.mjs";
 
@@ -89,7 +90,6 @@ function registry(f, hook = null) {
   const calls = [];
   const fetchImpl = async (input, init) => {
     const url = new URL(input);
-    assert.equal(init.redirect, "error");
     assert.ok(init.signal instanceof AbortSignal);
     assert.equal(url.protocol, "https:");
     assert.equal(url.username, "");
@@ -97,10 +97,22 @@ function registry(f, hook = null) {
     assert.ok(!url.href.includes(fakeBasic) && !url.href.includes("fixture-private-token"));
     const token = url.pathname === "/token";
     const ghcr = url.origin === "https://ghcr.io";
+    const cdn = ["https://production.cloudfront.docker.com", "https://pkg-containers.githubusercontent.com"]
+      .includes(url.origin);
     let repository;
     let kind;
     let requestedDigest;
-    if (token) {
+    if (cdn) {
+      const match = url.pathname.match(/^\/fixture-cdn\/([a-z0-9/-]+)\/config\/(sha256:[a-f0-9]{64})$/u);
+      assert.ok(match);
+      [, repository, requestedDigest] = match;
+      kind = "cdn";
+      assert.deepEqual(Object.keys(init.headers), ["Accept"]);
+      assert.equal(init.method, "GET");
+      assert.equal(init.credentials, "omit");
+      assert.equal(init.referrerPolicy, "no-referrer");
+      assert.equal(url.searchParams.get("fixture-signature"), "opaque");
+    } else if (token) {
       assert.ok(ghcr || url.origin === "https://auth.docker.io");
       assert.equal(url.searchParams.get("service"), ghcr ? "ghcr.io" : "registry.docker.io");
       const match = url.searchParams.get("scope")?.match(/^repository:([a-z0-9/-]+):pull$/u);
@@ -117,6 +129,7 @@ function registry(f, hook = null) {
       assert.equal(init.headers.Authorization, `Bearer fixture-bearer-${repository}`);
       assert.ok(!init.headers.Authorization.includes(fakeBasic));
     }
+    assert.equal(init.redirect, ["blobs", "cdn"].includes(kind) ? "manual" : "error");
     const doc = f.docs.get(requestedDigest);
     const call = { url, init, kind, repository, digest: requestedDigest, doc };
     calls.push(call);
@@ -140,6 +153,23 @@ function responseFor(doc, requestedDigest = doc.digest, { bytes = doc.bytes, hea
     "docker-content-digest": requestedDigest,
     ...headers
   } });
+}
+
+function configCdnUrl(call) {
+  const origin = call.url.origin === "https://ghcr.io" ? "https://pkg-containers.githubusercontent.com"
+    : "https://production.cloudfront.docker.com";
+  return `${origin}/fixture-cdn/${call.repository}/config/${call.digest}?fixture-signature=opaque`;
+}
+
+function redirectedRegistry(f, cdnHook = null) {
+  return registry(f, call => {
+    if (call.kind === "blobs") return new Response(null, { status: 307, headers: {
+      Location: configCdnUrl(call), "Set-Cookie": "fixture-cookie=never-forward",
+      "WWW-Authenticate": 'Bearer realm="https://untrusted.invalid/never-follow"'
+    } });
+    if (call.kind === "cdn" && cdnHook) return cdnHook(call);
+    return undefined;
+  });
 }
 
 function valueFree(code) {
@@ -362,6 +392,150 @@ test("fixed auth origins ignore WWW-Authenticate and redirects, never exposing G
   await rejectsFixture(f, "registry_manifest_denied", call => call.kind === "manifests"
     ? new Response("redirect", { status: 302, headers: { Location: "https://untrusted.invalid/secret-sink" } }) : undefined);
   await rejectsFixture(f, "registry_token_request", () => { throw new Error("fixture-private-token redirect blocked"); });
+});
+
+test("one config 307 to the exact provider CDN passes without forwarding auth/cookies or renewing the signal", async () => {
+  for (const [f, aliasRound] of [[fixture(), null], [fixture({ docker: true, indexed: false }), 1]]) {
+    const r = redirectedRegistry(f, call => new Response(call.doc.bytes, {
+      headers: { "content-type": "application/octet-stream" }
+    }));
+    assert.equal(await verifyProcessLocalValuesRuntimeImages({
+      snapshot: snapshotFor(f, aliasRound), fetchImpl: r.fetchImpl
+    }), true);
+    const cdnCalls = r.calls.filter(call => call.kind === "cdn");
+    assert.equal(cdnCalls.length, 13);
+    for (const call of cdnCalls) {
+      const configCall = r.calls.find(prior => prior.kind === "blobs" && prior.repository === call.repository);
+      assert.equal(call.init.signal, configCall.init.signal);
+      assert.equal(call.url.origin, configCall.url.origin === "https://ghcr.io"
+        ? "https://pkg-containers.githubusercontent.com" : "https://production.cloudfront.docker.com");
+      assert.deepEqual(call.init.headers, { Accept: f.configDoc.mediaType });
+    }
+    if (aliasRound !== null) assert.equal(cdnCalls.filter(call =>
+      call.url.origin === "https://production.cloudfront.docker.com").length, 5);
+  }
+});
+
+test("config redirects reject unsafe, cross-provider, internal, relative, oversized or credential-bearing locations", async () => {
+  const f = fixture();
+  for (const [repository, origin, crossProvider] of [
+    ["yengalvez/bot-orchestrator", "https://pkg-containers.githubusercontent.com", "https://production.cloudfront.docker.com"],
+    ["library/postgres", "https://production.cloudfront.docker.com", "https://pkg-containers.githubusercontent.com"]
+  ]) {
+    for (const location of [null, "", "/relative", `//${new URL(origin).host}/config`,
+      "https://untrusted.invalid/config", "https://127.0.0.1/config", "https://169.254.169.254/config",
+      "https://localhost/config", `${origin}.untrusted.invalid/config`, `${crossProvider}/config`,
+      origin.replace("https:", "http:"), origin.replace("https://", "https://user:password@"),
+      `${origin}:8443/config`, `${origin}/config#fragment`, `${origin}/config#`, `${origin}/back\\slash`,
+      `${origin}/raw space`, `${origin}/control\ncharacter`, `${origin}/config?${"q".repeat(8192)}`]) {
+      const r = registry(f, call => call.kind === "blobs" && call.repository === repository
+        ? { status: 307, headers: { get: name => name === "location" ? location : null } } : undefined);
+      await assert.rejects(verifyProcessLocalValuesRuntimeImages({
+        snapshot: snapshotFor(f, 1), fetchImpl: r.fetchImpl
+      }), valueFree("registry_config_redirect"));
+      assert.equal(r.calls.filter(call => call.kind === "cdn").length, 0);
+    }
+  }
+});
+
+test("config redirects permit only one 307 hop and reject unexpected response URL/automatic redirects", async () => {
+  const f = fixture();
+  for (const status of [301, 302, 303, 308]) {
+    await rejectsFixture(f, "registry_config_denied", call => call.kind === "blobs"
+      ? new Response(null, { status, headers: { Location: configCdnUrl(call) } }) : undefined);
+  }
+  const chain = redirectedRegistry(f, call => new Response(null, { status: 307, headers: {
+    Location: `${call.url.origin}/second-hop`
+  } }));
+  await assert.rejects(verifyProcessLocalValuesRuntimeImages({ snapshot: snapshotFor(f, 1), fetchImpl: chain.fetchImpl }),
+    valueFree("registry_config_redirect"));
+  assert.equal(chain.calls.filter(call => call.kind === "cdn").length, 13);
+  for (const surprise of [{ redirected: true }, { url: "https://untrusted.invalid/config" }]) {
+    const r = redirectedRegistry(f, call => {
+      const response = responseFor(call.doc, call.digest);
+      for (const [key, value] of Object.entries(surprise)) Object.defineProperty(response, key, { value });
+      return response;
+    });
+    await assert.rejects(verifyProcessLocalValuesRuntimeImages({ snapshot: snapshotFor(f), fetchImpl: r.fetchImpl }),
+      valueFree("registry_config_redirect"));
+  }
+});
+
+test("token/manifest and legacy access requests still reject redirects and never contact a CDN", async () => {
+  const f = fixture();
+  for (const kind of ["token", "manifests"]) {
+    const r = registry(f, call => call.kind === kind ? new Response(null, { status: 307, headers: {
+      Location: "https://pkg-containers.githubusercontent.com/never-follow"
+    } }) : undefined);
+    await assert.rejects(verifyProcessLocalValuesRuntimeImages({ snapshot: snapshotFor(f), fetchImpl: r.fetchImpl }),
+      valueFree(kind === "token" ? "registry_token_denied" : "registry_manifest_denied"));
+    assert.equal(r.calls.filter(call => call.kind === "cdn").length, 0);
+  }
+  let legacyCalls = 0;
+  await assert.rejects(verifyGhcrPullAccess({
+    encoded: fakeEncoded,
+    images: ["bot-orchestrator", "bot-runner"].map(repository => `ghcr.io/yengalvez/${repository}@${f.root.digest}`),
+    fetchImpl: async (input, init) => {
+      const url = new URL(input);
+      legacyCalls += 1;
+      assert.equal(url.origin, "https://ghcr.io");
+      assert.equal(init.redirect, "error");
+      return url.pathname === "/token" ? new Response(JSON.stringify({ token: "fixture-legacy-bearer" }))
+        : new Response(null, { status: 307, headers: { Location: "https://pkg-containers.githubusercontent.com/never-follow" } });
+    }
+  }), valueFree("registry_manifest_denied"));
+  assert.equal(legacyCalls, 4);
+});
+
+test("CDN config responses still enforce byte limits, raw digest, descriptor size and media type", async () => {
+  const f = fixture();
+  for (const [code, options] of [
+    ["registry_config_digest", { bytes: Buffer.concat([f.configDoc.bytes, Buffer.from(" ")]) }],
+    ["registry_config_digest", { headers: { "docker-content-digest": layerDigest } }],
+    ["registry_runtime_response", { headers: { "content-length": String(2 * 1024 * 1024 + 1) } }],
+    ["registry_runtime_media_type", { headers: { "content-type": "application/json" } }]
+  ]) {
+    const r = redirectedRegistry(f, call => responseFor(call.doc, call.digest, options));
+    await assert.rejects(verifyProcessLocalValuesRuntimeImages({ snapshot: snapshotFor(f, 1), fetchImpl: r.fetchImpl }),
+      valueFree(code));
+  }
+  const wrongSize = fixture({ configDescriptor: { size: f.configDoc.bytes.length + 1 } });
+  const r = redirectedRegistry(wrongSize);
+  await assert.rejects(verifyProcessLocalValuesRuntimeImages({ snapshot: snapshotFor(wrongSize, 1), fetchImpl: r.fetchImpl }),
+    valueFree("registry_runtime_size"));
+  let cancelled = 0;
+  const oversized = redirectedRegistry(f, call => ({
+    status: 200, headers: new Headers({ "content-type": OCI_CONFIG, "docker-content-digest": call.digest }),
+    body: { getReader: () => ({
+      read: async () => ({ done: false, value: new Uint8Array(2 * 1024 * 1024 + 1) }),
+      cancel: () => { cancelled += 1; }, releaseLock() {}
+    }) }
+  }));
+  await assert.rejects(verifyProcessLocalValuesRuntimeImages({ snapshot: snapshotFor(f, 1), fetchImpl: oversized.fetchImpl }),
+    valueFree("registry_runtime_response"));
+  assert.equal(cancelled, 13);
+});
+
+test("config handoff and CDN body reads share the original image deadline", async () => {
+  const f = fixture();
+  const keepAlive = setTimeout(() => {}, 400);
+  try {
+    const r = registry(f, async call => {
+      if (call.kind === "blobs" || call.kind === "cdn") await new Promise(resolve => setTimeout(resolve, 35));
+      return call.kind === "blobs" ? new Response(null, { status: 307, headers: { Location: configCdnUrl(call) } }) : undefined;
+    });
+    await assert.rejects(verifyProcessLocalValuesRuntimeImages({
+      snapshot: snapshotFor(f, 1), fetchImpl: r.fetchImpl, requestTimeoutMs: 60
+    }), valueFree("registry_config_request"));
+    assert.ok(r.calls.some(call => call.kind === "cdn"));
+    const stalled = redirectedRegistry(f, call => ({
+      status: 200, headers: new Headers({ "content-type": OCI_CONFIG, "docker-content-digest": call.digest }),
+      body: { getReader: () => ({ read: () => new Promise(() => {}), cancel() {}, releaseLock() {} }) }
+    }));
+    await assert.rejects(verifyProcessLocalValuesRuntimeImages({
+      snapshot: snapshotFor(f, 1), fetchImpl: stalled.fetchImpl, requestTimeoutMs: 30
+    }), valueFree("registry_runtime_response"));
+  } finally { clearTimeout(keepAlive); }
 });
 
 test("token and raw body limits apply both to declared and streamed content; stalled bodies abort", async () => {

@@ -584,13 +584,13 @@ function ghcrImageParts(image, allowedRepositories) {
   };
 }
 
-async function registryFetch(fetchImpl, url, init, code, timeoutMs, sharedSignal = null) {
+async function registryFetch(fetchImpl, url, init, code, timeoutMs, sharedSignal = null, redirectMode = "error") {
   const signal = sharedSignal ?? AbortSignal.timeout(timeoutMs);
   let response;
   try {
     response = await abortable(Promise.resolve().then(() => fetchImpl(url, {
       ...init,
-      redirect: "error",
+      redirect: redirectMode,
       signal
     })), signal, code);
   } catch {
@@ -840,13 +840,37 @@ function runtimeHeader(response, name, code) {
   }
 }
 
+function runtimeConfigRedirect(image, response) {
+  // Registry-owned 307 config handoffs only. These exact first-party hosts are
+  // documented by Docker's allow-list and GitHub's self-hosted runner guide.
+  const expectedOrigin = image.ghcr ? "https://pkg-containers.githubusercontent.com"
+    : "https://production.cloudfront.docker.com";
+  const location = runtimeHeader(response, "location", "registry_config_redirect");
+  if (typeof location !== "string" || !location || Buffer.byteLength(location, "utf8") > 8192 ||
+      /[\u0000-\u0020\u007f\\#]/u.test(location)) reject("registry_config_redirect");
+  let target;
+  try { target = new URL(location); } catch { reject("registry_config_redirect"); }
+  if (target.origin !== expectedOrigin || target.protocol !== "https:" || target.port !== "" ||
+      target.username !== "" || target.password !== "" || target.hash !== "") reject("registry_config_redirect");
+  return target;
+}
+
 async function verifyRuntimeImage(image, credential, fetchImpl, requestTimeoutMs) {
   // One finite budget covers token, every selected index/manifest, config and
   // all body reads. It is never renewed for a child or a slow response body.
   const signal = AbortSignal.timeout(requestTimeoutMs);
-  const fetchImage = (url, headers, code) => registryFetch(
-    fetchImpl, url, { headers }, code, requestTimeoutMs, signal
+  const fetchImage = (url, headers, code, config = false) => registryFetch(
+    fetchImpl, url, { headers, ...(config ? {
+      method: "GET", credentials: "omit", referrerPolicy: "no-referrer"
+    } : {}) }, code, requestTimeoutMs, signal, config ? "manual" : "error"
   );
+  const fetchConfig = async (url, headers) => {
+    const { response } = await fetchImage(url, headers, "registry_config_request", true);
+    if (response.redirected === true || (response.url && response.url !== new URL(url).href)) {
+      reject("registry_config_redirect");
+    }
+    return response;
+  };
   const tokenUrl = new URL(image.tokenOrigin);
   tokenUrl.searchParams.set("service", image.service);
   tokenUrl.searchParams.set("scope", `repository:${image.repository}:pull`);
@@ -867,10 +891,19 @@ async function verifyRuntimeImage(image, credential, fetchImpl, requestTimeoutMs
     const endpoint = config ? "blobs" : "manifests";
     // No challenge or descriptor URL can choose a host/path or receive auth.
     const url = `${image.registryOrigin}/v2/${image.repository}/${endpoint}/${digest}`;
-    const { response } = await fetchImage(url, {
+    const headers = {
       Accept: config ? descriptor.mediaType : [...RUNTIME_DOCUMENT_TYPES].join(", "),
       Authorization: `Bearer ${bearer}`
-    }, config ? "registry_config_request" : "registry_manifest_request");
+    };
+    let response = config ? await fetchConfig(url, headers)
+      : (await fetchImage(url, headers, "registry_manifest_request")).response;
+    if (config && response.status === 307) {
+      const target = runtimeConfigRedirect(image, response);
+      try { Promise.resolve(response.body?.cancel()).catch(() => {}); } catch { /* No redirect body is consumed. */ }
+      // A single config-only CDN hop receives neither registry auth nor cookies.
+      response = await fetchConfig(target, { Accept: descriptor.mediaType });
+      if (response.status >= 300 && response.status < 400) reject("registry_config_redirect");
+    }
     if (response.status !== 200) reject(config ? "registry_config_denied" : "registry_manifest_denied");
     const digestHeader = runtimeHeader(response, "docker-content-digest", "registry_manifest_digest");
     // Manifest responses must supply the registry digest. Blob responses may

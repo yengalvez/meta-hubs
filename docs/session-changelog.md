@@ -1,5 +1,27 @@
 # Session Changelog
 
+## 2026-10-04 · Accept bounded registry-owned config handoffs
+
+Real public Docker metadata reproduced a legitimate config307 to
+production.cloudfront.docker.com. The new metadata API's redirect:error rejected
+that valid path; no historical checkpoint cause is inferred. Permit exactly
+one config307 to the exact provider CDN over HTTPS443, without userinfo,
+fragment, cookies, referrer or forwarded auth. Keep one original signal/budget,
+raw-byte hash/descriptor size/media bounds and no layer/descriptor-URL fetch.
+Token/manifest requests and legacy APIs still reject redirects; unexpected
+destinations, response URLs, automatic following and second hops fail closed.
+Primary new22/22 tests exited0 (7ff191); existing pull verifier1/1 exited0
+(5f117f). Independent directed review CLOSED on the two-file hashes. Native
+API098cf4 exited0 in1404ms with one ACTUAL public Docker role and12 synthetic
+other roles;5 actual metadata requests, no credential egress. This is not
+complete-family, GHCR live, build-provenance, runtime or deploy acceptance.
+An active-values direct attempt29e035 stopped before network because those
+values are not the fully projected13-image process-local snapshot. No source
+values were printed or modified; missing image inputs are not inferred.
+Official sources: Distribution HTTP APIv2, Docker Desktop allowlist and GitHub
+self-hosted runner container domains. The one-off PG section preparation is
+separate, local and not yet an accepted gate. No production effect or build.
+
 ## 2026-10-04 · Keep the Reticulum receipt inventory oracle exact
 
 The eb0de45 static section passed after restoring only the new clone's local
