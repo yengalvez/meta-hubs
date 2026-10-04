@@ -28,6 +28,12 @@ attested 30-second fixture join override, not the production 300-second join.
 It proves local startup/teardown compatibility, not historical PGSQL causation,
 representative Kubernetes recovery, operational SLOs or the exact final full.
 
+The existing slow-publisher post-stream case now unsets its accelerated fixture
+poll override and exercises the ordinary one-second default. Native46/46
+(45 common checks plus that case), twelve complete audits and publisher cleanup
+pass with the unchanged8.5s publisher,10s stale/30s startup bounds and2s reserve.
+This closes a cadence-coverage gap, not the historical PGSQL expiry cause.
+
 The local candidate adds explicit authority2/consumer3/baseline4/receipt2 and
 metadata4/inventory5/freeze2 readers, rather than reinterpreting historical
 versions. Positive writers bind full spec and UID/RV/generation before the first

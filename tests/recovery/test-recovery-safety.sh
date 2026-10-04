@@ -13997,6 +13997,11 @@ run_multi_guard_round_robin_case() (
     bash -c '
       set -euo pipefail
       NAMESPACE=hcce
+      if [[ "$MULTI_GUARD_CASE" == post-audit-slow-publisher ]]; then
+        # Exercise the real ordinary poll cadence, not the accelerated 0.02 s
+        # fixture setting. A slow healthy publisher must survive that boundary.
+        unset RECOVERY_STREAM_POLL_SECONDS
+      fi
       source "$1"
       if [[ "$REQUIRE_LEASE" == 1 ]]; then
         recovery_require_operation_serialization_stream() { return 0; }

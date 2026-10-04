@@ -1,5 +1,17 @@
 # Session Changelog
 
+## 2026-10-04 · Cover the ordinary post-stream poll cadence
+
+The existing slow healthy publisher case used an accelerated0.02s fixture
+poll. Unset only that override in its isolated shell so it exercises the real
+default1s; keep its publisher8.5s, twelve complete audits, identity/cleanup,
+stale10s/startup30s/reserve2s and all other cases intact. Native59377 passes
+46/46 (45 common checks and one directed case). Readback confirms12 audits
+and no fixture-linked process; product and submodule bytes are unchanged.
+This rules out that cadence difference alone in this case, not historical
+PGSQL causation, recovery/full/SLO or production acceptance. No new selector
+or duplicate CI entrypoint is introduced.
+
 ## 2026-10-04 · Prove the native signed-monitor startup and teardown boundary
 
 Extend the existing durable-monitor fixture, without changing product code or
