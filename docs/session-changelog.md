@@ -1,5 +1,17 @@
 # Session Changelog
 
+## 2026-10-04 · Keep the Reticulum receipt inventory oracle exact
+
+The eb0de45 static section passed after restoring only the new clone's local
+upstream refs from the exact frozen source. Security then exited1 at case27:
+the verifier included the three catalog restore inputs, while its expected
+inventory still omitted them. Add those exact three paths to the oracle;
+retain ordered equality, per-input invalidation and Dialog isolation checks.
+No product code, guard, receipt or accepted input was removed or altered.
+Primary focused native93508 exited0:43/43 section fixture tests. Bash syntax,
+ShellCheck-x and diff-check passed. This is not a security/full acceptance;
+freeze the changed bytes and renew only the sections finalization identifies.
+
 ## 2026-10-04 · Repair exact validation fixtures and gate runtime image metadata
 
 The interrupted I425a6b3 full lost both its handle and process; its terminal
