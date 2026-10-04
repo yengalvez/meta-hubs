@@ -94,7 +94,7 @@ test("periodic native guard rejects manual sync, fake readiness handles and repl
 
 test("periodic native total chat budget is anchored before request admission, not the model POST", () => {
   const source = fs.readFileSync(new URL("./sql-http-local.mjs", import.meta.url), "utf8");
-  assert.ok(/if \(periodic\) current\.requestBeforeReadyAt = performance\.now\(\);\s*acknowledge\("ready"\);/.test(source),
+  assert.ok(/if \(periodic \|\| testCase === "chat-off"\) current\.requestBeforeReadyAt = performance\.now\(\);\s*acknowledge\("ready"\);/.test(source),
     "monotonic ancla must precede the ACK that admits the real chat");
   const observation = source.slice(source.indexOf("async function observePeriodicOff"), source.indexOf("export async function runSqlHttpCanary"));
   assert.ok(/Number\.isFinite\(current\.requestBeforeReadyAt\)/.test(observation));
@@ -200,6 +200,101 @@ test("STOP cleanup preserves the original oracle failure through all cleanup fai
 test("SQL HTTP canary selects only two new integrated cases", () => {
   assert.deepEqual(runtimeCases("--sql-http-canary"), [{ profile: "sql-http-canary", count: 2 }]);
   assert.throws(() => runtimeCases("--sql-http-all"), /explicit_native_target_required/);
+});
+
+// Execute only the owned fixture bodies with pure doubles. Neither helper can
+// reach the driver setup, spawn an actor, open HTTP or use a dependency cache.
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const canarySource = () => fs.readFileSync(new URL("./sql-http-local.mjs", import.meta.url), "utf8");
+function chatOffOracle({ closedAt = 1500, closedBeforeSync, requestBeforeReadyAt = 100,
+  pending = {}, events = [] } = {}) {
+  const source = canarySource(), marker = '} else if (testCase === "chat-off") {';
+  const start = source.indexOf(marker) + marker.length;
+  const end = source.indexOf('} else {\n        if (testCase === "chat-off-on")', start);
+  assert.ok(start >= marker.length && end > start, "exact chat-off fixture body required");
+  const run = new AsyncFunction("assert", "performance", "transition", "current", "sendBot",
+    "healthModules", "bounded", "acknowledge", `let elapsed; ${source.slice(start, end)} return elapsed;`);
+  const current = { calls: ["/v1/moderations", "/v1/responses"], response: { writableFinished: false },
+    socket: { destroyed: false }, closed: { promise: Promise.resolve() }, requestBeforeReadyAt,
+    closedAt: closedBeforeSync, ...pending };
+  return run(assert, { now: () => 1000 }, { sql_committed_off: true, three_distinct_sql_owners: true,
+    raw_cache_still_on: true }, current, async type => {
+    assert.equal(type, "sync"); events.push("sync");
+    current.closedAt = closedAt; current.unfinished = true; current.socket.destroyed = true;
+    return { authoritative: true, count: 1 };
+  }, async () => ({ bots_enabled: true, ai_enabled: false }), async (promise, code, ms) => {
+    assert.equal(code, "model_socket_not_cancelled"); assert.equal(ms, 2000); return promise;
+  }, line => { assert.equal(line, "off-synced"); events.push("ack"); });
+}
+
+test("SQL HTTP canary chat-off accepts held then post-sync cancellation before the original deadline", async () => {
+  const events = [];
+  assert.equal(await chatOffOracle({ events }), 500);
+  assert.deepEqual(events, ["sync", "ack"]);
+});
+
+test("SQL HTTP canary chat-off rejects deadline-only and pre-sync closure instead of emitting PASS", async () => {
+  for (const change of [{ closedAt: 14_100 }, { closedAt: 15_100 }, { closedAt: 999 },
+    { closedAt: NaN }, { requestBeforeReadyAt: NaN }, { requestBeforeReadyAt: null }, { closedBeforeSync: 500 },
+    { pending: { response: { writableFinished: true } } }, { pending: { socket: { destroyed: true } } }]) {
+    const events = [];
+    await assert.rejects(chatOffOracle({ ...change, events }), { code: "ERR_ASSERTION" });
+    assert.ok(!events.includes("ack"), "invalid temporal order must never acknowledge off-synced");
+    if (change.closedBeforeSync !== undefined || change.pending) assert.deepEqual(events, [], "sync requires a held open socket");
+  }
+});
+
+test("SQL HTTP canary chat-off request anchor immediately precedes the admission ACK", () => {
+  assert.ok(/if \(periodic \|\| testCase === "chat-off"\) current\.requestBeforeReadyAt = performance\.now\(\);\s*acknowledge\("ready"\);/.test(canarySource()),
+    "chat-off monotonic anchor must immediately precede the admission ACK");
+});
+
+function canaryCleanupOracle({ originalFailure, broken, callbackError = false } = {}) {
+  const source = canarySource(), start = source.indexOf("    if (periodic) {", source.indexOf("  } finally {", source.indexOf("export async function runSqlHttpCanary")));
+  const end = source.lastIndexOf("\n  }", source.indexOf("\n  const sourceAfter = snapshot();", start));
+  assert.ok(start >= 0 && end > start, "exact canary finally body required");
+  const run = new AsyncFunction("assert", "periodic", "finishStopDrainCleanup", "beam", "beamExit",
+    "bot", "botExit", "sockets", "provider", "denied", "cleanup", "failure", "bounded", "fail",
+    `try { if (failure) throw failure; } finally { ${source.slice(start, end)} } return cleanup;`);
+  const events = [], injected = new Error(`injected_${broken || "none"}`), later = new Error("later_cleanup_failure");
+  const actor = name => ({ exitCode: null, signalCode: null, stdin: { end() { events.push(`${name}-stdin`); } },
+    kill(signal) { events.push(`${name}-${signal}`); if (broken === name) throw injected; } });
+  const listener = name => ({ listening: true, close(done) {
+    events.push(name); this.listening = false;
+    if (broken === name) { if (callbackError) return done(injected); throw injected; }
+    if (broken === "beam" || broken === "bot" || broken === "socket") throw later;
+    done();
+  } });
+  const provider = listener("provider"), denied = listener("denied");
+  const sockets = new Set([{ destroy() { events.push("socket"); if (broken === "socket") throw injected; } }]);
+  const promise = run(assert, false, finishStopDrainCleanup, actor("beam"), Promise.resolve(),
+    actor("bot"), Promise.resolve(), sockets, provider, denied, true, originalFailure,
+    async promise => promise, code => { throw new Error(code); });
+  return { promise, events, injected, provider, denied };
+}
+
+test("SQL HTTP canary cleanup closes both actors socket and listeners on success", async () => {
+  const { promise, events, provider, denied } = canaryCleanupOracle();
+  assert.equal(await promise, true);
+  assert.deepEqual(events, ["beam-stdin", "beam-SIGTERM", "bot-stdin", "bot-SIGTERM", "socket", "provider", "denied"]);
+  assert.equal(provider.listening, false); assert.equal(denied.listening, false);
+});
+
+test("SQL HTTP canary cleanup attempts every resource and preserves the first injected error", async () => {
+  for (const broken of ["beam", "bot", "socket", "provider", "denied"]) {
+    for (const originalFailure of [undefined, new Error("original_oracle_failure")]) {
+      const { promise, events, injected, provider, denied } = canaryCleanupOracle({ broken, originalFailure });
+      await assert.rejects(promise, error => error === (originalFailure || injected));
+      assert.deepEqual(events, ["beam-stdin", "beam-SIGTERM", "bot-stdin", "bot-SIGTERM", "socket", "provider", "denied"]);
+      assert.equal(provider.listening, false); assert.equal(denied.listening, false);
+    }
+  }
+});
+
+test("SQL HTTP canary cleanup rejects listener callback errors without omitting the other listener", async () => {
+  const { promise, events, injected } = canaryCleanupOracle({ broken: "provider", callbackError: true });
+  await assert.rejects(promise, error => error === injected);
+  assert.deepEqual(events.slice(-2), ["provider", "denied"]);
 });
 
 test("SQL HTTP reentry selects only one previously unobserved OFF ON window", () => {

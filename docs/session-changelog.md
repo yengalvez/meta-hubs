@@ -1,5 +1,17 @@
 # Session Changelog
 
+## 2026-10-04 · Close local SQL HTTP canary oracle and cleanup gaps
+
+Test-only change: distinguish OFF cancellation from a pre-existing/deadline
+socket close, preserve first failure while attempting every owned cleanup,
+and reuse the verified Hex archive through an explicit canary-only option.
+No product source, dependency lock, deadline, provider or infrastructure change.
+Ten directed pure regressions showed RED2PASS/8FAIL then GREEN10/10;
+two affected source guards and syntax/diff checks passed. Independent delta
+review CLOSED; primary worktree security scan passed. One actual SQL/HTTP
+canary remains pending; pure fixtures are not
+runtime, six-edition, Kubernetes, release or full acceptance.
+
 ## 2026-10-03 · Prepare a connected local profile UI observation
 
 Add an opt-in native SQL/AppConfig → PubSub → Phoenix socket → RoomSettings

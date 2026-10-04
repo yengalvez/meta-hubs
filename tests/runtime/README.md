@@ -400,7 +400,8 @@ the six profiles, synthetic callback cases or separate Node HTTP tests:
 node tests/runtime/reticulum-local.mjs --sql-http-canary \
   --pg-bin /opt/homebrew/opt/postgresql@14/bin \
   --cache-reticulum /Users/yengalvez/.codex/worktrees/reliability-20261001/YenHubs/hubs-cloud/community-edition/services/reticulum \
-  --cache-bot-orchestrator /Users/Shared/Gits/YenHubs/output/product-fixes-20260926/hubs-cloud/community-edition/services/bot-orchestrator
+  --cache-bot-orchestrator /Users/Shared/Gits/YenHubs/output/product-fixes-20260926/hubs-cloud/community-edition/services/bot-orchestrator \
+  --hex-cache /private/tmp/ynret-local-eSjAot/mix/archives/hex-2.5.1
 ```
 
 Run only from a clean exact candidate. Both current tracked applications are
@@ -410,6 +411,19 @@ The current candidate's existing Reticulum dependency cache is required on
 this host: F's frozen runtime.exs predates the accepted port-binding delta
 and is deliberately rejected. Do not loosen the five-file equality guard.
 The new normal security guard is `node --test tests/runtime/sql-http-local.test.mjs`.
+
+The explicit trailing Hex cache is opt-in for this canary only. Its existing
+133-file manifest, version, ownership and regular-file checks precede scratch
+creation and PostgreSQL startup; private copy/source readbacks must match.
+This selected route never runs `mix local.hex` or downloads the archive.
+If the retained cache is missing or changed, stop; do not install or replace it.
+Legacy modes retain their existing arguments and preparation behavior.
+
+The OFF observation is anchored before chat admission. The provider socket
+must still be held immediately before the actual sync, close afterwards and
+before 14 seconds from admission, distinguishing OFF from the product's
+unchanged 15-second deadline. Cleanup tries both actors, all owned sockets
+and each listener even on errors, preserving the first original failure.
 
 The canary joins PostgreSQL + Reticulum's real HTTPoison client + Node's actual
 Express chat route/fetch + owned synthetic provider sockets. Node refreshes

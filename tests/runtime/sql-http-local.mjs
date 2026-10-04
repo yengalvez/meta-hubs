@@ -333,7 +333,7 @@ export async function runSqlHttpCanary({ root, work, log, env, application, pgPo
       const ready = await fetch(`http://127.0.0.1:${botPort}/ready`, { signal: AbortSignal.timeout(2000) });
       assert.equal(ready.status, 200); assert.equal((await ready.json()).ok, true);
       assert.deepEqual(await healthModules(), { bots_enabled: true, ai_enabled: true });
-      if (periodic) current.requestBeforeReadyAt = performance.now();
+      if (periodic || testCase === "chat-off") current.requestBeforeReadyAt = performance.now();
       acknowledge("ready");
       const begun = await waitStage("request-started", testCase);
       assert.equal(begun.distinct_sql_owners, true);
@@ -359,11 +359,16 @@ export async function runSqlHttpCanary({ root, work, log, env, application, pgPo
       } else if (testCase === "chat-off") {
         assert.equal(transition.sql_committed_off, true); assert.equal(transition.three_distinct_sql_owners, true);
         assert.equal(transition.raw_cache_still_on, true);
+        assert.equal(current.response.writableFinished, false); assert.equal(current.socket.destroyed, false);
+        assert.equal(current.closedAt, undefined, "model socket must still be held before OFF sync");
         const before = performance.now(), off = await sendBot("sync");
         assert.equal(off.authoritative, true); assert.equal(off.count, 1);
         assert.deepEqual(await healthModules(), { bots_enabled: true, ai_enabled: false });
         await bounded(current.closed.promise, "model_socket_not_cancelled", 2000);
         assert.equal(current.unfinished, true); assert.equal(current.socket.destroyed, true);
+        assert.ok(current.closedAt >= before, "model socket closure must follow OFF sync admission");
+        assert.ok(Number.isFinite(current.requestBeforeReadyAt));
+        assert.ok(current.closedAt - current.requestBeforeReadyAt < 14_000, "socket abort precedes the unchanged 15s chat budget");
         assert.deepEqual(current.calls, ["/v1/moderations", "/v1/responses"]);
         elapsed = Math.round(current.closedAt - before);
         acknowledge("off-synced");
@@ -439,19 +444,29 @@ export async function runSqlHttpCanary({ root, work, log, env, application, pgPo
         }
       }, failure);
     } else {
-      for (const [child, exit] of [[beam, beamExit], [bot, botExit]]) {
-        if (child && child.exitCode === null && child.signalCode === null) {
-          child.stdin?.end(); child.kill("SIGTERM");
-          try { await bounded(exit, "owned_child_cleanup_timeout", 3000); }
-          catch { child.kill("SIGKILL"); await bounded(exit, "owned_child_forced_cleanup_timeout", 3000); }
+      await finishStopDrainCleanup({
+        actorCleanups: [[beam, beamExit], [bot, botExit]].map(([child, exit]) => async () => {
+          if (child && child.exitCode === null && child.signalCode === null) {
+            child.stdin?.end(); child.kill("SIGTERM");
+            try { await bounded(exit, "owned_child_cleanup_timeout", 3000); }
+            catch { child.kill("SIGKILL"); await bounded(exit, "owned_child_forced_cleanup_timeout", 3000); }
+          }
+        }),
+        verifyRunnerAbsent: async () => {}, // This canary has no real runner.
+        releaseSockets: () => { for (const socket of sockets) socket.destroy(); },
+        closeListener: async () => {
+          let first;
+          for (const server of [provider, denied]) {
+            try {
+              if (server.listening) await bounded(new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())),
+                "owned_listener_cleanup_timeout", 2000);
+            } catch (error) { first ??= error; }
+          }
+          if (first) throw first;
+          cleanup &&= !provider.listening && !denied.listening;
+          if (!cleanup) fail("sql_http_cleanup_not_verified");
         }
-      }
-      for (const socket of sockets) socket.destroy();
-      for (const server of [provider, denied]) {
-        if (server.listening) await bounded(new Promise(resolve => server.close(resolve)), "owned_listener_cleanup_timeout", 2000);
-      }
-      cleanup &&= !provider.listening && !denied.listening;
-      if (!cleanup && !failure) fail("sql_http_cleanup_not_verified");
+      }, failure);
     }
   }
   const sourceAfter = snapshot(); assert.deepEqual(sourceAfter, sourceBefore);

@@ -323,7 +323,7 @@ async function main() {
   let work, log, env, data, pgBin, port, epoch, attempted = false, identity;
   let phase = "arguments", outcome = "FAIL", tests = 0;
   const metrics = {}, started = performance.now();
-  let catalog, catalogSourceBefore, catalogSourceAfter, socketMode = false, socketSourceBefore, socketSourceAfter, hexArchive;
+  let catalog, catalogSourceBefore, catalogSourceAfter, socketMode = false, socketSourceBefore, socketSourceAfter, hexArchive, canaryHexCache = false;
   const catalogSourceSnapshot = () => Object.fromEntries([".", "hubs", "hubs-cloud"].map(name => {
     const repository = path.join(root, name);
     const read = args => {
@@ -340,8 +340,8 @@ async function main() {
       scope: "native-synthetic-reticulum-not-kubernetes-or-production", phase,
       outcome, tests, metrics, elapsed_ms: Math.round(performance.now() - started),
       ...(socketMode ? { mode: args[0].slice(2), browser_acceptance: "NOT_RECORDED", full_acceptance: false,
-        socket_source_before: socketSourceBefore, socket_source_after: socketSourceAfter,
-        hex_archive: hexArchive && { manifest: hexArchive.manifest, files: hexArchive.files, bytes: hexArchive.bytes, version: hexArchive.version } } : {}),
+        socket_source_before: socketSourceBefore, socket_source_after: socketSourceAfter } : {}),
+      ...(hexArchive ? { hex_archive: { manifest: hexArchive.manifest, files: hexArchive.files, bytes: hexArchive.bytes, version: hexArchive.version } } : {}),
       ...(catalogSourceBefore ? { catalog_source_before: catalogSourceBefore, catalog_source_after: catalogSourceAfter } : {})
     }, null, 2) + "\n", { mode: 0o600 });
   };
@@ -362,12 +362,15 @@ async function main() {
     const integrated = ["--sql-http-canary", "--sql-http-reentry", "--sql-http-stop-drain", "--sql-http-periodic"].includes(args[0]);
     const catalogMode = ["--catalog-dataset", "--catalog-graph-dataset"].includes(args[0]);
     socketMode = ["--profile-ui-socket", "--profile-creator-socket", "--normal-glb-browser", "--avaturn-save-browser"].includes(args[0]);
-    if (args.length !== (socketMode ? 9 : integrated || catalogMode ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
+    canaryHexCache = args[0] === "--sql-http-canary" && args.length === 9;
+    if (args.length !== (socketMode || canaryHexCache ? 9 : integrated || catalogMode ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
         (integrated && args[5] !== "--cache-bot-orchestrator") ||
         (catalogMode && args[5] !== "--catalog-receipts") ||
+        (canaryHexCache && (args[7] !== "--hex-cache" || !args[8] || args[8].startsWith("--"))) ||
         (socketMode && (args[5] !== "--browser-origin" || args[7] !== "--hex-cache")) ||
         process.platform !== "darwin") reject("explicit_native_target_required");
     cases = runtimeCases(args[0]);
+    if (canaryHexCache) hexArchive = inspectHexArchive(args[8]);
     if (socketMode) {
       browserOrigin(args[6]); hexArchive = inspectHexArchive(args[8]);
       socketSourceBefore = catalogSourceSnapshot();
@@ -420,9 +423,10 @@ async function main() {
     });
     // The host's Hex 2.5.1 archive was compiled for a newer OTP and cannot
     // load on OTP27. Keep the SAME Hex version, using Mix's signed-CSV/SHA512
-    // official installer ONLY in this private Mix home, before starting PG.
+    // official installer ONLY in this private Mix home, before starting PG,
+    // unless the selected mode explicitly supplies a verified existing archive.
     // No user config, provider credentials or global software is changed.
-    if (socketMode) step("copy-verified-existing-hex-private-home", () => {
+    if (socketMode || canaryHexCache) step("copy-verified-existing-hex-private-home", () => {
       const archive = path.join(work, "mix/archives/hex-2.5.1");
       fs.mkdirSync(path.dirname(archive), { mode: 0o700 });
       fs.cpSync(hexArchive.directory, archive, { recursive: true, dereference: false });

@@ -306,7 +306,7 @@ test("UI socket is one explicit observation, never a replay of native tests", ()
   const bootstrap = fs.readFileSync(new URL("./reticulum-local.exs", import.meta.url), "utf8");
   const fixture = fs.readFileSync(new URL("./reticulum-ui-socket.exs", import.meta.url), "utf8");
   assert.ok(runner.indexOf("hexArchive = inspectHexArchive(args[8])") < runner.indexOf('work = fs.mkdtempSync'));
-  assert.match(runner, /if \(socketMode\) step\("copy-verified-existing-hex-private-home"/);
+  assert.match(runner, /if \(socketMode \|\| canaryHexCache\) step\("copy-verified-existing-hex-private-home"/);
   assert.match(runner, /else step\("materialize-pinned-hex-private-home"/);
   assert.match(runner, /outcome = socketMode \? "OBSERVATION_STOPPED" : "PASS"/);
   assert.match(runner, /ui_socket_input_eof_without_stop/);
@@ -331,6 +331,90 @@ test("socket origin and stdin commands have a closed local schema", () => {
     assert.throws(() => uiSocketCommand(line), /invalid_ui_socket_command/);
   }
   assert.throws(() => inspectHexArchive(path.join(os.tmpdir(), `missing-hex-${process.pid}`)), /ENOENT/);
+});
+
+// Purely exercise the real argument/copy/receipt bodies with closed doubles;
+// no archive bytes, native process, scratch directory or installer is reached.
+const reticulumSource = () => fs.readFileSync(new URL("./reticulum-local.mjs", import.meta.url), "utf8");
+const syntheticHex = { directory: "/owned/hex-2.5.1", manifest: "a".repeat(64), files: 133, bytes: 1549651, version: "2.5.1" };
+const canaryArgs = ["--sql-http-canary", "--pg-bin", "/owned/pg", "--cache-reticulum", "/owned/ret",
+  "--cache-bot-orchestrator", "/owned/bot"];
+function canaryHexArguments(args, inspect = value => { assert.equal(value, syntheticHex.directory); return syntheticHex; }) {
+  const source = reticulumSource(), start = source.indexOf("    const integrated =");
+  const end = source.indexOf("    pgBin = fs.realpathSync(args[2]);", start);
+  assert.ok(start >= 0 && end > start, "exact pre-effect argument body required");
+  const run = new Function("args", "runtimeCases", "inspectHexArchive", "browserOrigin", "catalogSourceSnapshot", "process", "reject",
+    `let cases, socketMode = false, canaryHexCache = false, hexArchive, socketSourceBefore;
+    ${source.slice(start, end)} return { cases, socketMode, canaryHexCache, hexArchive };`);
+  return run(args, runtimeCases, inspect, browserOrigin, () => { throw new Error("unexpected_source_snapshot"); },
+    { platform: "darwin" }, code => { throw new Error(code); });
+}
+
+test("SQL HTTP canary Hex opt-in accepts only the exact trailing flag before native effects", () => {
+  const source = reticulumSource(), events = [];
+  const parsed = canaryHexArguments([...canaryArgs, "--hex-cache", syntheticHex.directory], directory => {
+    events.push("inspect"); assert.equal(directory, syntheticHex.directory); return syntheticHex;
+  });
+  assert.deepEqual(parsed.cases, [{ profile: "sql-http-canary", count: 2 }]);
+  assert.equal(parsed.socketMode, false); assert.equal(parsed.canaryHexCache, true);
+  assert.equal(parsed.hexArchive, syntheticHex); assert.deepEqual(events, ["inspect"]);
+  const inspectAt = source.indexOf("if (canaryHexCache) hexArchive = inspectHexArchive(args[8]);");
+  assert.ok(inspectAt >= 0 && inspectAt < source.indexOf("work = fs.mkdtempSync"));
+  assert.ok(source.indexOf("work = fs.mkdtempSync") < source.indexOf('step("initialize-private-synthetic-database"'));
+  assert.equal(canaryHexArguments(canaryArgs).canaryHexCache, false, "legacy canary stays opt-in");
+});
+
+test("SQL HTTP canary Hex rejects partial unknown and other-mode flags before archive access", () => {
+  for (const args of [[...canaryArgs, "--hex-cache"], [...canaryArgs, "--unknown", syntheticHex.directory],
+    [...canaryArgs, "--hex-cache", ""], [...canaryArgs, "--hex-cache", "--unknown"],
+    [...canaryArgs, "--hex-cache", syntheticHex.directory, "--extra"],
+    ...["--sql-http-reentry", "--sql-http-stop-drain", "--sql-http-periodic"].map(mode => [mode, ...canaryArgs.slice(1), "--hex-cache", syntheticHex.directory])]) {
+    let inspected = false;
+    assert.throws(() => canaryHexArguments(args, () => { inspected = true; throw new Error("archive_access_not_allowed"); }), /explicit_native_target_required/);
+    assert.equal(inspected, false);
+  }
+  const first = new Error("injected_archive_manifest_mismatch");
+  assert.throws(() => canaryHexArguments([...canaryArgs, "--hex-cache", syntheticHex.directory], () => { throw first; }), error => error === first);
+});
+
+function canaryHexCopy(changed) {
+  const source = reticulumSource(), copy = source.indexOf('step("copy-verified-existing-hex-private-home"');
+  const start = source.lastIndexOf("\n    if (", copy), end = source.indexOf("\n    port = await privatePort", copy);
+  assert.ok(copy >= 0 && start >= 0 && end > copy, "existing private-home copy branch required");
+  const events = [], archive = "/owned/scratch/mix/archives/hex-2.5.1";
+  const run = new Function("socketMode", "canaryHexCache", "step", "path", "work", "fs", "hexArchive", "inspectHexArchive", "reject", "run", "elixir", source.slice(start, end));
+  run(false, true, (name, action) => { events.push(name); action(); }, path, "/owned/scratch", {
+    mkdirSync(directory, options) { assert.equal(directory, path.dirname(archive)); assert.equal(options.mode, 0o700); },
+    cpSync(from, to, options) { assert.equal(from, syntheticHex.directory); assert.equal(to, archive); assert.deepEqual(options, { recursive: true, dereference: false }); events.push("copy"); }
+  }, syntheticHex, directory => {
+    events.push(directory === archive ? "verify-copy" : "verify-source");
+    return { ...syntheticHex, manifest: directory === changed ? "b".repeat(64) : syntheticHex.manifest };
+  }, code => { throw new Error(code); }, () => { throw new Error("network_installer_forbidden"); }, "/no-installer");
+  return events;
+}
+
+test("SQL HTTP canary Hex copies and verifies the existing archive without a network installer", () => {
+  assert.deepEqual(canaryHexCopy(), ["copy-verified-existing-hex-private-home", "copy", "verify-copy", "verify-source"]);
+  for (const changed of [syntheticHex.directory, "/owned/scratch/mix/archives/hex-2.5.1"])
+    assert.throws(() => canaryHexCopy(changed), /hex_archive_changed_during_copy/);
+  const guards = reticulumSource().match(/for \(const name of \[("mix\.exs"[^\]]+)\]\) \{/);
+  assert.ok(guards); assert.equal(guards[1], '"mix.exs", "mix.lock", "config/config.exs", "config/test.exs", "config/runtime.exs"');
+});
+
+test("SQL HTTP canary Hex receipt records verified private archive hash and version", () => {
+  const source = reticulumSource(), start = source.indexOf("  const writeReceipt = () => {");
+  const end = source.indexOf("  const step =", start);
+  assert.ok(start >= 0 && end > start, "existing receipt body required");
+  let receipt;
+  const run = new Function("fs", "path", "performance", "args", "hexArchive", `
+    const work = "/owned/scratch", phase = "terminal", outcome = "PASS", tests = 2, metrics = {}, started = 0;
+    const socketMode = false, canaryHexCache = true, catalogSourceBefore = undefined, catalogSourceAfter = undefined;
+    ${source.slice(start, end)} writeReceipt();`);
+  run({ writeFileSync(file, contents, options) { assert.equal(file, "/owned/scratch/summary.json"); assert.equal(options.mode, 0o600); receipt = JSON.parse(contents); } },
+    path, { now: () => 100 }, [...canaryArgs, "--hex-cache", syntheticHex.directory], syntheticHex);
+  assert.deepEqual(receipt.hex_archive, { manifest: syntheticHex.manifest, files: 133, bytes: 1549651, version: "2.5.1" });
+  assert.equal(receipt.tests, 2); assert.equal(receipt.outcome, "PASS");
+  assert.equal(receipt.hex_archive.directory, undefined, "receipt metadata excludes the input path");
 });
 
 test("connected browser binds a private bootstrap and never exposes SQL buttons", () => {
