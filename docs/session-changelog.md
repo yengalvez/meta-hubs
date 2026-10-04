@@ -1,5 +1,16 @@
 # Session Changelog
 
+## 2026-10-04 · Trace the complete native PGSQL child with ordinary guards
+
+Test-only opt-in instrumentation of checkpoint-children/db-stable preserves
+literal original child/library bytes after removing insertion-only hooks,
+binds helpers to the original root and records the shared monotonic clock.
+The oracle rejects missing post-audit coverage, null/stale observations and
+counter regression: four actual RED cases, then17/17 pure PASS. Directed
+review is CLOSED; ShellCheck and worktree Gitleaks pass. Product source and
+submodule pins are unchanged. Native execution remains pending at this
+commit; no historical cause, recovery/full, SLO or production acceptance.
+
 ## 2026-10-04 · Discriminate publisher delay from foreground observation delay
 
 Test-only opt-in native focus8782 passes48/48: healthy fast publishers with

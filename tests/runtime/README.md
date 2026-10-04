@@ -4,6 +4,32 @@ These opt-in tests use **synthetic data**, not a checkpoint or the public DB.
 They do not create cloud resources or switch a public installation's profile.
 The existing `PRODUCT_MODULES` implementation/schema remains authoritative.
 
+## Native checkpoint freshness trace (test-only, opt-in)
+
+From the frozen candidate, select only the existing positive DB child case:
+
+```sh
+YENHUBS_RECOVERY_TEST_FOCUS=checkpoint-children \
+YENHUBS_RECOVERY_TEST_CASE=db-stable \
+YENHUBS_PGSQL_NATIVE_FRESHNESS_TRACE=1 \
+YENHUBS_RECOVERY_TEST_KEEP_TMP=1 \
+bash tests/recovery/test-recovery-safety.sh
+```
+
+This inserts trace hooks into private copies of the complete original Bash
+DB child/library; stripping them must reproduce the original bytes. The
+original helpers, guards and ordinary1s/30s/10s/reserve2s timings remain bound
+to the candidate. API/DB/Lease are simulated; the parent/source monitors and
+their process boundaries run natively. No dump delay, artificial extra rounds,
+production access or new default/CI entrypoint is added. Trace coverage must
+include at least two natural publication rounds and two post-audit reads;
+missing/inconsistent coverage fails, rather than manufacturing a passing run.
+Retained fixture contains instrumentation bindings, raw publisher/reader
+events and the original child exit. Measurements include hook overhead and
+do not assign a historical cause or clear a stale latch. Use one finite native
+attempt after directed review; an external900s deadline is failure, not a
+change to the product's timing contract. This is not a full/recovery/SLO gate.
+
 Portable safety checks (also registered in local/CI security):
 
 ```sh

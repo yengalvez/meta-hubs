@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -343,5 +343,171 @@ for (const [name, alterFiles] of [
     assert.equal(result.status, 1);
     assert.equal(result.stdout, "");
     assert.equal(result.stderr, "freshness_origin_trace:incomplete-or-inconsistent\n");
+  });
+}
+
+function nativeTraceProgram(marker) {
+  const start = recoveryHarness.indexOf(`<<'${marker}'\n`);
+  const end = recoveryHarness.indexOf(`\n${marker}\n`, start);
+  assert.ok(start >= 0 && end > start, marker);
+  return recoveryHarness.slice(start + `<<'${marker}'\n`.length, end);
+}
+const nativeTraceGenerate = nativeTraceProgram("CHECKPOINT_PGSQL_NATIVE_TRACE_GENERATE");
+const nativeTraceVerify = nativeTraceProgram("CHECKPOINT_PGSQL_NATIVE_TRACE_VERIFY");
+const selectorStart = recoveryHarness.indexOf("checkpoint_pgsql_native_trace_selected() {\n");
+const nativeTraceSelector = recoveryHarness.slice(selectorStart, recoveryHarness.indexOf("\n}\n", selectorStart) + 3);
+
+test("pgsql native trace selector accepts only the explicit existing DB-stable focus", () => {
+  for (const [flag, focus, selectedCase, status] of [["1", "checkpoint-children", "db-stable", 0],
+    ["0", "checkpoint-children", "db-stable", 1], ["1", "checkpoint-children", "db-source-monitor-abort", 1],
+    ["1", "pgsql-guard-round-native", "db-stable", 1], ["2", "checkpoint-children", "db-stable", 1]]) {
+    const result = spawnSync("bash", ["-c", `${nativeTraceSelector}\ncheckpoint_pgsql_native_trace_selected`], {
+      cwd: root, encoding: "utf8", timeout: 5000,
+      env: { ...process.env, YENHUBS_PGSQL_NATIVE_FRESHNESS_TRACE: flag,
+        YENHUBS_RECOVERY_TEST_FOCUS: focus, YENHUBS_RECOVERY_TEST_CASE: selectedCase }
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, status);
+    assert.equal(result.stdout + result.stderr, "");
+  }
+});
+
+function withNativeTraceCopy(callback) {
+  const directory = mkdtempSync(join(tmpdir(), "yenhubs-native-trace-pure-"));
+  const trace = join(directory, "trace");
+  try {
+    const result = spawnSync(process.execPath, ["-", root, join(root, "tests/recovery/test-recovery-safety.sh"), trace], {
+      input: nativeTraceGenerate, cwd: root, encoding: "utf8", timeout: 5000
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout + result.stderr, "");
+    return callback(trace);
+  } finally {
+    rmSync(directory, { recursive: true });
+  }
+}
+
+function seedNativeTraceRecords(trace) {
+  const row = (event, pid, at_ms, counter, phase = "publisher", observation_ms = null, status = 0) =>
+    ({ event, pid, at_ms, counter, status, phase, observation_ms });
+  const child = [row("child-start", 100, 10, 0, "child"), row("child-stop", 100, 2000, 0, "child")];
+  const names = ["cycle-start", "guard-end", "identity-end", "formatter-before", "formatter-after", "cycle-end"];
+  const publisher = [row("monitor-start", 101, 20, 0)];
+  [[30, 400, 450, 460, 470, 480], [700, 1100, 1150, 1160, 1170, 1180]].forEach((times, index) =>
+    times.forEach((at_ms, stage) => publisher.push(row(names[stage], 101, at_ms, index + 1))));
+  publisher.push(row("monitor-stop", 101, 1800, 2));
+  const readers = [];
+  for (const [pid, before, counter, phase, observation] of [[201, 500, 1, "startup", null],
+    [202, 1200, 2, "refresh", 1190], [203, 1400, 2, "post-audit", 1390], [204, 1600, 2, "post-audit", 1590]]) {
+    readers.push(row("reader-before", pid, before, 0, phase, observation), row("reader-after", pid, before + 20, counter, phase, observation));
+  }
+  const fixture = { child, publisher, readers };
+  for (const [name, rows] of Object.entries(fixture)) {
+    writeFileSync(join(trace, `${name}.jsonl`), `${rows.map(value => JSON.stringify(value)).join("\n")}\n`, { mode: 0o600 });
+  }
+  writeFileSync(join(trace, "native-exit"), "0\n", { mode: 0o600 });
+  return fixture;
+}
+
+function runNativeTraceOracle(trace) {
+  const result = spawnSync(process.execPath, ["-", trace], { input: nativeTraceVerify, cwd: root, encoding: "utf8", timeout: 5000 });
+  assert.ifError(result.error);
+  return result;
+}
+
+test("pgsql native trace copies strip byte-exactly and bind all original helper paths explicitly", () => {
+  withNativeTraceCopy(trace => {
+    const manifest = JSON.parse(readFileSync(join(trace, "instrumentation.json"), "utf8"));
+    assert.equal(manifest.fixture_only, true);
+    assert.equal(manifest.original_library_dir, realpathSync(join(root, "deployment/lib")));
+    for (const [name, relative] of [["child", "deployment/backup-retdb.sh"], ["library", "deployment/lib/recovery-safety.sh"]]) {
+      let stripped = readFileSync(join(trace, relative), "utf8");
+      for (const insertion of manifest.insertions.filter(item => item.file === name)) {
+        const exactLine = `\n${insertion.line}\n`;
+        assert.equal(stripped.split(exactLine).length, 2);
+        stripped = stripped.replace(exactLine, "\n");
+      }
+      assert.equal(stripped, readFileSync(manifest.sources[name], "utf8"));
+      const parsed = spawnSync("bash", ["-n", join(trace, relative)], { cwd: root, encoding: "utf8", timeout: 5000 });
+      assert.ifError(parsed.error);
+      assert.equal(parsed.status, 0, parsed.stderr);
+    }
+    const parsed = spawnSync("bash", ["-n", join(trace, "hooks.sh")], { cwd: root, encoding: "utf8", timeout: 5000 });
+    assert.ifError(parsed.error);
+    assert.equal(parsed.status, 0, parsed.stderr);
+  });
+});
+
+test("pgsql native trace complete pure records report brackets without assigning an origin", () => {
+  withNativeTraceCopy(trace => {
+    seedNativeTraceRecords(trace);
+    const result = runNativeTraceOracle(trace);
+    assert.equal(result.status, 0, result.stderr);
+    const summary = JSON.parse(result.stdout.replace(/^pgsql_native_freshness_trace:/, ""));
+    assert.equal(summary.native_exit, 0);
+    assert.equal(summary.rounds, 2);
+    assert.equal(summary.reads, 4);
+    assert.equal(summary.maximum_formatter_ms, 10);
+    assert.equal(summary.maximum_reader_ms, 20);
+    assert.equal(summary.origin, "indeterminate");
+  });
+});
+
+for (const [name, mutate] of [
+  ["missing monitor terminal", f => f.publisher.pop()],
+  ["only one actual round", f => { f.publisher.splice(7, 6); f.publisher.at(-1).counter = 1; }],
+  ["reordered guard and identity", f => { [f.publisher[2].event, f.publisher[3].event] = [f.publisher[3].event, f.publisher[2].event]; }],
+  ["incomplete reader bracket", f => f.readers.pop()],
+  ["reader counter without a publication", f => { f.readers[1].counter = 3; }],
+  ["reader phase drift", f => { f.readers[1].phase = "running"; }],
+  ["native exit mismatch", f => { f.child[1].status = 7; }],
+  ["missing post-audit observations", f => { f.readers = f.readers.filter(row => row.phase !== "post-audit"); }],
+  ["null post-audit observation", f => { f.readers.filter(row => row.phase === "post-audit").forEach(row => { row.observation_ms = null; }); }],
+  ["causally obsolete post-audit observation", f => {
+    f.readers[4].observation_ms = f.readers[5].observation_ms = 1190;
+    f.readers[6].observation_ms = f.readers[7].observation_ms = 1390;
+  }],
+  ["serialized counter regression", f => {
+    f.publisher[11].at_ms = 1700;
+    f.publisher[12].at_ms = 1710;
+    f.readers[5].counter = 1;
+  }],
+]) {
+  test(`pgsql native trace rejects ${name} as indeterminate`, () => {
+    withNativeTraceCopy(trace => {
+      const fixture = seedNativeTraceRecords(trace);
+      mutate(fixture);
+      for (const [sink, rows] of Object.entries(fixture)) {
+        writeFileSync(join(trace, `${sink}.jsonl`), `${rows.map(row => JSON.stringify(row)).join("\n")}\n`);
+      }
+      const result = runNativeTraceOracle(trace);
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "pgsql_native_freshness_trace:indeterminate-incomplete-or-inconsistent\n");
+    });
+  });
+}
+
+for (const [name, alter] of [
+  ["modified literal copy", trace => {
+    const file = join(trace, "deployment/backup-retdb.sh");
+    writeFileSync(file, `${readFileSync(file, "utf8")}\n`);
+  }],
+  ["modified hooks", trace => {
+    const file = join(trace, "hooks.sh");
+    writeFileSync(file, `${readFileSync(file, "utf8")}\n`);
+  }],
+  ["trace write or clock failure", trace => writeFileSync(join(trace, "invalid"), "invalid\n")],
+]) {
+  test(`pgsql native trace rejects ${name}`, () => {
+    withNativeTraceCopy(trace => {
+      seedNativeTraceRecords(trace);
+      alter(trace);
+      const result = runNativeTraceOracle(trace);
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "pgsql_native_freshness_trace:indeterminate-incomplete-or-inconsistent\n");
+    });
   });
 }

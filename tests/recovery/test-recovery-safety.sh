@@ -4,6 +4,16 @@ set -euo pipefail
 umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+checkpoint_pgsql_native_trace_selected() {
+  [[ "${YENHUBS_PGSQL_NATIVE_FRESHNESS_TRACE:-0}" == 1 &&
+     "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-children &&
+     "${YENHUBS_RECOVERY_TEST_CASE:-}" == db-stable ]]
+}
+if [[ "${YENHUBS_PGSQL_NATIVE_FRESHNESS_TRACE:-0}" != 0 ]] &&
+   ! checkpoint_pgsql_native_trace_selected; then
+  printf 'PGSQL native trace requires checkpoint-children/db-stable only.\n' >&2
+  exit 2
+fi
 # shellcheck source=tests/recovery/lib/harness-profile.sh
 source "$ROOT_DIR/tests/recovery/lib/harness-profile.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yenhubs-recovery-tests.XXXXXX")"
@@ -8374,6 +8384,260 @@ stop_checkpoint_backup_writer_guard() {
   CHECKPOINT_BACKUP_WRITER_GUARD_STALE_HELPER_PID=""
 }
 
+checkpoint_pgsql_native_trace_record() {
+  local event="$1" counter="${2:-0}" native_status="${3:-0}"
+  local sink=publisher phase=publisher observation=null sampled
+  case "$event" in
+    reader-before|reader-after)
+      sink=readers
+      phase="${stream_diagnostic_stage:-${stream_outer_stage:-startup}}"
+      if [[ " ${FUNCNAME[*]} " == *' observe_inactive_stream_guard_progress '* &&
+            "${sample_time:-}" =~ ^[0-9]+$ ]]; then
+        observation="$sample_time"
+      elif [[ "${observation_milliseconds:-}" =~ ^[0-9]+$ ]]; then
+        observation="$observation_milliseconds"
+      fi
+      ;;
+    child-start|child-stop) sink=child; phase=child ;;
+    monitor-start|monitor-stop|cycle-start|guard-end|identity-end|formatter-before|formatter-after|cycle-end) ;;
+    *) printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid"; return 0 ;;
+  esac
+  case "$phase" in
+    startup|child|publisher|arguments|guard-baseline|launch|initialize|refresh|running|command|post-audit) ;;
+    *) printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid"; return 0 ;;
+  esac
+  if [[ ! "$counter" =~ ^[0-9]+$ || ! "$native_status" =~ ^[0-9]+$ ]] ||
+     ! sampled="$(recovery_monotonic_milliseconds)"; then
+    printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid" || :
+    return 0
+  fi
+  printf '{"event":"%s","pid":%s,"at_ms":%s,"counter":%s,"status":%s,"phase":"%s","observation_ms":%s}\n' \
+    "$event" "$BASHPID" "$sampled" "$counter" "$native_status" "$phase" "$observation" \
+    >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/$sink.jsonl" ||
+      { printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid" || :; }
+  return 0
+}
+
+checkpoint_pgsql_native_trace_marker_event() {
+  local marker="$1" event="$2" counter="$3" native_status="$4"
+  if [[ -n "${DB_SOURCE_MONITOR_PROGRESS:-}" &&
+        "$marker" == "$DB_SOURCE_MONITOR_PROGRESS" ]]; then
+    checkpoint_pgsql_native_trace_record "$event" "$counter" "$native_status"
+  fi
+  # In particular retain the original reader printf's native status.
+  return "$native_status"
+}
+
+checkpoint_pgsql_native_trace_rebind_library() {
+  local original expected
+  expected="$(jq -er '.original_library_dir' \
+    "$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/instrumentation.json")" || return 1
+  original="$(cd "$CHECKPOINT_PGSQL_NATIVE_TRACE_ORIGINAL_LIB_DIR" && pwd -P)" || return 1
+  [[ "$original" == "$expected" ]] || return 1
+  # Explicit fixture binding: all original helper/watcher paths stay original.
+  RECOVERY_SAFETY_DIR="$original"
+}
+
+checkpoint_pgsql_native_trace_prepare() {
+  node - "$ROOT_DIR" "${BASH_SOURCE[0]}" "$1" <<'CHECKPOINT_PGSQL_NATIVE_TRACE_GENERATE'
+const fs = require("node:fs");
+const path = require("node:path");
+const crypto = require("node:crypto");
+const [root, suitePath, destination] = process.argv.slice(2);
+const suite = fs.readFileSync(suitePath, "utf8");
+const sources = {
+  child: path.join(root, "deployment/backup-retdb.sh"),
+  library: path.join(root, "deployment/lib/recovery-safety.sh")
+};
+const originals = Object.fromEntries(Object.entries(sources).map(([key, file]) => [key, fs.readFileSync(file, "utf8")]));
+const marker = "# CHECKPOINT_PGSQL_NATIVE_TRACE_INSERT";
+const insertions = [];
+function fn(text, name) {
+  const anchor = `${name}() {\n`;
+  if (text.split(anchor).length !== 2) throw new Error("non-unique trace function");
+  const first = text.indexOf(anchor), last = text.indexOf("\n}\n", first);
+  if (last < first) throw new Error("unterminated trace function");
+  return text.slice(first, last + 3);
+}
+function instrument(original, file, edits) {
+  if (original.includes(marker)) throw new Error("trace hook already in source");
+  const lines = original.split("\n"), before = new Map(), after = new Map();
+  for (const { line, hook, side = "before", occurrence = 0, count = 1 } of edits) {
+    const hits = lines.flatMap((value, index) => value === line ? [index] : []);
+    if (hits.length !== count || !Number.isInteger(hits[occurrence])) throw new Error("non-unique trace anchor");
+    const target = side === "before" ? before : after;
+    const insertion = `${line.match(/^\s*/)[0]}${hook} ${marker} ${insertions.length + 1}`;
+    const index = hits[occurrence];
+    target.set(index, [...(target.get(index) || []), insertion]);
+    insertions.push({ file, line: insertion });
+  }
+  return lines.flatMap((line, index) => [...(before.get(index) || []), line, ...(after.get(index) || [])]).join("\n");
+}
+let child = instrument(originals.child, "child", [
+  { line: 'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"', side: "after", hook: 'source "$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/hooks.sh"' },
+  { line: 'source "$SCRIPT_DIR/lib/recovery-safety.sh"', side: "after", hook: "checkpoint_pgsql_native_trace_record child-start 0 0" }
+]);
+const monitor = fn(child, "monitor_exact_pgsql_source");
+const monitorEdits = [
+  { line: "  local progress=0", side: "after", hook: "checkpoint_pgsql_native_trace_record monitor-start 0 0" },
+  { line: "    require_backup_guard || {", hook: 'checkpoint_pgsql_native_trace_record cycle-start "$((progress + 1))" 0' },
+  { line: "    require_exact_pgsql_source_now || {", hook: 'checkpoint_pgsql_native_trace_record guard-end "$((progress + 1))" 0' },
+  { line: "    progress=$((progress + 1))", hook: 'checkpoint_pgsql_native_trace_record identity-end "$((progress + 1))" 0' },
+  { line: '    sleep "$DB_SOURCE_MONITOR_POLL_SECONDS"', hook: 'checkpoint_pgsql_native_trace_record cycle-end "$progress" 0' },
+  { line: "}", hook: 'checkpoint_pgsql_native_trace_record monitor-stop "$progress" 0' }
+];
+for (let occurrence = 0; occurrence < 3; occurrence++) {
+  monitorEdits.push({ line: "      return 1", count: 3, occurrence, hook: 'checkpoint_pgsql_native_trace_record monitor-stop "$progress" 1' });
+}
+child = child.replace(monitor, instrument(monitor, "child", monitorEdits));
+const cleanup = fn(child, "cleanup_backup");
+child = child.replace(cleanup, instrument(cleanup, "child", [
+  { line: "  trap '' INT TERM", hook: "local checkpoint_pgsql_native_trace_cleanup_native=$?" },
+  { line: "  return 0", hook: 'checkpoint_pgsql_native_trace_record child-stop 0 "${status:-$checkpoint_pgsql_native_trace_cleanup_native}"' }
+]));
+let library = instrument(originals.library, "library", [
+  { line: 'RECOVERY_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"', side: "after", hook: "checkpoint_pgsql_native_trace_rebind_library || return 1" }
+]);
+const formatter = fn(library, "recovery_write_stream_guard_progress");
+library = library.replace(formatter, instrument(formatter, "library", [
+  { line: '  local next_marker="${progress_marker}.next"', side: "after", hook: 'checkpoint_pgsql_native_trace_marker_event "$progress_marker" formatter-before "$progress_value" 0' },
+  { line: "}", hook: 'checkpoint_pgsql_native_trace_marker_event "$progress_marker" formatter-after "$progress_value" 0' }
+]));
+const reader = fn(library, "recovery_stream_guard_progress_value");
+library = library.replace(reader, instrument(reader, "library", [
+  // Empty startup markers have not been read yet. Bracket the real acquisition
+  // after the unchanged metadata/nonempty guards, then its parser and printf.
+  { line: '  progress_value="$(<"$progress_marker")"', hook: 'checkpoint_pgsql_native_trace_marker_event "$progress_marker" reader-before 0 0' },
+  { line: '  printf \'%s\\n\' "$progress_value"', side: "after", hook: 'checkpoint_pgsql_native_trace_marker_event "$progress_marker" reader-after "$progress_value" "$?"' }
+]));
+const copies = { child, library };
+for (const file of Object.keys(copies)) {
+  let stripped = copies[file];
+  for (const insertion of insertions.filter(item => item.file === file)) {
+    const exactLine = "\n" + insertion.line + "\n";
+    if (stripped.split(exactLine).length !== 2) throw new Error("non-unique trace stripping hook");
+    stripped = stripped.replace(exactLine, "\n");
+  }
+  if (stripped !== originals[file]) throw new Error("trace stripping changed original bytes");
+}
+if (fs.existsSync(destination)) throw new Error("trace fixture already exists");
+fs.mkdirSync(path.join(destination, "deployment/lib"), { recursive: true, mode: 0o700 });
+fs.writeFileSync(path.join(destination, "deployment/backup-retdb.sh"), child, { mode: 0o700 });
+fs.writeFileSync(path.join(destination, "deployment/lib/recovery-safety.sh"), library, { mode: 0o600 });
+const hooks = ["checkpoint_pgsql_native_trace_record", "checkpoint_pgsql_native_trace_marker_event", "checkpoint_pgsql_native_trace_rebind_library"].map(name => fn(suite, name)).join("\n\n") + "\n";
+fs.writeFileSync(path.join(destination, "hooks.sh"), hooks, { mode: 0o600 });
+const sha = value => crypto.createHash("sha256").update(value).digest("hex");
+const manifest = { fixture_only: true, original_library_dir: fs.realpathSync(path.dirname(sources.library)), sources,
+  source_sha256: Object.fromEntries(Object.entries(originals).map(([key, bytes]) => [key, sha(bytes)])), hooks_sha256: sha(hooks), insertions };
+fs.writeFileSync(path.join(destination, "instrumentation.json"), JSON.stringify(manifest) + "\n", { mode: 0o600 });
+CHECKPOINT_PGSQL_NATIVE_TRACE_GENERATE
+}
+
+verify_checkpoint_pgsql_native_trace() {
+  node - "$1" <<'CHECKPOINT_PGSQL_NATIVE_TRACE_VERIFY'
+const fs = require("node:fs");
+const path = require("node:path");
+const crypto = require("node:crypto");
+const root = process.argv[2];
+function requireExact(value) { if (!value) throw new Error("indeterminate"); }
+const integer = value => Number.isSafeInteger(value) && value >= 0;
+const sha = value => crypto.createHash("sha256").update(value).digest("hex");
+function readRecords(name) {
+  const bytes = fs.readFileSync(path.join(root, `${name}.jsonl`), "utf8");
+  requireExact(bytes.endsWith("\n") && bytes.length <= 2_000_000);
+  return bytes.trimEnd().split("\n").map(line => {
+    const row = JSON.parse(line);
+    requireExact(line === JSON.stringify(row));
+    requireExact(Object.keys(row).sort().join() === "at_ms,counter,event,observation_ms,phase,pid,status");
+    requireExact(integer(row.at_ms) && integer(row.counter) && integer(row.pid) && row.pid > 0 && integer(row.status));
+    requireExact(["startup", "child", "publisher", "arguments", "guard-baseline", "launch", "initialize", "refresh", "running", "command", "post-audit"].includes(row.phase));
+    requireExact(row.observation_ms === null || integer(row.observation_ms) && row.observation_ms <= row.at_ms);
+    return row;
+  });
+}
+try {
+  requireExact(!fs.existsSync(path.join(root, "invalid")));
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "instrumentation.json"), "utf8"));
+  requireExact(manifest.fixture_only === true && fs.realpathSync(path.dirname(manifest.sources.library)) === manifest.original_library_dir);
+  for (const [file, copy] of [["child", "deployment/backup-retdb.sh"], ["library", "deployment/lib/recovery-safety.sh"]]) {
+    const original = fs.readFileSync(manifest.sources[file], "utf8");
+    requireExact(sha(original) === manifest.source_sha256[file]);
+    let stripped = fs.readFileSync(path.join(root, copy), "utf8");
+    for (const insertion of manifest.insertions.filter(item => item.file === file)) {
+      const line = "\n" + insertion.line + "\n";
+      requireExact(stripped.split(line).length === 2);
+      stripped = stripped.replace(line, "\n");
+    }
+    requireExact(stripped === original);
+  }
+  requireExact(sha(fs.readFileSync(path.join(root, "hooks.sh"), "utf8")) === manifest.hooks_sha256);
+  const nativeText = fs.readFileSync(path.join(root, "native-exit"), "utf8");
+  requireExact(/^[0-9]+\n$/.test(nativeText));
+  const nativeStatus = Number(nativeText.trim());
+  const child = readRecords("child");
+  requireExact(child.length === 2 && child[0].event === "child-start" && child[1].event === "child-stop" &&
+    child[0].pid === child[1].pid && child[0].at_ms <= child[1].at_ms && child[0].status === 0 && child[1].status === nativeStatus);
+  const publisher = readRecords("publisher");
+  requireExact(publisher[0].event === "monitor-start" && publisher.at(-1).event === "monitor-stop" && publisher.at(-1).status === 0);
+  let previous = child[0].at_ms;
+  for (const row of publisher) {
+    requireExact(row.pid === publisher[0].pid && row.phase === "publisher" && row.status === 0 && row.observation_ms === null &&
+      row.at_ms >= previous && row.at_ms <= child[1].at_ms);
+    previous = row.at_ms;
+  }
+  const cycles = publisher.slice(1, -1), expected = ["cycle-start", "guard-end", "identity-end", "formatter-before", "formatter-after", "cycle-end"];
+  requireExact(cycles.length >= 12 && cycles.length % expected.length === 0);
+  const rounds = [];
+  for (let offset = 0; offset < cycles.length; offset += expected.length) {
+    const round = cycles.slice(offset, offset + expected.length), counter = rounds.length + 1;
+    requireExact(round.every((row, index) => row.event === expected[index] && row.counter === counter));
+    rounds.push(round);
+  }
+  requireExact(publisher[0].counter === 0 && publisher.at(-1).counter === rounds.length);
+  const reads = readRecords("readers"), pairs = [];
+  requireExact(reads.length >= 4 && reads.length % 2 === 0);
+  previous = child[0].at_ms;
+  let previousCounter = 0;
+  for (let index = 0; index < reads.length; index += 2) {
+    const before = reads[index], after = reads[index + 1];
+    requireExact(before.event === "reader-before" && after.event === "reader-after" && before.pid === after.pid &&
+      before.counter === 0 && after.counter >= 1 && before.status === 0 && after.status === 0 &&
+      before.phase === after.phase && before.observation_ms === after.observation_ms &&
+      before.at_ms >= previous && after.at_ms >= before.at_ms && after.at_ms <= child[1].at_ms);
+    requireExact(after.counter >= previousCounter);
+    if (before.phase === "post-audit") {
+      // Correlate an inherited pre-read sample, never the earlier lower bound
+      // used to credit progress. Missing/ambiguous samples are not coverage.
+      requireExact(integer(before.observation_ms) && before.observation_ms >= previous && before.observation_ms <= before.at_ms);
+    }
+    const round = rounds[after.counter - 1], next = rounds[after.counter];
+    requireExact(round && round[3].at_ms <= after.at_ms && (!next || next[4].at_ms >= before.at_ms));
+    pairs.push([before, after]);
+    previous = after.at_ms;
+    previousCounter = after.counter;
+  }
+  requireExact(new Set(pairs.map(pair => pair[1].counter)).size >= 2);
+  const publishGaps = rounds.slice(1).map((round, index) => round[4].at_ms - rounds[index][3].at_ms);
+  const observed = pairs.filter(pair => pair[0].phase === "post-audit");
+  requireExact(observed.length >= 2);
+  const observationGaps = observed.slice(1).map((pair, index) => pair[1].at_ms - observed[index][0].at_ms);
+  const summary = { native_exit: nativeStatus, rounds: rounds.length, reads: pairs.length,
+    maximum_guard_ms: Math.max(...rounds.map(round => round[1].at_ms - round[0].at_ms)),
+    maximum_identity_ms: Math.max(...rounds.map(round => round[2].at_ms - round[1].at_ms)),
+    maximum_formatter_ms: Math.max(...rounds.map(round => round[4].at_ms - round[3].at_ms)),
+    maximum_reader_ms: Math.max(...pairs.map(pair => pair[1].at_ms - pair[0].at_ms)),
+    maximum_publication_gap_upper_ms: Math.max(...publishGaps),
+    maximum_post_audit_observation_gap_upper_ms: Math.max(...observationGaps),
+    origin: "indeterminate", fixture_only: true, instrumentation_included: true };
+  // Measurements never self-assign a cause, clear a latch or accept native failure.
+  process.stdout.write("pgsql_native_freshness_trace:" + JSON.stringify(summary) + "\n");
+} catch {
+  process.stderr.write("pgsql_native_freshness_trace:indeterminate-incomplete-or-inconsistent\n");
+  process.exitCode = 1;
+}
+CHECKPOINT_PGSQL_NATIVE_TRACE_VERIFY
+}
+
 run_checkpoint_backup_child() {
   local child="$1" output_root="$2" generation="$3" baseline_path="$4"
   local baseline_sha="$5" profile="$6" inventory_path="$7"
@@ -8386,7 +8650,27 @@ run_checkpoint_backup_child() {
   # WATCH fixtures; their production-like one-second pacing prevents a local
   # subprocess storm while this integration case has its own wider allowance.
   local fixture_monitor_poll_seconds=0.25
+  local db_child_path="$ROOT_DIR/deployment/backup-retdb.sh" trace_dir=""
   local writer_pid="" writer_identity="" writer_progress="" writer_authority=""
+  if checkpoint_pgsql_native_trace_selected; then
+    [[ "$child" == db && "$generation" == durable-v2 &&
+       "$profile" == fence-stable && "$writer_guard_mode" == healthy &&
+       -z "$child_stub_mode" ]] || return 2
+    # Restore ordinary timing BEFORE either real parent monitor starts.
+    export RECOVERY_STREAM_POLL_SECONDS=1
+    export RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=30
+    # Intentional fixture-local export; no caller state needs propagation.
+    # shellcheck disable=SC2031
+    export RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS=10
+    fixture_monitor_poll_seconds=1
+    guard_max_stale_seconds=10
+    trace_dir="${output_root}.pgsql-native-trace"
+    checkpoint_pgsql_native_trace_prepare "$trace_dir" || return 1
+    db_child_path="$trace_dir/deployment/backup-retdb.sh"
+    trap stop_checkpoint_backup_writer_guard EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+  fi
   if [[ "$generation" == durable-v2 ]]; then
     runner_namespace=present
     deployments_json="$KUBERNETES_DEPLOYMENTS_JSON"
@@ -8535,7 +8819,9 @@ run_checkpoint_backup_child() {
         STUB_DB_DUMP_DELAY_SECONDS="$db_dump_delay_seconds" \
         RECOVERY_STREAM_POLL_SECONDS="$fixture_monitor_poll_seconds" \
         RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS="$guard_max_stale_seconds" \
-        "$ROOT_DIR/deployment/backup-retdb.sh" \
+        CHECKPOINT_PGSQL_NATIVE_TRACE_DIR="$trace_dir" \
+        CHECKPOINT_PGSQL_NATIVE_TRACE_ORIGINAL_LIB_DIR="$ROOT_DIR/deployment/lib" \
+        "$db_child_path" \
         "$output_root/retdb-$STAMP.sql.gz"; then
         child_status=0
       else
@@ -8589,6 +8875,10 @@ run_checkpoint_backup_child() {
       "$(grep -q 'pg_dump' "$KUBECTL_LOG" 2>/dev/null && printf yes || printf no)" >&2
   fi
   [[ "$writer_guard_mode" == missing ]] || stop_checkpoint_backup_writer_guard
+  if [[ -n "$trace_dir" ]]; then
+    printf '%s\n' "$child_status" >"$trace_dir/native-exit"
+    trap - EXIT INT TERM
+  fi
   return "$child_status"
 }
 
@@ -9004,6 +9294,11 @@ run_checkpoint_backup_child_guard_tests() {
     else
       fail 'durable DB three-guard positive integration' \
         "$(cat "$KUBECTL_LOG")"
+    fi
+    if checkpoint_pgsql_native_trace_selected; then
+      expect_success 'complete literal PGSQL rounds and original reads retain native timing evidence' \
+        verify_checkpoint_pgsql_native_trace "$case_root/output.pgsql-native-trace"
+      printf '%s\n' "$LAST_OUTPUT"
     fi
     return
   fi
