@@ -14,6 +14,21 @@ if [[ "${YENHUBS_PGSQL_NATIVE_FRESHNESS_TRACE:-0}" != 0 ]] &&
   printf 'PGSQL native trace requires checkpoint-children/db-stable only.\n' >&2
   exit 2
 fi
+if [[ "${YENHUBS_PGSQL_NATIVE_ORDINARY_TIMING-0}" != 0 &&
+      ( "${YENHUBS_PGSQL_NATIVE_ORDINARY_TIMING-0}" != 1 ||
+        "${YENHUBS_RECOVERY_TEST_FOCUS:-}" != checkpoint-children ||
+        "${YENHUBS_RECOVERY_TEST_CASE:-}" != db-stable ) ]]; then
+  printf 'PGSQL ordinary timing requires 0 or 1 and checkpoint-children/db-stable only.\n' >&2
+  exit 2
+fi
+pgsql_guard_round_standalone_unavailable() {
+  printf 'PGSQL standalone measurement is unavailable after publisher-owned lifecycle; use checkpoint-children/db-stable ordinary timing without tracing.\n' >&2
+  return 2
+}
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == pgsql-guard-round-native ]]; then
+  pgsql_guard_round_standalone_unavailable
+  exit 2
+fi
 # shellcheck source=tests/recovery/lib/harness-profile.sh
 source "$ROOT_DIR/tests/recovery/lib/harness-profile.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yenhubs-recovery-tests.XXXXXX")"
@@ -1077,6 +1092,9 @@ fi
 
 run_pgsql_guard_round_native() (
   set -euo pipefail
+  # Preserve the literal historical extraction below, but it cannot construct
+  # the current publisher-owned STOP/guardian context. Direct calls fail too.
+  pgsql_guard_round_standalone_unavailable || exit "$?"
   local case_root="$TMP_DIR/pgsql-guard-round-native"
   local extraction="$case_root/extraction.json" round_status=0
   if [[ "${YENHUBS_PGSQL_ROUND_PROFILE:-0}" == 1 ]] &&
@@ -8553,8 +8571,8 @@ const monitorEdits = [
   { line: '    sleep "$DB_SOURCE_MONITOR_POLL_SECONDS"', hook: 'checkpoint_pgsql_native_trace_record cycle-end "$progress" 0' },
   { line: "}", hook: 'checkpoint_pgsql_native_trace_record monitor-stop "$progress" 0' }
 ];
-for (let occurrence = 0; occurrence < 3; occurrence++) {
-  monitorEdits.push({ line: "      return 1", count: 3, occurrence, hook: 'checkpoint_pgsql_native_trace_record monitor-stop "$progress" 1' });
+for (let occurrence = 0; occurrence < 4; occurrence++) {
+  monitorEdits.push({ line: "      return 1", count: 4, occurrence, hook: 'checkpoint_pgsql_native_trace_record monitor-stop "$progress" 1' });
 }
 child = child.replace(monitor, instrument(monitor, "child", monitorEdits));
 child = wallSegments(child, "child", "require_backup_guard", [
@@ -8829,11 +8847,16 @@ run_checkpoint_backup_child() {
   local fixture_monitor_poll_seconds=0.25
   local db_child_path="$ROOT_DIR/deployment/backup-retdb.sh" trace_dir=""
   local writer_pid="" writer_identity="" writer_progress="" writer_authority=""
-  if checkpoint_pgsql_native_trace_selected; then
-    [[ "$child" == db && "$generation" == durable-v2 &&
+  if checkpoint_pgsql_native_trace_selected ||
+     [[ "${YENHUBS_PGSQL_NATIVE_ORDINARY_TIMING:-0}" == 1 ]]; then
+    [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-children &&
+       "${YENHUBS_RECOVERY_TEST_CASE:-}" == db-stable &&
+       "$child" == db && "$generation" == durable-v2 &&
        "$profile" == fence-stable && "$writer_guard_mode" == healthy &&
        -z "$child_stub_mode" ]] || return 2
-    # Restore ordinary timing BEFORE either real parent monitor starts.
+    # Ordinary timing is independent of tracing and is inherited by both real
+    # parent monitors before launch. The child env keeps the same poll/stale
+    # values and inherits the exported startup deadline.
     export RECOVERY_STREAM_POLL_SECONDS=1
     export RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=30
     # Intentional fixture-local export; no caller state needs propagation.
@@ -8841,6 +8864,8 @@ run_checkpoint_backup_child() {
     export RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS=10
     fixture_monitor_poll_seconds=1
     guard_max_stale_seconds=10
+  fi
+  if checkpoint_pgsql_native_trace_selected; then
     trace_dir="${output_root}.pgsql-native-trace"
     checkpoint_pgsql_native_trace_prepare "$trace_dir" || return 1
     db_child_path="$trace_dir/deployment/backup-retdb.sh"

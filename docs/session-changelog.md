@@ -3008,3 +3008,21 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
 - Sigue pendiente el delta TEST-ONLY de timings ordinarios y rechazo del
   standalone incompatible. Sin nuevo native, full, recibos relabelados,
   backup real, build, despliegue ni aceptación del candidato combinado.
+
+## 2026-10-04 — Ensayo PGSQL ordinario separado de instrumentación
+
+- El ensayo funcional95668 sobre J5160452 terminó0,47/47, pero conservaba
+  startup120 y poll0.25 del fixture; no acredita los límites ordinarios.
+  Opt-in TEST-ONLY `YENHUBS_PGSQL_NATIVE_ORDINARY_TIMING=1`, exacto0/1 y sólo
+  checkpoint-children/db-stable healthy/fence-stable/durable-v2, fija poll1,
+  startup30 y stale10 antes de ambos padres y conserva el child/lib original
+  sin instrumentación cuando TRACE0. Defaults normales del fixture intactos.
+- Oráculo literal y contador del tracer coherentes con STOP/guardian del
+  publisher actual. El standalone histórico no aporta ese lifecycle: ahora
+  rechaza finitamente con2 antes de fixture/parents, también directo o bajo
+  caller condicional. No inventa guardian ni autoridad, ni una medición verde.
+- RED de timings y rechazo temprano; GREEN dirigido del builder8/8. Primario
+ 23/23 puros sobre el primer freeze y2/2 del rechazo nuevo; sintaxis/diff y
+  ShellCheck focal0. ShellCheck global-x salió1 por ocho infos fuera del delta,
+  no modificadas/silenciadas. Ningún cambio producto, nueva medición native,
+  full, copia real o afirmación de rendimiento por estas pruebas puras.

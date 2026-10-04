@@ -44,10 +44,178 @@ const nativeStart = suite.indexOf("\nrun_pgsql_guard_round_native() (\n") + 1;
 const nativeEnd = suite.indexOf("\n)\n", nativeStart);
 assert.ok(nativeStart > 0 && nativeEnd > nativeStart);
 const native = suite.slice(nativeStart, nativeEnd + 3);
-const dispatchStart = suite.indexOf('\nif [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == pgsql-guard-round-native ]]; then\n') + 1;
+const dispatchStart = suite.indexOf('\nif [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == pgsql-guard-round-native ]]; then\n', nativeEnd) + 1;
 const dispatchEnd = suite.indexOf("\nfi\n", dispatchStart);
 assert.ok(dispatchStart > nativeEnd && dispatchEnd > dispatchStart);
 const dispatch = suite.slice(dispatchStart, dispatchEnd + 4);
+
+const checkpointSelector = suite.slice(suite.indexOf("checkpoint_pgsql_native_trace_selected() {\n"),
+  suite.indexOf("# shellcheck source=tests/recovery/lib/harness-profile.sh"));
+const checkpointChild = fn(suite, "run_checkpoint_backup_child");
+const checkpointParents = fn(suite, "start_checkpoint_backup_writer_guard");
+const standaloneUnavailable = "PGSQL standalone measurement is unavailable after publisher-owned lifecycle; use checkpoint-children/db-stable ordinary timing without tracing.\n";
+
+test("publisher-owned standalone measurement rejects both profile modes before fixture or parent boundaries", () => {
+  // Literal preflight + entry/dispatch, with the first filesystem boundary
+  // replaced by a failing observable sentinel. No fixture or monitor runs.
+  for (const [profile, invocation] of [["0", "dispatch"], ["1", "dispatch"], ["0", "direct"], ["1", "direct"],
+    ["0", "conditional"], ["1", "conditional"]]) {
+    const result = spawnSync("bash", ["-c", `set -euo pipefail
+ROOT_DIR=/never-created TMP_DIR=/never-created
+${checkpointSelector}
+mkdir(){ printf 'unexpected-fixture-boundary\\n'; exit 97; }
+start_checkpoint_backup_writer_guard(){ printf 'unexpected-parent-boundary\\n'; exit 98; }
+${native}
+${invocation === "dispatch" ? dispatch : invocation === "conditional" ?
+  'if run_pgsql_guard_round_native; then exit 99; else exit "$?"; fi' : "run_pgsql_guard_round_native"}
+printf 'unexpected-suite-boundary\\n'
+`], {
+      encoding: "utf8", timeout: 5000,
+      env: { PATH: process.env.PATH, HOME: process.env.HOME,
+        YENHUBS_RECOVERY_TEST_FOCUS: invocation === "dispatch" ? "pgsql-guard-round-native" : "checkpoint-children",
+        YENHUBS_PGSQL_ROUND_PROFILE: profile,
+        YENHUBS_PGSQL_NATIVE_ORDINARY_TIMING: "0", YENHUBS_PGSQL_NATIVE_FRESHNESS_TRACE: "0" }
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 2, result.stdout + result.stderr);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, standaloneUnavailable);
+  }
+});
+
+function runCheckpointTiming({ ordinary = "1", trace = "0", focus = "checkpoint-children", selectedCase = "db-stable",
+  child = "db", generation = "durable-v2", profile = "fence-stable", writer = "healthy", stub = "", prefix = false } = {}) {
+  // Execute the literal selector/function in expect_success's command-substitution
+  // context. Parents, filesystem preparation and the child env launch are inert
+  // boundary probes: no monitor, API, DB, trace generator or child is executed.
+  const body = prefix ? checkpointChild.slice(0, checkpointChild.indexOf('  if [[ "$generation" == durable-v2 ]]; then')) +
+    '  printf "prefix:%s:%s:%s:%s:%s\\n" "$RECOVERY_STREAM_POLL_SECONDS" "$RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS" "$RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS" "$fixture_monitor_poll_seconds" "$db_child_path"\n  trap - EXIT INT TERM\n}\n' : checkpointChild;
+  const input = `set -euo pipefail
+${checkpointSelector}
+${fn(suite, "expect_success")}
+${body}
+ROOT_DIR=/literal-root
+LEGACY_DEPLOYMENTS_JSON=legacy KUBERNETES_DEPLOYMENTS_JSON=durable
+STAMP=fixture DUMP_SHA=fixture STORAGE_SHA=fixture RUNNER_EVIDENCE_LIVE_DIR=fixture
+PASS_COUNT=0 FAIL_COUNT=0 LAST_OUTPUT=""
+export RECOVERY_STREAM_POLL_SECONDS=0.01 RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=120
+unset RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS
+pass(){ PASS_COUNT=$((PASS_COUNT + 1)); }
+fail(){ FAIL_COUNT=$((FAIL_COUNT + 1)); printf '%s\\n' "$2" >&2; }
+recovery_test_profile_checkpoint_timing(){ :; }
+seed_recovery_operation_fence_binding_state(){ :; }
+start_checkpoint_backup_writer_guard(){
+  printf 'parents:%s:%s:%s:%s\\n' "$RECOVERY_STREAM_POLL_SECONDS" "$RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS" "\${RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS:-default10}" "$STUB_MONITOR_WATCH_PACE"
+}
+stop_checkpoint_backup_writer_guard(){ :; }
+checkpoint_pgsql_native_trace_prepare(){ printf 'trace-prepared\\n'; }
+mkdir(){ :; }
+env(){
+  local poll="$RECOVERY_STREAM_POLL_SECONDS" stale="\${RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS:-default10}" trace_dir= path=
+  while [[ "$1" == *=* ]]; do
+    case "$1" in
+      RECOVERY_STREAM_POLL_SECONDS=*) poll="\${1#*=}" ;;
+      RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS=*) stale="\${1#*=}" ;;
+      CHECKPOINT_PGSQL_NATIVE_TRACE_DIR=*) trace_dir="\${1#*=}" ;;
+    esac
+    shift
+  done
+  path="$1"
+  printf 'child:%s:%s:%s:%s:%s\\n' "$poll" "$RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS" "$stale" "$trace_dir" "$path"
+}
+expect_success 'pure selected timing' run_checkpoint_backup_child "$1" /never-created "$2" fixture fixture "$3" "" "$4"
+printf '%s\\n' "$LAST_OUTPUT"
+[[ "$PASS_COUNT" == 1 && "$FAIL_COUNT" == 0 ]]
+`;
+  return spawnSync("bash", ["-c", input, "_", child, generation, profile, writer], {
+    encoding: "utf8", timeout: 5000,
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, STUB_MODE: stub,
+      YENHUBS_PGSQL_NATIVE_ORDINARY_TIMING: ordinary, YENHUBS_PGSQL_NATIVE_FRESHNESS_TRACE: trace,
+      YENHUBS_RECOVERY_TEST_FOCUS: focus, YENHUBS_RECOVERY_TEST_CASE: selectedCase }
+  });
+}
+
+test("checkpoint child ordinary timing opt-in restores 1/30/10 before both parent launches and preserves the original child/lib", () => {
+  const result = runCheckpointTiming();
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "parents:1:30:10:1\nchild:1:30:10::/literal-root/deployment/backup-retdb.sh\n");
+  assert.equal(result.stderr, "");
+  assert.match(backup, /source "\$SCRIPT_DIR\/lib\/recovery-safety\.sh"/);
+  assert.match(checkpointParents, /source "\$ROOT_DIR\/deployment\/lib\/recovery-safety\.sh"/);
+  assert.match(checkpointParents, /recovery_start_checkpoint_writer_monitor[\s\S]+recovery_start_durable_runner_quiescence_monitor/);
+  assert.doesNotMatch(checkpointParents, /(?:RECOVERY_STREAM_POLL_SECONDS|RECOVERY_TEST_STREAM_GUARD_(?:INITIAL_DEADLINE|MAX_STALE)_SECONDS)=/);
+});
+
+test("checkpoint child ordinary timing disabled keeps accelerated fixture defaults, while the original tracer still restores ordinary timing", () => {
+  const disabled = runCheckpointTiming({ ordinary: "0" });
+  assert.ifError(disabled.error);
+  assert.equal(disabled.status, 0, disabled.stderr);
+  assert.equal(disabled.stdout, "parents:0.01:120:default10:1\nchild:0.25:120:::/literal-root/deployment/backup-retdb.sh\n");
+  for (const ordinary of ["0", "1"]) {
+    const traced = runCheckpointTiming({ ordinary, trace: "1", prefix: true });
+    assert.ifError(traced.error);
+    assert.equal(traced.status, 0, traced.stderr);
+    assert.equal(traced.stdout, "trace-prepared\nprefix:1:30:10:1:/never-created.pgsql-native-trace/deployment/backup-retdb.sh\n");
+    assert.equal(traced.stderr, "");
+  }
+});
+
+test("checkpoint child ordinary timing rejects non-exact opt-ins and selectors before any fixture boundary", () => {
+  for (const options of [{ ordinary: "2" }, { ordinary: "01" }, { ordinary: "" }, { ordinary: "true" },
+    { focus: "pgsql-guard-round-native" }, { focus: "" }, { selectedCase: "db-source-monitor-abort" }, { selectedCase: "" }]) {
+    const result = runCheckpointTiming(options);
+    assert.ifError(result.error);
+    assert.equal(result.status, 2, JSON.stringify(options) + result.stderr);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "PGSQL ordinary timing requires 0 or 1 and checkpoint-children/db-stable only.\n");
+  }
+});
+
+test("checkpoint child ordinary timing rejects non-healthy or non-durable DB invocations before parents", () => {
+  for (const options of [{ child: "storage" }, { generation: "legacy-absent" }, { profile: "fence-drift" },
+    { writer: "stale" }, { stub: "db-source-monitor-stall" }]) {
+    const result = runCheckpointTiming(options);
+    assert.ifError(result.error);
+    assert.equal(result.status, 1, JSON.stringify(options) + result.stderr);
+    assert.equal(result.stdout, "\n");
+    assert.equal(result.stderr, "\n");
+  }
+});
+
+test("checkpoint PGSQL trace generation strips to the current original child/lib and covers every monitor failure arm", () => {
+  // Run the actual generator with writes redirected to process-local memory.
+  // It reads the original sources but creates no fixture or native actor.
+  const generator = heredoc("CHECKPOINT_PGSQL_NATIVE_TRACE_GENERATE");
+  const input = generator.replace('const fs = require("node:fs");', String.raw`
+const originalFs = require("node:fs");
+const files = new Map();
+const fs = { ...originalFs,
+  existsSync(file) { if (file !== process.argv[4]) throw new Error("unexpected existence probe"); return false; },
+  mkdirSync(file) { if (file !== process.argv[4] + "/deployment/lib") throw new Error("unexpected directory"); },
+  writeFileSync(file, bytes) { if (!file.startsWith(process.argv[4] + "/") || files.has(file)) throw new Error("unexpected write"); files.set(file, bytes); }
+};
+`) + '\nprocess.stdout.write(JSON.stringify(Object.fromEntries(files)));\n';
+  const root = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
+  const result = spawnSync(process.execPath, ["-", root, suiteUrl.pathname, "/virtual-pgsql-trace"], {
+    input, encoding: "utf8", timeout: 5000
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  const files = JSON.parse(result.stdout);
+  const manifest = JSON.parse(files["/virtual-pgsql-trace/instrumentation.json"]);
+  for (const [file, name, original] of [["child", "deployment/backup-retdb.sh", backup],
+    ["library", "deployment/lib/recovery-safety.sh", library]]) {
+    let stripped = files[`/virtual-pgsql-trace/${name}`];
+    for (const hook of manifest.insertions.filter(item => item.file === file)) stripped = stripped.replace("\n" + hook.line + "\n", "\n");
+    assert.equal(stripped, original, "removing insert-only hooks retains literal current source");
+  }
+  const failureHooks = manifest.insertions.filter(item => item.file === "child" &&
+    item.line.includes('checkpoint_pgsql_native_trace_record monitor-stop "$progress" 1'));
+  assert.equal(failureHooks.length, monitor.split("\n      return 1\n").length - 1);
+  assert.equal(failureHooks.length, 4);
+});
 
 test("native extraction is literal and limited to the current fixture helpers and production guard definitions", () => {
   assert.equal(parts.preamble, backup.slice(0, backup.indexOf("require_parent_writer_monitor_capability() {")));
@@ -66,14 +234,20 @@ test("native extraction is literal and limited to the current fixture helpers an
   assert.doesNotMatch(parts.fixture_setup, /^expect_(?:success|failure)|^run_\w+_tests\b/m);
 });
 
-test("one measured round retains exactly both production calls and their failure arms", () => {
+test("one measured round retains current pre-publication checks, including STOP/guardian, not the owned publisher lifecycle", () => {
   const start = monitor.indexOf("    require_backup_guard || {\n");
   const end = monitor.indexOf("    progress=$((progress + 1))\n");
   assert.equal(parts.round, monitor.slice(start, end));
   assert.equal(parts.round, '    require_backup_guard || {\n' +
     '      record_pgsql_source_monitor_failure "${DB_BACKUP_GUARD_FAILURE_REASON:-backup-guard}"\n' +
     '      return 1\n    }\n    require_exact_pgsql_source_now || {\n' +
-    '      record_pgsql_source_monitor_failure pgsql-source\n      return 1\n    }\n');
+    '      record_pgsql_source_monitor_failure pgsql-source\n      return 1\n    }\n' +
+    '    [[ ! -e "$DB_SOURCE_MONITOR_STOP" ]] || return 0\n' +
+    '    db_source_guardian_is_usable || {\n' +
+    '      record_pgsql_source_monitor_failure source-guardian\n      return 1\n    }\n');
+  // This fragment excludes publication/poll and does not construct the owned
+  // publisher, its guardian or its joins. Literal extraction is not evidence
+  // that the standalone measurement executes a complete publisher lifecycle.
   assert.doesNotMatch(parts.round, /while|sleep|recovery_write_stream_guard_progress|pg_dump/);
   assert.equal(parts.publish_poll, monitor.slice(end, monitor.indexOf("  done\n", end)));
   assert.match(parts.publish_poll, /recovery_write_stream_guard_progress/);
@@ -295,21 +469,21 @@ test("Bash 5 builtin clock measures the actual bounded hook overhead", clockPosi
   assert.equal(result.stderr, "");
 });
 
-test("an available older Bash rejects profiling opt-in before fixture effects", {
+test("an available older Bash also rejects publisher-owned standalone profiling before fixture effects", {
   skip: !olderBash ? "no older Bash interpreter is available for the real rejection check" : false
 }, () => {
   assert.ok(native.indexOf("((BASH_VERSINFO[0] < 5))") < native.indexOf('mkdir -p "$case_root/deployment"'));
-  // Invoke the actual selector function, not a rewritten gate or fake clock.
-  // /dev/null is an immutable sentinel: reaching mkdir would fail, not create
-  // fixture bytes. The real version rejection must occur first with exit 2.
+  // The incompatibility precedes even the old version/profile check. Keep
+  // compatible pure hooks, but do not grant old Bash a partial native path.
   const result = spawnSync(olderBash.command, ["-c", 'set -euo pipefail\nTMP_DIR=/dev/null ROOT_DIR=/dev/null\n' +
-    native + '\nrun_pgsql_guard_round_native\n'], {
-    env: { ...process.env, YENHUBS_PGSQL_ROUND_PROFILE: "1" }, encoding: "utf8", timeout: 5000
+    checkpointSelector + '\n' + native + '\nrun_pgsql_guard_round_native\n'], {
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, YENHUBS_PGSQL_ROUND_PROFILE: "1",
+      YENHUBS_RECOVERY_TEST_FOCUS: "pgsql-guard-round-native" }, encoding: "utf8", timeout: 5000
   });
   assert.ifError(result.error);
   assert.equal(result.status, 2);
   assert.equal(result.stdout, "");
-  assert.equal(result.stderr, "PGSQL_ROUND_PROFILE requires Bash 5 or newer.\n");
+  assert.equal(result.stderr, standaloneUnavailable);
 });
 
 test("invalid profiling never changes native nonzero exits to success", () => {
