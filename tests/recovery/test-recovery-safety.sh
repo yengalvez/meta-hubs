@@ -1069,6 +1069,11 @@ run_pgsql_guard_round_native() (
   set -euo pipefail
   local case_root="$TMP_DIR/pgsql-guard-round-native"
   local extraction="$case_root/extraction.json" round_status=0
+  if [[ "${YENHUBS_PGSQL_ROUND_PROFILE:-0}" == 1 ]] &&
+     ((BASH_VERSINFO[0] < 5)); then
+    printf 'PGSQL_ROUND_PROFILE requires Bash 5 or newer.\n' >&2
+    exit 2
+  fi
   mkdir -p "$case_root/deployment"
   # Extract only existing setup/helpers and the literal production round. No
   # recovery assertions, dump, stream, validator replacement or clock shim.
@@ -1112,6 +1117,51 @@ const parts = {
 // The loop-closing anchor is scoped to the real monitor, not another loop.
 const monitor = fn(backup, "monitor_exact_pgsql_source");
 parts.publish_poll = between(monitor, "    progress=$((progress + 1))", "  done");
+if (process.env.YENHUBS_PGSQL_ROUND_PROFILE === "1") {
+  // Insert only defined hook lines. Removing each exact line must reproduce
+  // every original byte, including order, conditionals and failure arms.
+  const insertions = [];
+  function instrument(original, edits) {
+    let generated = original;
+    const lines = [];
+    if (original.includes("# PGSQL_ROUND_PROFILE_INSERT")) throw new Error("profile marker in source");
+    for (const [line, hook] of edits) {
+      const offset = anchor(generated, line);
+      const insertion = `${line.match(/^\s*/)[0]}${hook} # PGSQL_ROUND_PROFILE_INSERT\n`;
+      generated = generated.slice(0, offset) + insertion + generated.slice(offset);
+      lines.push(insertion);
+    }
+    let stripped = generated;
+    for (const insertion of lines) {
+      const exactLine = "\n" + insertion;
+      if (stripped.split(exactLine).length !== 2) throw new Error("non-unique inserted profile hook");
+      stripped = stripped.replace(exactLine, "\n");
+    }
+    if (stripped !== original) throw new Error("profile stripping changed native source");
+    insertions.push(...lines);
+    return generated;
+  }
+  const guard = fn(backup, "require_backup_guard");
+  const profiledGuard = instrument(guard, [
+    ["  recovery_require_operation_lock || {", "pgsql_round_profile_begin operation-lock"],
+    ["  for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do", "pgsql_round_profile_begin consumers"],
+    ['  if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then', "pgsql_round_profile_begin parent-capability"],
+    ['  if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then', "pgsql_round_profile_begin durable-capability"],
+    ['  DB_BACKUP_GUARD_FAILURE_REASON=""', "pgsql_round_profile_end 0"]
+  ]);
+  parts.profile = {
+    guards: parts.guards.replace(guard, profiledGuard),
+    round: instrument(parts.round, [["    require_exact_pgsql_source_now || {", "pgsql_round_profile_begin pgsql-identity"]]),
+    publish_poll: instrument(parts.publish_poll, [
+      ["    if ! recovery_write_stream_guard_progress \\", "pgsql_round_profile_begin progress-publication"],
+      ['    sleep "$DB_SOURCE_MONITOR_POLL_SECONDS"', "pgsql_round_profile_end 0"]
+    ]),
+    insertions
+  };
+  let strippedGuards = parts.profile.guards;
+  for (const insertion of insertions) strippedGuards = strippedGuards.replace("\n" + insertion, "\n");
+  if (strippedGuards !== parts.guards) throw new Error("profile guards changed native source");
+}
 process.stdout.write(JSON.stringify(parts));
 PGSQL_GUARD_ROUND_EXTRACT
   jq -j '.fixture_setup' "$extraction" >"$case_root/fixture-setup.sh"
@@ -1136,11 +1186,89 @@ PGSQL_GUARD_ROUND_EXTRACT
   # A directory link keeps the literal SCRIPT_DIR source and every library
   # helper path bound to the real library tree, not a copied implementation.
   ln -s "$ROOT_DIR/deployment/lib" "$case_root/deployment/lib"
-  jq -j '.preamble, .capabilities, "\n", .guards, "\n", .identity,
-    "pgsql_guard_round_native_once() {\n", .round, "}\n",
+  jq -j --arg profile "${YENHUBS_PGSQL_ROUND_PROFILE:-0}" '
+    .preamble, .capabilities, "\n",
+    (if $profile == "1" then .profile.guards else .guards end), "\n", .identity,
+    "pgsql_guard_round_native_once() {\n",
+    (if $profile == "1" then .profile.round else .round end), "}\n",
     "pgsql_guard_round_native_publish_poll() {\n  local progress=0\n",
-    .publish_poll, "}\n"' "$extraction" \
+    (if $profile == "1" then .profile.publish_poll else .publish_poll end), "}\n"' "$extraction" \
     >"$case_root/deployment/backup-retdb.sh"
+  if [[ "${YENHUBS_PGSQL_ROUND_PROFILE:-0}" == 1 ]]; then
+    cat >>"$case_root/deployment/backup-retdb.sh" <<'PGSQL_GUARD_ROUND_PROFILE'
+PGSQL_ROUND_PROFILE_STAGE="" PGSQL_ROUND_PROFILE_START=""
+PGSQL_ROUND_PROFILE_NOW="" PGSQL_ROUND_PROFILE_ELAPSED=""
+PGSQL_ROUND_PROFILE_INVALID=0
+pgsql_round_profile_now() {
+  local timestamp="${EPOCHREALTIME:-}" seconds fraction
+  [[ "$timestamp" =~ ^[0-9]{1,12}\.[0-9]{6}$ ]] || return 1
+  seconds="${timestamp%.*}" fraction="${timestamp#*.}"
+  PGSQL_ROUND_PROFILE_NOW=$((10#$seconds * 1000000 + 10#$fraction))
+}
+pgsql_round_profile_elapsed() {
+  local start="$1" end="$2"
+  [[ "$start" =~ ^[0-9]{1,18}$ && "$end" =~ ^[0-9]{1,18}$ ]] || return 1
+  ((10#$end >= 10#$start)) || return 1
+  PGSQL_ROUND_PROFILE_ELAPSED=$((10#$end - 10#$start))
+}
+pgsql_round_profile_end() {
+  local status="$1"
+  [[ -n "$PGSQL_ROUND_PROFILE_STAGE" ]] || return 0
+  case "$PGSQL_ROUND_PROFILE_STAGE" in
+    operation-lock|consumers|parent-capability|durable-capability|pgsql-identity|progress-publication|hook-overhead) ;;
+    *) PGSQL_ROUND_PROFILE_STAGE=profile-invalid PGSQL_ROUND_PROFILE_START=""
+       PGSQL_ROUND_PROFILE_INVALID=1 ;;
+  esac
+  if [[ ! "$status" =~ ^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$ ]]; then
+    status=2 PGSQL_ROUND_PROFILE_INVALID=1
+  fi
+  if pgsql_round_profile_now &&
+     pgsql_round_profile_elapsed "$PGSQL_ROUND_PROFILE_START" "$PGSQL_ROUND_PROFILE_NOW"; then
+    printf 'PGSQL_ROUND_PROFILE stage=%s elapsed_us=%s status=%s valid=1\n' \
+      "$PGSQL_ROUND_PROFILE_STAGE" "$PGSQL_ROUND_PROFILE_ELAPSED" "$status"
+  else
+    PGSQL_ROUND_PROFILE_INVALID=1
+    printf 'PGSQL_ROUND_PROFILE stage=%s status=%s valid=0\n' "$PGSQL_ROUND_PROFILE_STAGE" "$status"
+  fi
+  PGSQL_ROUND_PROFILE_STAGE="" PGSQL_ROUND_PROFILE_START=""
+  return 0
+}
+pgsql_round_profile_begin() {
+  local stage="$1"
+  case "$stage" in
+    operation-lock|consumers|parent-capability|durable-capability|pgsql-identity|progress-publication|hook-overhead) ;;
+    *) PGSQL_ROUND_PROFILE_INVALID=1
+       printf 'PGSQL_ROUND_PROFILE stage=profile-invalid status=2 valid=0\n'
+       return 0 ;;
+  esac
+  pgsql_round_profile_end 0
+  PGSQL_ROUND_PROFILE_STAGE="$stage"
+  if pgsql_round_profile_now; then
+    PGSQL_ROUND_PROFILE_START="$PGSQL_ROUND_PROFILE_NOW"
+  else
+    PGSQL_ROUND_PROFILE_START=""
+    PGSQL_ROUND_PROFILE_INVALID=1
+  fi
+  return 0
+}
+pgsql_round_profile_overhead() {
+  local start="" sample
+  if pgsql_round_profile_now; then start="$PGSQL_ROUND_PROFILE_NOW"; fi
+  for ((sample=0; sample<100; sample++)); do
+    pgsql_round_profile_begin hook-overhead
+    pgsql_round_profile_end 0
+  done >/dev/null
+  if pgsql_round_profile_now && pgsql_round_profile_elapsed "$start" "$PGSQL_ROUND_PROFILE_NOW" &&
+     [[ "$PGSQL_ROUND_PROFILE_INVALID" == 0 ]]; then
+    printf 'PGSQL_ROUND_PROFILE stage=hook-overhead samples=100 elapsed_us=%s status=0 valid=1\n' "$PGSQL_ROUND_PROFILE_ELAPSED"
+  else
+    PGSQL_ROUND_PROFILE_INVALID=1
+    printf 'PGSQL_ROUND_PROFILE stage=hook-overhead samples=100 status=2 valid=0\n'
+  fi
+  printf '%s\n' 'PGSQL_ROUND_PROFILE_LIMITS clock=EPOCHREALTIME-wall-may-adjust elapsed=unadjusted stage_edges=hooks-plus-shell-housekeeping overhead_samples=100 overhead_sink=dev-null overhead_includes-loop overhead_excludes-real-output-I/O no-SLO no-historical-cause'
+}
+PGSQL_GUARD_ROUND_PROFILE
+  fi
   cat >>"$case_root/deployment/backup-retdb.sh" <<'PGSQL_GUARD_ROUND_MEASURE'
 DB_SOURCE_MONITOR_FAILURE="$OUTPUT_DIR/pgsql-round.failure"
 DB_SOURCE_MONITOR_PROGRESS="$OUTPUT_DIR/pgsql-round.progress"
@@ -1148,17 +1276,39 @@ DB_SOURCE_MONITOR_POLL_SECONDS="$(recovery_stream_poll_seconds)"
 : >"$DB_SOURCE_MONITOR_FAILURE"
 : >"$DB_SOURCE_MONITOR_PROGRESS"
 TIMEFORMAT='PGSQL_GUARD_ROUND_NATIVE duration_seconds=%3R'
+if [[ "${YENHUBS_PGSQL_ROUND_PROFILE:-0}" == 1 ]]; then
+  pgsql_round_profile_overhead
+fi
 round_status=0
 if { time pgsql_guard_round_native_once; } 2>"$OUTPUT_DIR/round-time.log"; then
   round_status=0
 else
   round_status=$?
 fi
+if [[ "${YENHUBS_PGSQL_ROUND_PROFILE:-0}" == 1 ]]; then
+  pgsql_round_profile_end "$round_status"
+fi
 cat "$OUTPUT_DIR/round-time.log" >&2
 printf 'PGSQL_GUARD_ROUND_NATIVE round_exit=%s startup_seconds=30 stale_seconds=10 cancellation_reserve_seconds=2\n' "$round_status"
 printf '%s\n' 'PGSQL_GUARD_ROUND_NATIVE limits=fixture-only,no-dump,no-SLO,no-historical-cause; clock=Bash-time-wall-clock-may-adjust; overhead=timed-function-and-failure-arms; setup-publication-poll-cleanup=excluded'
-if [[ "$round_status" == 0 ]]; then
-  pgsql_guard_round_native_publish_poll
+if [[ "${YENHUBS_PGSQL_ROUND_PROFILE:-0}" == 1 ]]; then
+  if [[ "$round_status" == 0 && "$PGSQL_ROUND_PROFILE_INVALID" == 0 ]]; then
+    if pgsql_guard_round_native_publish_poll; then
+      round_status=0
+    else
+      round_status=$?
+    fi
+    pgsql_round_profile_end "$round_status"
+  fi
+  # Invalid guard metrics suppress publication; invalid publication metrics
+  # reject the result too. Neither can turn a native failure into success.
+  if [[ "$round_status" == 0 && "$PGSQL_ROUND_PROFILE_INVALID" != 0 ]]; then
+    round_status=2
+  fi
+else
+  if [[ "$round_status" == 0 ]]; then
+    pgsql_guard_round_native_publish_poll
+  fi
 fi
 exit "$round_status"
 PGSQL_GUARD_ROUND_MEASURE
