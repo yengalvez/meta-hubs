@@ -13753,10 +13753,11 @@ start_stream_guard_fixture_publisher() {
   local progress_marker="$1" stop_marker="$2" initial_delay="$3"
   local interval="$4" maximum_increments="$5" start_marker="${6:-}"
   local publication_prefix="${7:-}" frozen_marker="${8:-}"
-  local pause_marker="${9:-}"
+  local pause_marker="${9:-}" trace_path="${10:-}" trace_guard="${11:--1}"
   python3 - "$progress_marker" "$stop_marker" "$initial_delay" \
     "$interval" "$maximum_increments" "$start_marker" \
-    "$publication_prefix" "$frozen_marker" "$pause_marker" <<'PY' &
+    "$publication_prefix" "$frozen_marker" "$pause_marker" \
+    "$trace_path" "$trace_guard" <<'PY' &
 import os
 import sys
 import time
@@ -13771,6 +13772,8 @@ import time
     publication_prefix,
     frozen_path,
     pause_path,
+    trace_path,
+    trace_guard,
 ) = sys.argv[1:]
 initial_delay = float(initial_text)
 interval = float(interval_text)
@@ -13778,6 +13781,36 @@ maximum = int(maximum_text)
 counter = int(open(progress_path, encoding="utf-8").read().strip())
 published = 0
 paused = False
+pause_active = False
+
+if trace_path:
+    import ctypes
+    import json
+
+    # Match the product clock domain; do not assume time.monotonic's epoch.
+    class Timespec(ctypes.Structure):
+        _fields_ = [("seconds", ctypes.c_long), ("nanoseconds", ctypes.c_long)]
+
+    clock_id = 1 if sys.platform.startswith("linux") else 6 if sys.platform == "darwin" else -1
+    if clock_id < 0:
+        raise SystemExit(1)
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.clock_gettime.argtypes = [ctypes.c_int, ctypes.POINTER(Timespec)]
+    libc.clock_gettime.restype = ctypes.c_int
+    trace_file = open(trace_path, "x", encoding="utf-8", buffering=1)
+    os.chmod(trace_path, 0o600)
+
+    def trace_now():
+        value = Timespec()
+        if libc.clock_gettime(clock_id, ctypes.byref(value)) != 0:
+            raise OSError("fixture_clock_unavailable")
+        return value.seconds * 1000 + value.nanoseconds // 1_000_000
+
+    def trace(event, **fields):
+        trace_file.write(json.dumps(dict(event=event, guard=int(trace_guard),
+                                        pid=os.getpid(), counter=counter, **fields)) + "\n")
+
+    trace("start", at_ms=trace_now())
 
 
 def publish_private(path, value):
@@ -13798,19 +13831,29 @@ deadline = time.monotonic() + initial_delay
 while not os.path.exists(stop_path):
     if pause_path and os.path.exists(pause_path) and not paused:
         paused = True
+        pause_active = True
         deadline = time.monotonic() + 11.5
+        if trace_path:
+            trace("pause-start", at_ms=trace_now())
         publish_private(f"{publication_prefix}-paused", counter)
     if maximum == 0 or published < maximum:
         remaining = deadline - time.monotonic()
         if remaining > 0:
             time.sleep(min(remaining, 0.01))
             continue
+        if trace_path and pause_active:
+            trace("pause-end", at_ms=trace_now())
+            pause_active = False
         counter += 1
         next_path = f"{progress_path}.publisher-next"
         with open(next_path, "w", encoding="utf-8") as marker:
             marker.write(f"{counter}\n")
         os.chmod(next_path, 0o600)
+        if trace_path:
+            before_ms = trace_now()
         os.replace(next_path, progress_path)
+        if trace_path:
+            trace("publish", before_ms=before_ms, after_ms=trace_now())
         published += 1
         if publication_prefix:
             publish_private(f"{publication_prefix}-published-{published}", counter)
@@ -13818,6 +13861,9 @@ while not os.path.exists(stop_path):
     else:
         publish_private(frozen_path, counter)
         time.sleep(0.01)
+if trace_path:
+    trace("stop", at_ms=trace_now())
+    trace_file.close()
 PY
   # shellcheck disable=SC2031 # This shell owns the fixture publisher PID.
   STREAM_GUARD_FIXTURE_PUBLISHER_PID=$!
@@ -13830,6 +13876,198 @@ stream_guard_fixture_start_identity() {
     source "$1"
     recovery_process_start_identity "$2"
   ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$1"
+}
+
+verify_stream_guard_freshness_origin_trace() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+case, directory, native_status = sys.argv[1:]
+root = pathlib.Path(directory)
+observations = root / "observations"
+
+
+def require(condition):
+    if not condition:
+        raise ValueError("incomplete_or_inconsistent_trace")
+
+
+def number(value):
+    require(type(value) is int and value >= 0)
+    return value
+
+
+def records(path):
+    data = path.read_text(encoding="utf-8")
+    require(data.endswith("\n") and len(data) <= 2_000_000)
+    def unique_object(pairs):
+        require(len({key for key, _ in pairs}) == len(pairs))
+        return dict(pairs)
+    result = [json.loads(line, object_pairs_hook=unique_object) for line in data.splitlines()]
+    require(result and all(type(row) is dict for row in result))
+    return result
+
+
+def exact(row, fields):
+    require(set(row) == set(fields.split()))
+
+
+def bracket(row):
+    before, after = number(row["before_ms"]), number(row["after_ms"])
+    require(after >= before)
+    return before, after
+
+
+try:
+    publications, pauses, pids = {}, [], set()
+    for guard in range(3):
+        rows = records(observations / f"publisher-{guard}.jsonl")
+        require(rows[0]["event"] == "start" and rows[-1]["event"] == "stop")
+        pid = number(rows[0]["pid"])
+        require(pid > 0 and pid not in pids)
+        pids.add(pid)
+        counter, previous_time, active_pause = 1, 0, None
+        publications[guard] = []
+        for index, row in enumerate(rows):
+            require(number(row["guard"]) == guard and number(row["pid"]) == pid)
+            number(row["counter"])
+            event = row["event"]
+            if event == "publish":
+                exact(row, "event guard pid counter before_ms after_ms")
+                before, after = bracket(row)
+                require(active_pause is None and row["counter"] == counter + 1)
+                counter += 1
+                publications[guard].append(row)
+            else:
+                exact(row, "event guard pid counter at_ms")
+                before = after = number(row["at_ms"])
+                require(row["counter"] == counter)
+                if event == "start":
+                    require(index == 0)
+                elif event == "stop":
+                    require(index == len(rows) - 1)
+                    if active_pause is not None:
+                        active_pause["end_ms"] = after
+                elif event == "pause-start":
+                    require(active_pause is None)
+                    active_pause = dict(guard=guard, counter=counter, before_ms=before)
+                    pauses.append(active_pause)
+                elif event == "pause-end":
+                    require(active_pause is not None)
+                    active_pause["end_ms"] = after
+                    active_pause["resumed"] = True
+                    active_pause = None
+                else:
+                    require(False)
+            require(before >= previous_time)
+            previous_time = after
+        require(publications[guard])
+
+    rows = records(observations / "readers.jsonl")
+    terminal = rows.pop()
+    exact(terminal, "event at_ms status")
+    require(terminal["event"] == "supervisor-stop")
+    require(number(terminal["status"]) == int(native_status))
+    reads, delays, previous_time = [], [], 0
+    for row in rows:
+        before, after = bracket(row)
+        require(before >= previous_time)
+        previous_time = after
+        require(row["stage"] in ("guard-baseline", "launch", "initialize", "refresh", "running", "command", "post-audit"))
+        if row["event"] == "observer-delay":
+            exact(row, "event guard before_ms after_ms reader stage reaped gated handles_empty")
+            require(row["guard"] == 0 and row["reader"] == "foreground" and
+                    row["stage"] == "post-audit" and row["reaped"] == 1 and
+                    row["gated"] == 0 and row["handles_empty"] is True)
+            delays.append(row)
+        else:
+            exact(row, "event guard before_ms after_ms counter status reader stage observation_ms")
+            require(row["event"] == "read" and number(row["guard"]) in range(3) and
+                    number(row["status"]) == 0 and number(row["counter"]) >= 1 and
+                    row["reader"] in ("other", "foreground"))
+            if row["reader"] == "foreground":
+                require(number(row["observation_ms"]) <= before)
+            else:
+                require(row["observation_ms"] is None)
+            source = publications[row["guard"]]
+            possible = [p for p in source if p["counter"] == row["counter"]]
+            if row["counter"] == 1:
+                require(after <= source[0]["after_ms"])
+            else:
+                require(len(possible) == 1 and possible[0]["before_ms"] <= after)
+                later = [p for p in source if p["counter"] == row["counter"] + 1]
+                require(not later or later[0]["after_ms"] >= before)
+            reads.append(row)
+    require(number(terminal["at_ms"]) >= previous_time)
+    foreground = [r for r in reads if r["reader"] == "foreground" and r["stage"] == "post-audit"]
+    require({r["guard"] for r in foreground} == {0, 1, 2})
+
+    def healthy_during(guard, before, after):
+        source = publications[guard]
+        prior = [p for p in source if p["after_ms"] <= before]
+        inside = [p for p in source if p["before_ms"] > before and p["after_ms"] < after]
+        require(prior and len(inside) >= 10)
+        coverage = [prior[-1]] + inside
+        gaps = [right["after_ms"] - left["before_ms"] for left, right in zip(coverage, coverage[1:])]
+        gaps += [after - coverage[-1]["before_ms"]]
+        require(max(gaps) < 10000)
+
+    log = (root / "supervisor.log").read_text(encoding="utf-8")
+    if case == "post-audit-healthy":
+        require(int(native_status) == 0 and not delays and not pauses)
+        require("database_restore_stream_detail:" not in log)
+        origin = "healthy-control"
+    else:
+        require(int(native_status) != 0 and "database_restore_stream_stage:post-audit\n" in log)
+        details = re.findall(r"^database_restore_stream_detail:(.+)$", log, re.MULTILINE)
+        require(len(details) == 1)
+        stale = re.fullmatch(r"guard-stale:([0-2]):counter:([1-9][0-9]*):age-ms:([0-9]+):observation-ms:([0-9]+)", details[0])
+        require(stale is not None and int(stale[3]) >= 10000)
+        guard, stale_counter = int(stale[1]), int(stale[2])
+        require(any(r["guard"] == guard and r["observation_ms"] == int(stale[4]) and
+                    r["counter"] == stale_counter for r in foreground))
+        if case == "post-audit-observer-delay":
+            require(guard == 0 and len(delays) == 1 and not pauses)
+            delay = delays[0]
+            require(delay["after_ms"] - delay["before_ms"] >= 11500)
+            delayed_reads = [r for r in foreground if r["before_ms"] >= delay["after_ms"]]
+            require(len(delayed_reads) == 1 and delayed_reads[0]["guard"] == 0 and
+                    delayed_reads[0]["counter"] > stale_counter)
+            for publisher in range(3):
+                healthy_during(publisher, delay["before_ms"], delay["after_ms"])
+            origin = "foreground-delay-with-continuous-publication"
+        elif case == "post-audit-expired-progress":
+            require(guard == 2 and not delays and len(pauses) == 1)
+            pause = pauses[0]
+            require(pause["guard"] == 2 and pause["counter"] == stale_counter and
+                    "resumed" not in pause and pause["end_ms"] > pause["before_ms"])
+            require(not any(p["after_ms"] >= pause["before_ms"] for p in publications[2]))
+            for publisher in (0, 1):
+                healthy_during(publisher, pause["before_ms"], pause["end_ms"])
+            for reader in range(3):
+                source = [r for r in foreground if r["guard"] == reader]
+                prior = [r for r in source if r["after_ms"] <= pause["before_ms"]]
+                inside = [r for r in source if r["before_ms"] > pause["before_ms"] and
+                          r["after_ms"] <= terminal["at_ms"]]
+                require(prior and len(inside) >= 2)
+                coverage = [prior[-1]] + inside
+                # Close observation coverage at supervisor retirement, not at
+                # the later publisher cleanup. Mixed origins are not proof.
+                gaps = [right["after_ms"] - left["before_ms"]
+                        for left, right in zip(coverage, coverage[1:])]
+                gaps += [terminal["at_ms"] - coverage[-1]["before_ms"]]
+                require(max(gaps) < 10000)
+            origin = "publisher-paused-with-continuous-observation"
+        else:
+            require(False)
+    print(f"freshness_origin_trace:{origin}")
+except (OSError, ValueError, KeyError, TypeError, IndexError):
+    print("freshness_origin_trace:incomplete-or-inconsistent", file=sys.stderr)
+    sys.exit(1)
+PY
 }
 
 run_multi_guard_round_robin_case() (
@@ -13845,10 +14083,23 @@ run_multi_guard_round_robin_case() (
   local progress_value_one progress_value_two progress_value_three publisher_pid
   local inner_baseline_value=""
   local audit_group_pid="" audit_descendant_pid=""
+  local freshness_trace=0 trace_one="" trace_two="" trace_three=""
   guard_dir="$(mktemp -d "$TMP_DIR/multi-stream-guards.XXXXXX")" || return 1
   chmod 700 "$guard_dir"
   observation_dir="$guard_dir/observations"
   mkdir -m 700 "$observation_dir"
+  if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == post-stream-freshness-origin ]]; then
+    case "$case_name" in
+      post-audit-healthy|post-audit-expired-progress|post-audit-observer-delay) ;;
+      *) return 2 ;;
+    esac
+    freshness_trace=1
+    trace_one="$observation_dir/publisher-0.jsonl"
+    trace_two="$observation_dir/publisher-1.jsonl"
+    trace_three="$observation_dir/publisher-2.jsonl"
+  elif [[ "$case_name" == post-audit-observer-delay ]]; then
+    return 2
+  fi
   stop_marker="$guard_dir/stop"
   failure_one="$guard_dir/guard-one.failure"
   progress_one="$guard_dir/guard-one.progress"
@@ -13880,7 +14131,7 @@ run_multi_guard_round_robin_case() (
   trap 'cleanup_stream_guard_fixture_publishers || :' EXIT INT TERM
 
   case "$case_name" in
-    round-robin-success|round-robin-startup-grace|launch-window-realign|outer-baseline-realign|refresh-deadline|post-audit-healthy|post-audit-slow-publisher|post-audit-native-failure|post-audit-timeout|post-audit-owner-death|post-audit-expired-progress)
+    round-robin-success|round-robin-startup-grace|launch-window-realign|outer-baseline-realign|refresh-deadline|post-audit-healthy|post-audit-slow-publisher|post-audit-native-failure|post-audit-timeout|post-audit-owner-death|post-audit-expired-progress|post-audit-observer-delay)
       # Every publisher starts only after its initial baseline read. The slow
       # guard leaves a deliberately bounded gap between counters 2 and 3 while
       # both fast guards continue at 0.15/0.20 seconds. A serial refresher
@@ -13930,15 +14181,17 @@ run_multi_guard_round_robin_case() (
           0.10 4.50 0 "$observation_dir/guard-one-baseline-read"
       else
         start_stream_guard_fixture_publisher "$progress_one" "$stop_marker" \
-          0.10 0.15 0 "$observation_dir/guard-one-baseline-read"
+          0.10 0.15 0 "$observation_dir/guard-one-baseline-read" \
+          "" "" "" "$trace_one" 0
       fi
       pid_one="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
       start_stream_guard_fixture_publisher "$progress_two" "$stop_marker" \
-        0.10 0.20 0 "$observation_dir/guard-two-baseline-read"
+        0.10 0.20 0 "$observation_dir/guard-two-baseline-read" \
+        "" "" "" "$trace_two" 1
       pid_two="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
       start_stream_guard_fixture_publisher "$progress_three" "$stop_marker" \
         0.15 "$slow_interval" 0 "$observation_dir/guard-three-baseline-read" \
-        "$observation_dir/slow" "" "$observation_dir/slow-pause"
+        "$observation_dir/slow" "" "$observation_dir/slow-pause" "$trace_three" 2
       pid_three="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
       ;;
     no-simultaneous-window)
@@ -13994,10 +14247,12 @@ run_multi_guard_round_robin_case() (
     GUARD_MAX_STALE_SECONDS="$maximum_stale_seconds" REQUIRE_LEASE="$require_lease" \
     RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS="$initial_deadline_seconds" \
     MULTI_GUARD_CASE="$case_name" GUARD_OBSERVATION_DIR="$observation_dir" \
+    GUARD_FRESHNESS_TRACE="$freshness_trace" \
     bash -c '
       set -euo pipefail
       NAMESPACE=hcce
-      if [[ "$MULTI_GUARD_CASE" == post-audit-slow-publisher ]]; then
+      if [[ "$MULTI_GUARD_CASE" == post-audit-slow-publisher ||
+            "$GUARD_FRESHNESS_TRACE" == 1 ]]; then
         # Exercise the real ordinary poll cadence, not the accelerated 0.02 s
         # fixture setting. A slow healthy publisher must survive that boundary.
         unset RECOVERY_STREAM_POLL_SECONDS
@@ -14016,6 +14271,9 @@ run_multi_guard_round_robin_case() (
           # are faulted; pre-launch/running supervision remains unmodified.
           if [[ "$#" == 8 && "${stream_diagnostic_stage:-}" == post-audit &&
                 "${stream_child_reaped:-0}" == 1 ]]; then
+            if [[ "$MULTI_GUARD_CASE" == post-audit-observer-delay ]]; then
+              printf "%s\n" "$BASHPID" >"$GUARD_OBSERVATION_DIR/audit-group"
+            fi
             if [[ "$MULTI_GUARD_CASE" == post-audit-native-failure ]]; then
               printf "%s\n" "$BASHPID" >"$GUARD_OBSERVATION_DIR/audit-group"
               sleep 0.15
@@ -14060,22 +14318,56 @@ run_multi_guard_round_robin_case() (
         mv -f -- "$next_path" "$marker_path"
       }
       recovery_stream_guard_progress_value() {
-        local progress_path="$1" progress_value guard_name function_stack
-        if ! progress_value="$(
-          recovery_stream_guard_progress_value_fixture_original "$@"
-        )"; then
-          return 1
-        fi
+        local progress_path="$1" progress_value guard_name guard_index function_stack
+        local trace_before trace_after trace_observation=null delay_before delay_after reader_kind=other read_status=0
         case "$progress_path" in
-          "$GUARD_ONE_PROGRESS") guard_name=guard-one ;;
-          "$GUARD_TWO_PROGRESS") guard_name=guard-two ;;
-          "$GUARD_THREE_PROGRESS") guard_name=guard-three ;;
+          "$GUARD_ONE_PROGRESS") guard_name=guard-one; guard_index=0 ;;
+          "$GUARD_TWO_PROGRESS") guard_name=guard-two; guard_index=1 ;;
+          "$GUARD_THREE_PROGRESS") guard_name=guard-three; guard_index=2 ;;
           *) return 2 ;;
         esac
+        function_stack=" ${FUNCNAME[*]} "
+        if [[ "$GUARD_FRESHNESS_TRACE" == 1 &&
+              "${stream_diagnostic_stage:-}" == post-audit &&
+              "${stream_child_reaped:-0}" == 1 && "${stream_is_gated:-1}" == 0 &&
+              -z "${stream_pid:-}" && -z "${stream_start_identity:-}" &&
+              "$function_stack" == *" observe_inactive_stream_guard_progress "* ]]; then
+          reader_kind=foreground
+          [[ "${sample_time:-}" =~ ^[0-9]+$ ]] || return 1
+          trace_observation="$sample_time"
+        fi
+        if [[ "$MULTI_GUARD_CASE" == post-audit-observer-delay &&
+              "$reader_kind" == foreground && "$guard_index" == 0 &&
+              -e "$GUARD_OBSERVATION_DIR/audit-group" &&
+              ! -e "$GUARD_OBSERVATION_DIR/observer-delay-claimed" ]]; then
+          fixture_publish_guard_observation_once \
+            "$GUARD_OBSERVATION_DIR/observer-delay-claimed" 1 || return 1
+          delay_before="$(recovery_monotonic_milliseconds)" || return 1
+          sleep 11.5
+          delay_after="$(recovery_monotonic_milliseconds)" || return 1
+          printf "{\"event\":\"observer-delay\",\"guard\":0,\"before_ms\":%s,\"after_ms\":%s,\"reader\":\"foreground\",\"stage\":\"post-audit\",\"reaped\":1,\"gated\":0,\"handles_empty\":true}\n" \
+            "$delay_before" "$delay_after" >>"$GUARD_OBSERVATION_DIR/readers.jsonl" || return 1
+        fi
+        if [[ "$GUARD_FRESHNESS_TRACE" == 1 ]]; then
+          trace_before="$(recovery_monotonic_milliseconds)" || return 1
+        fi
+        if progress_value="$(recovery_stream_guard_progress_value_fixture_original "$@")"; then
+          :
+        else
+          read_status=$?
+        fi
+        if [[ "$GUARD_FRESHNESS_TRACE" == 1 ]]; then
+          trace_after="$(recovery_monotonic_milliseconds)" || return 1
+          [[ "$progress_value" =~ ^[1-9][0-9]*$ ]] || progress_value=null
+          printf "{\"event\":\"read\",\"guard\":%s,\"before_ms\":%s,\"after_ms\":%s,\"counter\":%s,\"status\":%s,\"reader\":\"%s\",\"stage\":\"%s\",\"observation_ms\":%s}\n" \
+            "$guard_index" "$trace_before" "$trace_after" "$progress_value" \
+            "$read_status" "$reader_kind" "${stream_diagnostic_stage:-guard-baseline}" "$trace_observation" \
+            >>"$GUARD_OBSERVATION_DIR/readers.jsonl" || return 1
+        fi
+        [[ "$read_status" == 0 ]] || return 1
         fixture_publish_guard_observation_once \
           "$GUARD_OBSERVATION_DIR/$guard_name-baseline-read" \
           "$progress_value" || return 1
-        function_stack=" ${FUNCNAME[*]} "
         if [[ "$MULTI_GUARD_CASE" == refresh-deadline &&
               "$guard_name" == guard-three &&
               "$function_stack" == *" refresh_supervised_stream_guards_for_launch "* &&
@@ -14136,6 +14428,16 @@ run_multi_guard_round_robin_case() (
         fi
         printf "%s\n" "$progress_value"
       }
+      if [[ "$GUARD_FRESHNESS_TRACE" == 1 ]]; then
+        fixture_freshness_trace_terminal() {
+          local native_status=$? terminal_time
+          terminal_time="$(recovery_monotonic_milliseconds)" || exit 1
+          printf "{\"event\":\"supervisor-stop\",\"at_ms\":%s,\"status\":%s}\n" \
+            "$terminal_time" "$native_status" >>"$GUARD_OBSERVATION_DIR/readers.jsonl" || exit 1
+          return "$native_status"
+        }
+        trap fixture_freshness_trace_terminal EXIT
+      fi
       recovery_kubectl_stream_supervised "$REQUIRE_LEASE" 30 \
         --guard-process "$GUARD_ONE_PID" "$GUARD_ONE_IDENTITY" \
           "$GUARD_ONE_FAILURE" "$GUARD_ONE_PROGRESS" "$GUARD_MAX_STALE_SECONDS" \
@@ -14163,7 +14465,8 @@ run_multi_guard_round_robin_case() (
   if [[ "$case_name" == post-audit-native-failure ||
         "$case_name" == post-audit-timeout ||
         "$case_name" == post-audit-owner-death ||
-        "$case_name" == post-audit-expired-progress ]]; then
+        "$case_name" == post-audit-expired-progress ||
+        "$case_name" == post-audit-observer-delay ]]; then
     audit_group_pid="$(cat "$observation_dir/audit-group" 2>/dev/null || :)"
     [[ "$audit_group_pid" =~ ^[1-9][0-9]*$ ]] || return 1
     audit_descendant_pid="$(cat "$observation_dir/audit-descendant" 2>/dev/null || :)"
@@ -14177,8 +14480,17 @@ run_multi_guard_round_robin_case() (
       ! kill -0 "$audit_descendant_pid" 2>/dev/null || return 1
     fi
   fi
+  if [[ "$freshness_trace" == 1 ]]; then
+    verify_stream_guard_freshness_origin_trace "$case_name" "$guard_dir" "$status" || return 1
+  fi
 
   case "$case_name" in
+    post-audit-observer-delay)
+      [[ "$status" != 0 && -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
+         -e "$observation_dir/observer-delay-claimed" ]] &&
+        grep -q "database_restore_stream_detail:guard-stale:0:counter:" \
+          "$guard_dir/supervisor.log" && return 0
+      ;;
     post-audit-expired-progress)
       [[ "$status" != 0 && -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
          -e "$observation_dir/slow-paused" ]] &&
@@ -17508,6 +17820,21 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == multi-stream-guards ]]; then
     exit 1
   fi
   printf 'Focused multi-guard stream tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == post-stream-freshness-origin ]]; then
+  expect_success \
+    "freshness origin: fast publishers and foreground observation remain healthy" \
+    run_multi_guard_round_robin_case post-audit-healthy
+  expect_success \
+    "freshness origin: selected publisher pause is distinct from observer delay" \
+    run_multi_guard_round_robin_case post-audit-expired-progress
+  expect_success \
+    "freshness origin: one foreground delay rejects despite continuous publication" \
+    run_multi_guard_round_robin_case post-audit-observer-delay
+  [[ "$FAIL_COUNT" == 0 ]] || exit 1
+  printf "Focused synthetic post-stream freshness origin tests passed: %s.\n" "$PASS_COUNT"
   exit 0
 fi
 

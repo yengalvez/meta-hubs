@@ -1,5 +1,18 @@
 # Session Changelog
 
+## 2026-10-04 · Discriminate publisher delay from foreground observation delay
+
+Test-only opt-in native focus8782 passes48/48: healthy fast publishers with
+twelve complete audits, a paused publisher2 with continuing foreground reads,
+and one11.584s foreground delay while all three publishers advance77/58/58
+times. The late counter177 does not clear stale counter91; both negatives
+retain native supervisor1 and post-audit/stale. Original validators and
+default1s/startup30s/stale10s/reserve2s remain intact. All publisher terminals,
+waits/cleanup and primary PID/fixture readback pass; source hashes stay fixed.
+Independent delta review is CLOSED after two oracle P2 corrections, with
+23 pure trace regressions. These local processes use simulated API/Lease;
+no product change, historical cause attribution, full/SLO or live acceptance.
+
 ## 2026-10-04 · Cover the ordinary post-stream poll cadence
 
 The existing slow healthy publisher case used an accelerated0.02s fixture

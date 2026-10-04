@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -205,5 +205,143 @@ printf 'status=%s supervisor=%s compressor=%s\\n' "$archive_status" "${'${archiv
     assert.equal(result.stderr, supervisorStatus || compressorStatus ?
       `storage_backup_stream_exit:supervisor=${supervisorStatus} compressor=${compressorStatus}\n` : "");
     assert.equal(result.stdout, `status=${compressorStatus || supervisorStatus} supervisor=${supervisorStatus} compressor=${compressorStatus}\n`);
+  });
+}
+
+// Pure qualification of the test-only origin oracle; this never invokes the
+// native recovery harness, publishers, supervisors, API fixture or clocks.
+const recoveryHarness = readFileSync(new URL("../recovery/test-recovery-safety.sh", import.meta.url), "utf8");
+const originStart = recoveryHarness.indexOf("verify_stream_guard_freshness_origin_trace() {\n");
+const originEnd = recoveryHarness.indexOf("\n}\n", originStart);
+assert.ok(originStart >= 0 && originEnd > originStart);
+const originValidator = recoveryHarness.slice(originStart, originEnd + 3);
+
+function freshnessOriginFixture(kind = "observer") {
+  const publishers = Array.from({ length: 3 }, (_, guard) => {
+    const rows = [{ event: "start", guard, pid: 100 + guard, counter: 1, at_ms: 1000 }];
+    const end = kind === "healthy" ? 3400 : kind === "publisher" && guard === 2 ? 4000 : 15800;
+    let counter = 1;
+    for (let before_ms = 1200; before_ms <= end; before_ms += 200) {
+      rows.push({ event: "publish", guard, pid: 100 + guard, counter: ++counter, before_ms, after_ms: before_ms + 1 });
+    }
+    if (kind === "publisher" && guard === 2) {
+      rows.push({ event: "pause-start", guard, pid: 102, counter, at_ms: 4100 });
+    }
+    rows.push({ event: "stop", guard, pid: 100 + guard, counter, at_ms: kind === "healthy" ? 3500 : 16000 });
+    return rows;
+  });
+  const read = (guard, before_ms, { foreground = true, counter = Math.floor((before_ms - 1000) / 200) + 1, observation_ms = before_ms - 5 } = {}) => ({
+    event: "read", guard, before_ms, after_ms: before_ms + 5, counter, status: 0,
+    reader: foreground ? "foreground" : "other", stage: foreground ? "post-audit" : "guard-baseline",
+    observation_ms: foreground ? observation_ms : null
+  });
+  const readers = [0, 1, 2].map(guard => read(guard, 1100 + guard * 10, { foreground: false, counter: 1 }));
+  readers.push(...[0, 1, 2].map(guard => read(guard, 3000 + guard * 20)));
+  if (kind === "observer") {
+    readers.push({ event: "observer-delay", guard: 0, before_ms: 4000, after_ms: 15500,
+      reader: "foreground", stage: "post-audit", reaped: 1, gated: 0, handles_empty: true });
+    readers.push(read(0, 15510, { observation_ms: 3995 }));
+  } else if (kind === "publisher") {
+    for (const time of [5000, 6500]) {
+      readers.push(...[0, 1, 2].map(guard => read(guard, time + guard * 20,
+        guard === 2 ? { counter: 16 } : {})));
+    }
+  }
+  readers.push({ event: "supervisor-stop", at_ms: kind === "healthy" ? 3300 : 15600, status: kind === "healthy" ? 0 : 1 });
+  return { publishers, readers, kind,
+    log: kind === "healthy" ? "" : `database_restore_stream_stage:post-audit\ndatabase_restore_stream_status:1\ndatabase_restore_stream_detail:guard-stale:${kind === "publisher" ? "2:counter:16:age-ms:10100:observation-ms:6535" : "0:counter:11:age-ms:14000:observation-ms:2995"}\n` };
+}
+
+function qualifyFreshnessOrigin(fixture, alterFiles = () => {}) {
+  const directory = mkdtempSync(join(tmpdir(), "yenhubs-origin-oracle-"));
+  try {
+    const observations = join(directory, "observations");
+    mkdirSync(observations);
+    const encode = rows => `${rows.map(row => JSON.stringify(row)).join("\n")}\n`;
+    fixture.publishers.forEach((rows, guard) => writeFileSync(join(observations, `publisher-${guard}.jsonl`), encode(rows)));
+    writeFileSync(join(observations, "readers.jsonl"), encode(fixture.readers));
+    writeFileSync(join(directory, "supervisor.log"), fixture.log);
+    alterFiles(observations);
+    const result = spawnSync("bash", ["-c", `${originValidator}\nverify_stream_guard_freshness_origin_trace "$1" "$2" "$3"`, "_",
+      `post-audit-${fixture.kind === "observer" ? "observer-delay" : fixture.kind === "publisher" ? "expired-progress" : "healthy"}`,
+      directory, fixture.kind === "healthy" ? "0" : "1"], { cwd: root, encoding: "utf8", timeout: 5000 });
+    assert.ifError(result.error);
+    return result;
+  } finally {
+    rmSync(directory, { recursive: true });
+  }
+}
+
+for (const [kind, expected] of [["healthy", "healthy-control"], ["publisher", "publisher-paused-with-continuous-observation"], ["observer", "foreground-delay-with-continuous-publication"]]) {
+  test(`freshness origin trace qualifies complete ${kind} records without running native recovery`, () => {
+    const result = qualifyFreshnessOrigin(freshnessOriginFixture(kind));
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, `freshness_origin_trace:${expected}\n`);
+  });
+}
+
+test("freshness origin trace rejects publisher pause with a later foreground observation gap", () => {
+  const fixture = freshnessOriginFixture("publisher");
+  for (const [index, time] of [[6, 4200], [9, 4500]]) {
+    for (let guard = 0; guard < 3; guard++) {
+      const row = fixture.readers[index + guard];
+      row.before_ms = time + guard * 20;
+      row.after_ms = row.before_ms + 5;
+      row.observation_ms = row.before_ms - 5;
+      row.counter = guard === 2 ? 16 : Math.floor((row.before_ms - 1000) / 200) + 1;
+    }
+  }
+  fixture.log = fixture.log.replace("observation-ms:6535", "observation-ms:4535");
+  const result = qualifyFreshnessOrigin(fixture);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "freshness_origin_trace:incomplete-or-inconsistent\n");
+});
+
+const invalidOriginTraces = [
+  ["missing publisher stop", f => f.publishers[0].pop()],
+  ["duplicate publication counter", f => { f.publishers[0][2].counter = 2; }],
+  ["unknown publisher event", f => { f.publishers[1][2].event = "unknown"; }],
+  ["out-of-order publication bracket", f => { f.publishers[2][2].before_ms = 1; }],
+  ["duplicate publisher PID", f => { f.publishers[1].forEach(row => { row.pid = 100; }); }],
+  ["unknown reader field", f => { f.readers[0].payload = "not-an-origin"; }],
+  ["missing supervisor terminal", f => f.readers.pop()],
+  ["failed original reader", f => { f.readers[0].status = 1; }],
+  ["delay outside foreground", f => { f.readers[6].reader = "other"; }],
+  ["delay before reap", f => { f.readers[6].reaped = 0; }],
+  ["short observer delay", f => { f.readers[6].after_ms = 15000; }],
+  ["late counter not advanced", f => { f.readers[7].counter = 11; }],
+  ["stale observation without matching real read", f => { f.log = f.log.replace("observation-ms:2995", "observation-ms:2996"); }],
+  ["stale counter incompatible with its observation", f => { f.log = f.log.replace("counter:11:", "counter:3:"); }],
+  ["second observer delay", f => { f.readers.splice(6, 0, { ...f.readers[6] }); }],
+  ["one publisher freezes during observer pause", f => {
+    f.publishers[2] = f.publishers[2].filter(row => row.event !== "publish" || row.after_ms < 4000);
+    f.publishers[2].at(-1).counter = f.publishers[2].at(-2).counter;
+  }],
+];
+for (const [name, mutate] of invalidOriginTraces) {
+  test(`freshness origin trace rejects ${name}`, () => {
+    const fixture = freshnessOriginFixture();
+    mutate(fixture);
+    const result = qualifyFreshnessOrigin(fixture);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "freshness_origin_trace:incomplete-or-inconsistent\n");
+  });
+}
+
+for (const [name, alterFiles] of [
+  ["truncated JSONL", dir => writeFileSync(join(dir, "publisher-0.jsonl"), '{"event":')],
+  ["missing trace file", dir => rmSync(join(dir, "publisher-1.jsonl"))],
+  ["duplicate JSON field", dir => {
+    const path = join(dir, "readers.jsonl");
+    writeFileSync(path, readFileSync(path, "utf8").replace('"guard":0', '"guard":0,"guard":0'));
+  }],
+]) {
+  test(`freshness origin trace rejects ${name}`, () => {
+    const result = qualifyFreshnessOrigin(freshnessOriginFixture(), alterFiles);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "freshness_origin_trace:incomplete-or-inconsistent\n");
   });
 }

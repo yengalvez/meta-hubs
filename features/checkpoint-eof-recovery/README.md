@@ -34,6 +34,16 @@ poll override and exercises the ordinary one-second default. Native46/46
 pass with the unchanged8.5s publisher,10s stale/30s startup bounds and2s reserve.
 This closes a cadence-coverage gap, not the historical PGSQL expiry cause.
 
+The opt-in `post-stream-freshness-origin` focus discriminates a healthy control,
+a paused publisher and a delayed foreground read with continuous publication.
+Native48/48 (45 common checks plus three cases) passes; the two negative streams
+retain exit1/stale rather than accepting a late counter. Private test-only
+JSONL brackets use the product libc clock domain, validate complete traces and
+reject mixed observer gaps or mismatched stale tuples. The existing diagnostic
+unit also rejects those malformed traces. Default1s/30s/10s/reserve2s and
+product sources remain unchanged. This is a local discriminator with simulated
+API/Lease, not proof of the historical PGSQL cause or a final full/backup/SLO.
+
 The local candidate adds explicit authority2/consumer3/baseline4/receipt2 and
 metadata4/inventory5/freeze2 readers, rather than reinterpreting historical
 versions. Positive writers bind full spec and UID/RV/generation before the first
