@@ -19,7 +19,7 @@ const nativeResponse = () => ({ phase: "AVATAR_RESPONSE_STOP", count: 1, status:
   controller: "RetWeb.Api.V1.AvatarController", action: "create", owned_account_equal: true });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function transport({ peerExitCode = 0, readbackError = false, automaticStop = true, unframedPeerExit = false, readbackPatch = {}, stalledPeerClose = false } = {}) {
+function transport({ peerExitCode = 0, readbackError = false, automaticStop = true, unframedPeerExit = false, readbackPatch = {}, stalledPeerClose = false, readbackSteps = [] } = {}) {
   const children = [], calls = [], output = [], order = []; let reads = 0;
   function spawnProcess(...invocation) {
     calls.push(invocation); const name = children.length ? "peer" : "native", child = new EventEmitter();
@@ -53,7 +53,11 @@ function transport({ peerExitCode = 0, readbackError = false, automaticStop = tr
   const driver = createCancelDriver({ options, spawnProcess,
     createReadback(file, pg) {
       assert.equal(file, `${work}/avaturn-save-socket-bootstrap.json`); assert.equal(pg, pgBin);
-      return () => { reads++; order.push("readback"); if (readbackError) throw new Error("PRIVATE_EXCEPTION_MUST_NOT_ESCAPE"); return { ...drainReply(), ...readbackPatch }; };
+      return () => {
+        reads++; order.push("readback"); const step = readbackSteps[reads - 1];
+        if (readbackError || step instanceof Error) throw new Error("PRIVATE_EXCEPTION_MUST_NOT_ESCAPE");
+        return { ...drainReply(), ...readbackPatch, ...step };
+      };
     }, emit(value) { output.push(value); order.push(`event:${value.event}`); } });
   const native = event => children[0].stdout.write(`RET_UI_SOCKET:${JSON.stringify(event)}\n`);
   const peer = event => children[1].stdout.write(JSON.stringify({ scope: peerScope, ...event }) + "\n");
@@ -142,10 +146,63 @@ test("DOWN before SQL_APPLIED is retained and drain still requires real OFF", as
   await t.driver.fail("pure_cleanup");
 });
 
-test("owned200 and DOWN without correlated exception are unresolved diagnostics, never cancellation acceptance", async () => {
+test("pending plus exact DOWN reaches observations only in either order with SQL_APPLIED, native stays alive", async () => {
+  for (const downBeforeOff of [true, false]) {
+    const t = transport(); t.arm(); t.native(start()); t.blocked();
+    const down = { ...start(), request_down: true, down_reason: "normal" };
+    if (downBeforeOff) t.native(down);
+    assert.equal(t.reads, 0); assert.deepEqual(t.children[0].commands, ["CREATOR_OFF"]);
+    t.off();
+    if (!downBeforeOff) { assert.equal(t.reads, 0); t.native(down); }
+    await tick(); assert.equal(t.reads, 1);
+    assert.deepEqual(t.children[1].commands, ["ARM", "RELEASE"]);
+    t.released(); await tick(); assert.equal(t.reads, 2);
+    assert.equal(t.driver.state, "OBSERVATIONS_PENDING");
+    assert.deepEqual(t.children[1].commands, ["ARM", "RELEASE", "STOP"]);
+    assert.deepEqual(t.children[0].commands, ["CREATOR_OFF"]);
+    assert.ok(t.order.indexOf("peer:close") < t.order.indexOf("event:OBSERVATIONS_PENDING"));
+    assert.ok(t.output.filter(event => event.event === "REQUEST_LIFECYCLE").every(event => event.terminal === "pending"));
+    assert.equal(t.output.at(-1).acceptance, "NOT_RUNTIME_ACCEPTED");
+    assert.equal(t.output.at(-1).browser_acceptance, "NOT_RECORDED");
+    assert.equal(t.output.at(-1).native_runtime_alive, true);
+    assert.ok(!t.output.some(event => ["PASS", "STOPPED", "FAIL"].includes(event.event)));
+    assert.doesNotMatch(JSON.stringify(t.output), /cancelled|canceled|negative_pass/);
+    const result = await t.driver.command("STOP"); assert.equal(result.failed, false);
+    assert.ok(t.order.indexOf("peer:close") < t.order.indexOf("native:STOP"));
+  }
+});
+
+test("correlated exception without DOWN cannot drain or reach observations", async () => {
+  const t = transport(); t.arm(); t.native(start()); t.blocked(); t.off();
+  t.native({ ...start(), terminal: "router_exception" }); await tick();
+  assert.equal(t.driver.state, "OFF_APPLIED"); assert.equal(t.reads, 0);
+  assert.deepEqual(t.children[1].commands, ["ARM"]);
+  assert.ok(!t.output.some(event => event.event === "OBSERVATIONS_PENDING"));
+  assert.equal((await t.driver.fail("pure_missing_down_cleanup")).failed, true);
+});
+
+test("pending DOWN rejects invalid identity/cardinality and duplicate DOWN without changing decoder", async () => {
+  for (const patch of [{ own_token_equal: false }, { start_seen: false }, { attempt_count: 0 },
+    { attempt_count: 2 }, { attempt_count: "1" }, { failed: true }]) {
+    const t = transport(); t.arm(); t.native(start()); t.blocked(); t.off();
+    t.native({ ...start(), request_down: true, down_reason: "normal", ...patch }); await tick();
+    assert.equal((await t.driver.completion).failed, true); assert.equal(t.reads, 0);
+    assert.ok(!t.children[1].commands.includes("RELEASE"));
+    assert.ok(!t.output.some(event => event.event === "OBSERVATIONS_PENDING"));
+  }
+  const t = transport(); t.arm(); t.native(start()); t.blocked(); t.off();
+  const down = { ...start(), request_down: true, down_reason: "normal" };
+  t.native(down); t.native(down); await tick();
+  assert.equal((await t.driver.completion).failed, true); assert.equal(t.reads, 1);
+  assert.ok(!t.children[1].commands.includes("RELEASE"));
+  assert.ok(!t.output.some(event => event.event === "OBSERVATIONS_PENDING"));
+});
+
+test("owned200 never enters abort branch, including pending lifecycle plus response200", async () => {
   for (const terminal of ["router_stop_200", "pending"]) {
     const t = transport(); t.arm(); t.native(start()); t.blocked(); t.off();
-    if (terminal === "router_stop_200") { t.native(nativeResponse()); t.native({ ...start(), terminal }); }
+    t.native(nativeResponse());
+    if (terminal === "router_stop_200") t.native({ ...start(), terminal });
     t.native({ ...start(), terminal, request_down: true, down_reason: "normal" });
     await tick(); const result = await t.driver.completion;
     assert.equal(result.failed, true); assert.equal(t.reads, 0);
@@ -156,11 +213,30 @@ test("owned200 and DOWN without correlated exception are unresolved diagnostics,
 });
 
 test("peer exit1 is never hidden even with graceful rollback true", async () => {
-  const t = transport({ peerExitCode: 1 }); t.arm(); t.native(start()); t.blocked(); t.off(); t.terminal(); await tick(); t.released();
+  const t = transport({ peerExitCode: 1 }); t.arm(); t.native(start()); t.blocked(); t.off();
+  t.native({ ...start(), request_down: true, down_reason: "normal" }); await tick(); t.released();
   await tick(); const result = await t.driver.completion;
   assert.equal(result.failed, true); assert.equal(t.output.at(-1).peer_exit_code, 1);
   assert.equal(t.output.at(-1).peer_stop_zero, false);
   assert.ok(!t.output.some(event => event.event === "OBSERVATIONS_PENDING"));
+});
+
+test("pending DOWN still fails closed for each first/second readback rows, INSERT, OFF, identity, owner or query error", async () => {
+  const failures = [{ owned_avatar_count: 1 }, { active_insert_count: 1 }, { creator_off_equal: false },
+    { identity_verified: false }, { own_account_equal: false }, new Error("PURE_READBACK_ERROR")];
+  for (const readIndex of [0, 1]) for (const failure of failures) {
+    const readbackSteps = [{}, {}]; readbackSteps[readIndex] = failure;
+    const t = transport({ readbackSteps }); t.arm(); t.native(start()); t.blocked(); t.off();
+    t.native({ ...start(), request_down: true, down_reason: "normal" }); await tick();
+    if (readIndex === 1) { assert.equal(t.driver.state, "RELEASE_SENT"); t.released(); await tick(); }
+    const result = await t.driver.completion;
+    assert.equal(result.failed, true); assert.equal(t.reads, readIndex + 1);
+    assert.equal(result.reason, readIndex === 0 ? "cancel_drain_or_terminal_failed" : "cancel_post_release_or_peer_stop_failed");
+    assert.equal(t.children[1].commands.includes("RELEASE"), readIndex === 1);
+    assert.ok(!t.output.some(event => event.event === "OBSERVATIONS_PENDING"));
+    assert.equal(t.output.at(-1).event, "FAIL"); assert.equal(t.output.at(-1).acceptance, "NOT_RUNTIME_ACCEPTED");
+    assert.doesNotMatch(JSON.stringify(t.output), /PURE_READBACK_ERROR|PRIVATE_EXCEPTION_MUST_NOT_ESCAPE/);
+  }
 });
 
 test("unframed peer close0 is a failure before OBSERVATIONS_PENDING", async () => {

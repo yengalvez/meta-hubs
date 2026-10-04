@@ -257,7 +257,8 @@ export function createCancelDriver({ options, spawnProcess = spawn, createReadba
     if (drainStarted || finishing || state !== "OFF_APPLIED" || !lifecycle?.request_down) return;
     drainStarted = true;
     try {
-      if (lifecycle.terminal !== "router_exception" || responseCount !== 0) {
+      // Exact owned DOWN permits observation, not a cancellation verdict.
+      if (!["pending", "router_exception"].includes(lifecycle.terminal) || responseCount !== 0) {
         output({ event: "TERMINAL_DIAGNOSTIC", terminal: lifecycle.terminal, correlated_down: true, acceptance: "NOT_RUNTIME_ACCEPTED" });
         fail("cancel_terminal_unresolved");
       }
