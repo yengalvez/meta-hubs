@@ -1,5 +1,15 @@
 # Session Changelog
 
+## 2026-10-04 · Keep the opt-in wall-clock samples locale-local
+
+The primary's native63504 stopped before parents/DB: in its sanitized environment
+Bash5.3 rendered EPOCHREALTIME with a comma, rejected by the decimal-point regex.
+Readiness and sample hooks now declare local LC_ALL=C before builtin expansion;
+caller locale, native status, coverage and all product timing remain unchanged.
+Two contextual/locale regressions were RED, then GREEN; the missing-builtin
+negative remains fail-closed. This repair does not replay native/full, alter
+product source or attribute the diagnostic startup failure to the product.
+
 ## 2026-10-04 · Partition the existing PGSQL guard trace by real callsites
 
 Extend only the checkpoint-children/db-stable test-only tracer: insertion-only

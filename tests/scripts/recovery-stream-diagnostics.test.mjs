@@ -504,6 +504,87 @@ if checkpoint_pgsql_native_trace_wall_clock_ready; then exit 1; fi
   });
 });
 
+test("pgsql native trace wall preflight accepts the sanitized runner context before any parent or DB starts", () => {
+  withNativeTraceCopy(trace => {
+    function harnessFunction(name, next) {
+      const start = recoveryHarness.indexOf(`${name}() {\n`);
+      const end = recoveryHarness.indexOf(`\n${next}() {\n`, start);
+      assert.ok(start >= 0 && end > start, name);
+      return recoveryHarness.slice(start, end);
+    }
+    const script = join(trace, "preflight-context.sh");
+    writeFileSync(script, `set -euo pipefail
+umask 077
+source "$1/hooks.sh"
+${nativeTraceSelector}
+${harnessFunction("expect_success", "expect_failure")}
+${harnessFunction("checkpoint_pgsql_native_trace_prepare", "verify_checkpoint_pgsql_native_trace")}
+${harnessFunction("run_checkpoint_backup_child", "seed_already_fenced_legacy_restore_lock")}
+ROOT_DIR="$2"
+PASS_COUNT=0 FAIL_COUNT=0 LAST_OUTPUT=""
+LEGACY_DEPLOYMENTS_JSON=fixture-legacy KUBERNETES_DEPLOYMENTS_JSON=fixture-durable
+pass(){ PASS_COUNT=$((PASS_COUNT + 1)); }
+fail(){ FAIL_COUNT=$((FAIL_COUNT + 1)); printf '%s\\n' "$2" >&2; }
+recovery_test_profile_checkpoint_timing(){ :; }
+# Stop after the real readiness/prefix, before generation or any parent/API/DB.
+node(){ printf 'preflight-ready\\n'; }
+seed_recovery_operation_fence_binding_state(){ printf 'pre-parent-stop\\n'; exit 0; }
+stop_checkpoint_backup_writer_guard(){ :; }
+start_checkpoint_backup_writer_guard(){ printf 'unexpected-parent-start\\n' >&2; exit 99; }
+expect_success 'isolated selected preflight' run_checkpoint_backup_child \\
+  db "$1/preflight-output" durable-v2 fixture-baseline fixture-sha fence-stable ""
+[[ "$PASS_COUNT" == 1 && "$FAIL_COUNT" == 0 &&
+   "$LAST_OUTPUT" == $'preflight-ready\\npre-parent-stop' &&
+   ! -e "$1/preflight-output" && ! -e "$1/preflight-output.pgsql-native-trace" ]]
+`, { mode: 0o600 });
+    const result = spawnSync(process.platform === "darwin" ? "/opt/homebrew/bin/bash" : "bash",
+      [script, trace, root], { cwd: root, encoding: "utf8", timeout: 5000,
+        env: { PATH: process.platform === "darwin" ?
+          "/opt/homebrew/bin:/Users/yengalvez/.node/bin:/usr/bin:/bin:/usr/sbin:/sbin" : process.env.PATH,
+          HOME: process.platform === "darwin" ? "/Users/yengalvez" : process.env.HOME,
+          TMPDIR: process.platform === "darwin" ? "/private/tmp" : tmpdir(),
+          YENHUBS_RECOVERY_TEST_FOCUS: "checkpoint-children", YENHUBS_RECOVERY_TEST_CASE: "db-stable",
+          YENHUBS_PGSQL_NATIVE_FRESHNESS_TRACE: "1", YENHUBS_RECOVERY_TEST_KEEP_TMP: "1" }
+      });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout + result.stderr, "");
+  });
+});
+
+test("pgsql native trace wall samples preserve the caller locale and normalize only the builtin rendering",
+  { skip: process.platform !== "darwin" && "requires the macOS comma-decimal locale from the reported runner" }, () => {
+  withNativeTraceCopy(trace => {
+    const result = spawnSync("bash", ["-c", `set -euo pipefail
+source "$1/hooks.sh"
+CHECKPOINT_PGSQL_NATIVE_TRACE_DIR="$1"
+# Explicit comma-decimal locale, independent of the test runner's locale.
+export LC_ALL=es_ES.UTF-8
+[[ "\${EPOCHREALTIME-}" =~ ^[0-9]+,[0-9]{6}$ ]]
+checkpoint_pgsql_native_trace_wall_clock_ready
+[[ "$LC_ALL" == es_ES.UTF-8 && "\${EPOCHREALTIME-}" =~ ^[0-9]+,[0-9]{6}$ ]]
+node(){ return 99; }; python3(){ return 99; }; date(){ return 99; }
+require_backup_guard(){
+  checkpoint_pgsql_native_trace_wall_segment before preconditions 0
+  [[ "$LC_ALL" == es_ES.UTF-8 && "\${EPOCHREALTIME-}" =~ ^[0-9]+,[0-9]{6}$ ]] || return 98
+  checkpoint_pgsql_native_trace_wall_segment after preconditions 37
+}
+monitor_exact_pgsql_source(){ local progress=2; require_backup_guard; }
+if monitor_exact_pgsql_source; then observed=0; else observed=$?; fi
+[[ "$observed" == 37 && "$LC_ALL" == es_ES.UTF-8 && "\${EPOCHREALTIME-}" =~ ^[0-9]+,[0-9]{6}$ ]]
+`, "_", trace], { cwd: root, encoding: "utf8", timeout: 5000 });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout + result.stderr, "");
+    const rows = readFileSync(join(trace, "segments.jsonl"), "utf8").trimEnd().split("\n").map(JSON.parse);
+    assert.equal(rows.length, 2);
+    assert.deepEqual(rows.map(row => [row.event, row.counter, row.status, row.clock]),
+      [["before", 3, 0, "WALL_CLOCK_EPOCHREALTIME"], ["after", 3, 37, "WALL_CLOCK_EPOCHREALTIME"]]);
+    assert.ok(rows.every(row => Number.isSafeInteger(row.wall_us)));
+    assert.ok(rows[1].wall_us >= rows[0].wall_us);
+  });
+});
+
 test("pgsql native trace complete pure records report brackets without assigning an origin", () => {
   withNativeTraceCopy(trace => {
     seedNativeTraceRecords(trace);

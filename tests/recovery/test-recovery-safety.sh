@@ -8429,6 +8429,8 @@ checkpoint_pgsql_native_trace_marker_event() {
 }
 
 checkpoint_pgsql_native_trace_wall_clock_ready() {
+  # Bash formats EPOCHREALTIME with LC_NUMERIC; scope the decimal point here.
+  local LC_ALL=C
   local sampled="${EPOCHREALTIME-}"
   ((BASH_VERSINFO[0] >= 5)) && [[ "$sampled" =~ ^[0-9]+\.[0-9]{6}$ ]]
 }
@@ -8440,6 +8442,7 @@ checkpoint_pgsql_native_trace_wall_segment() {
         " ${FUNCNAME[*]} " != *' require_backup_guard '* ]]; then
     return "$native_status"
   fi
+  local LC_ALL=C
   sampled="${EPOCHREALTIME-}"
   if [[ ! "$sampled" =~ ^[0-9]+\.[0-9]{6}$ || ! "${progress:-}" =~ ^[0-9]+$ ||
         ! "$native_status" =~ ^[0-9]+$ || ! "$callsite" =~ ^[a-z][a-z0-9_-]+$ ]]; then

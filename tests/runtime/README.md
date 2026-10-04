@@ -32,7 +32,10 @@ change to the product's timing contract. This is not a full/recovery/SLO gate.
 
 The same opt-in now also requires the host Bash5+ `EPOCHREALTIME` builtin,
 checked before starting parents, and writes `segments.jsonl` only while the
-PGSQL monitor calls `require_backup_guard`. Its28 flat callsite segments cover
+PGSQL monitor calls `require_backup_guard`. Bash renders the builtin using the
+numeric locale: readiness and each sample locally set `LC_ALL=C` before reading
+it, then restore the caller's locale. No global locale or subprocess fallback
+is introduced. Its28 flat callsite segments cover
 the initial lock/Lease, five consumers, parent authority/privacy/progress,
 contract/baseline, process, live boundary, durable quiescence and active fence.
 These are composite callsite costs, not isolated primitive costs. New hooks use
