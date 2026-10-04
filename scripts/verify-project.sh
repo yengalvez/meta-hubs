@@ -699,7 +699,18 @@ run_static() {
   actionlint -shellcheck=shellcheck -color=false "$ROOT_DIR/hubs/.github/workflows/"*.yml
   actionlint -shellcheck=shellcheck -color=false "$ROOT_DIR/hubs-cloud/.github/workflows/"*.yml
   while IFS= read -r -d '' shell_script; do
-    shellcheck -x "$shell_script"
+    if [[ "$shell_script" == "$ROOT_DIR/tests/recovery/test-recovery-safety.sh" ]]; then
+      # Match CI: following the same library at every fixture source site is
+      # redundant and exceeds the hosted runner's memory. The library is a
+      # separate input in this same loop; every other diagnostic stays live.
+      shellcheck -e SC1091,SC2030,SC2034,SC2317,SC2329 "$shell_script"
+    elif [[ "$shell_script" == "$ROOT_DIR/deployment/lib/recovery-safety.sh" ]]; then
+      # This library's indirect EXIT-trap callback has the same scoped CI
+      # compatibility exclusion, not an exclusion for operational scripts.
+      shellcheck -x -e SC2317 "$shell_script"
+    else
+      shellcheck -x "$shell_script"
+    fi
   done < <(
     find "$ROOT_DIR/deployment" "$ROOT_DIR/scripts" \
       "$ROOT_DIR/tests/recovery" "$ROOT_DIR/tests/scripts" \
@@ -741,6 +752,8 @@ run_security() {
   node --test "$ROOT_DIR/tests/scripts/product-modules-parser.test.mjs" "$ROOT_DIR/tests/scripts/product-modules-live.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/prepare-staging-values.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/prepare-synthetic-seed-values.test.mjs"
+  node --test "$ROOT_DIR/tests/scripts/runtime-image-platform.test.mjs"
+  node --test "$ROOT_DIR/tests/scripts/verification-shellcheck-policy.test.mjs"
   bash "$ROOT_DIR/tests/scripts/verify-project-sections.test.sh"
   node --test "$ROOT_DIR/tests/scripts/verification-hubs-build-env.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/verification-input-batch.test.mjs"

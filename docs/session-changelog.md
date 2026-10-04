@@ -1,5 +1,49 @@
 # Session Changelog
 
+## 2026-10-04 · Repair exact validation fixtures and gate runtime image metadata
+
+The interrupted I425a6b3 full lost both its handle and process; its terminal
+exit is unknown and it is not accepted. Its persisted static log reproduced
+subshell scope diagnostics; security reproduced two serial PGSQL positive
+fixtures missing the real source-guardian contract. Read-only finalization
+retained advisories only. This repair does not rewrite those receipts or
+attribute the historic multimedia failures to these test defects.
+
+Keep all original serial PGSQL tests and complete nested validators. Use the
+real source guardian and native owned job/start identity, with an explicit
+control FD that retires only the fixture's own group on runner EOF. Normal
+cleanup requires TERM and native wait143. Add group/identity/job rejection and
+actual launcher TERM/KILL controls; primary31/31 exit0 in5.535s, directed
+independent review CLOSED. Product guards, owned-round path and five-second
+fixture timeout are unchanged. Two line-local ShellCheck scope directives
+document the intentional fixture exports and dynamic trace hook.
+
+Align local static lint with the existing CI policy: separately lint the
+recovery library with source following, avoid repeated library traversal in
+the harness, and retain ordinary source following for every other input.
+Do not omit the library or broaden CI's existing exclusions. Policy and
+nonzero42 propagation tests passed2/2; real harness/library lint exited0 in
+25.23s. Directed review CLOSED. This is not a complete static receipt or a
+measured full-gate speedup.
+
+Add an opt-in metadata API to the existing image verifier, sharing all13
+accepted image-role/repository contracts and the existing credential parser.
+Bind raw manifest/index/config bytes to digest and descriptor size; require
+one linux/amd64 runtime chain, excluding artifact-marked descriptors, and
+verify config architecture/rootfs without fetching layers. Fixed registry
+auth origins, bounded payloads and one total per-image deadline remain
+fail-closed; no descriptor URL or redirected credential flow is admitted.
+Primary16 new fake-fetch cases plus the existing access verifier passed
+17 TAP entries, exit0 in0.331s; independent review found and then closed the
+artifact-descriptor boundary. No real registry/provenance/runtime evidence
+is supplied by these fixtures, nor any permission to apply/deploy. The API
+does not replace the signed three-image build contract or the accepted
+baseline/Hubs-image proof required for a deployable complete family.
+
+Register the two new test files once in local security and CI. Preserve
+compatible receipts, then require clean exact finalization/full on the new
+commit; no inherited full acceptance, production mutation or remote build.
+
 ## 2026-10-04 · Compose the local reliability candidate without acceptance
 
 Compose committed root C22179e7 and J5160452 on the new local

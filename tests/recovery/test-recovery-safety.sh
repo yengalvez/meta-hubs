@@ -1198,7 +1198,9 @@ PGSQL_GUARD_ROUND_EXTRACT
   source "$case_root/fixture-setup.sh"
   # shellcheck disable=SC1091 # The existing helpers are loaded without changes.
   source "$case_root/fixture-helpers.sh"
+  # shellcheck disable=SC2030 # Startup bounds are owned and consumed by this fixture subshell.
   export RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=30
+  # shellcheck disable=SC2030 # Neither fixture-local export needs to propagate to its caller.
   export RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS=10
   reset_stub
   STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" seed_checkpoint_backup_guard
@@ -8413,6 +8415,9 @@ stop_checkpoint_backup_writer_guard() {
 checkpoint_pgsql_native_trace_record() {
   local event="$1" counter="${2:-0}" native_status="${3:-0}"
   local sink=publisher phase=publisher observation=null sampled
+  # Injected native reader hooks run within the caller's dynamic Bash scope;
+  # these stream locals are read there, not recovered from an exited subshell.
+  # shellcheck disable=SC2031
   case "$event" in
     reader-before|reader-after)
       sink=readers

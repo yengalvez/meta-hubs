@@ -15,6 +15,31 @@ const PRIVATE_SNAPSHOT_MAX_BYTES = 8 * 1024 * 1024;
 const PRIVATE_FILE_MODE = 0o600;
 const DEFAULT_REGISTRY_TIMEOUT_MS = 15_000;
 const MAX_REGISTRY_TIMEOUT_MS = 15_000;
+const MAX_REGISTRY_DOCUMENT_BYTES = 2 * 1024 * 1024;
+const RUNTIME_INDEX_TYPES = new Set([
+  "application/vnd.oci.image.index.v1+json",
+  "application/vnd.docker.distribution.manifest.list.v2+json"
+]);
+const RUNTIME_MANIFEST_TYPES = new Set([
+  "application/vnd.oci.image.manifest.v1+json",
+  "application/vnd.docker.distribution.manifest.v2+json"
+]);
+const RUNTIME_CONFIG_TYPES = new Set([
+  "application/vnd.oci.image.config.v1+json",
+  "application/vnd.docker.container.image.v1+json"
+]);
+const RUNTIME_LAYER_TYPES = new Set([
+  "application/vnd.oci.image.layer.v1.tar",
+  "application/vnd.oci.image.layer.v1.tar+gzip",
+  "application/vnd.oci.image.layer.v1.tar+zstd",
+  "application/vnd.oci.image.layer.nondistributable.v1.tar",
+  "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip",
+  "application/vnd.oci.image.layer.nondistributable.v1.tar+zstd",
+  "application/vnd.docker.image.rootfs.diff.tar.gzip",
+  "application/vnd.docker.image.rootfs.foreign.diff.tar.gzip"
+]);
+const RUNTIME_DOCUMENT_TYPES = new Set([...RUNTIME_INDEX_TYPES, ...RUNTIME_MANIFEST_TYPES]);
+const SHA256_DIGEST = /^sha256:[a-f0-9]{64}$/u;
 
 // This is deliberately an exact, code-owned allowlist rather than data supplied
 // by the private snapshot. Keep its parity test aligned with the accepted
@@ -495,6 +520,11 @@ function abortable(promise, signal, code) {
 }
 
 async function boundedResponseText(response, maximumBytes, code, signal) {
+  const value = await boundedResponseBytes(response, maximumBytes, code, signal, true);
+  return typeof value === "string" ? value : value.toString("utf8");
+}
+
+async function boundedResponseBytes(response, maximumBytes, code, signal, textFallback = false) {
   let declared;
   try {
     declared = response.headers.get("content-length");
@@ -505,10 +535,16 @@ async function boundedResponseText(response, maximumBytes, code, signal) {
     reject(code);
   }
   if (!response.body || typeof response.body.getReader !== "function") {
-    if (typeof response.text !== "function") reject(code);
-    const text = await abortable(response.text(), signal, code);
-    if (typeof text !== "string" || Buffer.byteLength(text, "utf8") > maximumBytes) reject(code);
-    return text;
+    if (textFallback) {
+      if (typeof response.text !== "function") reject(code);
+      const text = await abortable(response.text(), signal, code);
+      if (typeof text !== "string" || Buffer.byteLength(text, "utf8") > maximumBytes) reject(code);
+      return text;
+    }
+    if (typeof response.arrayBuffer !== "function") reject(code);
+    const bytes = await abortable(response.arrayBuffer(), signal, code);
+    if (!(bytes instanceof ArrayBuffer) || bytes.byteLength > maximumBytes) reject(code);
+    return Buffer.from(bytes);
   }
   const reader = response.body.getReader();
   const chunks = [];
@@ -533,7 +569,7 @@ async function boundedResponseText(response, maximumBytes, code, signal) {
   } finally {
     try { reader.releaseLock(); } catch { /* Preserve the value-free primary error. */ }
   }
-  return Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
 }
 
 function ghcrImageParts(image, allowedRepositories) {
@@ -548,8 +584,8 @@ function ghcrImageParts(image, allowedRepositories) {
   };
 }
 
-async function registryFetch(fetchImpl, url, init, code, timeoutMs) {
-  const signal = AbortSignal.timeout(timeoutMs);
+async function registryFetch(fetchImpl, url, init, code, timeoutMs, sharedSignal = null) {
+  const signal = sharedSignal ?? AbortSignal.timeout(timeoutMs);
   let response;
   try {
     response = await abortable(Promise.resolve().then(() => fetchImpl(url, {
@@ -735,6 +771,202 @@ export async function verifyProcessLocalValuesGhcrAccess({
     fetchImpl,
     requestTimeoutMs
   });
+}
+
+function runtimeImages(snapshot) {
+  return PROCESS_LOCAL_IMAGE_PULL_CONTRACTS.map(contract => {
+    const image = snapshot[contract.valueKey];
+    const match = typeof image === "string" ? image.match(PINNED_IMAGE) : null;
+    if (!match || !contract.repositories.includes(match[1])) {
+      reject("process_local_image_contract");
+    }
+    const ghcr = match[1].startsWith("ghcr.io/");
+    if (ghcr && !GHCR_YENHUBS_IMAGE.test(image)) reject("process_local_image_contract");
+    const repository = ghcr ? match[1].slice("ghcr.io/".length)
+      : match[1] === "postgres" ? "library/postgres" : match[1].replace(/^docker\.io\//u, "");
+    return {
+      ghcr,
+      repository,
+      digest: match[2],
+      registryOrigin: ghcr ? "https://ghcr.io" : "https://registry-1.docker.io",
+      tokenOrigin: ghcr ? "https://ghcr.io/token" : "https://auth.docker.io/token",
+      service: ghcr ? "ghcr.io" : "registry.docker.io"
+    };
+  });
+}
+
+function runtimeJson(bytes, code) {
+  let parsed;
+  try {
+    const text = bytes.toString("utf8");
+    if (!Buffer.from(text, "utf8").equals(bytes)) reject(code);
+    parsed = JSON.parse(text);
+  } catch (error) {
+    if (error instanceof PullConfigError) throw error;
+    reject(code);
+  }
+  if (!object(parsed)) reject(code);
+  // Bound the whole JSON tree as well as the fetched document chain. Avoid
+  // recursively walking untrusted payloads or counting only selected entries.
+  const pending = [{ value: parsed, depth: 0 }];
+  let nodes = 0;
+  while (pending.length) {
+    const { value, depth } = pending.pop();
+    if (++nodes > 4096 || depth > 32) reject(code);
+    if (value !== null && typeof value === "object") {
+      const children = Object.values(value);
+      if (pending.length + children.length + nodes > 4096) reject(code);
+      for (const child of children) pending.push({ value: child, depth: depth + 1 });
+    }
+  }
+  return parsed;
+}
+
+function runtimeDescriptor(descriptor, types = null) {
+  if (!object(descriptor) || typeof descriptor.mediaType !== "string" ||
+      !SHA256_DIGEST.test(descriptor.digest ?? "") ||
+      !Number.isSafeInteger(descriptor.size) || descriptor.size < 1 ||
+      (types !== null && !types.has(descriptor.mediaType))) {
+    reject("registry_runtime_descriptor");
+  }
+  return descriptor;
+}
+
+function runtimeHeader(response, name, code) {
+  try {
+    return response.headers.get(name);
+  } catch {
+    reject(code);
+  }
+}
+
+async function verifyRuntimeImage(image, credential, fetchImpl, requestTimeoutMs) {
+  // One finite budget covers token, every selected index/manifest, config and
+  // all body reads. It is never renewed for a child or a slow response body.
+  const signal = AbortSignal.timeout(requestTimeoutMs);
+  const fetchImage = (url, headers, code) => registryFetch(
+    fetchImpl, url, { headers }, code, requestTimeoutMs, signal
+  );
+  const tokenUrl = new URL(image.tokenOrigin);
+  tokenUrl.searchParams.set("service", image.service);
+  tokenUrl.searchParams.set("scope", `repository:${image.repository}:pull`);
+  const tokenHeaders = { Accept: "application/json" };
+  if (image.ghcr) tokenHeaders.Authorization = `Basic ${credential.basic}`;
+  const { response: tokenResponse } = await fetchImage(tokenUrl, tokenHeaders, "registry_token_request");
+  if (tokenResponse.status !== 200) reject("registry_token_denied");
+  const tokenPayload = runtimeJson(await boundedResponseBytes(
+    tokenResponse, 64 * 1024, "registry_token_response", signal
+  ), "registry_token_response");
+  const bearer = tokenPayload.token ?? tokenPayload.access_token;
+  if (typeof bearer !== "string" || !bearer || bearer.length > 32 * 1024 ||
+      /[\u0000-\u001f\u007f]/u.test(bearer) ||
+      (tokenPayload.token !== undefined && tokenPayload.access_token !== undefined &&
+        tokenPayload.token !== tokenPayload.access_token)) reject("registry_token_response");
+
+  const readDocument = async (digest, descriptor = null, config = false) => {
+    const endpoint = config ? "blobs" : "manifests";
+    // No challenge or descriptor URL can choose a host/path or receive auth.
+    const url = `${image.registryOrigin}/v2/${image.repository}/${endpoint}/${digest}`;
+    const { response } = await fetchImage(url, {
+      Accept: config ? descriptor.mediaType : [...RUNTIME_DOCUMENT_TYPES].join(", "),
+      Authorization: `Bearer ${bearer}`
+    }, config ? "registry_config_request" : "registry_manifest_request");
+    if (response.status !== 200) reject(config ? "registry_config_denied" : "registry_manifest_denied");
+    const digestHeader = runtimeHeader(response, "docker-content-digest", "registry_manifest_digest");
+    // Manifest responses must supply the registry digest. Blob responses may
+    // omit that header; if present it must also match the verified raw bytes.
+    if ((!config || digestHeader !== null) && digestHeader !== digest) {
+      reject(config ? "registry_config_digest" : "registry_manifest_digest");
+    }
+    const contentType = (runtimeHeader(response, "content-type", "registry_runtime_media_type") ?? "")
+      .split(";", 1)[0].trim().toLowerCase();
+    if (config ? ![descriptor.mediaType, "application/octet-stream"].includes(contentType)
+      : !RUNTIME_DOCUMENT_TYPES.has(contentType)) reject("registry_runtime_media_type");
+    if (!config && descriptor !== null && contentType !== descriptor.mediaType) {
+      reject("registry_runtime_media_type");
+    }
+    const bytes = await boundedResponseBytes(
+      response, MAX_REGISTRY_DOCUMENT_BYTES, "registry_runtime_response", signal
+    );
+    if (`sha256:${checksum(bytes)}` !== digest) {
+      reject(config ? "registry_config_digest" : "registry_manifest_digest");
+    }
+    if (descriptor !== null && bytes.length !== descriptor.size) reject("registry_runtime_size");
+    const payload = runtimeJson(bytes, "registry_runtime_response");
+    if (payload.mediaType !== undefined && payload.mediaType !== (config ? descriptor.mediaType : contentType)) {
+      reject("registry_runtime_media_type");
+    }
+    return { payload, mediaType: contentType };
+  };
+
+  let document = await readDocument(image.digest);
+  const visited = new Set([image.digest]);
+  let depth = 0;
+  while (RUNTIME_INDEX_TYPES.has(document.mediaType)) {
+    const index = document.payload;
+    if (++depth > 3 || index.schemaVersion !== 2 || index.artifactType !== undefined ||
+        index.subject !== undefined || !Array.isArray(index.manifests) ||
+        index.manifests.length < 1 || index.manifests.length > 128) reject("registry_runtime_index");
+    const candidates = [];
+    for (const entry of index.manifests) {
+      runtimeDescriptor(entry);
+      if (!RUNTIME_DOCUMENT_TYPES.has(entry.mediaType)) continue;
+      if (!object(entry.platform) || typeof entry.platform.os !== "string" ||
+          typeof entry.platform.architecture !== "string") reject("registry_runtime_platform");
+      // Artifact/attestation markers override a runtime-looking platform claim.
+      if (entry.artifactType !== undefined ||
+          entry.annotations?.["vnd.docker.reference.type"] === "attestation-manifest") continue;
+      if (entry.platform.os === "linux" && entry.platform.architecture === "amd64") candidates.push(entry);
+    }
+    // unknown/unknown attestations and other platforms can coexist, but neither
+    // supplies runtime evidence. Multiple AMD64 chains are intentionally ambiguous.
+    if (candidates.length !== 1) reject("registry_runtime_platform");
+    const selected = candidates[0];
+    if (visited.has(selected.digest)) reject("registry_runtime_index");
+    visited.add(selected.digest);
+    document = await readDocument(selected.digest, selected);
+  }
+  const manifest = document.payload;
+  if (!RUNTIME_MANIFEST_TYPES.has(document.mediaType) || manifest.schemaVersion !== 2 ||
+      manifest.artifactType !== undefined || manifest.subject !== undefined ||
+      !Array.isArray(manifest.layers) || manifest.layers.length > 256) reject("registry_runtime_manifest");
+  const configDescriptor = runtimeDescriptor(manifest.config, RUNTIME_CONFIG_TYPES);
+  const expectedConfigType = document.mediaType === "application/vnd.oci.image.manifest.v1+json"
+    ? "application/vnd.oci.image.config.v1+json" : "application/vnd.docker.container.image.v1+json";
+  if (configDescriptor.mediaType !== expectedConfigType) reject("registry_runtime_media_type");
+  for (const layer of manifest.layers) runtimeDescriptor(layer, RUNTIME_LAYER_TYPES);
+  const { payload: config } = await readDocument(configDescriptor.digest, configDescriptor, true);
+  if (config.os !== "linux" || config.architecture !== "amd64") reject("registry_runtime_platform");
+  if (config.artifactType !== undefined || config.subject !== undefined ||
+      !object(config.rootfs) || config.rootfs.type !== "layers" ||
+      !Array.isArray(config.rootfs.diff_ids) || config.rootfs.diff_ids.length !== manifest.layers.length ||
+      config.rootfs.diff_ids.some(digest => typeof digest !== "string" || !SHA256_DIGEST.test(digest))) {
+    reject("registry_runtime_config");
+  }
+}
+
+// Opt-in digest and linux/amd64 baseline check for the complete accepted family,
+// including public Docker Hub aliases. This is NOT official build provenance,
+// runtime acceptance, seed validation or authority to apply/deploy. No readback
+// artefact or partial success is returned; all 13 role images must pass.
+// Only os/architecture are certified here, not variant or OS-feature compatibility.
+export async function verifyProcessLocalValuesRuntimeImages({
+  snapshot,
+  fetchImpl = globalThis.fetch,
+  requestTimeoutMs = DEFAULT_REGISTRY_TIMEOUT_MS
+}) {
+  if (!object(snapshot)) reject("process_local_snapshot_invalid");
+  if (typeof fetchImpl !== "function" || !Number.isInteger(requestTimeoutMs) ||
+      requestTimeoutMs < 1 || requestTimeoutMs > MAX_REGISTRY_TIMEOUT_MS) reject("registry_input");
+  const images = runtimeImages(snapshot);
+  const credential = canonicalGhcrCredential(snapshot.BOT_IMAGE_PULL_CONFIG_JSON_BASE64);
+  try {
+    await Promise.all(images.map(image => verifyRuntimeImage(image, credential, fetchImpl, requestTimeoutMs)));
+  } catch (error) {
+    if (error instanceof PullConfigError) throw error;
+    reject("registry_runtime_response");
+  }
+  return true;
 }
 
 function checksum(value) {
