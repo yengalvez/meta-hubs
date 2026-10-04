@@ -77,10 +77,12 @@ async function mount() {
     const [saved, setSaved] = useState({ sid: initialSid, callbacks: 0, failure: null });
     useEffect(() => {
       const update = patch => setStatus(previous => ({ ...previous, ...patch }));
-      const moduleRef = transport.on("product_modules_changed", capabilities => {
+      const onModulesChanged = capabilities => {
         setStatus(previous => ({ ...previous, events: previous.events + 1,
           creator: capabilities.avaturn_enabled === true ? "ON" : "OFF" }));
-      });
+      };
+      const moduleRef = transport.on("product_modules_changed", onModulesChanged);
+      const creatorRef = transport.on("avaturn_capabilities_changed", onModulesChanged);
       const openRef = socket.onOpen(() => update({ socket: "CONNECTED" }));
       const closeRef = socket.onClose(() => update({ socket: "CLOSED" }));
       const errorRef = socket.onError(() => update({ socket: "ERROR" }));
@@ -90,6 +92,7 @@ async function mount() {
         .receive("timeout", () => update({ join: "TIMEOUT" }));
       return () => {
         transport.off("product_modules_changed", moduleRef);
+        transport.off("avaturn_capabilities_changed", creatorRef);
         socket.off([openRef, closeRef, errorRef]);
         socket.disconnect();
       };

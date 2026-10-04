@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-10-04 · Preserve independent creator events across the chat client
+
+Reticulum forwards creator event provenance instead of aliasing it to general
+module revocation. Hubs preserves chat admission only for complete creator-only
+snapshots consistent with the admitted bots/AI profile; general events, malformed
+payloads and disconnects still revoke. Native test observers listen/unlisten to
+both names. A root compiled-clause→Phoenix/mounted-hook regression supplements
+Node-only Hubs tests and is registered with exact Reticulum receipt inputs.
+The pinned Elixir/OTP bridge passed; standalone mounted controls passed14/14.
+Independent review closed after binding six additional actual root inputs;
+the primary fingerprint regression, lint and worktree security scans passed.
+Integrated runtime/full acceptance remains pending.
+Compatible client/backend rollout is required; no production effect occurred.
+
 ## 2026-10-04 · Close local SQL HTTP canary oracle and cleanup gaps
 
 Test-only change: distinguish OFF cancellation from a pre-existing/deadline

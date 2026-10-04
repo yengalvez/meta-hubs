@@ -91,11 +91,11 @@ if (
   # shellcheck disable=SC2329 # Guards unwrapped calls through the command array.
   mise() { return 97; }
   run_reticulum
-  [[ "$(wc -l <"$TEST_TMP_DIR/sandbox-launches.log" | tr -d ' ')" == 4 ]]
+  [[ "$(wc -l <"$TEST_TMP_DIR/sandbox-launches.log" | tr -d ' ')" == 7 ]]
 ); then
-  pass_test 'only the four Reticulum Mix stages receive the explicit sandbox policy'
+  pass_test 'the three pure Reticulum checks and four Mix stages receive the explicit sandbox policy'
 else
-  fail_test 'only the four Reticulum Mix stages receive the explicit sandbox policy'
+  fail_test 'the three pure Reticulum checks and four Mix stages receive the explicit sandbox policy'
 fi
 
 if (
@@ -145,7 +145,7 @@ for ambient_policy_case in unset present; do
       if [[ "$port_case" == unset ]]; then unset PGPORT; expected_port=5432; else PGPORT="$port_case"; export PGPORT; expected_port="$port_case"; fi
       # This is a command-forwarding unit, not a real Mix/sandbox invocation.
       # An inherited sandbox launcher would escape the in-process mise stub.
-      # The separate sandbox test above covers all four wrapped stages.
+      # The separate sandbox test above covers all seven wrapped stages.
       unset YENHUBS_RETICULUM_TEST_SANDBOX_PROFILE
       launches="$TEST_TMP_DIR/port-$ambient_policy_case-$port_case.log"
       : >"$launches"
@@ -159,7 +159,7 @@ for ambient_policy_case in unset present; do
         fi
       }
       run_reticulum || exit 1
-      [[ "$(wc -l <"$launches" | tr -d ' ')" == 4 ]]
+      [[ "$(wc -l <"$launches" | tr -d ' ')" == 7 ]]
     ); then
       pass_test "Reticulum forwards the exact test port ($port_case; ambient policy $ambient_policy_case)"
     else
@@ -226,6 +226,35 @@ else
   fail_test 'expiring advisories evidence owns the Cowlib Git security contract'
 fi
 
+verify_creator_chat_input_binding() {
+  (
+    local expected input before_ret before_dialog changed=''
+    expected=$'cloud\tcommunity-edition/services/reticulum\nroot\ttests/runtime/avaturn-chat-event-isolation.test.mjs\nhubs\tpackage.json\nhubs\tpackage-lock.json\nhubs\tbabel.config.js\nhubs\t.browserslistrc\nhubs\tscripts/shim\nhubs\ttest/unit/react-components/use-bot-chat-request.test.js\nhubs\tsrc/react-components/room/useBotChatRequest.js\nhubs\tsrc/utils/hub-channel.js\nhubs\tsrc/utils/bot-chat-lifecycle.js\nhubs\tsrc/utils/configs.js\nhubs\tsrc/utils/i18n.js\nhubs\tsrc/utils/phoenix-utils.js\nhubs\tsrc/utils/waypoint-reservation-coordinator.js\nhubs\tsrc/assets/locales/locale_config.js\nhubs\tsrc/assets/locales/es.json\nhubs\tsrc/assets/images/app-logo.png\nhubs\tsrc/assets/images/app-logo-dark.png\nhubs\tsrc/assets/images/company-logo.png\nhubs\tsrc/assets/images/home-hero-background-unbranded.png\nhubs\tsrc/assets/images/editor-logo.png'
+    expected=$'root\ttests/runtime/avaturn-response-projection.test.mjs\nroot\ttests/runtime/avaturn-request-lifecycle.test.mjs\nroot\ttests/runtime/reticulum-ui-socket.exs\nroot\ttests/runtime/reticulum-local.mjs\nroot\ttests/runtime/catalog-dataset.mjs\nroot\tdeployment/import-local-avatars.mjs\n'"$expected"
+    [[ "$(verification_section_inputs reticulum)" == "$expected" ]] || return 1
+    # Content markers exercise the real closure/fingerprint code without
+    # changing any source, receipt, dependency, runtime or database.
+    verification_repository_input_material() {
+      local marker=original
+      [[ "$1"$'\t'"$3" != "$changed" ]] || marker=changed
+      printf '%s\0%s\0%s\0' "$1" "$3" "$marker"
+    }
+    before_ret="$(verification_section_input_sha256 reticulum)"
+    before_dialog="$(verification_section_input_sha256 dialog)"
+    while IFS= read -r input; do
+      changed="$input"
+      [[ "$before_ret" != "$(verification_section_input_sha256 reticulum)" &&
+         "$before_dialog" == "$(verification_section_input_sha256 dialog)" ]] || return 1
+    done <<<"$expected"
+  )
+}
+
+if verify_creator_chat_input_binding; then
+  pass_test 'Reticulum binds the exact cross-source oracle and every Hubs input without invalidating Dialog'
+else
+  fail_test 'Reticulum binds the exact cross-source oracle and every Hubs input without invalidating Dialog'
+fi
+
 if (
   export BASE_ASSETS_PATH=https://assets.example.invalid/hubs/
   export RETICULUM_SERVER=hubs.example.invalid
@@ -266,7 +295,7 @@ chmod 700 "$fake_bin/node"
 dialog_toolchain_after="$(PATH="$fake_bin:$PATH" verification_section_toolchain_sha256 dialog)"
 reticulum_toolchain_after="$(PATH="$fake_bin:$PATH" verification_section_toolchain_sha256 reticulum)"
 if [[ "$dialog_toolchain_before" != "$dialog_toolchain_after" &&
-      "$reticulum_toolchain_before" == "$reticulum_toolchain_after" ]]; then
+      "$reticulum_toolchain_before" != "$reticulum_toolchain_after" ]]; then
   pass_test 'a tool version change invalidates only sections that use that tool'
 else
   fail_test 'a tool version change invalidates only sections that use that tool'

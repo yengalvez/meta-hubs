@@ -157,7 +157,36 @@ INPUTS
       printf 'cloud\tcommunity-edition/services/spoke\n'
       ;;
     reticulum)
-      printf 'cloud\tcommunity-edition/services/reticulum\n'
+      cat <<'INPUTS'
+root	tests/runtime/avaturn-response-projection.test.mjs
+root	tests/runtime/avaturn-request-lifecycle.test.mjs
+root	tests/runtime/reticulum-ui-socket.exs
+root	tests/runtime/reticulum-local.mjs
+root	tests/runtime/catalog-dataset.mjs
+root	deployment/import-local-avatars.mjs
+cloud	community-edition/services/reticulum
+root	tests/runtime/avaturn-chat-event-isolation.test.mjs
+hubs	package.json
+hubs	package-lock.json
+hubs	babel.config.js
+hubs	.browserslistrc
+hubs	scripts/shim
+hubs	test/unit/react-components/use-bot-chat-request.test.js
+hubs	src/react-components/room/useBotChatRequest.js
+hubs	src/utils/hub-channel.js
+hubs	src/utils/bot-chat-lifecycle.js
+hubs	src/utils/configs.js
+hubs	src/utils/i18n.js
+hubs	src/utils/phoenix-utils.js
+hubs	src/utils/waypoint-reservation-coordinator.js
+hubs	src/assets/locales/locale_config.js
+hubs	src/assets/locales/es.json
+hubs	src/assets/images/app-logo.png
+hubs	src/assets/images/app-logo-dark.png
+hubs	src/assets/images/company-logo.png
+hubs	src/assets/images/home-hero-background-unbranded.png
+hubs	src/assets/images/editor-logo.png
+INPUTS
       ;;
     composition)
       cat <<'INPUTS'
@@ -300,6 +329,7 @@ verification_section_toolchain_sha256() {
         tool_version_or_missing shellcheck --version
         ;;
       reticulum)
+        tool_version_or_missing node --version
         tool_version_or_missing mise --version
         tool_version_or_missing mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- elixir --version
         tool_version_or_missing mise x erlang@27.3.4.14 elixir@1.18.4-otp-27 -- mix --version
@@ -758,6 +788,7 @@ run_reticulum() {
   fi
   "${test_launcher[@]}" -- node --test "$ROOT_DIR/tests/runtime/avaturn-response-projection.test.mjs"
   "${test_launcher[@]}" -- node --test "$ROOT_DIR/tests/runtime/avaturn-request-lifecycle.test.mjs"
+  "${test_launcher[@]}" -- node --test "$ROOT_DIR/tests/runtime/avaturn-chat-event-isolation.test.mjs"
   (
     cd "$ROOT_DIR/hubs-cloud/community-edition/services/reticulum"
     "${test_launcher[@]}" -- env MIX_ENV=test mix deps.get --only test --check-locked

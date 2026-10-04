@@ -76,8 +76,14 @@ writes use the same installed ceilings and current SQL flags. Creator-only
 writes publish after persistence without invalidating server chat admission;
 the existing bots/AI locking and invalidation order is retained.
 Internally, creator-only persistence emits `avaturn_capabilities_changed` on
-the existing topic; HubChannel maps it to the same client message, while the
-chat presence tracker ignores only that creator event.
+the existing topic; HubChannel preserves that event name through the client,
+while the chat presence tracker ignores only that creator event. A complete
+creator snapshot may change only Avaturn when bots/AI match the currently
+admitted profile; malformed or drifting snapshots revoke all capabilities.
+General module events still rotate chat admission even with equal flags/token.
+The client and backend must be updated as a compatible pair: older clients do
+not listen to the creator event, and older backends still alias it to general
+revocation. Initial join/rejoin retains the general snapshot contract.
 
 The client projects only those three flags from its current channel and fails
 closed on missing/malformed capability data or lost channel authority. Mounted
@@ -87,7 +93,7 @@ Delayed login, SDK export, preview, upload and avatar-save continuations must
 revalidate their current selection/epoch; cancellation uses the existing fetch
 AbortSignal path. Old completions cannot clear a newer session's autosave state.
 Every projection subscriber must be notified even if another subscriber fails.
-All other config, ordinary GLB import/editing and chat's unconditional capability
+All other config, ordinary GLB import/editing and general chat capability
 epoch rotation remain unchanged. Aborting a client request cannot undo bytes
 the server has already committed.
 
@@ -106,7 +112,11 @@ live. Only test cases change; the socket never connects/joins, transport and
 parent sendingDisabled remain explicit seams. This does not prove the full
 UIRoot, SQL-to-network propagation or movement/STOP. Keep these cases when
 merging upstream changes to HubChannel or the hook's cancellation identity.
-See [local evidence](../../DOC/fiabilidad-ui-canal-2026-10-01.md).
+The root Reticulum gate additionally compiles the actual backend forwarding
+clause, passes its closed mapping to real Phoenix dispatch and the mounted
+hook controls, and binds those cross-repository inputs to its receipt.
+Standalone Hubs tests remain Node-only; no sibling backend/Elixir is required.
+Neither path proves a connected SQL/socket/browser or release by itself.
 
 ### Automatic active-room propagation regression
 
