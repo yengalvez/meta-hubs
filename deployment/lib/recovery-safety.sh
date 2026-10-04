@@ -1123,13 +1123,23 @@ recovery_monitor_authority_common_is_exact() {
     --arg lease_name "${RECOVERY_SERIALIZATION_LEASE_NAME:-}" \
     --arg lease_uid "${RECOVERY_SERIALIZATION_LEASE_UID:-}" \
     --arg lease_holder "${RECOVERY_SERIALIZATION_LEASE_HOLDER:-}" \
+    --arg backup_keyring "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" \
+    --arg backup_key_id "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" \
     --arg authority "$authority_path" \
     --arg failure "$failure_marker" --arg ready "$ready_marker" \
     --arg progress "$progress_marker" '
-    (keys | sort) == ["context","hashes","kind","lease","namespace",
+    (keys | sort) == (["context","hashes","kind","lease","namespace",
       "namespace_uid","operation_id","operation_lock","operation_owner",
       "paths","pid","runtime_generation","schema_version",
-      "start_identity"] and
+      "start_identity"] +
+      (if $backup_keyring == "" and $backup_key_id == "" then []
+       else ["backup_authority"] end) | sort) and
+    (if $backup_keyring == "" and $backup_key_id == "" then true else
+      $operation_owner == "checkpoint-backup" and
+      ($backup_keyring | startswith("/")) and
+      ($backup_key_id | test("^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$")) and
+      .backup_authority == {keyring_path:$backup_keyring,key_id:$backup_key_id}
+    end) and
     .schema_version == 1 and .kind == $kind and .pid == $pid and
     .start_identity == $start_identity and .context == $context and
     .namespace == $namespace and .namespace_uid == $namespace_uid and
@@ -1212,7 +1222,8 @@ recovery_pgsql_source_monitor_failure_code_is_exact() {
     consumer-reticulum|consumer-pgbouncer|consumer-pgbouncer-t|\
     consumer-bot-orchestrator|consumer-coturn|parent-writer|freeze-fence|\
     runner-quiescence|durable-authority|durable-process|durable-progress|\
-    durable-baseline|active-fence|pgsql-source|progress_publish_failed)
+    durable-baseline|active-fence|pgsql-source|progress_publish_failed|\
+    source-owned-round|source-guardian)
       return 0 ;;
     *) return 1 ;;
   esac
@@ -1321,12 +1332,23 @@ recovery_stream_guard_initial_deadline_seconds() {
 recovery_wait_for_stream_guard_initial_progress() {
   local guard_pid="$1" guard_start_identity="$2" failure_marker="$3"
   local progress_marker="$4" maximum_seconds="$5"
-  local poll_seconds started_milliseconds current_milliseconds
+  local poll_seconds started_milliseconds="${6:-}" current_milliseconds
   [[ "$maximum_seconds" =~ ^([1-9]|[1-9][0-9]|1[01][0-9]|120)$ ]] || return 2
   poll_seconds="$(recovery_stream_poll_seconds)" || return 1
-  started_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+  if [[ -z "$started_milliseconds" ]]; then
+    started_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+  else
+    [[ "$started_milliseconds" =~ ^[0-9]{1,18}$ ]] || return 2
+  fi
   recovery_runner_watch_marker_is_exact "$progress_marker" || return 1
   while :; do
+    # An owned child's gate/guardian handshake spends the SAME startup budget,
+    # not a second allowance. Existing callers retain their original contract.
+    if [[ -n "${6:-}" ]]; then
+      current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+      ((current_milliseconds >= started_milliseconds &&
+        current_milliseconds - started_milliseconds < maximum_seconds * 1000)) || return 3
+    fi
     recovery_stream_guard_process_is_healthy \
       "$guard_pid" "$guard_start_identity" "$failure_marker" || return 1
     if [[ -s "$progress_marker" ]]; then
@@ -12032,7 +12054,9 @@ recovery_durable_runner_monitor_control_capability_sha256() {
   ' "$control_baseline_path" >/dev/null || return 1
   capability_json="$(jq -cS \
     --arg durable_sha "$durable_baseline_sha256" \
-    --arg control_sha "$control_baseline_sha256" '
+    --arg control_sha "$control_baseline_sha256" \
+    --arg backup_keyring "${RECOVERY_BACKUP_AUTHORITY_KEYRING:-}" \
+    --arg backup_key_id "${RECOVERY_BACKUP_AUTHORITY_KEY_ID:-}" '
     {schema_version:1,context:.context,
      parent_namespace:.recovery_operation_fence.namespaces.parent,
      runner_namespace:.recovery_operation_fence.namespaces.runner,
@@ -12041,7 +12065,9 @@ recovery_durable_runner_monitor_control_capability_sha256() {
      policy:.recovery_operation_fence.policy,
      binding:.recovery_operation_fence.binding,
      durable_fence_baseline_sha256:$durable_sha,
-     control_baseline_sha256:$control_sha}
+     control_baseline_sha256:$control_sha} +
+     (if $backup_keyring=="" and $backup_key_id=="" then {} else
+       {backup_authority:{keyring_path:$backup_keyring,key_id:$backup_key_id}} end)
   ' "$control_baseline_path")" || return 1
   printf '%s' "$capability_json" | recovery_sha256_bytes
 }

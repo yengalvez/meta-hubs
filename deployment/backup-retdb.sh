@@ -6,6 +6,10 @@
 set -euo pipefail
 umask 077
 
+# Publisher authority is process-local, never a capability accepted from env.
+unset DB_SOURCE_OWNED_GROUP DB_SOURCE_ROUND DB_SOURCE_GUARDIAN_PID \
+  DB_SOURCE_GUARDIAN_IDENTITY DB_SOURCE_PUBLISHER_ACTIVE
+
 if [[ $# -ne 1 ]]; then
   printf 'Usage: %s /path/to/retdb-YYYYMMDD-HHMMSS.sql.gz\n' "$0" >&2
   exit 2
@@ -275,6 +279,13 @@ require_backup_guard() {
     recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \
       "$deployment" 0 || return 1
   done
+  # Only the gated PGSQL publisher owns a pinned, isolated process group.
+  # Preflight/final callers retain the original serial predicate below.
+  if [[ "${DB_SOURCE_PUBLISHER_ACTIVE:-0}" == 1 &&
+        "${DB_SOURCE_OWNED_GROUP:-}" == "$BASHPID" ]]; then
+    db_source_join_parent_round
+    return $?
+  fi
   if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then
     DB_BACKUP_GUARD_FAILURE_REASON=freeze-fence
     require_parent_freeze_fence_capability || return 1
@@ -313,6 +324,261 @@ DB_SOURCE_MONITOR_START_IDENTITY=""
 DB_SOURCE_MONITOR_MAX_STALE_SECONDS=""
 DB_SOURCE_MONITOR_INITIAL_DEADLINE_SECONDS=""
 DB_SOURCE_MONITOR_POLL_SECONDS=""
+DB_SOURCE_MONITOR_CONTROL_FD=""
+DB_SOURCE_MONITOR_READ_FD=""
+DB_SOURCE_MONITOR_ROUND_DIR=""
+DB_SOURCE_MONITOR_LAST_STATUS=""
+DB_SOURCE_MONITOR_OWNED_PID=""
+DB_SOURCE_MONITOR_OWNED_IDENTITY=""
+
+db_source_monitor_revoke() {
+  # Revoke only this owner's original coproc pipe. No jobs/start/PGID snapshot
+  # can authorize an owner-side group signal: STOP may retire its last pins
+  # between the snapshot and that signal. The guardian signals its OWN group
+  # while it still belongs to it, on EOF or publisher reparenting.
+  [[ "$DB_SOURCE_MONITOR_PID" == "$DB_SOURCE_MONITOR_OWNED_PID" &&
+     "$DB_SOURCE_MONITOR_START_IDENTITY" == "$DB_SOURCE_MONITOR_OWNED_IDENTITY" ]] || return 1
+  if [[ -n "$DB_SOURCE_MONITOR_CONTROL_FD" &&
+          "${YENHUBS_PGSQL_SOURCE_PID:-}" == "$DB_SOURCE_MONITOR_PID" &&
+          "${YENHUBS_PGSQL_SOURCE[1]:-}" == "$DB_SOURCE_MONITOR_CONTROL_FD" ]]; then
+    # Check Bash's current pipe ownership without forks/FD allocations between
+    # the check and close. A completed coproc loses this binding; its historical
+    # descriptor must not be closed or its historical PGID signalled.
+    exec {DB_SOURCE_MONITOR_CONTROL_FD}>&-
+  fi
+  # Bash owns/closes the original coproc writer on termination. Its numeric
+  # descriptor is not an inherited capability or an FD to close after reap.
+  DB_SOURCE_MONITOR_CONTROL_FD=""
+}
+
+db_source_parent_branch() {
+  local branch="$1" status=0 reason=complete
+  if [[ "$branch" == W ]]; then
+    if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then
+      reason=freeze-fence
+      require_parent_freeze_fence_capability || status=$?
+    else
+      reason="parent-writer"
+      require_parent_writer_monitor_capability || status=$?
+    fi
+  elif [[ "$branch" == D && "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
+    require_parent_durable_monitor_capability || {
+      status=$?
+      reason="${DB_PARENT_DURABLE_FAILURE_REASON:-durable-authority}"
+    }
+  elif [[ "$branch" == D ]]; then
+    recovery_require_checkpoint_runner_quiescence_exact \
+      "$CHECKPOINT_RUNNER_GENERATION" \
+      "$CHECKPOINT_DURABLE_FENCE_BASELINE_PATH" \
+      "$CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256" || {
+      status=$?
+      reason="${RECOVERY_RUNNER_QUIESCENCE_FAILURE_DETAIL:-runner-quiescence}"
+    }
+  else
+    return 2
+  fi
+  [[ "$status" != 0 ]] || reason=complete
+  [[ "$reason" == complete ]] ||
+    recovery_pgsql_source_monitor_failure_code_is_exact "$reason" || reason="backup-guard"
+  printf 'branch:v1:%s:%s:%s:%s:%s\n' \
+    "$branch" "$DB_SOURCE_ROUND" "$BASHPID" "$status" "$reason" \
+    >"$DB_SOURCE_MONITOR_ROUND_DIR/$branch.result" || return 2
+  return "$status"
+}
+
+db_source_branch_result() {
+  local branch="$1" pid="$2" joined_status="$3" record
+  local path="$DB_SOURCE_MONITOR_ROUND_DIR/$branch.result"
+  DB_SOURCE_BRANCH_REASON=source-owned-round
+  recovery_runner_watch_marker_is_exact "$path" || return 1
+  [[ "$(wc -c <"$path")" -le 128 ]] || return 1
+  # read -d NUL retains LF and exposes embedded NUL. One closed bounded
+  # record is necessary; a failed wait or partial receipt can never be healthy.
+  if IFS= read -r -d '' record <"$path"; then return 1; fi
+  [[ "$record" == *$'\n' ]] || return 1
+  record="${record%$'\n'}"
+  [[ "$record" =~ ^branch:v1:([WD]):([1-9][0-9]*):([1-9][0-9]*):(0|[1-9][0-9]{0,2}):([a-z][a-z_-]*)$ ]] || return 1
+  [[ "${BASH_REMATCH[1]}" == "$branch" &&
+     "${BASH_REMATCH[2]}" == "$DB_SOURCE_ROUND" &&
+     "${BASH_REMATCH[3]}" == "$pid" &&
+     "${BASH_REMATCH[4]}" == "$joined_status" && "$joined_status" != 127 ]] || return 1
+  DB_SOURCE_BRANCH_REASON="${BASH_REMATCH[5]}"
+  if [[ "$joined_status" == 0 ]]; then
+    [[ "$DB_SOURCE_BRANCH_REASON" == complete ]] || return 1
+  else
+    [[ "$DB_SOURCE_BRANCH_REASON" != complete ]] &&
+      recovery_pgsql_source_monitor_failure_code_is_exact "$DB_SOURCE_BRANCH_REASON" || return 1
+  fi
+}
+
+db_source_guardian_is_usable() {
+  local running_jobs kernel_state
+  [[ "$BASHPID" == "${DB_SOURCE_OWNED_GROUP:-}" ]] || return 1
+  running_jobs="$(builtin jobs -pr)" || return 1
+  # With job control off Bash can retain a kernel-STOPPED child as RUNNING.
+  # Require our original native job AND a non-stopped/non-zombie kernel state
+  # AND its fresh identity. No global live-process semantics are changed here.
+  [[ $'\n'"$running_jobs"$'\n' == *$'\n'"$DB_SOURCE_GUARDIAN_PID"$'\n'* ]] || return 1
+  kernel_state="$(command ps -o state= -p "$DB_SOURCE_GUARDIAN_PID")" || return 1
+  kernel_state="${kernel_state//[[:space:]]/}"
+  # Darwin appends flags (e.g. SN/Ss); only the first character is state.
+  case "${kernel_state:0:1}" in
+    R|S|I|D|U) ;;
+    *) return 1 ;;
+  esac
+  # D/U are ordinary uninterruptible waits, not a guarantee against a kernel
+  # or I/O operation that never returns; a stopped guardian is always refused.
+  recovery_process_identity_is_live "$DB_SOURCE_GUARDIAN_PID" "$DB_SOURCE_GUARDIAN_IDENTITY"
+}
+
+db_source_join_parent_round() {
+  local writer_pid durable_pid writer_identity durable_identity group
+  local writer_status durable_status writer_reason durable_reason
+  local active_jobs
+  DB_BACKUP_GUARD_FAILURE_REASON=source-owned-round
+  DB_SOURCE_ROUND=$((DB_SOURCE_ROUND + 1))
+  rm -f -- "$DB_SOURCE_MONITOR_ROUND_DIR/"{W,D}.{go,result} || return 1
+  (
+    while [[ ! -e "$DB_SOURCE_MONITOR_ROUND_DIR/W.go" ]]; do sleep 0.01; done
+    db_source_parent_branch W
+  ) >&2 &
+  writer_pid=$!
+  (
+    while [[ ! -e "$DB_SOURCE_MONITOR_ROUND_DIR/D.go" ]]; do sleep 0.01; done
+    db_source_parent_branch D
+  ) >&2 &
+  durable_pid=$!
+  # Each worker is still gate-blocked. Its fresh identity and PGID must belong
+  # to the guardian-pinned source group before any complete predicate runs.
+  for group in "$writer_pid" "$durable_pid"; do
+    [[ "$(ps -o pgid= -p "$group" | tr -d '[:space:]')" == "$DB_SOURCE_OWNED_GROUP" ]] || return 1
+  done
+  writer_identity="$(recovery_process_start_identity "$writer_pid")" || return 1
+  durable_identity="$(recovery_process_start_identity "$durable_pid")" || return 1
+  recovery_process_identity_is_live "$writer_pid" "$writer_identity" &&
+    recovery_process_identity_is_live "$durable_pid" "$durable_identity" || return 1
+  db_source_guardian_is_usable || {
+    DB_BACKUP_GUARD_FAILURE_REASON=source-guardian
+    return 1
+  }
+  : >"$DB_SOURCE_MONITOR_ROUND_DIR/W.go" || return 1
+  : >"$DB_SOURCE_MONITOR_ROUND_DIR/D.go" || return 1
+  # Join BOTH complete branches even after rejection. Preserve the original
+  # W-before-D first cause independently of completion order; never publish
+  # before either native join and its exact receipt are validated.
+  while :; do
+    # A STOPPED branch is still pending: wait may report its state change
+    # without termination. Supervise BOTH jobs before either terminal wait.
+    if ! db_source_guardian_is_usable; then
+      DB_BACKUP_GUARD_FAILURE_REASON=source-guardian
+      record_pgsql_source_monitor_failure source-guardian
+      [[ "$BASHPID" == "$DB_SOURCE_OWNED_GROUP" ]] || return 1
+      kill -KILL -- "-$BASHPID"
+      return 1
+    fi
+    active_jobs="$(builtin jobs -pr; builtin jobs -ps)" || return 1
+    [[ $'\n'"$active_jobs"$'\n' == *$'\n'"$writer_pid"$'\n'* ||
+       $'\n'"$active_jobs"$'\n' == *$'\n'"$durable_pid"$'\n'* ]] || break
+    sleep "$DB_SOURCE_MONITOR_POLL_SECONDS" || return 1
+  done
+  if wait "$writer_pid"; then writer_status=0; else writer_status=$?; fi
+  if wait "$durable_pid"; then durable_status=0; else durable_status=$?; fi
+  db_source_branch_result W "$writer_pid" "$writer_status" || return 1
+  writer_reason="$DB_SOURCE_BRANCH_REASON"
+  if ! db_source_branch_result D "$durable_pid" "$durable_status"; then
+    # A proven W rejection was the original first cause, even if D's later
+    # receipt is unavailable. This cannot attest D or permit publication.
+    [[ "$writer_status" != 0 ]] || return 1
+    DB_BACKUP_GUARD_FAILURE_REASON="$writer_reason"
+    return "$writer_status"
+  fi
+  durable_reason="$DB_SOURCE_BRANCH_REASON"
+  if [[ "$writer_status" != 0 ]]; then
+    DB_BACKUP_GUARD_FAILURE_REASON="$writer_reason"
+    return "$writer_status"
+  fi
+  if [[ "$durable_status" != 0 ]]; then
+    DB_BACKUP_GUARD_FAILURE_REASON="$durable_reason"
+    return "$durable_status"
+  fi
+  db_source_guardian_is_usable || {
+    DB_BACKUP_GUARD_FAILURE_REASON=source-guardian
+    return 1
+  }
+  DB_BACKUP_GUARD_FAILURE_REASON=""
+}
+
+db_source_owned_publisher() {
+  local permission status=0 guardian_failure="" guardian_status
+  local DB_SOURCE_OWNED_GROUP="$BASHPID" DB_SOURCE_ROUND=0
+  local DB_SOURCE_GUARDIAN_PID="" DB_SOURCE_GUARDIAN_IDENTITY=""
+  local DB_SOURCE_PUBLISHER_ACTIVE=0
+  set +m
+  trap - EXIT INT TERM
+  IFS= read -r -t "$DB_SOURCE_MONITOR_INITIAL_DEADLINE_SECONDS" permission || return 1
+  [[ "$permission" == go ]] || return 1
+  # Same live-own-PGID/EOF guardian pattern as the stream audit. No foreign
+  # PID is retained to signal; reparenting catches publisher SIGKILL as well.
+  command python3 -I -c '
+import os, select, signal, sys, time
+group = int(sys.argv[1])
+if os.getpgrp() != group or os.getppid() != group:
+    sys.exit(1)
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+signal.signal(signal.SIGUSR1, lambda *_: sys.exit(0))
+with open(sys.argv[2], "x", encoding="ascii") as ready:
+    ready.write("ready\n")
+while True:
+    if os.getppid() != group or select.select([0], [], [], 0.05)[0]:
+        os.killpg(group, signal.SIGTERM)
+        time.sleep(0.1)
+        os.killpg(group, signal.SIGKILL)
+' "$DB_SOURCE_OWNED_GROUP" "$DB_SOURCE_MONITOR_ROUND_DIR/guardian.ready" <&0 >&2 &
+  DB_SOURCE_GUARDIAN_PID=$!
+  DB_SOURCE_GUARDIAN_IDENTITY="$(recovery_process_start_identity "$DB_SOURCE_GUARDIAN_PID")" || return 1
+  while [[ ! -s "$DB_SOURCE_MONITOR_ROUND_DIR/guardian.ready" ]]; do
+    db_source_guardian_is_usable || {
+      record_pgsql_source_monitor_failure source-guardian
+      [[ "$BASHPID" == "$DB_SOURCE_OWNED_GROUP" ]] || return 1
+      kill -KILL -- "-$BASHPID"
+      return 1
+    }
+    sleep 0.01
+  done
+  db_source_guardian_is_usable || {
+    record_pgsql_source_monitor_failure source-guardian
+    [[ "$BASHPID" == "$DB_SOURCE_OWNED_GROUP" ]] || return 1
+    kill -KILL -- "-$BASHPID"
+    return 1
+  }
+  DB_SOURCE_PUBLISHER_ACTIVE=1
+  printf 'ready\n' || return 1
+  if monitor_exact_pgsql_source >&2; then status=0; else status=$?; fi
+  if ! db_source_guardian_is_usable; then
+    guardian_failure=source-guardian
+  elif [[ "$status" == 0 && -e "$DB_SOURCE_MONITOR_STOP" ]]; then
+    if ! kill -USR1 "$DB_SOURCE_GUARDIAN_PID" 2>/dev/null; then
+      guardian_failure=source-guardian
+    else
+      if wait "$DB_SOURCE_GUARDIAN_PID"; then guardian_status=0; else guardian_status=$?; fi
+      [[ "$guardian_status" == 0 ]] || guardian_failure=source-guardian
+    fi
+  fi
+  if [[ -n "$guardian_failure" ]]; then
+    record_pgsql_source_monitor_failure "$guardian_failure"
+    # The guardian is no longer a usable pin. This publisher STILL pins its
+    # own group and must retire any gate-blocked/failed-round descendants now.
+    [[ "$BASHPID" == "$DB_SOURCE_OWNED_GROUP" ]] || return 1
+    kill -KILL -- "-$BASHPID"
+    return 1
+  elif [[ "$status" == 0 && ! -e "$DB_SOURCE_MONITOR_STOP" ]]; then
+    record_pgsql_source_monitor_failure source-owned-round
+    status=1
+  fi
+  printf 'source:v1:%s:%s\n' "$DB_SOURCE_OWNED_GROUP" "$status" || return 1
+  return "$status"
+}
 
 require_exact_pgsql_source_now() {
   local current_pods_json current_pod_info current_pod_json
@@ -340,6 +606,8 @@ record_pgsql_source_monitor_failure() {
   local failure_reason="$1"
   recovery_pgsql_source_monitor_failure_code_is_exact "$failure_reason" ||
     failure_reason=backup-guard
+  # Retain the first closed guard cause even if later infrastructure fails.
+  [[ ! -s "$DB_SOURCE_MONITOR_FAILURE" ]] || return 0
   printf 'pgsql_source_monitor_failed:%s\n' "$failure_reason" \
     >"$DB_SOURCE_MONITOR_FAILURE"
 }
@@ -358,6 +626,11 @@ monitor_exact_pgsql_source() {
       record_pgsql_source_monitor_failure pgsql-source
       return 1
     }
+    [[ ! -e "$DB_SOURCE_MONITOR_STOP" ]] || return 0
+    db_source_guardian_is_usable || {
+      record_pgsql_source_monitor_failure source-guardian
+      return 1
+    }
     progress=$((progress + 1))
     if ! recovery_write_stream_guard_progress \
         "$DB_SOURCE_MONITOR_PROGRESS" "$progress"; then
@@ -369,26 +642,54 @@ monitor_exact_pgsql_source() {
 }
 
 stop_db_source_monitor() {
-  local monitor_status=0
+  local monitor_status=0 terminal="" terminal_status=0
+  local mode="${1:-stop}" joined_pid="$DB_SOURCE_MONITOR_PID"
+  [[ "$mode" == stop || "$mode" == revoke ]] || return 2
   if [[ -n "$DB_SOURCE_MONITOR_PID" ]]; then
+    [[ "$DB_SOURCE_MONITOR_PID" == "$DB_SOURCE_MONITOR_OWNED_PID" &&
+       "$DB_SOURCE_MONITOR_START_IDENTITY" == "$DB_SOURCE_MONITOR_OWNED_IDENTITY" ]] || return 1
     : >"$DB_SOURCE_MONITOR_STOP"
+    if [[ "$mode" == revoke ]]; then db_source_monitor_revoke || return 1; fi
     if wait "$DB_SOURCE_MONITOR_PID"; then
       monitor_status=0
     else
       monitor_status=$?
     fi
+    DB_SOURCE_MONITOR_LAST_STATUS="$monitor_status"
+    # Keep the duplicated reader through reap. EOF, native wait and
+    # the one exact terminal receipt must agree; no wait127/missing receipt0.
+    # Bash owns/closes the original coproc writer. Never close a historical FD
+    # or signal a historical group after this authentic native join.
+    DB_SOURCE_MONITOR_CONTROL_FD=""
+    if [[ -n "$DB_SOURCE_MONITOR_READ_FD" ]]; then
+      if LC_ALL=C IFS= read -r -d '' -n 80 -t 0.1 -u "$DB_SOURCE_MONITOR_READ_FD" terminal; then
+        terminal_status=0
+      else
+        terminal_status=$?
+      fi
+      exec {DB_SOURCE_MONITOR_READ_FD}<&-
+      DB_SOURCE_MONITOR_READ_FD=""
+    fi
+    if [[ "$terminal_status" != 1 ||
+          "$terminal" != "source:v1:$joined_pid:$DB_SOURCE_MONITOR_LAST_STATUS"$'\n' ||
+          "$DB_SOURCE_MONITOR_LAST_STATUS" == 127 ]]; then
+      [[ "$monitor_status" != 0 ]] || monitor_status=1
+    fi
     DB_SOURCE_MONITOR_PID=""
     DB_SOURCE_MONITOR_START_IDENTITY=""
+    DB_SOURCE_MONITOR_OWNED_PID=""
+    DB_SOURCE_MONITOR_OWNED_IDENTITY=""
   fi
   if [[ -n "$DB_SOURCE_MONITOR_FAILURE" &&
         -s "$DB_SOURCE_MONITOR_FAILURE" ]]; then
-    monitor_status=1
+    [[ "$monitor_status" != 0 ]] || monitor_status=1
   fi
   DUMP_STREAM_GUARD_ARGS=()
-  [[ "$monitor_status" == 0 ]]
+  return "$monitor_status"
 }
 
 start_db_source_monitor() {
+  local monitor_mode=0 pipe_read pipe_write group ready="" ready_status started
   [[ -z "$DB_SOURCE_MONITOR_PID" &&
      -z "$DB_SOURCE_MONITOR_START_IDENTITY" ]] || return 2
   DB_SOURCE_MONITOR_STOP="$(
@@ -403,38 +704,56 @@ start_db_source_monitor() {
   rm -f -- "$DB_SOURCE_MONITOR_STOP"
   chmod 600 "$DB_SOURCE_MONITOR_FAILURE" "$DB_SOURCE_MONITOR_PROGRESS" ||
     return 1
+  DB_SOURCE_MONITOR_ROUND_DIR="$(mktemp -d "${OUTPUT_PATH}.pgsql-round.XXXXXX")" || return 1
+  chmod 700 "$DB_SOURCE_MONITOR_ROUND_DIR" || return 1
   DB_SOURCE_MONITOR_POLL_SECONDS="$(recovery_stream_poll_seconds)" || return 1
-  (
-    # Prevent Bash 3.2 from tail-execing a nested kubectl and replacing the
-    # long-lived process whose start identity is passed to the stream guard.
-    db_source_monitor_exit_status=0
-    trap 'db_source_monitor_exit_status=$?; trap - EXIT; exit "$db_source_monitor_exit_status"' EXIT
-    monitor_exact_pgsql_source
-  ) &
-  DB_SOURCE_MONITOR_PID=$!
+  DB_SOURCE_MONITOR_MAX_STALE_SECONDS="$(recovery_stream_guard_max_stale_seconds)" || return 1
+  DB_SOURCE_MONITOR_INITIAL_DEADLINE_SECONDS="$(recovery_stream_guard_initial_deadline_seconds)" || return 1
+  started="$(recovery_monotonic_milliseconds)" || return 1
+  [[ $- != *m* ]] || monitor_mode=1
+  set -m
+  coproc YENHUBS_PGSQL_SOURCE { db_source_owned_publisher; }
+  DB_SOURCE_MONITOR_PID="${YENHUBS_PGSQL_SOURCE_PID:-}"
+  DB_SOURCE_MONITOR_OWNED_PID="$DB_SOURCE_MONITOR_PID"
+  pipe_read="${YENHUBS_PGSQL_SOURCE[0]:-}"
+  pipe_write="${YENHUBS_PGSQL_SOURCE[1]:-}"
+  [[ "$monitor_mode" == 1 ]] || set +m
+  DB_SOURCE_MONITOR_CONTROL_FD="$pipe_write"
   if ! DB_SOURCE_MONITOR_START_IDENTITY="$(
     recovery_process_start_identity "$DB_SOURCE_MONITOR_PID"
   )"; then
-    : >"$DB_SOURCE_MONITOR_STOP"
-    wait "$DB_SOURCE_MONITOR_PID" 2>/dev/null || :
-    DB_SOURCE_MONITOR_PID=""
-    DB_SOURCE_MONITOR_START_IDENTITY=""
+    stop_db_source_monitor revoke || :
     return 1
   fi
-  if ! DB_SOURCE_MONITOR_MAX_STALE_SECONDS="$(
-       recovery_stream_guard_max_stale_seconds
-     )" ||
-     ! DB_SOURCE_MONITOR_INITIAL_DEADLINE_SECONDS="$(
-       recovery_stream_guard_initial_deadline_seconds
-     )" ||
+  DB_SOURCE_MONITOR_OWNED_IDENTITY="$DB_SOURCE_MONITOR_START_IDENTITY"
+  if ! group="$(ps -o pgid= -p "$DB_SOURCE_MONITOR_PID" | tr -d '[:space:]')" ||
+     [[ "$group" != "$DB_SOURCE_MONITOR_PID" ]] ||
+     ! recovery_process_identity_is_live "$DB_SOURCE_MONITOR_PID" "$DB_SOURCE_MONITOR_START_IDENTITY"; then
+    stop_db_source_monitor revoke || :
+    return 1
+  fi
+  # Duplicate only the reader for terminal buffering. The original coproc
+  # writer is closed by Bash in non-owner subshells, including the dump pipe.
+  if ! exec {DB_SOURCE_MONITOR_READ_FD}<&"$pipe_read"; then
+    stop_db_source_monitor revoke || :
+    return 1
+  fi
+  exec {pipe_read}<&-
+  if ! printf 'go\n' >&"$DB_SOURCE_MONITOR_CONTROL_FD"; then
+    stop_db_source_monitor revoke || :
+    return 1
+  fi
+  if LC_ALL=C IFS= read -r -d '' -n 6 -t "$DB_SOURCE_MONITOR_INITIAL_DEADLINE_SECONDS" -u "$DB_SOURCE_MONITOR_READ_FD" ready; then
+    ready_status=0
+  else
+    ready_status=$?
+  fi
+  if [[ "$ready_status" != 0 || "$ready" != $'ready\n' ]] ||
      ! recovery_wait_for_stream_guard_initial_progress \
        "$DB_SOURCE_MONITOR_PID" "$DB_SOURCE_MONITOR_START_IDENTITY" \
        "$DB_SOURCE_MONITOR_FAILURE" "$DB_SOURCE_MONITOR_PROGRESS" \
-       "$DB_SOURCE_MONITOR_INITIAL_DEADLINE_SECONDS"; then
-    : >"$DB_SOURCE_MONITOR_STOP"
-    wait "$DB_SOURCE_MONITOR_PID" 2>/dev/null || :
-    DB_SOURCE_MONITOR_PID=""
-    DB_SOURCE_MONITOR_START_IDENTITY=""
+       "$DB_SOURCE_MONITOR_INITIAL_DEADLINE_SECONDS" "$started"; then
+    stop_db_source_monitor revoke || :
     DB_SOURCE_MONITOR_MAX_STALE_SECONDS=""
     DB_SOURCE_MONITOR_INITIAL_DEADLINE_SECONDS=""
     return 1
@@ -628,7 +947,7 @@ cleanup_backup() {
   remove_owned_published_file 1 "$PARTIAL_OWNED_IDENTITY" "$PARTIAL_PATH"
   remove_owned_published_file \
     1 "$CONTRACT_BOUND_OWNED_IDENTITY" "$CONTRACT_BOUND"
-  stop_db_source_monitor || :
+  stop_db_source_monitor revoke || :
   rm -f -- "$SQL_CHECK_PATH" "$CONTRACT_BEFORE" "$CONTRACT_AFTER" || :
   [[ -z "$DB_SOURCE_MONITOR_STOP" ]] ||
     rm -f -- "$DB_SOURCE_MONITOR_STOP" || :
@@ -637,6 +956,11 @@ cleanup_backup() {
   [[ -z "$DB_SOURCE_MONITOR_PROGRESS" ]] ||
     rm -f -- "$DB_SOURCE_MONITOR_PROGRESS" \
       "${DB_SOURCE_MONITOR_PROGRESS}.next" || :
+  if [[ -n "$DB_SOURCE_MONITOR_ROUND_DIR" ]]; then
+    rm -f -- "$DB_SOURCE_MONITOR_ROUND_DIR/"{W,D}.{go,result} \
+      "$DB_SOURCE_MONITOR_ROUND_DIR/guardian.ready" || :
+    rmdir -- "$DB_SOURCE_MONITOR_ROUND_DIR" || :
+  fi
   return 0
 }
 backup_interrupted() {
@@ -719,7 +1043,10 @@ if run_dump_stream | gzip -9 >"$PARTIAL_PATH"; then
 else
   dump_status=$?
 fi
-if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]] || stop_db_source_monitor; then
+source_monitor_stop_mode=stop
+[[ "$dump_status" == 0 ]] || source_monitor_stop_mode=revoke
+if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]] ||
+   stop_db_source_monitor "$source_monitor_stop_mode"; then
   source_monitor_status=0
 else
   source_monitor_status=$?

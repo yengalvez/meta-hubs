@@ -4,6 +4,16 @@ set -euo pipefail
 umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+checkpoint_pgsql_native_trace_selected() {
+  [[ "${YENHUBS_PGSQL_NATIVE_FRESHNESS_TRACE:-0}" == 1 &&
+     "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-children &&
+     "${YENHUBS_RECOVERY_TEST_CASE:-}" == db-stable ]]
+}
+if [[ "${YENHUBS_PGSQL_NATIVE_FRESHNESS_TRACE:-0}" != 0 ]] &&
+   ! checkpoint_pgsql_native_trace_selected; then
+  printf 'PGSQL native trace requires checkpoint-children/db-stable only.\n' >&2
+  exit 2
+fi
 # shellcheck source=tests/recovery/lib/harness-profile.sh
 source "$ROOT_DIR/tests/recovery/lib/harness-profile.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yenhubs-recovery-tests.XXXXXX")"
@@ -1065,6 +1075,278 @@ if recovery_focus_selected git-provenance; then
   recovery_finish_focus 'Focused git provenance'
 fi
 
+run_pgsql_guard_round_native() (
+  set -euo pipefail
+  local case_root="$TMP_DIR/pgsql-guard-round-native"
+  local extraction="$case_root/extraction.json" round_status=0
+  if [[ "${YENHUBS_PGSQL_ROUND_PROFILE:-0}" == 1 ]] &&
+     ((BASH_VERSINFO[0] < 5)); then
+    printf 'PGSQL_ROUND_PROFILE requires Bash 5 or newer.\n' >&2
+    exit 2
+  fi
+  mkdir -p "$case_root/deployment"
+  # Extract only existing setup/helpers and the literal production round. No
+  # recovery assertions, dump, stream, validator replacement or clock shim.
+  node - "${BASH_SOURCE[0]}" "$ROOT_DIR/deployment/backup-retdb.sh" \
+    >"$extraction" <<'PGSQL_GUARD_ROUND_EXTRACT'
+const fs = require("node:fs");
+const suite = fs.readFileSync(process.argv[2], "utf8");
+const backup = fs.readFileSync(process.argv[3], "utf8");
+function anchor(text, line) {
+  const lines = text.split("\n");
+  const hits = lines.flatMap((value, index) => value === line ? [index] : []);
+  if (hits.length !== 1) throw new Error(`non-unique extraction anchor: ${line}`);
+  return lines.slice(0, hits[0]).join("\n").length + (hits[0] ? 1 : 0);
+}
+function between(text, start, end) {
+  const first = anchor(text, start), last = anchor(text, end);
+  if (last <= first) throw new Error("unordered extraction anchors");
+  return text.slice(first, last);
+}
+function fn(text, name) {
+  const first = anchor(text, `${name}() {`);
+  const last = text.indexOf("\n}\n", first);
+  if (last < 0) throw new Error(`unterminated extraction function: ${name}`);
+  return text.slice(first, last + 3);
+}
+const parts = {
+  fixture_setup: between(suite, 'mkdir -p "$TMP_DIR/bin" "$TMP_DIR/stub-state"', 'reset_stub() {'),
+  fixture_helpers: ["reset_stub", "seed_recovery_operation_fence_binding_state",
+    "seed_serialization_lease", "seed_restore_lock", "seed_checkpoint_backup_guard",
+    "start_checkpoint_backup_writer_guard", "stop_checkpoint_backup_writer_guard"]
+    .map(name => fn(suite, name)).join("\n\n"),
+  preamble: between(backup, "#!/usr/bin/env bash", "require_parent_writer_monitor_capability() {"),
+  capabilities: ["require_parent_writer_monitor_capability", "require_parent_freeze_fence_capability",
+    "require_parent_durable_monitor_capability"].map(name => fn(backup, name)).join("\n\n"),
+  guards: ["require_backup_guard", "require_exact_pgsql_source_now",
+    "record_pgsql_source_monitor_failure"].map(name => fn(backup, name)).join("\n\n"),
+  identity: between(backup, 'PGSQL_PODS_JSON="$(recovery_kubectl get pod -n "$NAMESPACE" -l app=pgsql -o json)"',
+    "require_pgsql_source() {"),
+  round: between(backup, "    require_backup_guard || {", "    progress=$((progress + 1))")
+};
+// The loop-closing anchor is scoped to the real monitor, not another loop.
+const monitor = fn(backup, "monitor_exact_pgsql_source");
+parts.publish_poll = between(monitor, "    progress=$((progress + 1))", "  done");
+if (process.env.YENHUBS_PGSQL_ROUND_PROFILE === "1") {
+  // Insert only defined hook lines. Removing each exact line must reproduce
+  // every original byte, including order, conditionals and failure arms.
+  const insertions = [];
+  function instrument(original, edits) {
+    let generated = original;
+    const lines = [];
+    if (original.includes("# PGSQL_ROUND_PROFILE_INSERT")) throw new Error("profile marker in source");
+    for (const [line, hook] of edits) {
+      const offset = anchor(generated, line);
+      const insertion = `${line.match(/^\s*/)[0]}${hook} # PGSQL_ROUND_PROFILE_INSERT\n`;
+      generated = generated.slice(0, offset) + insertion + generated.slice(offset);
+      lines.push(insertion);
+    }
+    let stripped = generated;
+    for (const insertion of lines) {
+      const exactLine = "\n" + insertion;
+      if (stripped.split(exactLine).length !== 2) throw new Error("non-unique inserted profile hook");
+      stripped = stripped.replace(exactLine, "\n");
+    }
+    if (stripped !== original) throw new Error("profile stripping changed native source");
+    insertions.push(...lines);
+    return generated;
+  }
+  const guard = fn(backup, "require_backup_guard");
+  const profiledGuard = instrument(guard, [
+    ["  recovery_require_operation_lock || {", "pgsql_round_profile_begin operation-lock"],
+    ["  for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do", "pgsql_round_profile_begin consumers"],
+    ['  if [[ -n "$PARENT_FREEZE_FENCE_CAPABILITY" ]]; then', "pgsql_round_profile_begin parent-capability"],
+    ['  if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then', "pgsql_round_profile_begin durable-capability"],
+    ['  DB_BACKUP_GUARD_FAILURE_REASON=""', "pgsql_round_profile_end 0"]
+  ]);
+  parts.profile = {
+    guards: parts.guards.replace(guard, profiledGuard),
+    round: instrument(parts.round, [["    require_exact_pgsql_source_now || {", "pgsql_round_profile_begin pgsql-identity"]]),
+    publish_poll: instrument(parts.publish_poll, [
+      ["    if ! recovery_write_stream_guard_progress \\", "pgsql_round_profile_begin progress-publication"],
+      ['    sleep "$DB_SOURCE_MONITOR_POLL_SECONDS"', "pgsql_round_profile_end 0"]
+    ]),
+    insertions
+  };
+  let strippedGuards = parts.profile.guards;
+  for (const insertion of insertions) strippedGuards = strippedGuards.replace("\n" + insertion, "\n");
+  if (strippedGuards !== parts.guards) throw new Error("profile guards changed native source");
+}
+process.stdout.write(JSON.stringify(parts));
+PGSQL_GUARD_ROUND_EXTRACT
+  jq -j '.fixture_setup' "$extraction" >"$case_root/fixture-setup.sh"
+  jq -j '.fixture_helpers' "$extraction" >"$case_root/fixture-helpers.sh"
+  # shellcheck disable=SC1091 # Literal fragments from this current harness.
+  source "$case_root/fixture-setup.sh"
+  # shellcheck disable=SC1091 # The existing helpers are loaded without changes.
+  source "$case_root/fixture-helpers.sh"
+  export RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=30
+  export RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS=10
+  reset_stub
+  STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" seed_checkpoint_backup_guard
+  seed_recovery_operation_fence_binding_state active
+  trap 'stop_checkpoint_backup_writer_guard' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
+    STUB_RUNNER_NAMESPACE=present STUB_RUNNER_POD_PROFILE=fence-stable \
+    STUB_MONITOR_WATCH_PACE=1 \
+    start_checkpoint_backup_writer_guard healthy durable-v2 \
+      "$DURABLE_FENCE_BASELINE_FIXTURE" "$DURABLE_FENCE_BASELINE_SHA"
+  # A directory link keeps the literal SCRIPT_DIR source and every library
+  # helper path bound to the real library tree, not a copied implementation.
+  ln -s "$ROOT_DIR/deployment/lib" "$case_root/deployment/lib"
+  jq -j --arg profile "${YENHUBS_PGSQL_ROUND_PROFILE:-0}" '
+    .preamble, .capabilities, "\n",
+    (if $profile == "1" then .profile.guards else .guards end), "\n", .identity,
+    "pgsql_guard_round_native_once() {\n",
+    (if $profile == "1" then .profile.round else .round end), "}\n",
+    "pgsql_guard_round_native_publish_poll() {\n  local progress=0\n",
+    (if $profile == "1" then .profile.publish_poll else .publish_poll end), "}\n"' "$extraction" \
+    >"$case_root/deployment/backup-retdb.sh"
+  if [[ "${YENHUBS_PGSQL_ROUND_PROFILE:-0}" == 1 ]]; then
+    cat >>"$case_root/deployment/backup-retdb.sh" <<'PGSQL_GUARD_ROUND_PROFILE'
+PGSQL_ROUND_PROFILE_STAGE="" PGSQL_ROUND_PROFILE_START=""
+PGSQL_ROUND_PROFILE_NOW="" PGSQL_ROUND_PROFILE_ELAPSED=""
+PGSQL_ROUND_PROFILE_INVALID=0
+pgsql_round_profile_now() {
+  local timestamp="${EPOCHREALTIME:-}" seconds fraction
+  [[ "$timestamp" =~ ^[0-9]{1,12}\.[0-9]{6}$ ]] || return 1
+  seconds="${timestamp%.*}" fraction="${timestamp#*.}"
+  PGSQL_ROUND_PROFILE_NOW=$((10#$seconds * 1000000 + 10#$fraction))
+}
+pgsql_round_profile_elapsed() {
+  local start="$1" end="$2"
+  [[ "$start" =~ ^[0-9]{1,18}$ && "$end" =~ ^[0-9]{1,18}$ ]] || return 1
+  ((10#$end >= 10#$start)) || return 1
+  PGSQL_ROUND_PROFILE_ELAPSED=$((10#$end - 10#$start))
+}
+pgsql_round_profile_end() {
+  local status="$1"
+  [[ -n "$PGSQL_ROUND_PROFILE_STAGE" ]] || return 0
+  case "$PGSQL_ROUND_PROFILE_STAGE" in
+    operation-lock|consumers|parent-capability|durable-capability|pgsql-identity|progress-publication|hook-overhead) ;;
+    *) PGSQL_ROUND_PROFILE_STAGE=profile-invalid PGSQL_ROUND_PROFILE_START=""
+       PGSQL_ROUND_PROFILE_INVALID=1 ;;
+  esac
+  if [[ ! "$status" =~ ^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$ ]]; then
+    status=2 PGSQL_ROUND_PROFILE_INVALID=1
+  fi
+  if pgsql_round_profile_now &&
+     pgsql_round_profile_elapsed "$PGSQL_ROUND_PROFILE_START" "$PGSQL_ROUND_PROFILE_NOW"; then
+    printf 'PGSQL_ROUND_PROFILE stage=%s elapsed_us=%s status=%s valid=1\n' \
+      "$PGSQL_ROUND_PROFILE_STAGE" "$PGSQL_ROUND_PROFILE_ELAPSED" "$status"
+  else
+    PGSQL_ROUND_PROFILE_INVALID=1
+    printf 'PGSQL_ROUND_PROFILE stage=%s status=%s valid=0\n' "$PGSQL_ROUND_PROFILE_STAGE" "$status"
+  fi
+  PGSQL_ROUND_PROFILE_STAGE="" PGSQL_ROUND_PROFILE_START=""
+  return 0
+}
+pgsql_round_profile_begin() {
+  local stage="$1"
+  case "$stage" in
+    operation-lock|consumers|parent-capability|durable-capability|pgsql-identity|progress-publication|hook-overhead) ;;
+    *) PGSQL_ROUND_PROFILE_INVALID=1
+       printf 'PGSQL_ROUND_PROFILE stage=profile-invalid status=2 valid=0\n'
+       return 0 ;;
+  esac
+  pgsql_round_profile_end 0
+  PGSQL_ROUND_PROFILE_STAGE="$stage"
+  if pgsql_round_profile_now; then
+    PGSQL_ROUND_PROFILE_START="$PGSQL_ROUND_PROFILE_NOW"
+  else
+    PGSQL_ROUND_PROFILE_START=""
+    PGSQL_ROUND_PROFILE_INVALID=1
+  fi
+  return 0
+}
+pgsql_round_profile_overhead() {
+  local start="" sample
+  if pgsql_round_profile_now; then start="$PGSQL_ROUND_PROFILE_NOW"; fi
+  for ((sample=0; sample<100; sample++)); do
+    pgsql_round_profile_begin hook-overhead
+    pgsql_round_profile_end 0
+  done >/dev/null
+  if pgsql_round_profile_now && pgsql_round_profile_elapsed "$start" "$PGSQL_ROUND_PROFILE_NOW" &&
+     [[ "$PGSQL_ROUND_PROFILE_INVALID" == 0 ]]; then
+    printf 'PGSQL_ROUND_PROFILE stage=hook-overhead samples=100 elapsed_us=%s status=0 valid=1\n' "$PGSQL_ROUND_PROFILE_ELAPSED"
+  else
+    PGSQL_ROUND_PROFILE_INVALID=1
+    printf 'PGSQL_ROUND_PROFILE stage=hook-overhead samples=100 status=2 valid=0\n'
+  fi
+  printf '%s\n' 'PGSQL_ROUND_PROFILE_LIMITS clock=EPOCHREALTIME-wall-may-adjust elapsed=unadjusted stage_edges=hooks-plus-shell-housekeeping overhead_samples=100 overhead_sink=dev-null overhead_includes-loop overhead_excludes-real-output-I/O no-SLO no-historical-cause'
+}
+PGSQL_GUARD_ROUND_PROFILE
+  fi
+  cat >>"$case_root/deployment/backup-retdb.sh" <<'PGSQL_GUARD_ROUND_MEASURE'
+DB_SOURCE_MONITOR_FAILURE="$OUTPUT_DIR/pgsql-round.failure"
+DB_SOURCE_MONITOR_PROGRESS="$OUTPUT_DIR/pgsql-round.progress"
+DB_SOURCE_MONITOR_POLL_SECONDS="$(recovery_stream_poll_seconds)"
+: >"$DB_SOURCE_MONITOR_FAILURE"
+: >"$DB_SOURCE_MONITOR_PROGRESS"
+TIMEFORMAT='PGSQL_GUARD_ROUND_NATIVE duration_seconds=%3R'
+if [[ "${YENHUBS_PGSQL_ROUND_PROFILE:-0}" == 1 ]]; then
+  pgsql_round_profile_overhead
+fi
+round_status=0
+if { time pgsql_guard_round_native_once; } 2>"$OUTPUT_DIR/round-time.log"; then
+  round_status=0
+else
+  round_status=$?
+fi
+if [[ "${YENHUBS_PGSQL_ROUND_PROFILE:-0}" == 1 ]]; then
+  pgsql_round_profile_end "$round_status"
+fi
+cat "$OUTPUT_DIR/round-time.log" >&2
+printf 'PGSQL_GUARD_ROUND_NATIVE round_exit=%s startup_seconds=30 stale_seconds=10 cancellation_reserve_seconds=2\n' "$round_status"
+printf '%s\n' 'PGSQL_GUARD_ROUND_NATIVE limits=fixture-only,no-dump,no-SLO,no-historical-cause; clock=Bash-time-wall-clock-may-adjust; overhead=timed-function-and-failure-arms; setup-publication-poll-cleanup=excluded'
+if [[ "${YENHUBS_PGSQL_ROUND_PROFILE:-0}" == 1 ]]; then
+  if [[ "$round_status" == 0 && "$PGSQL_ROUND_PROFILE_INVALID" == 0 ]]; then
+    if pgsql_guard_round_native_publish_poll; then
+      round_status=0
+    else
+      round_status=$?
+    fi
+    pgsql_round_profile_end "$round_status"
+  fi
+  # Invalid guard metrics suppress publication; invalid publication metrics
+  # reject the result too. Neither can turn a native failure into success.
+  if [[ "$round_status" == 0 && "$PGSQL_ROUND_PROFILE_INVALID" != 0 ]]; then
+    round_status=2
+  fi
+else
+  if [[ "$round_status" == 0 ]]; then
+    pgsql_guard_round_native_publish_poll
+  fi
+fi
+exit "$round_status"
+PGSQL_GUARD_ROUND_MEASURE
+  if env BACKUP_COORDINATED=1 EXPECTED_KUBE_CONTEXT=fixture-context \
+    EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
+    RECOVERY_CHECKPOINT_STAMP="$STAMP" RECOVERY_DUMP_SHA256="$DUMP_SHA" \
+    RECOVERY_STORAGE_SHA256="$STORAGE_SHA" \
+    RECOVERY_NAMESPACE_UID=fixture-uid RECOVERY_PVC_UID=fixture-pvc-uid \
+    CHECKPOINT_RUNNER_GENERATION=durable-v2 \
+    CHECKPOINT_DURABLE_FENCE_BASELINE_PATH="$DURABLE_FENCE_BASELINE_FIXTURE" \
+    CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256="$DURABLE_FENCE_BASELINE_SHA" \
+    RUNNER_EVIDENCE_LIVE_DIR="$RUNNER_EVIDENCE_LIVE_DIR" \
+    STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
+    STUB_RUNNER_NAMESPACE=present STUB_RUNNER_POD_PROFILE=fence-stable \
+    STUB_MODE='' RECOVERY_STREAM_POLL_SECONDS=0.25 \
+    bash "$case_root/deployment/backup-retdb.sh" "$case_root/retdb-$STAMP.sql.gz"; then
+    round_status=0
+  else
+    round_status=$?
+  fi
+  exit "$round_status"
+)
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == pgsql-guard-round-native ]]; then
+  run_pgsql_guard_round_native
+  exit "$?"
+fi
+
 SIZE_FIXTURE="$TMP_DIR/file-size-fixture"
 printf '1234' >"$SIZE_FIXTURE"
 # Expansion is intentionally performed by the isolated Bash process below.
@@ -1801,9 +2083,9 @@ if [[ "$request_timeout" == "--request-timeout=20s" &&
   set -- get "$resource" "$5" -n hcce -o json
 fi
 joined="$*"
-# Read-only default Namespace responses need none of the large stateful fake
+# Read-only default Namespace and raw policy responses need no stateful fake
 # dispatch below. Keep the original parser/log/provenance above, read fresh
-# JSON on every call, and retain the entire old route for all fault modes,
+# input on every call, and retain the entire old route for all fault modes,
 # Watch/LIST requests and nonexact argument shapes. This is test plumbing only.
 if [[ -z "${STUB_MODE:-}" ]]; then
   case "$joined" in
@@ -1814,6 +2096,12 @@ if [[ -z "${STUB_MODE:-}" ]]; then
         {"kubernetes.io/metadata.name": .metadata.name})' \
         "$RUNNER_EVIDENCE_LIVE_DIR/namespace-$fast_namespace.json"
       exit 0
+      ;;
+    "get --raw /apis/admissionregistration.k8s.io/v1/validatingadmissionpolicies/recovery-operation-pod-fence.yenhubs.org")
+      if [[ "$#" == 3 && "${1:-}" == get && "${2:-}" == --raw ]]; then
+        cat "$RECOVERY_OPERATION_FENCE_POLICY_FIXTURE"
+        exit 0
+      fi
       ;;
   esac
 fi
@@ -6863,6 +7151,7 @@ export RUNNER_EVIDENCE_LIVE_DIR RUNNER_RESTORE_FENCE_LIVE_DIR \
 export PATH="$TMP_DIR/bin:$PATH"
 export RECOVERY_WAIT_RETRY_DELAY_SECONDS=0
 export RECOVERY_STREAM_POLL_SECONDS=0.01
+# shellcheck disable=SC2031 # This global fixture value is re-established outside the isolated native focus.
 export RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=120
 # shellcheck disable=SC2031 # Intentional global fixture values after isolated subshells.
 export YENHUBS_RECOVERY_TEST_MODE=local-fixture
@@ -7346,7 +7635,7 @@ STUB
 
 run_checkpoint_dormant_fence_aba_tests() {
   local output_root="$1" only_mode="${2:-}" mode output expected marker checkpoint_stamp
-  local all_zero published_valid resume_patch_count lock_delete_count
+  local all_zero published_valid unpublished_clean resume_patch_count lock_delete_count
   local -a modes=(checkpoint-dormant-fence-aba-before-first-resume
     checkpoint-dormant-fence-aba-before-lock-release)
   mkdir -p "$output_root"
@@ -7382,12 +7671,21 @@ run_checkpoint_dormant_fence_aba_tests() {
         "$ROOT_DIR/deployment/create-checkpoint.sh" "$output"
 
     published_valid=false
-    checkpoint_stamp="$(jq -er '.stamp' "$output/checkpoint-metadata.json" 2>/dev/null || :)"
-    if [[ -n "$checkpoint_stamp" && ! -e "$output/.yenhubs-incomplete" ]] &&
-       bash -c 'source "$1"; recovery_verify_checkpoint_directory "$2" "$3"' \
-         _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$output" \
-         "$checkpoint_stamp" >/dev/null 2>&1; then
-      published_valid=true
+    unpublished_clean=false
+    if [[ "$mode" == checkpoint-dormant-fence-aba-before-first-resume ]]; then
+      if [[ ! -e "$output" && ! -L "$output" &&
+            ! -e "$output.yenhubs-publish-lock" &&
+            ! -L "$output.yenhubs-publish-lock" ]]; then
+        unpublished_clean=true
+      fi
+    else
+      checkpoint_stamp="$(jq -er '.stamp' "$output/checkpoint-metadata.json" 2>/dev/null || :)"
+      if [[ -n "$checkpoint_stamp" && ! -e "$output/.yenhubs-incomplete" ]] &&
+         bash -c 'source "$1"; recovery_verify_checkpoint_directory "$2" "$3"' \
+           _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$output" \
+           "$checkpoint_stamp" >/dev/null 2>&1; then
+        published_valid=true
+      fi
     fi
     all_zero=true
     for writer in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do
@@ -7401,20 +7699,26 @@ run_checkpoint_dormant_fence_aba_tests() {
       'delete --raw=/api/v1/namespaces/hcce/configmaps/yenhubs-recovery-operation-lock' \
       "$KUBECTL_LOG" || :)"
 
-    if [[ -e "$marker" && "$published_valid" == true &&
+    if [[ -e "$marker" &&
           -e "$STUB_STATE_DIR/restore-lock.yaml" && "$lock_delete_count" == 0 ]] &&
        recovery_operation_fence_binding_state_is dormant \
          recovery-operation-fence-binding-rv-5 &&
        [[ "$(cat "$STUB_STATE_DIR/recovery-operation-fence-binding-replace-count" 2>/dev/null || :)" == 2 ]] &&
        { { [[ "$mode" == checkpoint-dormant-fence-aba-before-first-resume &&
+              "$unpublished_clean" == true &&
               "$all_zero" == true && "$resume_patch_count" == 0 ]]; } ||
-         { [[ "$mode" == checkpoint-dormant-fence-aba-before-lock-release ]] &&
+         { [[ "$mode" == checkpoint-dormant-fence-aba-before-lock-release &&
+              "$published_valid" == true ]] &&
               checkpoint_all_writers_at 1 &&
               [[ "$resume_patch_count" == 5 ]]; }; }; then
-      pass "$mode retains the exact published checkpoint and lock at its safe writer boundary"
+      if [[ "$mode" == checkpoint-dormant-fence-aba-before-first-resume ]]; then
+        pass "$mode rejects before resume without publishing a checkpoint and retains the lock with all writers stopped"
+      else
+        pass "$mode retains the exact published checkpoint and lock at its safe writer boundary"
+      fi
     else
       fail "$mode dormant ABA fail-closed state" \
-        "observed=$([[ -e "$marker" ]] && printf yes || printf no) published=$published_valid zero=$all_zero resumes=$resume_patch_count lock_deletes=$lock_delete_count output=$LAST_OUTPUT"
+        "observed=$([[ -e "$marker" ]] && printf yes || printf no) published=$published_valid unpublished_clean=$unpublished_clean zero=$all_zero resumes=$resume_patch_count lock_deletes=$lock_delete_count output=$LAST_OUTPUT"
     fi
   done
 }
@@ -8088,6 +8392,429 @@ stop_checkpoint_backup_writer_guard() {
   CHECKPOINT_BACKUP_WRITER_GUARD_STALE_HELPER_PID=""
 }
 
+checkpoint_pgsql_native_trace_record() {
+  local event="$1" counter="${2:-0}" native_status="${3:-0}"
+  local sink=publisher phase=publisher observation=null sampled
+  case "$event" in
+    reader-before|reader-after)
+      sink=readers
+      phase="${stream_diagnostic_stage:-${stream_outer_stage:-startup}}"
+      if [[ " ${FUNCNAME[*]} " == *' observe_inactive_stream_guard_progress '* &&
+            "${sample_time:-}" =~ ^[0-9]+$ ]]; then
+        observation="$sample_time"
+      elif [[ "${observation_milliseconds:-}" =~ ^[0-9]+$ ]]; then
+        observation="$observation_milliseconds"
+      fi
+      ;;
+    child-start|child-stop) sink=child; phase=child ;;
+    monitor-start|monitor-stop|cycle-start|guard-end|identity-end|formatter-before|formatter-after|cycle-end) ;;
+    *) printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid"; return 0 ;;
+  esac
+  case "$phase" in
+    startup|child|publisher|arguments|guard-baseline|launch|initialize|refresh|running|command|post-audit) ;;
+    *) printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid"; return 0 ;;
+  esac
+  if [[ ! "$counter" =~ ^[0-9]+$ || ! "$native_status" =~ ^[0-9]+$ ]] ||
+     ! sampled="$(recovery_monotonic_milliseconds)"; then
+    printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid" || :
+    return 0
+  fi
+  printf '{"event":"%s","pid":%s,"at_ms":%s,"counter":%s,"status":%s,"phase":"%s","observation_ms":%s}\n' \
+    "$event" "$BASHPID" "$sampled" "$counter" "$native_status" "$phase" "$observation" \
+    >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/$sink.jsonl" ||
+      { printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid" || :; }
+  return 0
+}
+
+checkpoint_pgsql_native_trace_marker_event() {
+  local marker="$1" event="$2" counter="$3" native_status="$4"
+  if [[ -n "${DB_SOURCE_MONITOR_PROGRESS:-}" &&
+        "$marker" == "$DB_SOURCE_MONITOR_PROGRESS" ]]; then
+    checkpoint_pgsql_native_trace_record "$event" "$counter" "$native_status"
+  fi
+  # In particular retain the original reader printf's native status.
+  return "$native_status"
+}
+
+checkpoint_pgsql_native_trace_wall_clock_ready() {
+  # Bash formats EPOCHREALTIME with LC_NUMERIC; scope the decimal point here.
+  local LC_ALL=C
+  local sampled="${EPOCHREALTIME-}"
+  ((BASH_VERSINFO[0] >= 5)) && [[ "$sampled" =~ ^[0-9]+\.[0-9]{6}$ ]]
+}
+
+checkpoint_pgsql_native_trace_wall_segment() {
+  local event="$1" callsite="$2" native_status="$3" sampled wall_us counter
+  # No records from preflight/audits/other parents, even in the opt-in copy.
+  if [[ " ${FUNCNAME[*]} " != *' monitor_exact_pgsql_source '* ||
+        " ${FUNCNAME[*]} " != *' require_backup_guard '* ]]; then
+    return "$native_status"
+  fi
+  local LC_ALL=C
+  sampled="${EPOCHREALTIME-}"
+  if [[ ! "$sampled" =~ ^[0-9]+\.[0-9]{6}$ || ! "${progress:-}" =~ ^[0-9]+$ ||
+        ! "$native_status" =~ ^[0-9]+$ || ! "$callsite" =~ ^[a-z][a-z0-9_-]+$ ]]; then
+    printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid" || :
+    return "$native_status"
+  fi
+  case "$event" in
+    before|after|round-before|round-after) ;;
+    *) printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid" || :; return "$native_status" ;;
+  esac
+  wall_us="${sampled/./}"
+  counter=$((progress + 1))
+  # WALL CLOCK only: this epoch is never used for security or mixed with libc
+  # monotonic samples. Builtin expansion/math/printf only; no process per hook.
+  printf '{"event":"%s","callsite":"%s","clock":"WALL_CLOCK_EPOCHREALTIME","pid":%s,"counter":%s,"wall_us":%s,"status":%s}\n' \
+    "$event" "$callsite" "$BASHPID" "$counter" "$wall_us" "$native_status" \
+    >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/segments.jsonl" ||
+      { printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid" || :; }
+  # A hook at a function's final call must not turn a native failure into 0.
+  return "$native_status"
+}
+
+checkpoint_pgsql_native_trace_rebind_library() {
+  local original expected
+  expected="$(jq -er '.original_library_dir' \
+    "$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/instrumentation.json")" || return 1
+  original="$(cd "$CHECKPOINT_PGSQL_NATIVE_TRACE_ORIGINAL_LIB_DIR" && pwd -P)" || return 1
+  [[ "$original" == "$expected" ]] || return 1
+  # Explicit fixture binding: all original helper/watcher paths stay original.
+  RECOVERY_SAFETY_DIR="$original"
+}
+
+checkpoint_pgsql_native_trace_prepare() {
+  checkpoint_pgsql_native_trace_wall_clock_ready || {
+    printf 'PGSQL wall segments require the host Bash EPOCHREALTIME builtin.\n' >&2
+    return 2
+  }
+  node - "$ROOT_DIR" "${BASH_SOURCE[0]}" "$1" <<'CHECKPOINT_PGSQL_NATIVE_TRACE_GENERATE'
+const fs = require("node:fs");
+const path = require("node:path");
+const crypto = require("node:crypto");
+const [root, suitePath, destination] = process.argv.slice(2);
+const suite = fs.readFileSync(suitePath, "utf8");
+const sources = {
+  child: path.join(root, "deployment/backup-retdb.sh"),
+  library: path.join(root, "deployment/lib/recovery-safety.sh")
+};
+const originals = Object.fromEntries(Object.entries(sources).map(([key, file]) => [key, fs.readFileSync(file, "utf8")]));
+const marker = "# CHECKPOINT_PGSQL_NATIVE_TRACE_INSERT";
+const insertions = [];
+function fn(text, name) {
+  const anchor = `${name}() {\n`;
+  if (text.split(anchor).length !== 2) throw new Error("non-unique trace function");
+  const first = text.indexOf(anchor), last = text.indexOf("\n}\n", first);
+  if (last < first) throw new Error("unterminated trace function");
+  return text.slice(first, last + 3);
+}
+function instrument(original, file, edits) {
+  if (original.includes(marker)) throw new Error("trace hook already in source");
+  const lines = original.split("\n"), before = new Map(), after = new Map();
+  for (const { line, hook, side = "before", occurrence = 0, count = 1 } of edits) {
+    const hits = lines.flatMap((value, index) => value === line ? [index] : []);
+    if (hits.length !== count || !Number.isInteger(hits[occurrence])) throw new Error(`non-unique trace anchor: ${file}: ${JSON.stringify(line)} (${hits.length}/${count})`);
+    const target = side === "before" ? before : after;
+    const insertion = `${line.match(/^\s*/)[0]}${hook} ${marker} ${insertions.length + 1}`;
+    const index = hits[occurrence];
+    target.set(index, [...(target.get(index) || []), insertion]);
+    insertions.push({ file, line: insertion });
+  }
+  return lines.flatMap((line, index) => [...(before.get(index) || []), line, ...(after.get(index) || [])]).join("\n");
+}
+const wallCallsites = ["preconditions", "lock-lease-initial",
+  "consumer-reticulum", "consumer-pgbouncer", "consumer-pgbouncer-t", "consumer-bot-orchestrator", "consumer-coturn",
+  "writer-authority-export", "writer-monitor-authority-privacy-progress", "writer-process-before-boundary",
+  "writer-boundary-lock-lease-before", "writer-contracts-baselines", "writer-live-boundary", "writer-boundary-lock-lease-after",
+  "writer-process-after-boundary", "writer-progress-export", "durable-authority-export",
+  "durable-monitor-authority-privacy", "durable-control-baseline", "durable-monitor-authority-contract",
+  "durable-monitor-progress", "durable-process-before", "durable-lock-lease", "durable-baseline",
+  "durable-runner-quiescence", "durable-process-after", "durable-progress-export", "durable-active-fence"];
+const wallHook = (event, callsite) => `checkpoint_pgsql_native_trace_wall_segment ${event} "${callsite}" "$?"`;
+function wallSegments(text, file, name, segments, extra = []) {
+  const body = fn(text, name), edits = [];
+  for (const [callsite, start, end] of segments) {
+    edits.push({ ...start, hook: wallHook("before", callsite) });
+    edits.push({ ...end, hook: wallHook("after", callsite) });
+  }
+  return text.replace(body, instrument(body, file, [...extra, ...edits]));
+}
+const at = (line, options = {}) => ({ line, ...options });
+let child = instrument(originals.child, "child", [
+  { line: 'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"', side: "after", hook: 'source "$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/hooks.sh"' },
+  { line: 'source "$SCRIPT_DIR/lib/recovery-safety.sh"', side: "after", hook: "checkpoint_pgsql_native_trace_record child-start 0 0" }
+]);
+const monitor = fn(child, "monitor_exact_pgsql_source");
+const monitorEdits = [
+  { line: "  local progress=0", side: "after", hook: "checkpoint_pgsql_native_trace_record monitor-start 0 0" },
+  { line: "    require_backup_guard || {", hook: 'checkpoint_pgsql_native_trace_record cycle-start "$((progress + 1))" 0' },
+  { line: "    require_exact_pgsql_source_now || {", hook: 'checkpoint_pgsql_native_trace_record guard-end "$((progress + 1))" 0' },
+  { line: "    progress=$((progress + 1))", hook: 'checkpoint_pgsql_native_trace_record identity-end "$((progress + 1))" 0' },
+  { line: '    sleep "$DB_SOURCE_MONITOR_POLL_SECONDS"', hook: 'checkpoint_pgsql_native_trace_record cycle-end "$progress" 0' },
+  { line: "}", hook: 'checkpoint_pgsql_native_trace_record monitor-stop "$progress" 0' }
+];
+for (let occurrence = 0; occurrence < 3; occurrence++) {
+  monitorEdits.push({ line: "      return 1", count: 3, occurrence, hook: 'checkpoint_pgsql_native_trace_record monitor-stop "$progress" 1' });
+}
+child = child.replace(monitor, instrument(monitor, "child", monitorEdits));
+child = wallSegments(child, "child", "require_backup_guard", [
+  ["preconditions", at("  local deployment"), at("  recovery_require_operation_lock || {")],
+  ["lock-lease-initial", at("  recovery_require_operation_lock || {"), at("  for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do")],
+  ["consumer-$deployment", at('    recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \\'),
+    at('      "$deployment" 0 || return 1', { side: "after" })]
+], [
+  { ...at("  local deployment"), hook: wallHook("round-before", "require_backup_guard") },
+  { ...at('  DB_BACKUP_GUARD_FAILURE_REASON=""', { side: "after" }), hook: wallHook("round-after", "require_backup_guard") }
+]);
+child = wallSegments(child, "child", "require_parent_writer_monitor_capability", [
+  ["writer-authority-export", at('  local observed_authority_sha256=""'), at("  recovery_require_checkpoint_writer_monitor_healthy \\")],
+  ["writer-progress-export", at("  recovery_stream_guard_progress_value \\"),
+    at('      "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" >/dev/null', { side: "after" })]
+]);
+child = wallSegments(child, "child", "require_parent_durable_monitor_capability", [
+  ["durable-authority-export", at("  DB_PARENT_DURABLE_FAILURE_REASON=durable-authority"), at("  recovery_require_durable_runner_quiescence_monitor_healthy \\")],
+  ["durable-progress-export", at("  DB_PARENT_DURABLE_FAILURE_REASON=durable-progress"), at("  DB_PARENT_DURABLE_FAILURE_REASON=active-fence")],
+  ["durable-active-fence", at("  DB_PARENT_DURABLE_FAILURE_REASON=active-fence"), at('  DB_PARENT_DURABLE_FAILURE_REASON=""')]
+]);
+const cleanup = fn(child, "cleanup_backup");
+child = child.replace(cleanup, instrument(cleanup, "child", [
+  { line: "  trap '' INT TERM", hook: "local checkpoint_pgsql_native_trace_cleanup_native=$?" },
+  { line: "  return 0", hook: 'checkpoint_pgsql_native_trace_record child-stop 0 "${status:-$checkpoint_pgsql_native_trace_cleanup_native}"' }
+]));
+let library = instrument(originals.library, "library", [
+  { line: 'RECOVERY_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"', side: "after", hook: "checkpoint_pgsql_native_trace_rebind_library || return 1" }
+]);
+library = wallSegments(library, "library", "recovery_require_checkpoint_writer_monitor_healthy", [
+  ["writer-monitor-authority-privacy-progress", at('  [[ "$runtime_generation" =~ ^(durable-v2|legacy-absent)$ &&'),
+    at('  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" ||', { count: 2 })],
+  ["writer-process-before-boundary", at('  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" ||', { count: 2 }),
+    at("  recovery_checkpoint_writer_monitor_boundary_json \\")],
+  ["writer-process-after-boundary", at('  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" ||', { count: 2, occurrence: 1 }),
+    at("    recovery_monitor_health_diagnostic process-after-boundary", { side: "after" })]
+]);
+library = wallSegments(library, "library", "recovery_checkpoint_writer_monitor_boundary_json", [
+  ["writer-boundary-lock-lease-before", at("  recovery_require_operation_serialization || return 1", { count: 2 }),
+    at("  recovery_checkpoint_writer_monitor_file_is_exact \\", { count: 2 })],
+  ["writer-contracts-baselines", at("  recovery_checkpoint_writer_monitor_file_is_exact \\", { count: 2 }),
+    at('  boundary_json="$(env KUBECTL_BIN="$watcher_kubectl_bin" \\')],
+  ["writer-live-boundary", at('  boundary_json="$(env KUBECTL_BIN="$watcher_kubectl_bin" \\'),
+    at("  recovery_require_operation_serialization || return 1", { count: 2, occurrence: 1 })],
+  ["writer-boundary-lock-lease-after", at("  recovery_require_operation_serialization || return 1", { count: 2, occurrence: 1 }),
+    at('  printf \'%s\\n\' "$boundary_json"')]
+]);
+library = wallSegments(library, "library", "recovery_require_durable_runner_quiescence_monitor_healthy", [
+  ["durable-monitor-authority-privacy", at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-authority"), at('  expected_capability="$(')],
+  ["durable-control-baseline", at('  expected_capability="$('), at("  recovery_durable_runner_monitor_authority_is_exact \\")],
+  ["durable-monitor-authority-contract", at("  recovery_durable_runner_monitor_authority_is_exact \\"), at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-progress")],
+  ["durable-monitor-progress", at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-progress"), at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-process", { count: 2 })],
+  ["durable-process-before", at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-process", { count: 2 }), at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=serialization")],
+  ["durable-lock-lease", at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=serialization"), at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-baseline")],
+  ["durable-baseline", at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-baseline"), at('  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL="runner-quiescence"')],
+  ["durable-runner-quiescence", at('  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL="runner-quiescence"'), at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-process", { count: 2, occurrence: 1 })],
+  ["durable-process-after", at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-process", { count: 2, occurrence: 1 }), at('  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=""')]
+]);
+const formatter = fn(library, "recovery_write_stream_guard_progress");
+library = library.replace(formatter, instrument(formatter, "library", [
+  { line: '  local next_marker="${progress_marker}.next"', side: "after", hook: 'checkpoint_pgsql_native_trace_marker_event "$progress_marker" formatter-before "$progress_value" 0' },
+  { line: "}", hook: 'checkpoint_pgsql_native_trace_marker_event "$progress_marker" formatter-after "$progress_value" 0' }
+]));
+const reader = fn(library, "recovery_stream_guard_progress_value");
+library = library.replace(reader, instrument(reader, "library", [
+  // Empty startup markers have not been read yet. Bracket the real acquisition
+  // after the unchanged metadata/nonempty guards, then its parser and printf.
+  { line: '  progress_value="$(<"$progress_marker")"', hook: 'checkpoint_pgsql_native_trace_marker_event "$progress_marker" reader-before 0 0' },
+  { line: '  printf \'%s\\n\' "$progress_value"', side: "after", hook: 'checkpoint_pgsql_native_trace_marker_event "$progress_marker" reader-after "$progress_value" "$?"' }
+]));
+const copies = { child, library };
+for (const file of Object.keys(copies)) {
+  let stripped = copies[file];
+  for (const insertion of insertions.filter(item => item.file === file)) {
+    const exactLine = "\n" + insertion.line + "\n";
+    if (stripped.split(exactLine).length !== 2) throw new Error("non-unique trace stripping hook");
+    stripped = stripped.replace(exactLine, "\n");
+  }
+  if (stripped !== originals[file]) throw new Error("trace stripping changed original bytes");
+}
+if (fs.existsSync(destination)) throw new Error("trace fixture already exists");
+fs.mkdirSync(path.join(destination, "deployment/lib"), { recursive: true, mode: 0o700 });
+fs.writeFileSync(path.join(destination, "deployment/backup-retdb.sh"), child, { mode: 0o700 });
+fs.writeFileSync(path.join(destination, "deployment/lib/recovery-safety.sh"), library, { mode: 0o600 });
+const hooks = ["checkpoint_pgsql_native_trace_record", "checkpoint_pgsql_native_trace_marker_event",
+  "checkpoint_pgsql_native_trace_wall_clock_ready", "checkpoint_pgsql_native_trace_wall_segment",
+  "checkpoint_pgsql_native_trace_rebind_library"].map(name => fn(suite, name)).join("\n\n") + "\n";
+fs.writeFileSync(path.join(destination, "hooks.sh"), hooks, { mode: 0o600 });
+const sha = value => crypto.createHash("sha256").update(value).digest("hex");
+const manifest = { fixture_only: true, original_library_dir: fs.realpathSync(path.dirname(sources.library)), sources,
+  source_sha256: Object.fromEntries(Object.entries(originals).map(([key, bytes]) => [key, sha(bytes)])), hooks_sha256: sha(hooks), insertions,
+  wall_clock_segments: { clock: "WALL_CLOCK_EPOCHREALTIME", unit: "microseconds", security_clock: false,
+    scope: "monitor_exact_pgsql_source/require_backup_guard", callsites: wallCallsites,
+    hook_events_per_complete_round: 2 + 2 * wallCallsites.length, instrumentation_overhead_included: true } };
+fs.writeFileSync(path.join(destination, "instrumentation.json"), JSON.stringify(manifest) + "\n", { mode: 0o600 });
+CHECKPOINT_PGSQL_NATIVE_TRACE_GENERATE
+}
+
+verify_checkpoint_pgsql_native_trace() {
+  node - "$1" <<'CHECKPOINT_PGSQL_NATIVE_TRACE_VERIFY'
+const fs = require("node:fs");
+const path = require("node:path");
+const crypto = require("node:crypto");
+const root = process.argv[2];
+function requireExact(value) { if (!value) throw new Error("indeterminate"); }
+const integer = value => Number.isSafeInteger(value) && value >= 0;
+const sha = value => crypto.createHash("sha256").update(value).digest("hex");
+function readRecords(name) {
+  const bytes = fs.readFileSync(path.join(root, `${name}.jsonl`), "utf8");
+  requireExact(bytes.endsWith("\n") && bytes.length <= 2_000_000);
+  return bytes.trimEnd().split("\n").map(line => {
+    const row = JSON.parse(line);
+    requireExact(line === JSON.stringify(row));
+    requireExact(Object.keys(row).sort().join() === "at_ms,counter,event,observation_ms,phase,pid,status");
+    requireExact(integer(row.at_ms) && integer(row.counter) && integer(row.pid) && row.pid > 0 && integer(row.status));
+    requireExact(["startup", "child", "publisher", "arguments", "guard-baseline", "launch", "initialize", "refresh", "running", "command", "post-audit"].includes(row.phase));
+    requireExact(row.observation_ms === null || integer(row.observation_ms) && row.observation_ms <= row.at_ms);
+    return row;
+  });
+}
+try {
+  requireExact(!fs.existsSync(path.join(root, "invalid")));
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "instrumentation.json"), "utf8"));
+  requireExact(manifest.fixture_only === true && fs.realpathSync(path.dirname(manifest.sources.library)) === manifest.original_library_dir);
+  for (const [file, copy] of [["child", "deployment/backup-retdb.sh"], ["library", "deployment/lib/recovery-safety.sh"]]) {
+    const original = fs.readFileSync(manifest.sources[file], "utf8");
+    requireExact(sha(original) === manifest.source_sha256[file]);
+    let stripped = fs.readFileSync(path.join(root, copy), "utf8");
+    for (const insertion of manifest.insertions.filter(item => item.file === file)) {
+      const line = "\n" + insertion.line + "\n";
+      requireExact(stripped.split(line).length === 2);
+      stripped = stripped.replace(line, "\n");
+    }
+    requireExact(stripped === original);
+  }
+  requireExact(sha(fs.readFileSync(path.join(root, "hooks.sh"), "utf8")) === manifest.hooks_sha256);
+  const nativeText = fs.readFileSync(path.join(root, "native-exit"), "utf8");
+  requireExact(/^[0-9]+\n$/.test(nativeText));
+  const nativeStatus = Number(nativeText.trim());
+  const child = readRecords("child");
+  requireExact(child.length === 2 && child[0].event === "child-start" && child[1].event === "child-stop" &&
+    child[0].pid === child[1].pid && child[0].at_ms <= child[1].at_ms && child[0].status === 0 && child[1].status === nativeStatus);
+  const publisher = readRecords("publisher");
+  requireExact(publisher[0].event === "monitor-start" && publisher.at(-1).event === "monitor-stop" && publisher.at(-1).status === 0);
+  let previous = child[0].at_ms;
+  for (const row of publisher) {
+    requireExact(row.pid === publisher[0].pid && row.phase === "publisher" && row.status === 0 && row.observation_ms === null &&
+      row.at_ms >= previous && row.at_ms <= child[1].at_ms);
+    previous = row.at_ms;
+  }
+  const cycles = publisher.slice(1, -1), expected = ["cycle-start", "guard-end", "identity-end", "formatter-before", "formatter-after", "cycle-end"];
+  requireExact(cycles.length >= 12 && cycles.length % expected.length === 0);
+  const rounds = [];
+  for (let offset = 0; offset < cycles.length; offset += expected.length) {
+    const round = cycles.slice(offset, offset + expected.length), counter = rounds.length + 1;
+    requireExact(round.every((row, index) => row.event === expected[index] && row.counter === counter));
+    rounds.push(round);
+  }
+  requireExact(publisher[0].counter === 0 && publisher.at(-1).counter === rounds.length);
+  const reads = readRecords("readers"), pairs = [];
+  requireExact(reads.length >= 4 && reads.length % 2 === 0);
+  previous = child[0].at_ms;
+  let previousCounter = 0;
+  for (let index = 0; index < reads.length; index += 2) {
+    const before = reads[index], after = reads[index + 1];
+    requireExact(before.event === "reader-before" && after.event === "reader-after" && before.pid === after.pid &&
+      before.counter === 0 && after.counter >= 1 && before.status === 0 && after.status === 0 &&
+      before.phase === after.phase && before.observation_ms === after.observation_ms &&
+      before.at_ms >= previous && after.at_ms >= before.at_ms && after.at_ms <= child[1].at_ms);
+    requireExact(after.counter >= previousCounter);
+    if (before.phase === "post-audit") {
+      // Correlate an inherited pre-read sample, never the earlier lower bound
+      // used to credit progress. Missing/ambiguous samples are not coverage.
+      requireExact(integer(before.observation_ms) && before.observation_ms >= previous && before.observation_ms <= before.at_ms);
+    }
+    const round = rounds[after.counter - 1], next = rounds[after.counter];
+    requireExact(round && round[3].at_ms <= after.at_ms && (!next || next[4].at_ms >= before.at_ms));
+    pairs.push([before, after]);
+    previous = after.at_ms;
+    previousCounter = after.counter;
+  }
+  requireExact(new Set(pairs.map(pair => pair[1].counter)).size >= 2);
+  const publishGaps = rounds.slice(1).map((round, index) => round[4].at_ms - rounds[index][3].at_ms);
+  const observed = pairs.filter(pair => pair[0].phase === "post-audit");
+  requireExact(observed.length >= 2);
+  const observationGaps = observed.slice(1).map((pair, index) => pair[1].at_ms - observed[index][0].at_ms);
+  // A separate WALL CLOCK partition: correlate only PID/counter/callsite.
+  // Neither wall epochs nor wall durations are used to credit/latch progress.
+  const wallCallsites = ["preconditions", "lock-lease-initial",
+    "consumer-reticulum", "consumer-pgbouncer", "consumer-pgbouncer-t", "consumer-bot-orchestrator", "consumer-coturn",
+    "writer-authority-export", "writer-monitor-authority-privacy-progress", "writer-process-before-boundary",
+    "writer-boundary-lock-lease-before", "writer-contracts-baselines", "writer-live-boundary", "writer-boundary-lock-lease-after",
+    "writer-process-after-boundary", "writer-progress-export", "durable-authority-export",
+    "durable-monitor-authority-privacy", "durable-control-baseline", "durable-monitor-authority-contract",
+    "durable-monitor-progress", "durable-process-before", "durable-lock-lease", "durable-baseline",
+    "durable-runner-quiescence", "durable-process-after", "durable-progress-export", "durable-active-fence"];
+  const wallManifest = manifest.wall_clock_segments, eventsPerRound = 2 + 2 * wallCallsites.length;
+  requireExact(wallManifest?.clock === "WALL_CLOCK_EPOCHREALTIME" && wallManifest.unit === "microseconds" &&
+    wallManifest.security_clock === false && wallManifest.scope === "monitor_exact_pgsql_source/require_backup_guard" &&
+    JSON.stringify(wallManifest.callsites) === JSON.stringify(wallCallsites) &&
+    wallManifest.hook_events_per_complete_round === eventsPerRound && wallManifest.instrumentation_overhead_included === true);
+  const wallBytes = fs.readFileSync(path.join(root, "segments.jsonl"), "utf8");
+  requireExact(wallBytes.endsWith("\n") && wallBytes.length <= 2_000_000);
+  const wallRows = wallBytes.slice(0, -1).split("\n").map(line => {
+    const row = JSON.parse(line);
+    requireExact(line === JSON.stringify(row) &&
+      Object.keys(row).sort().join() === "callsite,clock,counter,event,pid,status,wall_us");
+    requireExact(row.clock === wallManifest.clock && integer(row.wall_us) && integer(row.counter) &&
+      row.pid === publisher[0].pid && row.status === 0);
+    return row;
+  });
+  requireExact(wallRows.length === rounds.length * eventsPerRound);
+  const wallRounds = [], maximumByCallsite = {};
+  let previousWall = 0;
+  for (let index = 0; index < rounds.length; index++) {
+    const rows = wallRows.slice(index * eventsPerRound, (index + 1) * eventsPerRound);
+    const first = rows[0], last = rows.at(-1), counter = index + 1;
+    requireExact(first.event === "round-before" && last.event === "round-after" &&
+      first.callsite === "require_backup_guard" && last.callsite === first.callsite);
+    for (const row of rows) {
+      requireExact(row.counter === counter && row.wall_us >= previousWall);
+      previousWall = row.wall_us;
+    }
+    let measured = 0;
+    const segments = wallCallsites.map((callsite, segment) => {
+      const before = rows[1 + segment * 2], after = rows[2 + segment * 2];
+      requireExact(before.event === "before" && after.event === "after" &&
+        before.callsite === callsite && after.callsite === callsite);
+      const duration = after.wall_us - before.wall_us;
+      measured += duration;
+      maximumByCallsite[callsite] = Math.max(maximumByCallsite[callsite] || 0, duration);
+      return { callsite, duration_us: duration };
+    });
+    const total = last.wall_us - first.wall_us;
+    requireExact(integer(measured) && measured <= total);
+    wallRounds.push({ counter, pid: first.pid, total_us: total, measured_us: measured,
+      // Includes hooks, call plumbing and any unbracketed work, not a cause.
+      unattributed_us: total - measured, segments });
+  }
+  const summary = { native_exit: nativeStatus, rounds: rounds.length, reads: pairs.length,
+    maximum_guard_ms: Math.max(...rounds.map(round => round[1].at_ms - round[0].at_ms)),
+    maximum_identity_ms: Math.max(...rounds.map(round => round[2].at_ms - round[1].at_ms)),
+    maximum_formatter_ms: Math.max(...rounds.map(round => round[4].at_ms - round[3].at_ms)),
+    maximum_reader_ms: Math.max(...pairs.map(pair => pair[1].at_ms - pair[0].at_ms)),
+    maximum_publication_gap_upper_ms: Math.max(...publishGaps),
+    maximum_post_audit_observation_gap_upper_ms: Math.max(...observationGaps),
+    wall_clock_segments: { clock: wallManifest.clock, unit: wallManifest.unit, security_clock: false,
+      hook_events: wallRows.length, instrumentation_overhead_included: true,
+      rounds: wallRounds, maximum_by_callsite_us: maximumByCallsite },
+    origin: "indeterminate", fixture_only: true, instrumentation_included: true };
+  // Measurements never self-assign a cause, clear a latch or accept native failure.
+  process.stdout.write("pgsql_native_freshness_trace:" + JSON.stringify(summary) + "\n");
+  process.exitCode = nativeStatus === 0 ? 0 : 1;
+} catch {
+  process.stderr.write("pgsql_native_freshness_trace:indeterminate-incomplete-or-inconsistent\n");
+  process.exitCode = 1;
+}
+CHECKPOINT_PGSQL_NATIVE_TRACE_VERIFY
+}
+
 run_checkpoint_backup_child() {
   local child="$1" output_root="$2" generation="$3" baseline_path="$4"
   local baseline_sha="$5" profile="$6" inventory_path="$7"
@@ -8100,7 +8827,27 @@ run_checkpoint_backup_child() {
   # WATCH fixtures; their production-like one-second pacing prevents a local
   # subprocess storm while this integration case has its own wider allowance.
   local fixture_monitor_poll_seconds=0.25
+  local db_child_path="$ROOT_DIR/deployment/backup-retdb.sh" trace_dir=""
   local writer_pid="" writer_identity="" writer_progress="" writer_authority=""
+  if checkpoint_pgsql_native_trace_selected; then
+    [[ "$child" == db && "$generation" == durable-v2 &&
+       "$profile" == fence-stable && "$writer_guard_mode" == healthy &&
+       -z "$child_stub_mode" ]] || return 2
+    # Restore ordinary timing BEFORE either real parent monitor starts.
+    export RECOVERY_STREAM_POLL_SECONDS=1
+    export RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS=30
+    # Intentional fixture-local export; no caller state needs propagation.
+    # shellcheck disable=SC2031
+    export RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS=10
+    fixture_monitor_poll_seconds=1
+    guard_max_stale_seconds=10
+    trace_dir="${output_root}.pgsql-native-trace"
+    checkpoint_pgsql_native_trace_prepare "$trace_dir" || return 1
+    db_child_path="$trace_dir/deployment/backup-retdb.sh"
+    trap stop_checkpoint_backup_writer_guard EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+  fi
   if [[ "$generation" == durable-v2 ]]; then
     runner_namespace=present
     deployments_json="$KUBERNETES_DEPLOYMENTS_JSON"
@@ -8249,7 +8996,9 @@ run_checkpoint_backup_child() {
         STUB_DB_DUMP_DELAY_SECONDS="$db_dump_delay_seconds" \
         RECOVERY_STREAM_POLL_SECONDS="$fixture_monitor_poll_seconds" \
         RECOVERY_TEST_STREAM_GUARD_MAX_STALE_SECONDS="$guard_max_stale_seconds" \
-        "$ROOT_DIR/deployment/backup-retdb.sh" \
+        CHECKPOINT_PGSQL_NATIVE_TRACE_DIR="$trace_dir" \
+        CHECKPOINT_PGSQL_NATIVE_TRACE_ORIGINAL_LIB_DIR="$ROOT_DIR/deployment/lib" \
+        "$db_child_path" \
         "$output_root/retdb-$STAMP.sql.gz"; then
         child_status=0
       else
@@ -8303,6 +9052,10 @@ run_checkpoint_backup_child() {
       "$(grep -q 'pg_dump' "$KUBECTL_LOG" 2>/dev/null && printf yes || printf no)" >&2
   fi
   [[ "$writer_guard_mode" == missing ]] || stop_checkpoint_backup_writer_guard
+  if [[ -n "$trace_dir" ]]; then
+    printf '%s\n' "$child_status" >"$trace_dir/native-exit"
+    trap - EXIT INT TERM
+  fi
   return "$child_status"
 }
 
@@ -8718,6 +9471,11 @@ run_checkpoint_backup_child_guard_tests() {
     else
       fail 'durable DB three-guard positive integration' \
         "$(cat "$KUBECTL_LOG")"
+    fi
+    if checkpoint_pgsql_native_trace_selected; then
+      expect_success 'complete literal PGSQL rounds and original reads retain native timing evidence' \
+        verify_checkpoint_pgsql_native_trace "$case_root/output.pgsql-native-trace"
+      printf '%s\n' "$LAST_OUTPUT"
     fi
     return
   fi
@@ -13467,10 +14225,11 @@ start_stream_guard_fixture_publisher() {
   local progress_marker="$1" stop_marker="$2" initial_delay="$3"
   local interval="$4" maximum_increments="$5" start_marker="${6:-}"
   local publication_prefix="${7:-}" frozen_marker="${8:-}"
-  local pause_marker="${9:-}"
+  local pause_marker="${9:-}" trace_path="${10:-}" trace_guard="${11:--1}"
   python3 - "$progress_marker" "$stop_marker" "$initial_delay" \
     "$interval" "$maximum_increments" "$start_marker" \
-    "$publication_prefix" "$frozen_marker" "$pause_marker" <<'PY' &
+    "$publication_prefix" "$frozen_marker" "$pause_marker" \
+    "$trace_path" "$trace_guard" <<'PY' &
 import os
 import sys
 import time
@@ -13485,6 +14244,8 @@ import time
     publication_prefix,
     frozen_path,
     pause_path,
+    trace_path,
+    trace_guard,
 ) = sys.argv[1:]
 initial_delay = float(initial_text)
 interval = float(interval_text)
@@ -13492,6 +14253,36 @@ maximum = int(maximum_text)
 counter = int(open(progress_path, encoding="utf-8").read().strip())
 published = 0
 paused = False
+pause_active = False
+
+if trace_path:
+    import ctypes
+    import json
+
+    # Match the product clock domain; do not assume time.monotonic's epoch.
+    class Timespec(ctypes.Structure):
+        _fields_ = [("seconds", ctypes.c_long), ("nanoseconds", ctypes.c_long)]
+
+    clock_id = 1 if sys.platform.startswith("linux") else 6 if sys.platform == "darwin" else -1
+    if clock_id < 0:
+        raise SystemExit(1)
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.clock_gettime.argtypes = [ctypes.c_int, ctypes.POINTER(Timespec)]
+    libc.clock_gettime.restype = ctypes.c_int
+    trace_file = open(trace_path, "x", encoding="utf-8", buffering=1)
+    os.chmod(trace_path, 0o600)
+
+    def trace_now():
+        value = Timespec()
+        if libc.clock_gettime(clock_id, ctypes.byref(value)) != 0:
+            raise OSError("fixture_clock_unavailable")
+        return value.seconds * 1000 + value.nanoseconds // 1_000_000
+
+    def trace(event, **fields):
+        trace_file.write(json.dumps(dict(event=event, guard=int(trace_guard),
+                                        pid=os.getpid(), counter=counter, **fields)) + "\n")
+
+    trace("start", at_ms=trace_now())
 
 
 def publish_private(path, value):
@@ -13512,19 +14303,29 @@ deadline = time.monotonic() + initial_delay
 while not os.path.exists(stop_path):
     if pause_path and os.path.exists(pause_path) and not paused:
         paused = True
+        pause_active = True
         deadline = time.monotonic() + 11.5
+        if trace_path:
+            trace("pause-start", at_ms=trace_now())
         publish_private(f"{publication_prefix}-paused", counter)
     if maximum == 0 or published < maximum:
         remaining = deadline - time.monotonic()
         if remaining > 0:
             time.sleep(min(remaining, 0.01))
             continue
+        if trace_path and pause_active:
+            trace("pause-end", at_ms=trace_now())
+            pause_active = False
         counter += 1
         next_path = f"{progress_path}.publisher-next"
         with open(next_path, "w", encoding="utf-8") as marker:
             marker.write(f"{counter}\n")
         os.chmod(next_path, 0o600)
+        if trace_path:
+            before_ms = trace_now()
         os.replace(next_path, progress_path)
+        if trace_path:
+            trace("publish", before_ms=before_ms, after_ms=trace_now())
         published += 1
         if publication_prefix:
             publish_private(f"{publication_prefix}-published-{published}", counter)
@@ -13532,6 +14333,9 @@ while not os.path.exists(stop_path):
     else:
         publish_private(frozen_path, counter)
         time.sleep(0.01)
+if trace_path:
+    trace("stop", at_ms=trace_now())
+    trace_file.close()
 PY
   # shellcheck disable=SC2031 # This shell owns the fixture publisher PID.
   STREAM_GUARD_FIXTURE_PUBLISHER_PID=$!
@@ -13544,6 +14348,198 @@ stream_guard_fixture_start_identity() {
     source "$1"
     recovery_process_start_identity "$2"
   ' _ "$ROOT_DIR/deployment/lib/recovery-safety.sh" "$1"
+}
+
+verify_stream_guard_freshness_origin_trace() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+case, directory, native_status = sys.argv[1:]
+root = pathlib.Path(directory)
+observations = root / "observations"
+
+
+def require(condition):
+    if not condition:
+        raise ValueError("incomplete_or_inconsistent_trace")
+
+
+def number(value):
+    require(type(value) is int and value >= 0)
+    return value
+
+
+def records(path):
+    data = path.read_text(encoding="utf-8")
+    require(data.endswith("\n") and len(data) <= 2_000_000)
+    def unique_object(pairs):
+        require(len({key for key, _ in pairs}) == len(pairs))
+        return dict(pairs)
+    result = [json.loads(line, object_pairs_hook=unique_object) for line in data.splitlines()]
+    require(result and all(type(row) is dict for row in result))
+    return result
+
+
+def exact(row, fields):
+    require(set(row) == set(fields.split()))
+
+
+def bracket(row):
+    before, after = number(row["before_ms"]), number(row["after_ms"])
+    require(after >= before)
+    return before, after
+
+
+try:
+    publications, pauses, pids = {}, [], set()
+    for guard in range(3):
+        rows = records(observations / f"publisher-{guard}.jsonl")
+        require(rows[0]["event"] == "start" and rows[-1]["event"] == "stop")
+        pid = number(rows[0]["pid"])
+        require(pid > 0 and pid not in pids)
+        pids.add(pid)
+        counter, previous_time, active_pause = 1, 0, None
+        publications[guard] = []
+        for index, row in enumerate(rows):
+            require(number(row["guard"]) == guard and number(row["pid"]) == pid)
+            number(row["counter"])
+            event = row["event"]
+            if event == "publish":
+                exact(row, "event guard pid counter before_ms after_ms")
+                before, after = bracket(row)
+                require(active_pause is None and row["counter"] == counter + 1)
+                counter += 1
+                publications[guard].append(row)
+            else:
+                exact(row, "event guard pid counter at_ms")
+                before = after = number(row["at_ms"])
+                require(row["counter"] == counter)
+                if event == "start":
+                    require(index == 0)
+                elif event == "stop":
+                    require(index == len(rows) - 1)
+                    if active_pause is not None:
+                        active_pause["end_ms"] = after
+                elif event == "pause-start":
+                    require(active_pause is None)
+                    active_pause = dict(guard=guard, counter=counter, before_ms=before)
+                    pauses.append(active_pause)
+                elif event == "pause-end":
+                    require(active_pause is not None)
+                    active_pause["end_ms"] = after
+                    active_pause["resumed"] = True
+                    active_pause = None
+                else:
+                    require(False)
+            require(before >= previous_time)
+            previous_time = after
+        require(publications[guard])
+
+    rows = records(observations / "readers.jsonl")
+    terminal = rows.pop()
+    exact(terminal, "event at_ms status")
+    require(terminal["event"] == "supervisor-stop")
+    require(number(terminal["status"]) == int(native_status))
+    reads, delays, previous_time = [], [], 0
+    for row in rows:
+        before, after = bracket(row)
+        require(before >= previous_time)
+        previous_time = after
+        require(row["stage"] in ("guard-baseline", "launch", "initialize", "refresh", "running", "command", "post-audit"))
+        if row["event"] == "observer-delay":
+            exact(row, "event guard before_ms after_ms reader stage reaped gated handles_empty")
+            require(row["guard"] == 0 and row["reader"] == "foreground" and
+                    row["stage"] == "post-audit" and row["reaped"] == 1 and
+                    row["gated"] == 0 and row["handles_empty"] is True)
+            delays.append(row)
+        else:
+            exact(row, "event guard before_ms after_ms counter status reader stage observation_ms")
+            require(row["event"] == "read" and number(row["guard"]) in range(3) and
+                    number(row["status"]) == 0 and number(row["counter"]) >= 1 and
+                    row["reader"] in ("other", "foreground"))
+            if row["reader"] == "foreground":
+                require(number(row["observation_ms"]) <= before)
+            else:
+                require(row["observation_ms"] is None)
+            source = publications[row["guard"]]
+            possible = [p for p in source if p["counter"] == row["counter"]]
+            if row["counter"] == 1:
+                require(after <= source[0]["after_ms"])
+            else:
+                require(len(possible) == 1 and possible[0]["before_ms"] <= after)
+                later = [p for p in source if p["counter"] == row["counter"] + 1]
+                require(not later or later[0]["after_ms"] >= before)
+            reads.append(row)
+    require(number(terminal["at_ms"]) >= previous_time)
+    foreground = [r for r in reads if r["reader"] == "foreground" and r["stage"] == "post-audit"]
+    require({r["guard"] for r in foreground} == {0, 1, 2})
+
+    def healthy_during(guard, before, after):
+        source = publications[guard]
+        prior = [p for p in source if p["after_ms"] <= before]
+        inside = [p for p in source if p["before_ms"] > before and p["after_ms"] < after]
+        require(prior and len(inside) >= 10)
+        coverage = [prior[-1]] + inside
+        gaps = [right["after_ms"] - left["before_ms"] for left, right in zip(coverage, coverage[1:])]
+        gaps += [after - coverage[-1]["before_ms"]]
+        require(max(gaps) < 10000)
+
+    log = (root / "supervisor.log").read_text(encoding="utf-8")
+    if case == "post-audit-healthy":
+        require(int(native_status) == 0 and not delays and not pauses)
+        require("database_restore_stream_detail:" not in log)
+        origin = "healthy-control"
+    else:
+        require(int(native_status) != 0 and "database_restore_stream_stage:post-audit\n" in log)
+        details = re.findall(r"^database_restore_stream_detail:(.+)$", log, re.MULTILINE)
+        require(len(details) == 1)
+        stale = re.fullmatch(r"guard-stale:([0-2]):counter:([1-9][0-9]*):age-ms:([0-9]+):observation-ms:([0-9]+)", details[0])
+        require(stale is not None and int(stale[3]) >= 10000)
+        guard, stale_counter = int(stale[1]), int(stale[2])
+        require(any(r["guard"] == guard and r["observation_ms"] == int(stale[4]) and
+                    r["counter"] == stale_counter for r in foreground))
+        if case == "post-audit-observer-delay":
+            require(guard == 0 and len(delays) == 1 and not pauses)
+            delay = delays[0]
+            require(delay["after_ms"] - delay["before_ms"] >= 11500)
+            delayed_reads = [r for r in foreground if r["before_ms"] >= delay["after_ms"]]
+            require(len(delayed_reads) == 1 and delayed_reads[0]["guard"] == 0 and
+                    delayed_reads[0]["counter"] > stale_counter)
+            for publisher in range(3):
+                healthy_during(publisher, delay["before_ms"], delay["after_ms"])
+            origin = "foreground-delay-with-continuous-publication"
+        elif case == "post-audit-expired-progress":
+            require(guard == 2 and not delays and len(pauses) == 1)
+            pause = pauses[0]
+            require(pause["guard"] == 2 and pause["counter"] == stale_counter and
+                    "resumed" not in pause and pause["end_ms"] > pause["before_ms"])
+            require(not any(p["after_ms"] >= pause["before_ms"] for p in publications[2]))
+            for publisher in (0, 1):
+                healthy_during(publisher, pause["before_ms"], pause["end_ms"])
+            for reader in range(3):
+                source = [r for r in foreground if r["guard"] == reader]
+                prior = [r for r in source if r["after_ms"] <= pause["before_ms"]]
+                inside = [r for r in source if r["before_ms"] > pause["before_ms"] and
+                          r["after_ms"] <= terminal["at_ms"]]
+                require(prior and len(inside) >= 2)
+                coverage = [prior[-1]] + inside
+                # Close observation coverage at supervisor retirement, not at
+                # the later publisher cleanup. Mixed origins are not proof.
+                gaps = [right["after_ms"] - left["before_ms"]
+                        for left, right in zip(coverage, coverage[1:])]
+                gaps += [terminal["at_ms"] - coverage[-1]["before_ms"]]
+                require(max(gaps) < 10000)
+            origin = "publisher-paused-with-continuous-observation"
+        else:
+            require(False)
+    print(f"freshness_origin_trace:{origin}")
+except (OSError, ValueError, KeyError, TypeError, IndexError):
+    print("freshness_origin_trace:incomplete-or-inconsistent", file=sys.stderr)
+    sys.exit(1)
+PY
 }
 
 run_multi_guard_round_robin_case() (
@@ -13559,10 +14555,23 @@ run_multi_guard_round_robin_case() (
   local progress_value_one progress_value_two progress_value_three publisher_pid
   local inner_baseline_value=""
   local audit_group_pid="" audit_descendant_pid=""
+  local freshness_trace=0 trace_one="" trace_two="" trace_three=""
   guard_dir="$(mktemp -d "$TMP_DIR/multi-stream-guards.XXXXXX")" || return 1
   chmod 700 "$guard_dir"
   observation_dir="$guard_dir/observations"
   mkdir -m 700 "$observation_dir"
+  if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == post-stream-freshness-origin ]]; then
+    case "$case_name" in
+      post-audit-healthy|post-audit-expired-progress|post-audit-observer-delay) ;;
+      *) return 2 ;;
+    esac
+    freshness_trace=1
+    trace_one="$observation_dir/publisher-0.jsonl"
+    trace_two="$observation_dir/publisher-1.jsonl"
+    trace_three="$observation_dir/publisher-2.jsonl"
+  elif [[ "$case_name" == post-audit-observer-delay ]]; then
+    return 2
+  fi
   stop_marker="$guard_dir/stop"
   failure_one="$guard_dir/guard-one.failure"
   progress_one="$guard_dir/guard-one.progress"
@@ -13594,7 +14603,7 @@ run_multi_guard_round_robin_case() (
   trap 'cleanup_stream_guard_fixture_publishers || :' EXIT INT TERM
 
   case "$case_name" in
-    round-robin-success|round-robin-startup-grace|launch-window-realign|outer-baseline-realign|refresh-deadline|post-audit-healthy|post-audit-slow-publisher|post-audit-native-failure|post-audit-timeout|post-audit-owner-death|post-audit-expired-progress)
+    round-robin-success|round-robin-startup-grace|launch-window-realign|outer-baseline-realign|refresh-deadline|post-audit-healthy|post-audit-slow-publisher|post-audit-native-failure|post-audit-timeout|post-audit-owner-death|post-audit-expired-progress|post-audit-observer-delay)
       # Every publisher starts only after its initial baseline read. The slow
       # guard leaves a deliberately bounded gap between counters 2 and 3 while
       # both fast guards continue at 0.15/0.20 seconds. A serial refresher
@@ -13644,15 +14653,17 @@ run_multi_guard_round_robin_case() (
           0.10 4.50 0 "$observation_dir/guard-one-baseline-read"
       else
         start_stream_guard_fixture_publisher "$progress_one" "$stop_marker" \
-          0.10 0.15 0 "$observation_dir/guard-one-baseline-read"
+          0.10 0.15 0 "$observation_dir/guard-one-baseline-read" \
+          "" "" "" "$trace_one" 0
       fi
       pid_one="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
       start_stream_guard_fixture_publisher "$progress_two" "$stop_marker" \
-        0.10 0.20 0 "$observation_dir/guard-two-baseline-read"
+        0.10 0.20 0 "$observation_dir/guard-two-baseline-read" \
+        "" "" "" "$trace_two" 1
       pid_two="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
       start_stream_guard_fixture_publisher "$progress_three" "$stop_marker" \
         0.15 "$slow_interval" 0 "$observation_dir/guard-three-baseline-read" \
-        "$observation_dir/slow" "" "$observation_dir/slow-pause"
+        "$observation_dir/slow" "" "$observation_dir/slow-pause" "$trace_three" 2
       pid_three="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
       ;;
     no-simultaneous-window)
@@ -13708,9 +14719,16 @@ run_multi_guard_round_robin_case() (
     GUARD_MAX_STALE_SECONDS="$maximum_stale_seconds" REQUIRE_LEASE="$require_lease" \
     RECOVERY_TEST_STREAM_GUARD_INITIAL_DEADLINE_SECONDS="$initial_deadline_seconds" \
     MULTI_GUARD_CASE="$case_name" GUARD_OBSERVATION_DIR="$observation_dir" \
+    GUARD_FRESHNESS_TRACE="$freshness_trace" \
     bash -c '
       set -euo pipefail
       NAMESPACE=hcce
+      if [[ "$MULTI_GUARD_CASE" == post-audit-slow-publisher ||
+            "$GUARD_FRESHNESS_TRACE" == 1 ]]; then
+        # Exercise the real ordinary poll cadence, not the accelerated 0.02 s
+        # fixture setting. A slow healthy publisher must survive that boundary.
+        unset RECOVERY_STREAM_POLL_SECONDS
+      fi
       source "$1"
       if [[ "$REQUIRE_LEASE" == 1 ]]; then
         recovery_require_operation_serialization_stream() { return 0; }
@@ -13725,6 +14743,9 @@ run_multi_guard_round_robin_case() (
           # are faulted; pre-launch/running supervision remains unmodified.
           if [[ "$#" == 8 && "${stream_diagnostic_stage:-}" == post-audit &&
                 "${stream_child_reaped:-0}" == 1 ]]; then
+            if [[ "$MULTI_GUARD_CASE" == post-audit-observer-delay ]]; then
+              printf "%s\n" "$BASHPID" >"$GUARD_OBSERVATION_DIR/audit-group"
+            fi
             if [[ "$MULTI_GUARD_CASE" == post-audit-native-failure ]]; then
               printf "%s\n" "$BASHPID" >"$GUARD_OBSERVATION_DIR/audit-group"
               sleep 0.15
@@ -13769,22 +14790,56 @@ run_multi_guard_round_robin_case() (
         mv -f -- "$next_path" "$marker_path"
       }
       recovery_stream_guard_progress_value() {
-        local progress_path="$1" progress_value guard_name function_stack
-        if ! progress_value="$(
-          recovery_stream_guard_progress_value_fixture_original "$@"
-        )"; then
-          return 1
-        fi
+        local progress_path="$1" progress_value guard_name guard_index function_stack
+        local trace_before trace_after trace_observation=null delay_before delay_after reader_kind=other read_status=0
         case "$progress_path" in
-          "$GUARD_ONE_PROGRESS") guard_name=guard-one ;;
-          "$GUARD_TWO_PROGRESS") guard_name=guard-two ;;
-          "$GUARD_THREE_PROGRESS") guard_name=guard-three ;;
+          "$GUARD_ONE_PROGRESS") guard_name=guard-one; guard_index=0 ;;
+          "$GUARD_TWO_PROGRESS") guard_name=guard-two; guard_index=1 ;;
+          "$GUARD_THREE_PROGRESS") guard_name=guard-three; guard_index=2 ;;
           *) return 2 ;;
         esac
+        function_stack=" ${FUNCNAME[*]} "
+        if [[ "$GUARD_FRESHNESS_TRACE" == 1 &&
+              "${stream_diagnostic_stage:-}" == post-audit &&
+              "${stream_child_reaped:-0}" == 1 && "${stream_is_gated:-1}" == 0 &&
+              -z "${stream_pid:-}" && -z "${stream_start_identity:-}" &&
+              "$function_stack" == *" observe_inactive_stream_guard_progress "* ]]; then
+          reader_kind=foreground
+          [[ "${sample_time:-}" =~ ^[0-9]+$ ]] || return 1
+          trace_observation="$sample_time"
+        fi
+        if [[ "$MULTI_GUARD_CASE" == post-audit-observer-delay &&
+              "$reader_kind" == foreground && "$guard_index" == 0 &&
+              -e "$GUARD_OBSERVATION_DIR/audit-group" &&
+              ! -e "$GUARD_OBSERVATION_DIR/observer-delay-claimed" ]]; then
+          fixture_publish_guard_observation_once \
+            "$GUARD_OBSERVATION_DIR/observer-delay-claimed" 1 || return 1
+          delay_before="$(recovery_monotonic_milliseconds)" || return 1
+          sleep 11.5
+          delay_after="$(recovery_monotonic_milliseconds)" || return 1
+          printf "{\"event\":\"observer-delay\",\"guard\":0,\"before_ms\":%s,\"after_ms\":%s,\"reader\":\"foreground\",\"stage\":\"post-audit\",\"reaped\":1,\"gated\":0,\"handles_empty\":true}\n" \
+            "$delay_before" "$delay_after" >>"$GUARD_OBSERVATION_DIR/readers.jsonl" || return 1
+        fi
+        if [[ "$GUARD_FRESHNESS_TRACE" == 1 ]]; then
+          trace_before="$(recovery_monotonic_milliseconds)" || return 1
+        fi
+        if progress_value="$(recovery_stream_guard_progress_value_fixture_original "$@")"; then
+          :
+        else
+          read_status=$?
+        fi
+        if [[ "$GUARD_FRESHNESS_TRACE" == 1 ]]; then
+          trace_after="$(recovery_monotonic_milliseconds)" || return 1
+          [[ "$progress_value" =~ ^[1-9][0-9]*$ ]] || progress_value=null
+          printf "{\"event\":\"read\",\"guard\":%s,\"before_ms\":%s,\"after_ms\":%s,\"counter\":%s,\"status\":%s,\"reader\":\"%s\",\"stage\":\"%s\",\"observation_ms\":%s}\n" \
+            "$guard_index" "$trace_before" "$trace_after" "$progress_value" \
+            "$read_status" "$reader_kind" "${stream_diagnostic_stage:-guard-baseline}" "$trace_observation" \
+            >>"$GUARD_OBSERVATION_DIR/readers.jsonl" || return 1
+        fi
+        [[ "$read_status" == 0 ]] || return 1
         fixture_publish_guard_observation_once \
           "$GUARD_OBSERVATION_DIR/$guard_name-baseline-read" \
           "$progress_value" || return 1
-        function_stack=" ${FUNCNAME[*]} "
         if [[ "$MULTI_GUARD_CASE" == refresh-deadline &&
               "$guard_name" == guard-three &&
               "$function_stack" == *" refresh_supervised_stream_guards_for_launch "* &&
@@ -13845,6 +14900,16 @@ run_multi_guard_round_robin_case() (
         fi
         printf "%s\n" "$progress_value"
       }
+      if [[ "$GUARD_FRESHNESS_TRACE" == 1 ]]; then
+        fixture_freshness_trace_terminal() {
+          local native_status=$? terminal_time
+          terminal_time="$(recovery_monotonic_milliseconds)" || exit 1
+          printf "{\"event\":\"supervisor-stop\",\"at_ms\":%s,\"status\":%s}\n" \
+            "$terminal_time" "$native_status" >>"$GUARD_OBSERVATION_DIR/readers.jsonl" || exit 1
+          return "$native_status"
+        }
+        trap fixture_freshness_trace_terminal EXIT
+      fi
       recovery_kubectl_stream_supervised "$REQUIRE_LEASE" 30 \
         --guard-process "$GUARD_ONE_PID" "$GUARD_ONE_IDENTITY" \
           "$GUARD_ONE_FAILURE" "$GUARD_ONE_PROGRESS" "$GUARD_MAX_STALE_SECONDS" \
@@ -13872,7 +14937,8 @@ run_multi_guard_round_robin_case() (
   if [[ "$case_name" == post-audit-native-failure ||
         "$case_name" == post-audit-timeout ||
         "$case_name" == post-audit-owner-death ||
-        "$case_name" == post-audit-expired-progress ]]; then
+        "$case_name" == post-audit-expired-progress ||
+        "$case_name" == post-audit-observer-delay ]]; then
     audit_group_pid="$(cat "$observation_dir/audit-group" 2>/dev/null || :)"
     [[ "$audit_group_pid" =~ ^[1-9][0-9]*$ ]] || return 1
     audit_descendant_pid="$(cat "$observation_dir/audit-descendant" 2>/dev/null || :)"
@@ -13886,8 +14952,17 @@ run_multi_guard_round_robin_case() (
       ! kill -0 "$audit_descendant_pid" 2>/dev/null || return 1
     fi
   fi
+  if [[ "$freshness_trace" == 1 ]]; then
+    verify_stream_guard_freshness_origin_trace "$case_name" "$guard_dir" "$status" || return 1
+  fi
 
   case "$case_name" in
+    post-audit-observer-delay)
+      [[ "$status" != 0 && -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
+         -e "$observation_dir/observer-delay-claimed" ]] &&
+        grep -q "database_restore_stream_detail:guard-stale:0:counter:" \
+          "$guard_dir/supervisor.log" && return 0
+      ;;
     post-audit-expired-progress)
       [[ "$status" != 0 && -e "$STUB_STATE_DIR/multi-guard-stream-completed" &&
          -e "$observation_dir/slow-paused" ]] &&
@@ -17217,6 +18292,21 @@ if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == multi-stream-guards ]]; then
     exit 1
   fi
   printf 'Focused multi-guard stream tests passed: %s.\n' "$PASS_COUNT"
+  exit 0
+fi
+
+if [[ "${YENHUBS_RECOVERY_TEST_FOCUS:-}" == post-stream-freshness-origin ]]; then
+  expect_success \
+    "freshness origin: fast publishers and foreground observation remain healthy" \
+    run_multi_guard_round_robin_case post-audit-healthy
+  expect_success \
+    "freshness origin: selected publisher pause is distinct from observer delay" \
+    run_multi_guard_round_robin_case post-audit-expired-progress
+  expect_success \
+    "freshness origin: one foreground delay rejects despite continuous publication" \
+    run_multi_guard_round_robin_case post-audit-observer-delay
+  [[ "$FAIL_COUNT" == 0 ]] || exit 1
+  printf "Focused synthetic post-stream freshness origin tests passed: %s.\n" "$PASS_COUNT"
   exit 0
 fi
 

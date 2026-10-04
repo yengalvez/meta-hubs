@@ -1,5 +1,24 @@
 # Session Changelog
 
+## 2026-10-04 · Compose the local reliability candidate without acceptance
+
+Compose committed root C22179e7 and J5160452 on the new local
+`codex/reliability-composed-20261004` branch, without rewriting either source
+branch or committing the merge. Retain C's Hubs137eb876/Cloud81d5be0d pins,
+independent creator event/privacy and fifteen toolchain providers with their
+fail-closed receipt fingerprints. Preserve J's signed monitor authority,
+complete owned publisher/parent guards, timing anchors and test-only traces.
+The only merge conflict is this changelog; retain both source histories.
+
+Register the existing owned-round regression once beside the native-round
+unit in local security and CI. Security's whole-root input and declared
+`run_security` harness bind its bytes and invocation; recovery/H5 retain their
+consumed admission-fence footprint. No old receipt is relabeled or real cache
+changed. Two inherited test-only serial extraction/trace assumptions remain
+with J's assigned owner; do not edit them in this composition. Their pending
+repair, native checkpoint, exact finalizer/full and live acceptance are not
+supplied by this local assembly or by syntax/pure wiring checks.
+
 ## 2026-10-04 · Bind toolchain providers and reject failed receipt fingerprints
 
 Extract the original fifteen toolchain command lists into section providers.
@@ -77,6 +96,128 @@ its actual exit0, the same cherry-pick continued with the original hooks.
 This assembly does not inherit full acceptance, native cycles or production
 acceptance. Preserve the single live J verifier and require the combined
 candidate's exact finalizer and affected gates before integration/publication.
+## 2026-10-04 · Own and join concurrent PGSQL parent observations
+
+After the complete operation lock and five consumer checks, overlap the full
+writer/freeze and durable predicates only inside a gated publisher with its
+own process group and EOF guardian. Keep the serial preflight/final path,
+original validator bodies, native statuses, closed receipts, W-before-D
+failure priority and timing anchors/budgets. Owner cancellation closes only
+the original coproc writer; no historical PGID signal or inherited authority.
+Publisher-local pending-job supervision includes stopped workers and checks
+the original guardian job, kernel state and fresh identity. Loss retires the
+publisher's own live group; state flags do not change the kernel state.
+
+Real-process RED cases reproduced orphan descendants, retained pipeline FDs,
+retirement interleavings, guardian loss during blocked joins and nice flags.
+The primary's assigned focal passed46/46, original exit0,95.435s, with actor
+cleanup and watchdog=FAIL. Independent scoped source review closed the found
+ownership/authority/joins/flags defects. Callbacks are synthetic: no native
+checkpoint, observed speed improvement, full or real acceptance is claimed.
+One clean-candidate checkpoint-children/db-stable sample remains due, without
+the serial-only PGSQL trace. Submodule pins and production are unchanged.
+
+## 2026-10-04 · Keep the opt-in wall-clock samples locale-local
+
+The primary's native63504 stopped before parents/DB: in its sanitized environment
+Bash5.3 rendered EPOCHREALTIME with a comma, rejected by the decimal-point regex.
+Readiness and sample hooks now declare local LC_ALL=C before builtin expansion;
+caller locale, native status, coverage and all product timing remain unchanged.
+Two contextual/locale regressions were RED, then GREEN; the missing-builtin
+negative remains fail-closed. This repair does not replay native/full, alter
+product source or attribute the diagnostic startup failure to the product.
+
+## 2026-10-04 · Partition the existing PGSQL guard trace by real callsites
+
+Extend only the checkpoint-children/db-stable test-only tracer: insertion-only
+copies still strip to the exact child/library originals. Within the PGSQL
+monitor's actual require_backup_guard stack,28 non-overlapping segments retain
+all lock/Lease, consumer, parent authority/privacy/progress, contract/baseline,
+PID, live boundary, durable-quiescence and fence calls. New segment hooks use
+the host Bash EPOCHREALTIME builtin only, explicitly WALL CLOCK and separate
+from the unchanged libc monotonic samples. The oracle requires complete ordered
+coverage and reports unassigned residual/hook costs; a measured native1 stays
+FAIL. Fifteen directed RED cases became GREEN;39 selected pure tests pass,
+including exact stripping, clock availability, stack gating and status37
+preservation. No native/full rerun, product/submodule change or cause acceptance
+is claimed. The jq proposal remains parked after its44ms partial micro-sample.
+Independent delta review and one finite native sample remain pending.
+
+## 2026-10-04 · Trace the complete native PGSQL child with ordinary guards
+
+Test-only opt-in instrumentation of checkpoint-children/db-stable preserves
+literal original child/library bytes after removing insertion-only hooks,
+binds helpers to the original root and records the shared monotonic clock.
+The oracle rejects missing post-audit coverage, null/stale observations and
+counter regression: four actual RED cases, then17/17 pure PASS. Directed
+review is CLOSED; ShellCheck and worktree Gitleaks pass. Product source and
+submodule pins are unchanged. Native execution remains pending at this
+commit; no historical cause, recovery/full, SLO or production acceptance.
+
+## 2026-10-04 · Discriminate publisher delay from foreground observation delay
+
+Test-only opt-in native focus8782 passes48/48: healthy fast publishers with
+twelve complete audits, a paused publisher2 with continuing foreground reads,
+and one11.584s foreground delay while all three publishers advance77/58/58
+times. The late counter177 does not clear stale counter91; both negatives
+retain native supervisor1 and post-audit/stale. Original validators and
+default1s/startup30s/stale10s/reserve2s remain intact. All publisher terminals,
+waits/cleanup and primary PID/fixture readback pass; source hashes stay fixed.
+Independent delta review is CLOSED after two oracle P2 corrections, with
+23 pure trace regressions. These local processes use simulated API/Lease;
+no product change, historical cause attribution, full/SLO or live acceptance.
+
+## 2026-10-04 · Cover the ordinary post-stream poll cadence
+
+The existing slow healthy publisher case used an accelerated0.02s fixture
+poll. Unset only that override in its isolated shell so it exercises the real
+default1s; keep its publisher8.5s, twelve complete audits, identity/cleanup,
+stale10s/startup30s/reserve2s and all other cases intact. Native59377 passes
+46/46 (45 common checks and one directed case). Readback confirms12 audits
+and no fixture-linked process; product and submodule bytes are unchanged.
+This rules out that cadence difference alone in this case, not historical
+PGSQL causation, recovery/full/SLO or production acceptance. No new selector
+or duplicate CI entrypoint is introduced.
+
+## 2026-10-04 · Prove the native signed-monitor startup and teardown boundary
+
+Extend the existing durable-monitor fixture, without changing product code or
+adding a second CI entrypoint. Real Bash starters and Node watchers pass3/3:
+signed positive lifecycle, changed-key refusal, and an external timeout after
+both READY markers with a child retaining wrapper pipes. The timeout preserves
+native143 and discards both monitors without positive final evidence; owned
+processes and groups are absent. Thirteen affected unsigned/default regressions
+also pass. Independent directed review is CLOSED; syntax and diff checks pass.
+The fixture's formerly fixed Lease now has owner-driven atomic renewal history,
+causally consumed by GET/LIST/WATCH. Execution and cleanup have separate finite
+deadlines and retain failures. The attested fixture join is30s; production300s,
+guard limits, library and submodule pins are unchanged. This local proof does
+not explain historical PGSQL expiry or accept Kubernetes/full/SLO/production.
+
+## 2026-10-04 · Align signed monitor authority at the Bash/Node boundary
+
+The real Bash constructors included a selected backup authority that the common
+shell comparator rejected; unsigned controls passed while both signed monitors
+failed. The comparator now requires that exact pair only in the signed backup
+mode, rejecting missing/unselected/partial/mismatched or extra fields. A second
+cross-language regression covers the durable capability digest including the
+selection, as required by the existing Node watcher. Private-read, hashes, READY,
+PID/start identity, fence/Lease and timing guards are not weakened. This is a
+local signed-startup compatibility correction, not evidence explaining the
+historical PGSQL expiry, a full gate or a new production acceptance.
+Combined focused gate: 37/37, no skips. Directed review closed the test's Bash
+selection mismatch; its two actual shell cases also pass with an explicit
+supported interpreter despite BASH pointing to macOS's unsupported Bash3.2.
+
+## 2026-10-04 · Bind long verification receipts to their consumed script test
+
+Adding an unrelated UI unit reproduced recovery/H5 invalidation in both Bash
+5.3 and 3.2. The footprint now binds the external admission-fence unit, keeping
+deployment, recovery harness and Cloud inputs intact and static/security broad.
+Seven focused tests pass, including relevant byte, deletion and executable-bit
+changes; the new regression is registered in security and CI. This avoids an
+unnecessary future rerun, not the known PGSQL failure or full/SLO acceptance.
+Do not relabel previous receipts; final exact full remains required.
 
 ## 2026-10-03 · Restore the BASE transport fixture context
 
@@ -2849,3 +2990,21 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   -0 en0. El esperado se serializa después de las marcas exactas; cuatro
   casos afectados pasan, incluida esa regresión y los rechazos de cambios
   estructurales. Recheck CLOSED, sin ampliar la revisión ni tocar producto.
+
+## 2026-10-04 — Composición local de fiabilidad, sin aceptación heredada
+
+- Rama `codex/reliability-composed-20261004` desde C22179e72; unión de
+  objetos guardados J5160452. Conserva Hubs137eb876 y Cloud81d5be0, ancestros
+  compatibles; no modifica bytes de subrepos ni publica nada.
+- Producto `deployment/` idéntico a J. Conserva proveedores y consumidores
+  de fingerprints fail-closed, bindings Avaturn/chat de C y mapas recovery/H5
+  de J. Nuevo test owned-round registrado una vez en security y CI, cubierto
+  por la clausura legítima de security. Revisión independiente de esa unión
+  CLOSED; no es otra revisión de producto ni de sus pruebas ya aceptadas.
+- Verificador primario de proveedores terminó0; footprint recovery/H5
+  pasó7/7 en Bash instalado/system. Sintaxis/diff y Actionlint0. El enumerador
+  exploratorio del integrador terminó1 al omitir el dígito de h5; no se
+  atribuye al producto ni se oculta como PASS.
+- Sigue pendiente el delta TEST-ONLY de timings ordinarios y rechazo del
+  standalone incompatible. Sin nuevo native, full, recibos relabelados,
+  backup real, build, despliegue ni aceptación del candidato combinado.

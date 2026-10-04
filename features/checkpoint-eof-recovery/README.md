@@ -2,7 +2,47 @@
 
 Candidate dated 2026-09-26. Baselines: Hubs prod-2026-03-11 and Hubs CE 2.1.0. This changes operator-side backup/recovery tooling, not avatar bytes, application schemas or the accepted checkpoint format. Local tests are not a live recovery acceptance.
 
+The recovery/H5 receipt footprint includes the consumed external admission-fence
+test, rather than unrelated `tests/scripts` units. New harness dependencies must
+extend that footprint and its regression; static/security retain whole-tree
+coverage. No input, toolchain, cleanup or final-full acceptance guard is waived.
+
 ## Versioned signed closure candidate (2026-10-03)
+
+Monitor envelopes remain schema1. Signed backup envelopes require the exact
+selected keyring path/UUID pair; unsigned envelopes must not accept that field.
+The Bash parent and Node durable watcher must hash the same capability including
+that selection. No key is created or read by the metadata comparator. Private
+file/hash/READY/process identity checks and cryptographic resource verification
+remain independent and mandatory. Focused shell/cross-language regressions do
+not replace watcher startup, representative Kubernetes recovery or exact full.
+
+The existing durable-monitor fixture now exercises both complete Bash starters
+and real Node watchers together: signed READY/progress/final/join, rejection of
+a changed key selection, and an external timeout with retained wrapper pipes.
+The owner renews the synthetic Lease; GET/LIST/WATCH only consume its causal
+history. Three native cases and thirteen affected unsigned/default cases pass.
+The timeout must retain native143, discard both monitors without positive final
+evidence, and close all owned processes by identity. This lane uses the real
+attested 30-second fixture join override, not the production 300-second join.
+It proves local startup/teardown compatibility, not historical PGSQL causation,
+representative Kubernetes recovery, operational SLOs or the exact final full.
+
+The existing slow-publisher post-stream case now unsets its accelerated fixture
+poll override and exercises the ordinary one-second default. Native46/46
+(45 common checks plus that case), twelve complete audits and publisher cleanup
+pass with the unchanged8.5s publisher,10s stale/30s startup bounds and2s reserve.
+This closes a cadence-coverage gap, not the historical PGSQL expiry cause.
+
+The opt-in `post-stream-freshness-origin` focus discriminates a healthy control,
+a paused publisher and a delayed foreground read with continuous publication.
+Native48/48 (45 common checks plus three cases) passes; the two negative streams
+retain exit1/stale rather than accepting a late counter. Private test-only
+JSONL brackets use the product libc clock domain, validate complete traces and
+reject mixed observer gaps or mismatched stale tuples. The existing diagnostic
+unit also rejects those malformed traces. Default1s/30s/10s/reserve2s and
+product sources remain unchanged. This is a local discriminator with simulated
+API/Lease, not proof of the historical PGSQL cause or a final full/backup/SLO.
 
 The local candidate adds explicit authority2/consumer3/baseline4/receipt2 and
 metadata4/inventory5/freeze2 readers, rather than reinterpreting historical
