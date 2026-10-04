@@ -1,5 +1,26 @@
 # Session Changelog
 
+## 2026-10-04 · Own and join concurrent PGSQL parent observations
+
+After the complete operation lock and five consumer checks, overlap the full
+writer/freeze and durable predicates only inside a gated publisher with its
+own process group and EOF guardian. Keep the serial preflight/final path,
+original validator bodies, native statuses, closed receipts, W-before-D
+failure priority and timing anchors/budgets. Owner cancellation closes only
+the original coproc writer; no historical PGID signal or inherited authority.
+Publisher-local pending-job supervision includes stopped workers and checks
+the original guardian job, kernel state and fresh identity. Loss retires the
+publisher's own live group; state flags do not change the kernel state.
+
+Real-process RED cases reproduced orphan descendants, retained pipeline FDs,
+retirement interleavings, guardian loss during blocked joins and nice flags.
+The primary's assigned focal passed46/46, original exit0,95.435s, with actor
+cleanup and watchdog=FAIL. Independent scoped source review closed the found
+ownership/authority/joins/flags defects. Callbacks are synthetic: no native
+checkpoint, observed speed improvement, full or real acceptance is claimed.
+One clean-candidate checkpoint-children/db-stable sample remains due, without
+the serial-only PGSQL trace. Submodule pins and production are unchanged.
+
 ## 2026-10-04 · Keep the opt-in wall-clock samples locale-local
 
 The primary's native63504 stopped before parents/DB: in its sanitized environment

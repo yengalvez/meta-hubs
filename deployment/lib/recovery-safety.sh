@@ -1222,7 +1222,8 @@ recovery_pgsql_source_monitor_failure_code_is_exact() {
     consumer-reticulum|consumer-pgbouncer|consumer-pgbouncer-t|\
     consumer-bot-orchestrator|consumer-coturn|parent-writer|freeze-fence|\
     runner-quiescence|durable-authority|durable-process|durable-progress|\
-    durable-baseline|active-fence|pgsql-source|progress_publish_failed)
+    durable-baseline|active-fence|pgsql-source|progress_publish_failed|\
+    source-owned-round|source-guardian)
       return 0 ;;
     *) return 1 ;;
   esac
@@ -1331,12 +1332,23 @@ recovery_stream_guard_initial_deadline_seconds() {
 recovery_wait_for_stream_guard_initial_progress() {
   local guard_pid="$1" guard_start_identity="$2" failure_marker="$3"
   local progress_marker="$4" maximum_seconds="$5"
-  local poll_seconds started_milliseconds current_milliseconds
+  local poll_seconds started_milliseconds="${6:-}" current_milliseconds
   [[ "$maximum_seconds" =~ ^([1-9]|[1-9][0-9]|1[01][0-9]|120)$ ]] || return 2
   poll_seconds="$(recovery_stream_poll_seconds)" || return 1
-  started_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+  if [[ -z "$started_milliseconds" ]]; then
+    started_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+  else
+    [[ "$started_milliseconds" =~ ^[0-9]{1,18}$ ]] || return 2
+  fi
   recovery_runner_watch_marker_is_exact "$progress_marker" || return 1
   while :; do
+    # An owned child's gate/guardian handshake spends the SAME startup budget,
+    # not a second allowance. Existing callers retain their original contract.
+    if [[ -n "${6:-}" ]]; then
+      current_milliseconds="$(recovery_monotonic_milliseconds)" || return 1
+      ((current_milliseconds >= started_milliseconds &&
+        current_milliseconds - started_milliseconds < maximum_seconds * 1000)) || return 3
+    fi
     recovery_stream_guard_process_is_healthy \
       "$guard_pid" "$guard_start_identity" "$failure_marker" || return 1
     if [[ -s "$progress_marker" ]]; then
