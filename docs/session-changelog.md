@@ -3026,3 +3026,72 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   ShellCheck focal0. ShellCheck global-x salió1 por ocho infos fuera del delta,
   no modificadas/silenciadas. Ningún cambio producto, nueva medición native,
   full, copia real o afirmación de rendimiento por estas pruebas puras.
+
+## 2026-10-04 — Opt-in de restauración nativa del seed sintético existente
+
+- Worktree `synthetic-seed-restore-20261004`, rama del mismo alcance desde
+  raíz425a6b3b, Hubs137eb876 y Cloud81d5be0. Primer delta adaptador/tests
+  locales; producto, otros candidatos y despliegue intactos. El puente
+  greenfield se registra separadamente debajo.
+- Nuevo `--catalog-restore --pg-bin <bin> --cache-reticulum <cache>
+  --seed-source <scratch-existente> --hex-cache <archivo-existente>` cerrado.
+  Hex se copia mediante su inspector fijado, sin instalación/fetch. No genera
+  otro seed: valida recibo histórico terminal/PG14.23, SQL375445B, binding
+  aprobado33/7, grafo y103 pares; copia SQL+medios con destino nuevo privado,
+  no-clobber y fuente detenida/read-only. Binding privado liga SQL, config
+  pública test, tuple source, dataset y hashes de cada mitad de los pares.
+- `psql -X`, socket/usuario/DB explícitos, `ON_ERROR_STOP` y transacción única
+  recargan el SQL original en el PG14 nuevo identificado. El lector salta
+  create/migrate y usa SQL read-only: compara IDs/FKs/estados y digests de
+  claves recargadas, descifra103 plaintext mediante `Ret.Storage.fetch`,
+  verifica ownership distinto room/project y los consumidores de catálogo.
+  El negativo cambia sólo secret_key_base sintético, exige103 rechazos reales,
+  repone el dominio original y vuelve a verificar103 pares y el grafo.
+- Las claves por archivo no se duplican al binding: sólo digests; permanecen
+  en el SQL sintético privado. No se imprimen config/keys/SQL. Los bytes físicos
+  cifrados se contabilizan aparte, nunca como si fuesen bytes plaintext.
+- Focales falsos íntegramente en memoria14/14, salida original0; sintaxis JS,
+  parse Elixir y diff-check0. Primera ejecución focal salió1 por dos fallos del
+  propio test (raíz ausente en mkdir virtual y regexp que confundía Restore
+  con store); causa reparada, sin tocar seed ni lanzar native. Restauración
+  nativa real aún pendiente del primario y su revisión independiente. No
+  checkpoint, HTTP/browser, Kubernetes/producción ni tres ciclos por esto.
+- Reparación focal tras tres hallazgos de revisión: el origen designado es
+  raíz d52e25f9/Hubs2a3d7ab4/Cloudcb154140, distinto del destino425/137/81;
+  recibo PG exacto incluye `(Homebrew)`. La primera inspección source-only
+  del primario salió1 por esa incompatibilidad del binder, antes de writes
+  o native; no se reemplaza el seed ni se falsea aquel resultado.
+- Tokenizer COPY cerrado admite identificadores simples citados/unquoted,
+  incluida `"order"`, normaliza sin duplicados/fragments y conserva el SQL
+  importado intacto. Focales ahora usan esos encabezados realistas.
+- El primario capturó el 2026-10-04 la referencia SHA256 del SQL designado
+  y `ret0.table_id_seq`: last_value180/is_calledtrue. Se fijan para este seed,
+  sin override CLI; el lector compara esa secuencia literalmente y read-only,
+  sin nextval/migración. No había recibo hash histórico previo: esta referencia
+  actual NO prueba inmutabilidad desde la creación del seed. Binding separa
+  source_identity, sql_reference/fecha y futura evidencia de readback nativo.
+- Reparación17/17 puros, salida original0; sintaxis JS, parse Elixir y
+  diff-check0. No native ejecutado por el hijo. Pendientes recheck independiente,
+  inspección source-only del primario y después el gate nativo autorizado.
+
+## 2026-10-04 — Puente cerrado de values para la semilla sintética
+
+- Selector local `--prepare-synthetic-seed-values` del preparador existente:
+  TEMPLATE SHARED BINDING SEED_SOURCE BOOTSTRAP FINAL DOMAIN IMAGES_JSON.
+  Conserva sólo PHX_KEY del fixture público exacto; demás credenciales y
+  PERMS_KEY nuevas. No override de claves/hash en CLI/env ni inputs productivos.
+- Inputs CI públicos fijados y seis PRODUCT_MODULES válidos; creator URL propia
+  sólo cuando ON. Fuente detenida privada, binding y212archivos comprobados,
+  incluidos103pares/206archivos físicos. Images son CI registry.invalid:
+  esta preparación no es una familia de imágenes desplegable ni aceptación K3s.
+- Revisión independiente focal CLOSED, primario47980 original0,6/6 pruebas
+  falsas; JS/Elixir/diff y Gitleaks root12.28MB0leaks. Modo normal sigue con
+  PHX nueva; bootstrap→admission→active preserva PHX/módulos. Dos publicaciones
+  individuales no son una transacción: fallo I/O entre ellas propaga FAIL,
+  conserva el primer archivo recuperable y no emite éxito.
+- Primario bbef05 confirmó17/17 del adaptador e inspección de fuente real
+  original0 sin arrancar PG/copiar datos; los tres hallazgos de revisión
+  CLOSED sobre los SHA respectivos. Restore real nuevo todavía pendiente.
+- Se añaden ambas regresiones puras al gate security y workflow; el footprint
+  reticulum incluye binder/lector/test importados por el harness. Sin
+  aceptación heredada, normal+full consecutivos, build o cambio productivo.

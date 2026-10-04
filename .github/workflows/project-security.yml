@@ -192,6 +192,8 @@ jobs:
           node --test tests/runtime/bot-transport-local.test.mjs
           node --test tests/runtime/sql-http-local.test.mjs
           node --test tests/runtime/catalog-dataset.test.mjs
+          node --test tests/runtime/catalog-seed-restore.test.mjs
+          node --test tests/scripts/prepare-synthetic-seed-values.test.mjs
           node --test tests/scripts/recovery-kubectl-fixture-contract.test.mjs tests/scripts/stream-prelaunch-alignment.test.mjs tests/scripts/recovery-stream-diagnostics.test.mjs tests/scripts/pgsql-source-sweep.test.mjs tests/scripts/storage-parent-sweep.test.mjs
           bash tests/scripts/security-gates.test.sh
           bash tests/recovery/test-recovery-safety.sh

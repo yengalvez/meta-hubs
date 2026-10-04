@@ -1,5 +1,6 @@
 // Opt-in, macOS-only native backend sample. No provider, production DB,
-// Kubernetes, restore or profile/deployment acceptance is implied by this test.
+// Kubernetes or profile/deployment acceptance is implied by this test. Only
+// --catalog-restore selects the explicit existing synthetic local paired restore.
 import fs from "node:fs";
 import path from "node:path";
 import net from "node:net";
@@ -7,6 +8,7 @@ import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { prepareCatalogDataset } from "./catalog-dataset.mjs";
+import { catalogRestoreArguments, prepareCatalogSeedRestore, restorePsqlArguments, restoreScope } from "./catalog-seed-restore.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const relativeRet = "community-edition/services/reticulum";
@@ -289,6 +291,7 @@ export function runtimeCases(mode) {
     case "--sql-http-periodic": return [{ profile: "sql-http-periodic", count: 1 }];
     case "--catalog-dataset": return [{ profile: "catalog-dataset", count: 1 }];
     case "--catalog-graph-dataset": return [{ profile: "catalog-graph-dataset", count: 1 }];
+    case "--catalog-restore": return [{ profile: "catalog-restore", count: 1 }];
     case "--config-cache-canary": return [{ profile: "config-cache-canary", count: 2 }];
     case "--config-cache-boundaries": return [{ profile: "config-cache-boundaries", count: 4 }];
     case "--config-cache-types": return [{ profile: "config-cache-types", count: 1 }];
@@ -323,7 +326,7 @@ async function main() {
   let work, log, env, data, pgBin, port, epoch, attempted = false, identity;
   let phase = "arguments", outcome = "FAIL", tests = 0;
   const metrics = {}, started = performance.now();
-  let catalog, catalogSourceBefore, catalogSourceAfter, socketMode = false, socketSourceBefore, socketSourceAfter, hexArchive, canaryHexCache = false;
+  let catalog, restore, restoreOptions, catalogSourceBefore, catalogSourceAfter, socketMode = false, socketSourceBefore, socketSourceAfter, hexArchive, canaryHexCache = false;
   const catalogSourceSnapshot = () => Object.fromEntries([".", "hubs", "hubs-cloud"].map(name => {
     const repository = path.join(root, name);
     const read = args => {
@@ -361,16 +364,18 @@ async function main() {
   try {
     const integrated = ["--sql-http-canary", "--sql-http-reentry", "--sql-http-stop-drain", "--sql-http-periodic"].includes(args[0]);
     const catalogMode = ["--catalog-dataset", "--catalog-graph-dataset"].includes(args[0]);
+    const restoreMode = args[0] === "--catalog-restore";
     socketMode = ["--profile-ui-socket", "--profile-creator-socket", "--normal-glb-browser", "--avaturn-save-browser"].includes(args[0]);
     canaryHexCache = args[0] === "--sql-http-canary" && args.length === 9;
-    if (args.length !== (socketMode || canaryHexCache ? 9 : integrated || catalogMode ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
+    if (restoreMode) restoreOptions = catalogRestoreArguments(args);
+    if (args.length !== (socketMode || canaryHexCache || restoreMode ? 9 : integrated || catalogMode ? 7 : 5) || args[1] !== "--pg-bin" || args[3] !== "--cache-reticulum" ||
         (integrated && args[5] !== "--cache-bot-orchestrator") ||
         (catalogMode && args[5] !== "--catalog-receipts") ||
         (canaryHexCache && (args[7] !== "--hex-cache" || !args[8] || args[8].startsWith("--"))) ||
         (socketMode && (args[5] !== "--browser-origin" || args[7] !== "--hex-cache")) ||
         process.platform !== "darwin") reject("explicit_native_target_required");
     cases = runtimeCases(args[0]);
-    if (canaryHexCache) hexArchive = inspectHexArchive(args[8]);
+    if (canaryHexCache || restoreMode) hexArchive = inspectHexArchive(args[8]);
     if (socketMode) {
       browserOrigin(args[6]); hexArchive = inspectHexArchive(args[8]);
       socketSourceBefore = catalogSourceSnapshot();
@@ -400,7 +405,7 @@ async function main() {
       MIX_HOME: path.join(work, "mix"), HEX_HOME: path.join(work, "hex"),
       ERL_FLAGS: "+S 4:4", DB_HOST: "127.0.0.1", DB_CREDENTIALS: "unusable-before-local-override" };
     let catalogPostgresVersion;
-    if (catalogMode) {
+    if (catalogMode || restoreMode) {
       catalogPostgresVersion = run(path.join(pgBin, "postgres"), ["--version"], { capture: true }).trim();
       if (!/^postgres \(PostgreSQL\) 14\./.test(catalogPostgresVersion)) reject("catalog_native_major14_required");
     }
@@ -426,7 +431,7 @@ async function main() {
     // official installer ONLY in this private Mix home, before starting PG,
     // unless the selected mode explicitly supplies a verified existing archive.
     // No user config, provider credentials or global software is changed.
-    if (socketMode || canaryHexCache) step("copy-verified-existing-hex-private-home", () => {
+    if (socketMode || canaryHexCache || restoreMode) step("copy-verified-existing-hex-private-home", () => {
       const archive = path.join(work, "mix/archives/hex-2.5.1");
       fs.mkdirSync(path.dirname(archive), { mode: 0o700 });
       fs.cpSync(hexArchive.directory, archive, { recursive: true, dereference: false });
@@ -448,6 +453,27 @@ async function main() {
       if (answer !== `${data}|profile_test`) reject("database_identity_mismatch");
     });
     env.RET_LOCAL_DATA = data; env.RET_LOCAL_PORT = String(port); env.RET_LOCAL_CREDENTIAL = credential;
+    if (restoreMode) {
+      // No seed generation, create/store/promote, default DB, migration or
+      // restore controller: only this already-identified new private cluster.
+      restore = step("copy-existing-synthetic-sql-media-pair", () => prepareCatalogSeedRestore({
+        seedSource: restoreOptions.seedSource, work, testConfigSha: sha(fs.readFileSync(path.join(source, "config/test.exs")))
+      }));
+      step("restore-paired-sql-into-owned-new-pg14", () => {
+        restore.assertUnchanged(); restore.assertDestinationUnchanged();
+        if (assertPostmaster(work, data, port, epoch) !== identity) reject("restore_postmaster_identity_changed");
+        const target = ["-X", "-h", path.join(work, "socket"), "-p", String(port), "-U", "profile_test", "-d", "postgres", "-v", "ON_ERROR_STOP=1"];
+        const existing = run(path.join(pgBin, "psql"), [...target, "-At", "-c", "SELECT count(*) FROM pg_database WHERE datname='ret_test'"], { capture: true }).trim();
+        if (existing !== "0") reject("restore_destination_database_already_exists");
+        run(path.join(pgBin, "psql"), [...target, "-c", "CREATE DATABASE ret_test TEMPLATE template0 ENCODING 'UTF8'"]);
+        run(path.join(pgBin, "psql"), restorePsqlArguments({ work, data, port, sqlFile: restore.sqlFile }));
+        run(path.join(pgBin, "psql"), [...target, "-c", "ALTER DATABASE ret_test SET default_transaction_read_only = on"]);
+        if (assertPostmaster(work, data, port, epoch) !== identity) reject("restore_postmaster_identity_changed");
+        restore.assertUnchanged(); restore.assertDestinationUnchanged();
+      });
+      env.RET_LOCAL_CATALOG_RESTORE_BINDING = restore.bindingFile;
+      env.RET_LOCAL_CATALOG_RESTORE_STORAGE = restore.storage;
+    }
     if (socketMode) {
       env.RET_LOCAL_UI_HTTP_PORT = String(await privatePort([port, Number(new URL(args[6]).port)]));
       env.RET_LOCAL_BROWSER_ORIGIN = args[6]; env.RET_LOCAL_UI_BOOTSTRAP = path.join(work,
@@ -513,6 +539,17 @@ async function main() {
       };
       step("capture-owned-catalog-sql-and-source-identity", captureOwnedCatalogDump);
     }
+    if (restore) step("verify-restored-seed-source-and-pair-unchanged", () => {
+      if (assertPostmaster(work, data, port, epoch) !== identity) reject("restore_postmaster_identity_changed");
+      restore.assertUnchanged(); restore.assertDestinationUnchanged();
+      const readback = JSON.parse(fs.readFileSync(path.join(work, "catalog-restore/readback.json"), "utf8"));
+      if (readback.scope !== restoreScope || readback.pair_binding_sha256 !== restore.binding.pair_binding_sha256 ||
+          readback.sql_reload_verified !== true || readback.sequence_verified !== true || readback.owned_pairs !== 103 || readback.plaintext_verified !== 103 ||
+          readback.negative_secret_rejected !== 103 || readback.original_domain_reverified !== 103 ||
+          readback.graph_ownership_verified !== true) reject("restore_native_readback_missing");
+      metrics.catalog_restore = { ...readback, postgres_version: catalogPostgresVersion, source_unchanged: true, destination_pair_unchanged: true,
+        sql_bytes: restore.sql.length, physical_media_bytes: restore.binding.files.reduce((sum, row) => sum + row.blob_bytes + row.meta_bytes, 0) };
+    });
     outcome = socketMode ? "OBSERVATION_STOPPED" : "PASS";
   } catch (error) {
     process.stderr.write(`RET_LOCAL_FAIL:${phase}:${/^[a-z0-9_-]+$/.test(error.message) ? error.message : "inspect_private_log"}\n`);

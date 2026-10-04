@@ -306,7 +306,7 @@ test("UI socket is one explicit observation, never a replay of native tests", ()
   const bootstrap = fs.readFileSync(new URL("./reticulum-local.exs", import.meta.url), "utf8");
   const fixture = fs.readFileSync(new URL("./reticulum-ui-socket.exs", import.meta.url), "utf8");
   assert.ok(runner.indexOf("hexArchive = inspectHexArchive(args[8])") < runner.indexOf('work = fs.mkdtempSync'));
-  assert.match(runner, /if \(socketMode \|\| canaryHexCache\) step\("copy-verified-existing-hex-private-home"/);
+  assert.match(runner, /if \(socketMode \|\| canaryHexCache \|\| restoreMode\) step\("copy-verified-existing-hex-private-home"/);
   assert.match(runner, /else step\("materialize-pinned-hex-private-home"/);
   assert.match(runner, /outcome = socketMode \? "OBSERVATION_STOPPED" : "PASS"/);
   assert.match(runner, /ui_socket_input_eof_without_stop/);
@@ -358,7 +358,7 @@ test("SQL HTTP canary Hex opt-in accepts only the exact trailing flag before nat
   assert.deepEqual(parsed.cases, [{ profile: "sql-http-canary", count: 2 }]);
   assert.equal(parsed.socketMode, false); assert.equal(parsed.canaryHexCache, true);
   assert.equal(parsed.hexArchive, syntheticHex); assert.deepEqual(events, ["inspect"]);
-  const inspectAt = source.indexOf("if (canaryHexCache) hexArchive = inspectHexArchive(args[8]);");
+  const inspectAt = source.indexOf("if (canaryHexCache || restoreMode) hexArchive = inspectHexArchive(args[8]);");
   assert.ok(inspectAt >= 0 && inspectAt < source.indexOf("work = fs.mkdtempSync"));
   assert.ok(source.indexOf("work = fs.mkdtempSync") < source.indexOf('step("initialize-private-synthetic-database"'));
   assert.equal(canaryHexArguments(canaryArgs).canaryHexCache, false, "legacy canary stays opt-in");

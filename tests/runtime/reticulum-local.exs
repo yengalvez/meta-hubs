@@ -33,6 +33,7 @@ Application.put_env(:ret, Ret.RoomAssigner, balancer_weights: [{600, 1}, {300, 5
 Application.put_env(:ret, Ret.MediaResolver, [])
 
 profile = System.fetch_env!("RET_LOCAL_PROFILE")
+catalog_restore = profile == "catalog-restore"
 avaturn_runtime = profile == "avaturn-runtime"
 chat_focus = profile in ["chat-canary", "chat-boundaries"]
 chat_concurrent = profile in ["chat-concurrent", "chat-concurrent-boundaries"]
@@ -95,7 +96,7 @@ if ui_socket do
   Application.put_env(:phoenix, :filter_parameters, ["auth_token", "session_token", "perms_token", "token"])
 end
 
-if catalog do
+if catalog or catalog_restore do
   Application.put_env(:ret, Ret.ProductModules, bots: false, ai: false, avaturn: false)
 
   Application.put_env(
@@ -113,6 +114,32 @@ if catalog do
     Ret.Storage,
     Keyword.put(Application.fetch_env!(:ret, Ret.Storage), :host, "http://127.0.0.1:4000")
   )
+end
+
+if catalog_restore do
+  work = Path.dirname(data)
+  storage = System.fetch_env!("RET_LOCAL_CATALOG_RESTORE_STORAGE")
+  binding = System.fetch_env!("RET_LOCAL_CATALOG_RESTORE_BINDING")
+
+  unless storage == Path.join(work, "reticulum/storage/test") and
+           binding == Path.join(work, "catalog-restore/binding.json") do
+    raise "explicit owned paired restore input required"
+  end
+
+  # Preserve the tracked test crypto domain exactly; never set a new PHX_KEY.
+  Application.put_env(
+    :ret,
+    Ret.Storage,
+    Keyword.put(Application.fetch_env!(:ret, Ret.Storage), :storage_path, storage)
+  )
+
+  # SQL is already reloaded by psql into the verified new cluster. Readers,
+  # including application children, may not create or repair restored rows.
+  for repo <- [Ret.Repo, Ret.SessionLockRepo] do
+    config = Application.fetch_env!(:ret, repo)
+    parameters = Keyword.get(config, :parameters, []) |> Keyword.put(:default_transaction_read_only, "on")
+    Application.put_env(:ret, repo, Keyword.put(config, :parameters, parameters))
+  end
 end
 
 if sql_http do
@@ -159,7 +186,7 @@ profiles = %{
 
 unless profile == "existing-tests" or avaturn_runtime or chat_focus or chat_concurrent or
          config_cache or sql_http or
-         catalog or ui_socket do
+         catalog or catalog_restore or ui_socket do
   modules = Map.fetch!(profiles, profile)
 
   Application.put_env(
@@ -180,10 +207,18 @@ end
     []
   )
 
+if catalog_restore do
+  %Postgrex.Result{rows: [[true]]} =
+    Postgrex.query!(connection, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname='ret_test')", [])
+end
+
 GenServer.stop(connection)
-Mix.Task.run("ecto.create", ["--quiet"])
-Mix.Task.run("ecto.migrate", [])
-File.mkdir_p!("storage/test")
+
+unless catalog_restore do
+  Mix.Task.run("ecto.create", ["--quiet"])
+  Mix.Task.run("ecto.migrate", [])
+  File.mkdir_p!("storage/test")
+end
 {:ok, _} = Application.ensure_all_started(:ret)
 
 if ui_socket do
@@ -198,6 +233,11 @@ ExUnit.configure(autorun: false)
 
 {count, total, excluded} =
   cond do
+    catalog_restore ->
+      Ecto.Adapters.SQL.Sandbox.mode(Ret.Repo, :auto)
+      Code.require_file(Path.join(__DIR__, "reticulum-catalog-restore.exs"))
+      {1, 1, 0}
+
     profile == "existing-tests" ->
       Code.require_file("test/ret/product_modules_test.exs")
       Code.require_file("test/ret/bot_chat_presence_test.exs")
