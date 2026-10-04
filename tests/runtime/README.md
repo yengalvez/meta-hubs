@@ -30,6 +30,21 @@ do not assign a historical cause or clear a stale latch. Use one finite native
 attempt after directed review; an external900s deadline is failure, not a
 change to the product's timing contract. This is not a full/recovery/SLO gate.
 
+The same opt-in now also requires the host Bash5+ `EPOCHREALTIME` builtin,
+checked before starting parents, and writes `segments.jsonl` only while the
+PGSQL monitor calls `require_backup_guard`. Its28 flat callsite segments cover
+the initial lock/Lease, five consumers, parent authority/privacy/progress,
+contract/baseline, process, live boundary, durable quiescence and active fence.
+These are composite callsite costs, not isolated primitive costs. New hooks use
+only Bash builtins and private appends: no Python/Node/date process per segment.
+Their microseconds are explicitly **WALL CLOCK**, never mixed with the existing
+libc monotonic samples or used for security. The oracle requires58 ordered
+events per complete round, one PID/counter, no overlaps or backward timestamps,
+and reports a non-attributed residual that includes hook/plumbing costs.
+Missing/ambiguous coverage fails as indeterminate. A complete breakdown with
+native exit1 remains FAIL while retaining its measurements; it is not a fix,
+historical cause attribution or acceptance. No guard or deadline is changed.
+
 Portable safety checks (also registered in local/CI security):
 
 ```sh

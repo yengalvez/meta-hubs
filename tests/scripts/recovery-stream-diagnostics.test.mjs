@@ -388,6 +388,15 @@ function withNativeTraceCopy(callback) {
   }
 }
 
+const nativeWallCallsites = ["preconditions", "lock-lease-initial",
+  "consumer-reticulum", "consumer-pgbouncer", "consumer-pgbouncer-t", "consumer-bot-orchestrator", "consumer-coturn",
+  "writer-authority-export", "writer-monitor-authority-privacy-progress", "writer-process-before-boundary",
+  "writer-boundary-lock-lease-before", "writer-contracts-baselines", "writer-live-boundary", "writer-boundary-lock-lease-after",
+  "writer-process-after-boundary", "writer-progress-export", "durable-authority-export",
+  "durable-monitor-authority-privacy", "durable-control-baseline", "durable-monitor-authority-contract",
+  "durable-monitor-progress", "durable-process-before", "durable-lock-lease", "durable-baseline",
+  "durable-runner-quiescence", "durable-process-after", "durable-progress-export", "durable-active-fence"];
+
 function seedNativeTraceRecords(trace) {
   const row = (event, pid, at_ms, counter, phase = "publisher", observation_ms = null, status = 0) =>
     ({ event, pid, at_ms, counter, status, phase, observation_ms });
@@ -402,7 +411,18 @@ function seedNativeTraceRecords(trace) {
     [202, 1200, 2, "refresh", 1190], [203, 1400, 2, "post-audit", 1390], [204, 1600, 2, "post-audit", 1590]]) {
     readers.push(row("reader-before", pid, before, 0, phase, observation), row("reader-after", pid, before + 20, counter, phase, observation));
   }
-  const fixture = { child, publisher, readers };
+  const segments = [];
+  for (let counter = 1; counter <= 2; counter++) {
+    const start = 1_800_000_000_000_000 + counter * 10000;
+    const wall = (event, callsite, wall_us) =>
+      ({ event, callsite, clock: "WALL_CLOCK_EPOCHREALTIME", pid: 101, counter, wall_us, status: 0 });
+    segments.push(wall("round-before", "require_backup_guard", start));
+    nativeWallCallsites.forEach((callsite, index) => {
+      segments.push(wall("before", callsite, start + 10 + index * 30), wall("after", callsite, start + 30 + index * 30));
+    });
+    segments.push(wall("round-after", "require_backup_guard", start + 1000));
+  }
+  const fixture = { child, publisher, readers, segments };
   for (const [name, rows] of Object.entries(fixture)) {
     writeFileSync(join(trace, `${name}.jsonl`), `${rows.map(value => JSON.stringify(value)).join("\n")}\n`, { mode: 0o600 });
   }
@@ -439,6 +459,51 @@ test("pgsql native trace copies strip byte-exactly and bind all original helper 
   });
 });
 
+test("pgsql native trace wall hooks gate on the monitor guard stack and preserve the native status without subprocesses", () => {
+  withNativeTraceCopy(trace => {
+    const result = spawnSync("bash", ["-c", `set -euo pipefail
+source "$1/hooks.sh"
+CHECKPOINT_PGSQL_NATIVE_TRACE_DIR="$1"
+checkpoint_pgsql_native_trace_wall_clock_ready
+node(){ return 99; }; python3(){ return 99; }; date(){ return 99; }
+for expected in 0 1 37; do
+  if checkpoint_pgsql_native_trace_wall_segment before preconditions "$expected"; then observed=0; else observed=$?; fi
+  [[ "$observed" == "$expected" && ! -e "$1/segments.jsonl" ]]
+done
+require_backup_guard(){
+  checkpoint_pgsql_native_trace_wall_segment before preconditions 0
+  checkpoint_pgsql_native_trace_wall_segment after preconditions 37
+}
+monitor_exact_pgsql_source(){ local progress=2; require_backup_guard; }
+if monitor_exact_pgsql_source; then observed=0; else observed=$?; fi
+[[ "$observed" == 37 ]]
+`, "_", trace], { cwd: root, encoding: "utf8", timeout: 5000 });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout + result.stderr, "");
+    const rows = readFileSync(join(trace, "segments.jsonl"), "utf8").trimEnd().split("\n").map(JSON.parse);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].pid, rows[1].pid);
+    assert.deepEqual(rows.map(row => [row.event, row.counter, row.status, row.clock]),
+      [["before", 3, 0, "WALL_CLOCK_EPOCHREALTIME"], ["after", 3, 37, "WALL_CLOCK_EPOCHREALTIME"]]);
+    assert.ok(rows[1].wall_us >= rows[0].wall_us);
+  });
+});
+
+test("pgsql native trace wall preflight rejects a missing EPOCHREALTIME builtin", () => {
+  withNativeTraceCopy(trace => {
+    const result = spawnSync("bash", ["-c", `set -euo pipefail
+source "$1/hooks.sh"
+checkpoint_pgsql_native_trace_wall_clock_ready
+unset EPOCHREALTIME
+if checkpoint_pgsql_native_trace_wall_clock_ready; then exit 1; fi
+`, "_", trace], { cwd: root, encoding: "utf8", timeout: 5000 });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout + result.stderr, "");
+  });
+});
+
 test("pgsql native trace complete pure records report brackets without assigning an origin", () => {
   withNativeTraceCopy(trace => {
     seedNativeTraceRecords(trace);
@@ -453,6 +518,67 @@ test("pgsql native trace complete pure records report brackets without assigning
     assert.equal(summary.origin, "indeterminate");
   });
 });
+
+test("pgsql native trace wall segments sum only the flat same-round partition in their own clock domain", () => {
+  withNativeTraceCopy(trace => {
+    seedNativeTraceRecords(trace);
+    const result = runNativeTraceOracle(trace);
+    assert.equal(result.status, 0, result.stderr);
+    const summary = JSON.parse(result.stdout.replace(/^pgsql_native_freshness_trace:/, ""));
+    assert.equal(summary.wall_clock_segments.clock, "WALL_CLOCK_EPOCHREALTIME");
+    assert.equal(summary.wall_clock_segments.unit, "microseconds");
+    assert.equal(summary.wall_clock_segments.hook_events, 116);
+    assert.equal(summary.wall_clock_segments.security_clock, false);
+    assert.deepEqual(summary.wall_clock_segments.rounds.map(round => [round.counter, round.total_us,
+      round.measured_us, round.unattributed_us]), [[1, 1000, 560, 440], [2, 1000, 560, 440]]);
+    assert.equal(summary.maximum_guard_ms, 400, "wall and monotonic epochs are never subtracted");
+  });
+});
+
+test("pgsql native trace preserves native failure even when its wall breakdown is complete", () => {
+  withNativeTraceCopy(trace => {
+    const fixture = seedNativeTraceRecords(trace);
+    fixture.child[1].status = 1;
+    writeFileSync(join(trace, "child.jsonl"), `${fixture.child.map(row => JSON.stringify(row)).join("\n")}\n`);
+    writeFileSync(join(trace, "native-exit"), "1\n");
+    const result = runNativeTraceOracle(trace);
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr, "");
+    const summary = JSON.parse(result.stdout.replace(/^pgsql_native_freshness_trace:/, ""));
+    assert.equal(summary.native_exit, 1);
+    assert.equal(summary.wall_clock_segments.rounds.length, 2);
+  });
+});
+
+for (const [name, mutate] of [
+  ["absent coverage", f => { f.segments = []; }],
+  ["missing round terminal", f => f.segments.pop()],
+  ["incomplete pair", f => f.segments.splice(2, 1)],
+  ["interleaved pairs", f => { [f.segments[2], f.segments[3]] = [f.segments[3], f.segments[2]]; }],
+  ["overlapping pairs", f => { f.segments[3].wall_us = f.segments[2].wall_us - 1; }],
+  ["ambiguous PID", f => { f.segments[2].pid = 999; }],
+  ["ambiguous counter", f => { f.segments[2].counter = 2; }],
+  ["ambiguous callsite", f => { f.segments[2].callsite = "lock-lease-initial"; }],
+  ["duplicate callsite", f => { f.segments[3].callsite = f.segments[4].callsite = "preconditions"; }],
+  ["clock regression", f => { f.segments[2].wall_us = f.segments[1].wall_us - 1; }],
+  ["mixed clocks", f => { f.segments[2].clock = "monotonic"; }],
+  ["unknown field", f => { f.segments[2].payload = "not-a-cost"; }],
+  ["failed segment", f => { f.segments[2].status = 1; }],
+  ["out-of-round event", f => { f.segments[1].wall_us = f.segments[0].wall_us - 1; }],
+]) {
+  test(`pgsql native trace rejects wall ${name}`, () => {
+    withNativeTraceCopy(trace => {
+      const fixture = seedNativeTraceRecords(trace);
+      mutate(fixture);
+      writeFileSync(join(trace, "segments.jsonl"), fixture.segments.length ?
+        `${fixture.segments.map(row => JSON.stringify(row)).join("\n")}\n` : "");
+      const result = runNativeTraceOracle(trace);
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "pgsql_native_freshness_trace:indeterminate-incomplete-or-inconsistent\n");
+    });
+  });
+}
 
 for (const [name, mutate] of [
   ["missing monitor terminal", f => f.publisher.pop()],
@@ -499,6 +625,17 @@ for (const [name, alter] of [
     writeFileSync(file, `${readFileSync(file, "utf8")}\n`);
   }],
   ["trace write or clock failure", trace => writeFileSync(join(trace, "invalid"), "invalid\n")],
+  ["missing wall trace file", trace => rmSync(join(trace, "segments.jsonl"))],
+  ["truncated wall JSONL", trace => writeFileSync(join(trace, "segments.jsonl"), '{"event":')],
+  ["blank wall record", trace => {
+    const file = join(trace, "segments.jsonl");
+    writeFileSync(file, `${readFileSync(file, "utf8")}\n`);
+  }],
+  ["ambiguous wall manifest coverage", trace => {
+    const file = join(trace, "instrumentation.json"), manifest = JSON.parse(readFileSync(file, "utf8"));
+    manifest.wall_clock_segments.callsites.pop();
+    writeFileSync(file, JSON.stringify(manifest));
+  }],
 ]) {
   test(`pgsql native trace rejects ${name}`, () => {
     withNativeTraceCopy(trace => {

@@ -1,5 +1,21 @@
 # Session Changelog
 
+## 2026-10-04 · Partition the existing PGSQL guard trace by real callsites
+
+Extend only the checkpoint-children/db-stable test-only tracer: insertion-only
+copies still strip to the exact child/library originals. Within the PGSQL
+monitor's actual require_backup_guard stack,28 non-overlapping segments retain
+all lock/Lease, consumer, parent authority/privacy/progress, contract/baseline,
+PID, live boundary, durable-quiescence and fence calls. New segment hooks use
+the host Bash EPOCHREALTIME builtin only, explicitly WALL CLOCK and separate
+from the unchanged libc monotonic samples. The oracle requires complete ordered
+coverage and reports unassigned residual/hook costs; a measured native1 stays
+FAIL. Fifteen directed RED cases became GREEN;39 selected pure tests pass,
+including exact stripping, clock availability, stack gating and status37
+preservation. No native/full rerun, product/submodule change or cause acceptance
+is claimed. The jq proposal remains parked after its44ms partial micro-sample.
+Independent delta review and one finite native sample remain pending.
+
 ## 2026-10-04 · Trace the complete native PGSQL child with ordinary guards
 
 Test-only opt-in instrumentation of checkpoint-children/db-stable preserves

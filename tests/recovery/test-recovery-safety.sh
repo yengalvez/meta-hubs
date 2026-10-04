@@ -8428,6 +8428,40 @@ checkpoint_pgsql_native_trace_marker_event() {
   return "$native_status"
 }
 
+checkpoint_pgsql_native_trace_wall_clock_ready() {
+  local sampled="${EPOCHREALTIME-}"
+  ((BASH_VERSINFO[0] >= 5)) && [[ "$sampled" =~ ^[0-9]+\.[0-9]{6}$ ]]
+}
+
+checkpoint_pgsql_native_trace_wall_segment() {
+  local event="$1" callsite="$2" native_status="$3" sampled wall_us counter
+  # No records from preflight/audits/other parents, even in the opt-in copy.
+  if [[ " ${FUNCNAME[*]} " != *' monitor_exact_pgsql_source '* ||
+        " ${FUNCNAME[*]} " != *' require_backup_guard '* ]]; then
+    return "$native_status"
+  fi
+  sampled="${EPOCHREALTIME-}"
+  if [[ ! "$sampled" =~ ^[0-9]+\.[0-9]{6}$ || ! "${progress:-}" =~ ^[0-9]+$ ||
+        ! "$native_status" =~ ^[0-9]+$ || ! "$callsite" =~ ^[a-z][a-z0-9_-]+$ ]]; then
+    printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid" || :
+    return "$native_status"
+  fi
+  case "$event" in
+    before|after|round-before|round-after) ;;
+    *) printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid" || :; return "$native_status" ;;
+  esac
+  wall_us="${sampled/./}"
+  counter=$((progress + 1))
+  # WALL CLOCK only: this epoch is never used for security or mixed with libc
+  # monotonic samples. Builtin expansion/math/printf only; no process per hook.
+  printf '{"event":"%s","callsite":"%s","clock":"WALL_CLOCK_EPOCHREALTIME","pid":%s,"counter":%s,"wall_us":%s,"status":%s}\n' \
+    "$event" "$callsite" "$BASHPID" "$counter" "$wall_us" "$native_status" \
+    >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/segments.jsonl" ||
+      { printf 'invalid\n' >>"$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/invalid" || :; }
+  # A hook at a function's final call must not turn a native failure into 0.
+  return "$native_status"
+}
+
 checkpoint_pgsql_native_trace_rebind_library() {
   local original expected
   expected="$(jq -er '.original_library_dir' \
@@ -8439,6 +8473,10 @@ checkpoint_pgsql_native_trace_rebind_library() {
 }
 
 checkpoint_pgsql_native_trace_prepare() {
+  checkpoint_pgsql_native_trace_wall_clock_ready || {
+    printf 'PGSQL wall segments require the host Bash EPOCHREALTIME builtin.\n' >&2
+    return 2
+  }
   node - "$ROOT_DIR" "${BASH_SOURCE[0]}" "$1" <<'CHECKPOINT_PGSQL_NATIVE_TRACE_GENERATE'
 const fs = require("node:fs");
 const path = require("node:path");
@@ -8464,7 +8502,7 @@ function instrument(original, file, edits) {
   const lines = original.split("\n"), before = new Map(), after = new Map();
   for (const { line, hook, side = "before", occurrence = 0, count = 1 } of edits) {
     const hits = lines.flatMap((value, index) => value === line ? [index] : []);
-    if (hits.length !== count || !Number.isInteger(hits[occurrence])) throw new Error("non-unique trace anchor");
+    if (hits.length !== count || !Number.isInteger(hits[occurrence])) throw new Error(`non-unique trace anchor: ${file}: ${JSON.stringify(line)} (${hits.length}/${count})`);
     const target = side === "before" ? before : after;
     const insertion = `${line.match(/^\s*/)[0]}${hook} ${marker} ${insertions.length + 1}`;
     const index = hits[occurrence];
@@ -8473,6 +8511,24 @@ function instrument(original, file, edits) {
   }
   return lines.flatMap((line, index) => [...(before.get(index) || []), line, ...(after.get(index) || [])]).join("\n");
 }
+const wallCallsites = ["preconditions", "lock-lease-initial",
+  "consumer-reticulum", "consumer-pgbouncer", "consumer-pgbouncer-t", "consumer-bot-orchestrator", "consumer-coturn",
+  "writer-authority-export", "writer-monitor-authority-privacy-progress", "writer-process-before-boundary",
+  "writer-boundary-lock-lease-before", "writer-contracts-baselines", "writer-live-boundary", "writer-boundary-lock-lease-after",
+  "writer-process-after-boundary", "writer-progress-export", "durable-authority-export",
+  "durable-monitor-authority-privacy", "durable-control-baseline", "durable-monitor-authority-contract",
+  "durable-monitor-progress", "durable-process-before", "durable-lock-lease", "durable-baseline",
+  "durable-runner-quiescence", "durable-process-after", "durable-progress-export", "durable-active-fence"];
+const wallHook = (event, callsite) => `checkpoint_pgsql_native_trace_wall_segment ${event} "${callsite}" "$?"`;
+function wallSegments(text, file, name, segments, extra = []) {
+  const body = fn(text, name), edits = [];
+  for (const [callsite, start, end] of segments) {
+    edits.push({ ...start, hook: wallHook("before", callsite) });
+    edits.push({ ...end, hook: wallHook("after", callsite) });
+  }
+  return text.replace(body, instrument(body, file, [...extra, ...edits]));
+}
+const at = (line, options = {}) => ({ line, ...options });
 let child = instrument(originals.child, "child", [
   { line: 'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"', side: "after", hook: 'source "$CHECKPOINT_PGSQL_NATIVE_TRACE_DIR/hooks.sh"' },
   { line: 'source "$SCRIPT_DIR/lib/recovery-safety.sh"', side: "after", hook: "checkpoint_pgsql_native_trace_record child-start 0 0" }
@@ -8490,6 +8546,25 @@ for (let occurrence = 0; occurrence < 3; occurrence++) {
   monitorEdits.push({ line: "      return 1", count: 3, occurrence, hook: 'checkpoint_pgsql_native_trace_record monitor-stop "$progress" 1' });
 }
 child = child.replace(monitor, instrument(monitor, "child", monitorEdits));
+child = wallSegments(child, "child", "require_backup_guard", [
+  ["preconditions", at("  local deployment"), at("  recovery_require_operation_lock || {")],
+  ["lock-lease-initial", at("  recovery_require_operation_lock || {"), at("  for deployment in reticulum pgbouncer pgbouncer-t bot-orchestrator coturn; do")],
+  ["consumer-$deployment", at('    recovery_require_consumer_contract_entry "$RECOVERY_CONSUMER_CONTRACT_JSON" \\'),
+    at('      "$deployment" 0 || return 1', { side: "after" })]
+], [
+  { ...at("  local deployment"), hook: wallHook("round-before", "require_backup_guard") },
+  { ...at('  DB_BACKUP_GUARD_FAILURE_REASON=""', { side: "after" }), hook: wallHook("round-after", "require_backup_guard") }
+]);
+child = wallSegments(child, "child", "require_parent_writer_monitor_capability", [
+  ["writer-authority-export", at('  local observed_authority_sha256=""'), at("  recovery_require_checkpoint_writer_monitor_healthy \\")],
+  ["writer-progress-export", at("  recovery_stream_guard_progress_value \\"),
+    at('      "$PARENT_WRITER_MONITOR_AUTHORITY_SHA256" >/dev/null', { side: "after" })]
+]);
+child = wallSegments(child, "child", "require_parent_durable_monitor_capability", [
+  ["durable-authority-export", at("  DB_PARENT_DURABLE_FAILURE_REASON=durable-authority"), at("  recovery_require_durable_runner_quiescence_monitor_healthy \\")],
+  ["durable-progress-export", at("  DB_PARENT_DURABLE_FAILURE_REASON=durable-progress"), at("  DB_PARENT_DURABLE_FAILURE_REASON=active-fence")],
+  ["durable-active-fence", at("  DB_PARENT_DURABLE_FAILURE_REASON=active-fence"), at('  DB_PARENT_DURABLE_FAILURE_REASON=""')]
+]);
 const cleanup = fn(child, "cleanup_backup");
 child = child.replace(cleanup, instrument(cleanup, "child", [
   { line: "  trap '' INT TERM", hook: "local checkpoint_pgsql_native_trace_cleanup_native=$?" },
@@ -8497,6 +8572,35 @@ child = child.replace(cleanup, instrument(cleanup, "child", [
 ]));
 let library = instrument(originals.library, "library", [
   { line: 'RECOVERY_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"', side: "after", hook: "checkpoint_pgsql_native_trace_rebind_library || return 1" }
+]);
+library = wallSegments(library, "library", "recovery_require_checkpoint_writer_monitor_healthy", [
+  ["writer-monitor-authority-privacy-progress", at('  [[ "$runtime_generation" =~ ^(durable-v2|legacy-absent)$ &&'),
+    at('  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" ||', { count: 2 })],
+  ["writer-process-before-boundary", at('  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" ||', { count: 2 }),
+    at("  recovery_checkpoint_writer_monitor_boundary_json \\")],
+  ["writer-process-after-boundary", at('  recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" ||', { count: 2, occurrence: 1 }),
+    at("    recovery_monitor_health_diagnostic process-after-boundary", { side: "after" })]
+]);
+library = wallSegments(library, "library", "recovery_checkpoint_writer_monitor_boundary_json", [
+  ["writer-boundary-lock-lease-before", at("  recovery_require_operation_serialization || return 1", { count: 2 }),
+    at("  recovery_checkpoint_writer_monitor_file_is_exact \\", { count: 2 })],
+  ["writer-contracts-baselines", at("  recovery_checkpoint_writer_monitor_file_is_exact \\", { count: 2 }),
+    at('  boundary_json="$(env KUBECTL_BIN="$watcher_kubectl_bin" \\')],
+  ["writer-live-boundary", at('  boundary_json="$(env KUBECTL_BIN="$watcher_kubectl_bin" \\'),
+    at("  recovery_require_operation_serialization || return 1", { count: 2, occurrence: 1 })],
+  ["writer-boundary-lock-lease-after", at("  recovery_require_operation_serialization || return 1", { count: 2, occurrence: 1 }),
+    at('  printf \'%s\\n\' "$boundary_json"')]
+]);
+library = wallSegments(library, "library", "recovery_require_durable_runner_quiescence_monitor_healthy", [
+  ["durable-monitor-authority-privacy", at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-authority"), at('  expected_capability="$(')],
+  ["durable-control-baseline", at('  expected_capability="$('), at("  recovery_durable_runner_monitor_authority_is_exact \\")],
+  ["durable-monitor-authority-contract", at("  recovery_durable_runner_monitor_authority_is_exact \\"), at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-progress")],
+  ["durable-monitor-progress", at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-progress"), at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-process", { count: 2 })],
+  ["durable-process-before", at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-process", { count: 2 }), at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=serialization")],
+  ["durable-lock-lease", at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=serialization"), at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-baseline")],
+  ["durable-baseline", at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-baseline"), at('  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL="runner-quiescence"')],
+  ["durable-runner-quiescence", at('  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL="runner-quiescence"'), at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-process", { count: 2, occurrence: 1 })],
+  ["durable-process-after", at("  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=durable-process", { count: 2, occurrence: 1 }), at('  RECOVERY_DURABLE_MONITOR_FAILURE_DETAIL=""')]
 ]);
 const formatter = fn(library, "recovery_write_stream_guard_progress");
 library = library.replace(formatter, instrument(formatter, "library", [
@@ -8524,11 +8628,16 @@ if (fs.existsSync(destination)) throw new Error("trace fixture already exists");
 fs.mkdirSync(path.join(destination, "deployment/lib"), { recursive: true, mode: 0o700 });
 fs.writeFileSync(path.join(destination, "deployment/backup-retdb.sh"), child, { mode: 0o700 });
 fs.writeFileSync(path.join(destination, "deployment/lib/recovery-safety.sh"), library, { mode: 0o600 });
-const hooks = ["checkpoint_pgsql_native_trace_record", "checkpoint_pgsql_native_trace_marker_event", "checkpoint_pgsql_native_trace_rebind_library"].map(name => fn(suite, name)).join("\n\n") + "\n";
+const hooks = ["checkpoint_pgsql_native_trace_record", "checkpoint_pgsql_native_trace_marker_event",
+  "checkpoint_pgsql_native_trace_wall_clock_ready", "checkpoint_pgsql_native_trace_wall_segment",
+  "checkpoint_pgsql_native_trace_rebind_library"].map(name => fn(suite, name)).join("\n\n") + "\n";
 fs.writeFileSync(path.join(destination, "hooks.sh"), hooks, { mode: 0o600 });
 const sha = value => crypto.createHash("sha256").update(value).digest("hex");
 const manifest = { fixture_only: true, original_library_dir: fs.realpathSync(path.dirname(sources.library)), sources,
-  source_sha256: Object.fromEntries(Object.entries(originals).map(([key, bytes]) => [key, sha(bytes)])), hooks_sha256: sha(hooks), insertions };
+  source_sha256: Object.fromEntries(Object.entries(originals).map(([key, bytes]) => [key, sha(bytes)])), hooks_sha256: sha(hooks), insertions,
+  wall_clock_segments: { clock: "WALL_CLOCK_EPOCHREALTIME", unit: "microseconds", security_clock: false,
+    scope: "monitor_exact_pgsql_source/require_backup_guard", callsites: wallCallsites,
+    hook_events_per_complete_round: 2 + 2 * wallCallsites.length, instrumentation_overhead_included: true } };
 fs.writeFileSync(path.join(destination, "instrumentation.json"), JSON.stringify(manifest) + "\n", { mode: 0o600 });
 CHECKPOINT_PGSQL_NATIVE_TRACE_GENERATE
 }
@@ -8621,6 +8730,59 @@ try {
   const observed = pairs.filter(pair => pair[0].phase === "post-audit");
   requireExact(observed.length >= 2);
   const observationGaps = observed.slice(1).map((pair, index) => pair[1].at_ms - observed[index][0].at_ms);
+  // A separate WALL CLOCK partition: correlate only PID/counter/callsite.
+  // Neither wall epochs nor wall durations are used to credit/latch progress.
+  const wallCallsites = ["preconditions", "lock-lease-initial",
+    "consumer-reticulum", "consumer-pgbouncer", "consumer-pgbouncer-t", "consumer-bot-orchestrator", "consumer-coturn",
+    "writer-authority-export", "writer-monitor-authority-privacy-progress", "writer-process-before-boundary",
+    "writer-boundary-lock-lease-before", "writer-contracts-baselines", "writer-live-boundary", "writer-boundary-lock-lease-after",
+    "writer-process-after-boundary", "writer-progress-export", "durable-authority-export",
+    "durable-monitor-authority-privacy", "durable-control-baseline", "durable-monitor-authority-contract",
+    "durable-monitor-progress", "durable-process-before", "durable-lock-lease", "durable-baseline",
+    "durable-runner-quiescence", "durable-process-after", "durable-progress-export", "durable-active-fence"];
+  const wallManifest = manifest.wall_clock_segments, eventsPerRound = 2 + 2 * wallCallsites.length;
+  requireExact(wallManifest?.clock === "WALL_CLOCK_EPOCHREALTIME" && wallManifest.unit === "microseconds" &&
+    wallManifest.security_clock === false && wallManifest.scope === "monitor_exact_pgsql_source/require_backup_guard" &&
+    JSON.stringify(wallManifest.callsites) === JSON.stringify(wallCallsites) &&
+    wallManifest.hook_events_per_complete_round === eventsPerRound && wallManifest.instrumentation_overhead_included === true);
+  const wallBytes = fs.readFileSync(path.join(root, "segments.jsonl"), "utf8");
+  requireExact(wallBytes.endsWith("\n") && wallBytes.length <= 2_000_000);
+  const wallRows = wallBytes.slice(0, -1).split("\n").map(line => {
+    const row = JSON.parse(line);
+    requireExact(line === JSON.stringify(row) &&
+      Object.keys(row).sort().join() === "callsite,clock,counter,event,pid,status,wall_us");
+    requireExact(row.clock === wallManifest.clock && integer(row.wall_us) && integer(row.counter) &&
+      row.pid === publisher[0].pid && row.status === 0);
+    return row;
+  });
+  requireExact(wallRows.length === rounds.length * eventsPerRound);
+  const wallRounds = [], maximumByCallsite = {};
+  let previousWall = 0;
+  for (let index = 0; index < rounds.length; index++) {
+    const rows = wallRows.slice(index * eventsPerRound, (index + 1) * eventsPerRound);
+    const first = rows[0], last = rows.at(-1), counter = index + 1;
+    requireExact(first.event === "round-before" && last.event === "round-after" &&
+      first.callsite === "require_backup_guard" && last.callsite === first.callsite);
+    for (const row of rows) {
+      requireExact(row.counter === counter && row.wall_us >= previousWall);
+      previousWall = row.wall_us;
+    }
+    let measured = 0;
+    const segments = wallCallsites.map((callsite, segment) => {
+      const before = rows[1 + segment * 2], after = rows[2 + segment * 2];
+      requireExact(before.event === "before" && after.event === "after" &&
+        before.callsite === callsite && after.callsite === callsite);
+      const duration = after.wall_us - before.wall_us;
+      measured += duration;
+      maximumByCallsite[callsite] = Math.max(maximumByCallsite[callsite] || 0, duration);
+      return { callsite, duration_us: duration };
+    });
+    const total = last.wall_us - first.wall_us;
+    requireExact(integer(measured) && measured <= total);
+    wallRounds.push({ counter, pid: first.pid, total_us: total, measured_us: measured,
+      // Includes hooks, call plumbing and any unbracketed work, not a cause.
+      unattributed_us: total - measured, segments });
+  }
   const summary = { native_exit: nativeStatus, rounds: rounds.length, reads: pairs.length,
     maximum_guard_ms: Math.max(...rounds.map(round => round[1].at_ms - round[0].at_ms)),
     maximum_identity_ms: Math.max(...rounds.map(round => round[2].at_ms - round[1].at_ms)),
@@ -8628,9 +8790,13 @@ try {
     maximum_reader_ms: Math.max(...pairs.map(pair => pair[1].at_ms - pair[0].at_ms)),
     maximum_publication_gap_upper_ms: Math.max(...publishGaps),
     maximum_post_audit_observation_gap_upper_ms: Math.max(...observationGaps),
+    wall_clock_segments: { clock: wallManifest.clock, unit: wallManifest.unit, security_clock: false,
+      hook_events: wallRows.length, instrumentation_overhead_included: true,
+      rounds: wallRounds, maximum_by_callsite_us: maximumByCallsite },
     origin: "indeterminate", fixture_only: true, instrumentation_included: true };
   // Measurements never self-assign a cause, clear a latch or accept native failure.
   process.stdout.write("pgsql_native_freshness_trace:" + JSON.stringify(summary) + "\n");
+  process.exitCode = nativeStatus === 0 ? 0 : 1;
 } catch {
   process.stderr.write("pgsql_native_freshness_trace:indeterminate-incomplete-or-inconsistent\n");
   process.exitCode = 1;
