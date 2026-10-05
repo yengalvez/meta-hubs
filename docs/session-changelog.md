@@ -3214,3 +3214,29 @@ live sin efectos pasan; publicación aún pendiente. Se excluye Cloud6efe87a
   ShellCheck/Gitleaks y revisión dirigida cerraron los hallazgos. Ambas
   regresiones quedan en security local y CI. No hay full heredado ni prueba Linux.
 - No hubo clúster, backup real, build, rollout o cambios de datos/permisos.
+
+## 2026-10-05 — Namespace explícito en dos fixtures WATCH
+
+- Recuperación sobre8004bb6 terminó905/908: dos casos enviaban eventos a
+  hcce-bot-runners pero dejaban ese Namespace ausente en la fixture.
+- El contraste aislado69104 registró ocho casos en16s: sólo esos dos missing
+  fallaron; ambos present y los controles parent-SA/component-only pasaron.
+  Los ocho grupos cerraron con el protocolo protegido, sin cleanup desconocido.
+- Esos dos tests ahora declaran STUB_RUNNER_NAMESPACE=present. No cambian sus
+  assertions ni el watcher, identidades, guardas, ventanas o código productivo.
+- Sigue pendiente el caso de sincronización inicial y la aceptación full exacta;
+  no se atribuye a este defecto de fixture una causa productiva histórica.
+
+## 2026-10-05 — Fases causales de la fixture de startup grace
+
+El foco original reprodujo el fallo post-audit con guard-stale a10058ms.
+La traza instrumentada positiva no demostraba la causa del producto y no se
+aceptó como recuperación. La fixture ahora mantiene su fase pre-launch lenta
+de8,50s y el mismo publisher/counter, pasando a0,20s sólo después de baseline
+nueva e inicio real del stream. Añade testigos del gap inicial y ACK posterior;
+los demás casos conservan sus defaults, incluido post-audit-slow-publisher.
+No cambia helper, guardas ni startup10/stale10/stream30/reserva2/poll0,02.
+Revisión focal independiente CLOSED. Foco normal60507 original0 en43071ms,
+46/46; testigos inicial2, rápidos18/13 y ACK3; started/completed presentes.
+Diarios privados /private/tmp/yenhubs-S8004bb6-startup-phase-fixture-20261005.*.
+Esto es una regresión local; recovery/full exactos y Linux siguen pendientes.

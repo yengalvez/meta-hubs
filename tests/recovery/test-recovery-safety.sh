@@ -14256,10 +14256,13 @@ start_stream_guard_fixture_publisher() {
   local interval="$4" maximum_increments="$5" start_marker="${6:-}"
   local publication_prefix="${7:-}" frozen_marker="${8:-}"
   local pause_marker="${9:-}" trace_path="${10:-}" trace_guard="${11:--1}"
+  local post_launch_marker="${12:-}" post_launch_interval="${13:-}"
+  local post_launch_ack="${14:-}"
   python3 - "$progress_marker" "$stop_marker" "$initial_delay" \
     "$interval" "$maximum_increments" "$start_marker" \
     "$publication_prefix" "$frozen_marker" "$pause_marker" \
-    "$trace_path" "$trace_guard" <<'PY' &
+    "$trace_path" "$trace_guard" "$post_launch_marker" \
+    "$post_launch_interval" "$post_launch_ack" <<'PY' &
 import os
 import sys
 import time
@@ -14276,6 +14279,9 @@ import time
     pause_path,
     trace_path,
     trace_guard,
+    post_launch_path,
+    post_launch_interval_text,
+    post_launch_ack,
 ) = sys.argv[1:]
 initial_delay = float(initial_text)
 interval = float(interval_text)
@@ -14284,6 +14290,8 @@ counter = int(open(progress_path, encoding="utf-8").read().strip())
 published = 0
 paused = False
 pause_active = False
+post_launch_changed = False
+post_launch_interval = float(post_launch_interval_text) if post_launch_path else None
 
 if trace_path:
     import ctypes
@@ -14329,8 +14337,15 @@ while start_path and not os.path.exists(start_path):
     if os.path.exists(stop_path):
         sys.exit(0)
     time.sleep(0.01)
+# The baseline marker is fresh and appears only after reset_stub. Do not
+# inspect the stream marker earlier: a preceding case may have left one.
 deadline = time.monotonic() + initial_delay
 while not os.path.exists(stop_path):
+    if post_launch_path and not post_launch_changed and os.path.exists(post_launch_path):
+        post_launch_changed = True
+        interval = post_launch_interval
+        deadline = time.monotonic() + interval
+        publish_private(post_launch_ack, counter)
     if pause_path and os.path.exists(pause_path) and not paused:
         paused = True
         pause_active = True
@@ -14582,6 +14597,8 @@ run_multi_guard_round_robin_case() (
   local require_lease=0
   local initial_deadline_seconds=""
   local slow_interval=4.50
+  local post_launch_marker="" post_launch_interval="" post_launch_ack=""
+  local startup_gap_one="" startup_gap_two="" post_launch_counter=""
   local progress_value_one progress_value_two progress_value_three publisher_pid
   local inner_baseline_value=""
   local audit_group_pid="" audit_descendant_pid=""
@@ -14640,7 +14657,7 @@ run_multi_guard_round_robin_case() (
       # reaches the slow result with less than the mandatory two-second
       # cancellation reserve; foreground round-robin observations keep both
       # fast lower bounds current. Production remains fixed at ten seconds by
-      # the timing contract; only this attested fixture uses six.
+      # the timing contract; this fixture does not extend that budget.
       maximum_stale_seconds=10
       if [[ "$case_name" == post-audit-* ]]; then
         slow_interval=0.20
@@ -14660,12 +14677,15 @@ run_multi_guard_round_robin_case() (
         initial_deadline_seconds=30
         slow_interval=0.25
       elif [[ "$case_name" == round-robin-startup-grace ]]; then
-        # The guard freshness budget is deliberately shorter than the slow
-        # next sweep. The pre-launch alignment may use the independent startup
-        # allowance, while post-launch freshness must remain strict.
+        # Keep the slow pre-launch round and its independent startup budget.
+        # The same publisher becomes fast only after the real stream starts;
+        # near-limit post-audit cadence has a separate dedicated fixture.
         slow_interval=8.50
         initial_deadline_seconds=10
         maximum_stale_seconds=10
+        post_launch_marker="$STUB_STATE_DIR/multi-guard-stream-started"
+        post_launch_interval=0.20
+        post_launch_ack="$observation_dir/slow-post-launch-cadence"
       elif [[ "$case_name" == launch-window-realign ]]; then
         # Guard one advances early in the inner round, while guard three
         # advances about four seconds later. Both are individually fresh, but
@@ -14693,7 +14713,8 @@ run_multi_guard_round_robin_case() (
       pid_two="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
       start_stream_guard_fixture_publisher "$progress_three" "$stop_marker" \
         0.15 "$slow_interval" 0 "$observation_dir/guard-three-baseline-read" \
-        "$observation_dir/slow" "" "$observation_dir/slow-pause" "$trace_three" 2
+        "$observation_dir/slow" "" "$observation_dir/slow-pause" "$trace_three" 2 \
+        "$post_launch_marker" "$post_launch_interval" "$post_launch_ack"
       pid_three="$STREAM_GUARD_FIXTURE_PUBLISHER_PID"
       ;;
     no-simultaneous-window)
@@ -14903,7 +14924,10 @@ run_multi_guard_round_robin_case() (
             "$GUARD_OBSERVATION_DIR/continuity-cost-before-budget" 1 || return 1
         fi
         if [[ "$MULTI_GUARD_CASE" == round-robin-success ||
-              "$MULTI_GUARD_CASE" == round-robin-startup-grace ||
+              ( "$MULTI_GUARD_CASE" == round-robin-startup-grace &&
+                "${stream_diagnostic_stage:-}" == refresh &&
+                "${stream_is_gated:-0}" == 1 &&
+                ! -e "$STUB_STATE_DIR/multi-guard-stream-started" ) ||
               "$MULTI_GUARD_CASE" == launch-window-realign ]]; then
           if [[ "$guard_name" == guard-three && "$progress_value" == 2 &&
                 "$function_stack" == *" refresh_supervised_stream_guards_for_launch "* &&
@@ -15031,6 +15055,19 @@ run_multi_guard_round_robin_case() (
       fi
       ;;
     round-robin-success|round-robin-startup-grace|outer-baseline-realign)
+      if [[ "$case_name" == round-robin-startup-grace ]]; then
+        [[ -s "$observation_dir/slow-inner-wait-started" &&
+           "$(<"$observation_dir/slow-inner-wait-started")" == 2 &&
+           -s "$observation_dir/guard-one-observed-during-slow-gap" &&
+           -s "$observation_dir/guard-two-observed-during-slow-gap" &&
+           -s "$post_launch_ack" ]] || return 1
+        startup_gap_one="$(<"$observation_dir/guard-one-observed-during-slow-gap")"
+        startup_gap_two="$(<"$observation_dir/guard-two-observed-during-slow-gap")"
+        post_launch_counter="$(<"$post_launch_ack")"
+        [[ "$startup_gap_one" =~ ^[0-9]+$ && "$startup_gap_one" -ge 2 &&
+           "$startup_gap_two" =~ ^[0-9]+$ && "$startup_gap_two" -ge 2 &&
+           "$post_launch_counter" =~ ^[0-9]+$ && "$post_launch_counter" -ge 3 ]] || return 1
+      fi
       if [[ "$case_name" == outer-baseline-realign &&
             ! -e "$observation_dir/outer-baseline-delayed" ]]; then
         return 1
@@ -19551,10 +19588,12 @@ fi
 reset_stub
 # The watch stream emits ADDED and DELETED back-to-back while every LIST is
 # empty. A polling monitor would pass; the resourceVersion watch must fail.
+# The fixture must contain the runner namespace where these events are emitted.
 # shellcheck disable=SC2016
 expect_success 'runner ADDED+DELETED between empty LISTs is remembered fail-closed' \
   env EXPECTED_KUBE_CONTEXT=fixture-context EXPECTED_NAMESPACE_UID=fixture-uid \
-  EXPECTED_RET_PVC_UID=fixture-pvc-uid STUB_MODE=runner-watch-transient bash -c '
+  EXPECTED_RET_PVC_UID=fixture-pvc-uid STUB_RUNNER_NAMESPACE=present \
+  STUB_MODE=runner-watch-transient bash -c '
     set -euo pipefail
     NAMESPACE=hcce
     source "$1"
@@ -19601,7 +19640,7 @@ reset_stub
 expect_success 'unlabelled Pod event in runner namespace is remembered fail-closed' \
   env EXPECTED_KUBE_CONTEXT=fixture-context \
   EXPECTED_NAMESPACE_UID=fixture-uid EXPECTED_RET_PVC_UID=fixture-pvc-uid \
-  STUB_MODE=runner-watch-runner-unlabeled bash -c '
+  STUB_RUNNER_NAMESPACE=present STUB_MODE=runner-watch-runner-unlabeled bash -c '
     set -euo pipefail
     NAMESPACE=hcce
     source "$1"
