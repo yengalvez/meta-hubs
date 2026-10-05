@@ -7,6 +7,44 @@ test, rather than unrelated `tests/scripts` units. New harness dependencies must
 extend that footprint and its regression; static/security retain whole-tree
 coverage. No input, toolchain, cleanup or final-full acceptance guard is waived.
 
+## Aggregate WATCH retirement candidate (2026-10-05)
+
+A controlled native macOS regression reproduced STOP returning zero after the
+original Node had exited zero but guardian B had exited seven, been reaped by
+A, and published the original fsynced failure. The group was already absent
+before observer cleanup. This proves an aggregate-return race, not the cause
+of historical backup failures or acceptance on Linux, H5, full or production.
+
+The candidate changes only the internal launcher capability: Bash waits for
+A, the actual child and isolated session leader; A owns both Node and B. Node
+binds A as its real parent, while A/B retain the original Bash owner's exact
+identity. No parent wildcard, generic live PID or weaker UID check is allowed.
+Normal completion needs the reciprocal ACK, real socket EOF, actual Node0
+and B0 reaps, then the native Bash wait of A0. A must reject residual members
+while the group is still pinned, including zombies, and perform no external
+operation after B0. STOP subsequently requires the complete group inventory
+empty, ESRCH, the same original empty failure marker, exact READY and the
+original final Pod guard. The observation uses the remaining original join
+budget, never another grace or a replacement success receipt.
+
+Darwin uses a non-privileged Python/libproc group inventory, not setuid `ps`.
+The fixed four-PID buffer is purpose-specific: pre-retirement accepts exactly
+A/B/the original unreaped observer; a fourth member, native query error,
+missing detail or incomplete frame rejects closure. Postjoin accepts only a
+complete empty inventory, real observer wait0 and ESRCH. Other UIDs and zombies
+are not filtered out. Linux retains its separate original `ps` route.
+
+Native retirement, completion, owner-loss and inventory regressions are registered
+once in local security and CI. On the 05/10 candidate, all38 unique cases passed
+the directed primary execution, including actual Node0/B0/A0, rejection of B7,
+owner/peer loss and the unshortened65-second external gate. The fixture captures
+the real BASHPID before command substitution, retaining the exact identity oracle.
+These local macOS results do not accept Linux, recovery/H5/full or operational cycles. Preserve
+Pod LIST/RV/event coverage, production61/65 and stream30/10/reserve2. This does
+not change checkpoint envelopes, data, images, configuration or persisted APIs.
+Revert tooling only before starting an operation; an active incident keeps
+its original pinned source, receipt and journal until reconciliation.
+
 ## Versioned signed closure candidate (2026-10-03)
 
 Monitor envelopes remain schema1. Signed backup envelopes require the exact

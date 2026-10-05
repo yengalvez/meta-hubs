@@ -1,5 +1,36 @@
 # Session Changelog
 
+## 2026-10-05 · Candidate native aggregate WATCH closure
+
+Controlled macOS RED94777 reproduced Node0, actual B7 reaped by A, the original
+failure20/fsync and group absence before cleanup, while full STOP returned0.
+The independent directed review confirmed that observation; it does not prove
+the cause of historic media/H5 failures or representative Linux acceptance.
+The candidate makes A the Bash-waitable session leader and actual parent of
+Node/B, preserving exact UID/start/parent/group and owner capabilities. Normal
+success requires their real exits, reciprocal ACK/EOF, original pinned empty
+failure and complete residual/group checks within the existing join budget.
+Register the new retirement regression once in local security and CI; update
+only the affected feature contract/runbook. Darwin's setuid ps observer was
+rejected by the exact UID guard; replace only that inventory with non-privileged
+libproc, fixed4PID saturation rejection and strict complete frames. Retain all
+UIDs/zombies, native child waits and original budgets; Linux keeps ps.
+
+Directed primary runs passed38 unique local cases: inventory10/10, pending1/1,
+actual Node0/B0/A0 and Node0/B7/A-no0 one each, completion15/15, owner1/1 plus
+remaining10/10 including the real65s external gate. A negative name selector
+unintentionally repeated pending once; switch to explicit positive selectors.
+The first owner batch failed six metadata assertions before sending signals:
+the fixture queried BASHPID inside command substitution, then paired that
+subshell identity with the outer owner PID. Capture the owner PID before the
+substitution, retain every original assertion/timing and independently review
+the three-line change. Product helper/UID checks were not weakened.
+
+Private journals: yenhubs-P-aggregate-native-20261005-02-{short,remaining} and
+03-owner-{short,remaining}. Frozen helper4e4a9b6e/utility75e5d6ed; owner90371ee8.
+Directed source/delta reviews CLEAR. New exact full, Linux, operational cycles
+and production acceptance remain pending. No images, data or production changes.
+
 ## 2026-10-04 · Accept bounded registry-owned config handoffs
 
 Real public Docker metadata reproduced a legitimate config307 to

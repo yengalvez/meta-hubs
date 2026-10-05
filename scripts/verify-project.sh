@@ -730,6 +730,8 @@ run_security() {
   node --test "$ROOT_DIR/tests/recovery/runner-cutover-checkpoint-evidence.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/runner-watch-owner.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/runner-watch-completion.test.mjs"
+  node --test "$ROOT_DIR/tests/recovery/runner-watch-retirement.test.mjs"
+  node --test "$ROOT_DIR/tests/recovery/darwin-process-group-inventory.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/runner-watch-failure-publication.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/durable-runner-quiescence-monitor.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/checkpoint-activation-receipt.test.mjs"

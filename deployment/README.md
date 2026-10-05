@@ -2310,18 +2310,40 @@ cannot satisfy this contract.
 The runner-absence Pod WATCH must be launched through
 `recovery_start_no_managed_bot_runner_watch`, not as a standalone Node CLI.
 Its capability binds the real caller BASHPID and native start identity before
-any Pod LIST. Two native peers in its isolated PGID supervise the caller and
-each other independently of Node, including blocked LIST/WATCH and Node
-SIGSTOP. Caller loss, individual peer loss/STOP or unauthorized socket EOF
+any Pod LIST. The returned PID/start capability is A, Bash's actual child and
+isolated session leader, not Node. A owns Node and guardian B; Node binds A as
+its exact native parent, while A/B bind the original Bash owner. Two native
+peers supervise that owner and each other independently of Node, including
+blocked LIST/WATCH and Node SIGSTOP. Caller loss, individual peer loss/STOP or
+unauthorized socket EOF
 publishes the fixed failure with positional writes and fsync, then revokes
 that exact pinned group; no recycled positive-PID fallback is allowed.
 READY still requires the first complete closed round for both namespaces.
-Normal discard/handoff requires reciprocal completion ACK, authorized EOF
-and the actual Node exit; A reaps B before retiring. Verify group absence
-including zombies on each target host: the final orphan still needs the host
-reaper. This is not a guarantee against simultaneous loss of both peers,
+Normal discard/handoff requires reciprocal completion ACK, real socket EOF
+and actual Node0/B0 reaps by A, followed by Bash's real waitA0. Before B retires,
+A rejects any residual group member; its exact owned/reaped native inventory
+probe is an observer, never a success receipt. After joining A, STOP requires
+an empty full-PGID inventory including all UIDs/zombies, ESRCH, the original
+pinned failure marker still empty, exact READY and the unchanged final Pod
+guard. That observation shares the remaining original join budget, with no
+new grace, retry or signal authority. Verify absence on each target host:
+the final orphan still needs the host reaper. Candidate regression/full and
+representative-host acceptance remain separate. This is not a guarantee
+against simultaneous loss of both peers,
 stopping the entire PGID or an OS/storage failure. Pod LIST/RV/event coverage,
 the final 61/65-second window and the 30/10/2-second stream budgets are unchanged.
+
+On Darwin, the inventory producer must retain the caller's user: `/bin/ps`
+is setuid-root on the verified host and cannot satisfy the observer's exact
+same-user contract. The candidate uses a non-privileged Python/libproc
+inventory, including zombie and other-user members; query errors, truncated
+inventories and incomplete frames must reject closure. Its fixed four-PID
+buffer is specific to this protocol: exactly A/B/the original observer before
+retirement, rejection if a fourth member fills it, and only a complete empty
+frame after join. Native errors or missing member details cannot become an
+empty inventory. The observer's real native wait is mandatory. Linux retains its
+original `ps` route. These are separate host-specific acceptance surfaces,
+not permission to relax UID, parent, process-group or native-reap checks.
 
 Immediately before opening each stream, every guard must publish a complete
 successful sweep with a monotonic counter strictly newer than the value just

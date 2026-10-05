@@ -386,13 +386,29 @@ recovery_watcher_join_timeout_seconds() {
 
 recovery_wait_isolated_process_bounded() {
   local target_pid="$1" target_identity="$2" stop_path="$3"
+  local deadline_variable="${4:-}" monotonic_now=""
   local timeout_seconds watchdog_pid="" watchdog_start_identity=""
   local watchdog_marker=""
   local wait_status=0 wait_retry=0 attempt=0 expired=0
   [[ "$target_pid" =~ ^[1-9][0-9]*$ && -n "$target_identity" ]] || return 2
+  [[ -z "$deadline_variable" ||
+     "$deadline_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 2
+  case "$deadline_variable" in
+    target_pid|target_identity|stop_path|deadline_variable|monotonic_now|\
+    timeout_seconds|watchdog_pid|watchdog_start_identity|watchdog_marker|\
+    wait_status|wait_retry|attempt|expired) return 2 ;;
+  esac
   recovery_runner_watch_marker_is_exact "$stop_path" || return 1
   [[ -s "$stop_path" ]] || return 1
   timeout_seconds="$(recovery_watcher_join_timeout_seconds)" || return 1
+  if [[ -n "$deadline_variable" ]]; then
+    # One absolute native-clock budget, also for the cached-child fast path.
+    # Consumers that do not request it retain the original three-argument join.
+    monotonic_now="$(recovery_monotonic_milliseconds)" || return 1
+    [[ "$monotonic_now" =~ ^[0-9]+$ ]] || return 1
+    printf -v "$deadline_variable" '%s' \
+      "$((monotonic_now + timeout_seconds * 1000))"
+  fi
   # The identity is captured immediately after spawn and threaded through the
   # whole watcher capability. Never adopt a process that merely reused the
   # stored PID before this late join/cleanup boundary.
@@ -10747,6 +10763,7 @@ recovery_start_no_managed_bot_runner_watch() {
   local stop_path="$1" failure_path="$2" ready_path="$3" pid_variable="$4"
   local identity_variable="$5" progress_path="${6:-}"
   local watcher_path="$RECOVERY_SAFETY_DIR/../watch-bot-runner-pods.mjs"
+  local inventory_path="$RECOVERY_SAFETY_DIR/darwin-process-group-inventory.py"
   local started_pid="" started_identity="" ready_value="" marker_path
   local runner_namespace="" runner_namespaces="" attempt=0
   local watcher_stable_seconds="" watcher_test_mode=""
@@ -10807,17 +10824,25 @@ recovery_start_no_managed_bot_runner_watch() {
     fi
     exec python3 -I -c '
 import ctypes
+import importlib.util
 import os
 import pathlib
 import select
 import signal
 import socket
 import stat
+import subprocess
 import sys
 import time
 
 owner_pid, owner_identity, failure_path = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+inventory_path = sys.argv[4]
+inventory_module = None
 failure_fd = None
+group = None
+
+class ProcessUnavailable(Exception):
+    pass
 
 class ProcBsdInfo(ctypes.Structure):
     _fields_ = [(name, ctypes.c_uint32) for name in (
@@ -10828,19 +10853,19 @@ class ProcBsdInfo(ctypes.Structure):
     ] + [("nice", ctypes.c_int32), ("seconds", ctypes.c_uint64),
          ("microseconds", ctypes.c_uint64)]
 
-def native_info(pid):
+def native_snapshot(pid):
     if sys.platform.startswith("linux"):
         entry = pathlib.Path(f"/proc/{pid}")
         text = (entry / "stat").read_text(encoding="ascii")
         closing = text.rfind(")")
         fields = text[closing + 2:].split()
-        if closing < 0 or len(fields) < 20 or fields[0] in ("Z", "X") or not fields[19].isdigit():
+        if closing < 0 or len(fields) < 20 or not fields[19].isdigit():
             raise RuntimeError("process_identity")
         if entry.stat().st_uid != os.getuid():
             raise RuntimeError("process_uid")
         boot = pathlib.Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
         return (f"linux:{boot}:{fields[19]}", int(fields[1]), int(fields[2]),
-                fields[0] in ("T", "t"))
+                fields[0] in ("T", "t"), fields[0] in ("Z", "X"))
     if sys.platform == "darwin":
         libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
         libproc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
@@ -10848,13 +10873,19 @@ def native_info(pid):
         libproc.proc_pidinfo.restype = ctypes.c_int
         info = ProcBsdInfo()
         if libproc.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
-            raise RuntimeError("process_identity")
-        if (info.pid != pid or info.uid != os.getuid() or info.status == 5 or
+            raise ProcessUnavailable()
+        if (info.pid != pid or info.uid != os.getuid() or
                 info.seconds <= 0 or info.microseconds >= 1_000_000):
             raise RuntimeError("process_identity")
         return (f"darwin:{info.seconds}:{info.microseconds}", info.ppid, info.pgid,
-                info.status == 4)
+                info.status == 4, info.status == 5)
     raise RuntimeError("platform")
+
+def native_info(pid):
+    info = native_snapshot(pid)
+    if info[4]:
+        raise ProcessUnavailable()
+    return info[:4]
 
 def native_identity(pid):
     return native_info(pid)[0]
@@ -10862,16 +10893,27 @@ def native_identity(pid):
 def peer_is_live(pid, identity, parent):
     try:
         info = native_info(pid)
-        return (info[0] == identity and info[2:] == (group, False) and
-                (parent is None or info[1] == parent))
-    except (OSError, ValueError, RuntimeError):
+        return info == (identity, parent, group, False)
+    except (OSError, ValueError, RuntimeError, ProcessUnavailable):
         return False
 
 def owner_is_live():
     try:
-        return native_identity(owner_pid) == owner_identity
-    except (OSError, ValueError, RuntimeError):
+        info = native_info(owner_pid)
+        return info[0] == owner_identity and not info[3]
+    except (OSError, ValueError, RuntimeError, ProcessUnavailable):
         return False
+
+def pending_child_is_live(pid, identity):
+    try:
+        info = native_snapshot(pid)
+    except (OSError, ProcessUnavailable):
+        # Only waitpid can classify an actual, unreaped child as exited.
+        # Unavailable/zombie probes do not turn WNOHANG 0 into an exit status.
+        return False
+    if info[:3] != (identity, group, group) or info[3]:
+        revoke()
+    return not info[4]
 
 def same_marker(left, right):
     return (left.st_dev, left.st_ino, left.st_uid, left.st_mode) == (
@@ -10892,7 +10934,167 @@ def record_failure():
     os.ftruncate(failure_fd, 20)
     os.fsync(failure_fd)
 
+def require_original_empty_failure():
+    opened = os.fstat(failure_fd)
+    named = os.lstat(failure_path)
+    if (not same_marker(opened, named) or not same_marker(opened, failure_identity) or
+            opened.st_size != 0 or named.st_size != 0):
+        revoke()
+
+def revoke():
+    # A must survive its own TERM long enough to kill TERM-ignoring members;
+    # its ordinary signal disposition remains native/non-zero otherwise.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        record_failure()
+    finally:
+        if group is not None and os.getpgrp() == group:
+            os.killpg(group, signal.SIGTERM)
+            time.sleep(0.1)
+            os.killpg(group, signal.SIGKILL)
+    os._exit(1)
+
+buffers = {}
+def receive_frame(channel):
+    chunk = channel.recv(512)
+    if not chunk:
+        if buffers.get(channel, b""):
+            revoke()
+        return b""
+    buffer = buffers.get(channel, b"") + chunk
+    if len(buffer) > 256:
+        revoke()
+    if b"\n" not in buffer:
+        buffers[channel] = buffer
+        return None
+    message, remainder = buffer.split(b"\n", 1)
+    if remainder:
+        revoke()
+    buffers[channel] = b""
+    return message
+
+def zero_exit(status):
+    return os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+
+def primary_is_live():
+    return peer_is_live(group, leader_identity, owner_pid)
+
+def require_retirement_peers():
+    if (not owner_is_live() or not primary_is_live() or
+            not peer_is_live(secondary_pid, secondary_identity, group)):
+        revoke()
+
+def require_no_residual_members():
+    require_retirement_peers()
+    # The observer stays inside the pinned PGID, so either native guardian
+    # can revoke it. Its real unreaped child handle, never a name or output
+    # PID, is the sole temporary exception to the A/B-only inventory.
+    observer_command = ([sys.executable, "-I", inventory_path, str(group)]
+                        if sys.platform == "darwin" else
+                        ["/bin/ps", "-axo", "pid=,ppid=,pgid=,uid=,stat="])
+    observer = subprocess.Popen(
+        observer_command,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True
+    )
+    observer_pid = observer.pid
+    observer_identity = None
+    def check_owned_observer():
+        nonlocal observer_identity
+        try:
+            info = native_snapshot(observer_pid)
+        except (OSError, ProcessUnavailable):
+            # This is our original Popen child, still unreaped. A fast query can
+            # finish before its native snapshot or before pipe EOF is read.
+            # Unavailable/zombie observation supplies no exit classification.
+            return
+        if info[1:4] != (group, group, False):
+            revoke()
+        if observer_identity is not None and info[0] != observer_identity:
+            revoke()
+        # Bind only a valid snapshot of the actual child. Its zombie state
+        # remains pending; the complete frame and real wait0 are still needed.
+        observer_identity = info[0]
+    check_owned_observer()
+    descriptor = observer.stdout.fileno()
+    os.set_blocking(descriptor, False)
+    output = bytearray()
+    while True:
+        require_retirement_peers()
+        reaped, _ = os.waitpid(secondary_pid, os.WNOHANG)
+        if reaped:
+            revoke()
+        check_owned_observer()
+        readable = select.select([primary_peer, descriptor], [], [], 0.05)[0]
+        if primary_peer in readable:
+            revoke()
+        if descriptor not in readable:
+            continue
+        chunk = os.read(descriptor, 65536)
+        if not chunk:
+            break
+        output.extend(chunk)
+        if len(output) > 1048576:
+            revoke()
+    # Capture the complete witness while the exact observer is unreaped.
+    # No poll/communicate or cached Popen status may release its PID early.
+    lines = (inventory_module.parse_group_frame(bytes(output), group)
+             if sys.platform == "darwin" else output.decode("ascii").splitlines())
+    members = {}
+    for line in lines:
+        fields = line.split()
+        if (len(fields) != 5 or not all(value.isdigit() for value in fields[:4]) or
+                not fields[4] or fields[4][0] not in "DIRSTUWXZt"):
+            revoke()
+        pid, parent, pgid, uid = map(int, fields[:4])
+        if pid <= 0:
+            revoke()
+        if pgid == group:
+            if pid in members:
+                revoke()
+            members[pid] = (parent, uid, fields[4])
+    expected = {group: owner_pid, secondary_pid: group, observer_pid: group}
+    if set(members) != set(expected):
+        revoke()
+    for pid, parent in expected.items():
+        observed_parent, uid, state = members[pid]
+        if (observed_parent != parent or uid != os.getuid() or
+                state[0] in ("T", "t", "X") or
+                (pid != observer_pid and state[0] == "Z")):
+            revoke()
+    observer.stdout.close()
+    while True:
+        require_retirement_peers()
+        reaped, _ = os.waitpid(secondary_pid, os.WNOHANG)
+        if reaped:
+            revoke()
+        reaped, status = os.waitpid(observer_pid, os.WNOHANG)
+        if reaped:
+            if reaped != observer_pid or not zero_exit(status):
+                revoke()
+            observer.returncode = 0
+            break
+        # EOF can precede the native exit. WNOHANG 0 remains pending even
+        # when a native probe is unavailable or sees the exiting zombie.
+        check_owned_observer()
+        if select.select([primary_peer], [], [], 0.05)[0]:
+            revoke()
+    require_retirement_peers()
+
 try:
+    if sys.platform == "darwin":
+        inventory_file = pathlib.Path(inventory_path)
+        if (not inventory_file.is_absolute() or inventory_file.name != "darwin-process-group-inventory.py" or
+                inventory_file.is_symlink() or not inventory_file.is_file()):
+            raise RuntimeError("process_inventory_path")
+        # Load only the tracked absolute path, never an environment-selected
+        # module; importing its pure parser performs no native query.
+        sys.dont_write_bytecode = True
+        inventory_spec = importlib.util.spec_from_file_location("yenhubs_group_inventory", inventory_path)
+        if inventory_spec is None or inventory_spec.loader is None:
+            raise RuntimeError("process_inventory_module")
+        inventory_module = importlib.util.module_from_spec(inventory_spec)
+        inventory_spec.loader.exec_module(inventory_module)
     named = os.lstat(failure_path)
     failure_fd = os.open(failure_path, os.O_WRONLY | os.O_NOFOLLOW)
     failure_identity = os.fstat(failure_fd)
@@ -10905,225 +11107,199 @@ try:
     os.setsid()
     group = os.getpid()
     leader_identity = native_identity(group)
+    # A is the session leader and the original Bash-waitable aggregate.
+    # B protects A even during startup, before any Node child is created.
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
     parent_socket, guardian_socket = socket.socketpair()
-    guardian_pid = os.fork()
-    if guardian_pid == 0:
+    primary_peer, secondary_peer = socket.socketpair()
+    startup_deadline = time.monotonic() + 10
+    secondary_pid = os.fork()
+    if secondary_pid == 0:
         parent_socket.close()
-        # This live member pins its OWN session/PGID, so revocation never
-        # falls back to a positive PID that might have been recycled.
+        guardian_socket.close()
+        primary_peer.close()
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         null_fd = os.open(os.devnull, os.O_RDWR)
         for fd in (0, 1, 2):
             os.dup2(null_fd, fd)
         os.close(null_fd)
-        def revoke():
-            try:
-                record_failure()
-            finally:
-                if os.getpgrp() == group:
-                    os.killpg(group, signal.SIGTERM)
-                    time.sleep(0.1)
-                    os.killpg(group, signal.SIGKILL)
-            os._exit(1)
-        def leader_is_live():
-            try:
-                info = native_info(group)
-            except (OSError, ValueError, RuntimeError):
-                return False
-            # Node SIGSTOP is precisely a case these native peers must cover.
-            # A different identity, parent or group is never a normal exit.
-            if info[:3] != (leader_identity, owner_pid, group):
-                revoke()
-            return True
-        buffers = {}
-        def receive_frame(channel):
-            chunk = channel.recv(512)
-            if not chunk:
-                if buffers.get(channel, b""):
-                    revoke()
-                return b""
-            buffer = buffers.get(channel, b"") + chunk
-            if len(buffer) > 256:
-                revoke()
-            if b"\n" not in buffer:
-                buffers[channel] = buffer
-                return None
-            message, remainder = buffer.split(b"\n", 1)
-            if remainder:
-                revoke()
-            buffers[channel] = b""
-            return message
-        try:
+        node_pid = None
+        node_identity = None
+        completing = False
+        retiring = False
+        while True:
             if os.getpgrp() != group or os.getppid() != group:
                 revoke()
-            primary_pid = os.getpid()
-            primary_identity = native_identity(primary_pid)
-            primary_peer, secondary_peer = socket.socketpair()
-            secondary_pid = os.fork()
-            if secondary_pid == 0:
-                # B must not retain A/Node endpoints: only A can observe the
-                # real Node EOF, while B independently supervises A itself.
-                guardian_socket.close()
-                primary_peer.close()
-                if os.getpgrp() != group or os.getppid() != primary_pid:
+            if not owner_is_live() or not primary_is_live():
+                revoke()
+            node_live = node_pid is not None and pending_child_is_live(node_pid, node_identity)
+            if node_pid is not None and not node_live and not completing:
+                revoke()
+            if node_pid is None and time.monotonic() >= startup_deadline:
+                revoke()
+            if not select.select([secondary_peer], [], [], 0.05)[0]:
+                continue
+            message = receive_frame(secondary_peer)
+            if message is None:
+                continue
+            if not message:
+                revoke()
+            if node_pid is None and message.startswith(b"node:"):
+                fields = message.split(b":", 2)
+                if len(fields) != 3 or not fields[1].isdigit():
+                    revoke()
+                node_pid = int(fields[1])
+                node_identity = fields[2].decode("ascii")
+                if node_pid <= 0 or not pending_child_is_live(node_pid, node_identity):
                     revoke()
                 secondary_peer.sendall(b"ready\n")
-                completing = False
-                retiring = False
-                while True:
-                    leader_live = leader_is_live()
-                    # Only an authorized, real Node exit permits the known
-                    # primary to be reparented; its identity/group stay exact.
-                    parent = None if completing and not leader_live else group
-                    if not peer_is_live(primary_pid, primary_identity, parent):
-                        # Re-read across the native exit/reparent boundary;
-                        # never relax identity/group or an in-flight parent.
-                        if (not completing or leader_is_live() or
-                                not peer_is_live(primary_pid, primary_identity, None)):
-                            revoke()
-                    # Once completion was mutually authorized, a real Node
-                    # exit can precede normal owner wait/EXIT cleanup.
-                    # Until then, neither owner nor leader loss means success.
-                    if not leader_live and not completing:
-                        revoke()
-                    if not owner_is_live() and (not completing or leader_is_live()):
-                        revoke()
-                    if not select.select([secondary_peer], [], [], 0.05)[0]:
-                        continue
-                    message = receive_frame(secondary_peer)
-                    if message is None:
-                        continue
-                    if not message:
-                        revoke()
-                    if not completing and message == b"complete" and leader_live and owner_is_live():
-                        completing = True
-                        secondary_peer.sendall(b"complete\n")
-                    elif completing and not retiring and message == b"retire" and not leader_is_live():
-                        retiring = True
-                        secondary_peer.sendall(b"retired\n")
-                    elif retiring and message == b"reap" and not leader_is_live():
-                        secondary_peer.close()
-                        os._exit(0)
-                    else:
-                        revoke()
-            secondary_peer.close()
-            secondary_identity = native_identity(secondary_pid)
-            started = False
-            peer_ready = False
-            requested_start = False
-            completing = False
-            completion_acknowledged = False
-            node_closed = False
-            retiring = False
-            startup_deadline = time.monotonic() + 10
-            while True:
-                if not peer_is_live(secondary_pid, secondary_identity, primary_pid):
-                    # Only A can reap B. Unexpected exit is still failure,
-                    # including a child that exited zero without retirement.
-                    os.waitpid(secondary_pid, os.WNOHANG)
-                    revoke()
-                leader_live = leader_is_live()
-                channels = [primary_peer] + ([] if node_closed else [guardian_socket])
-                for channel in select.select(channels, [], [], 0.05)[0]:
-                    message = receive_frame(channel)
-                    if message is None:
-                        continue
-                    if channel is guardian_socket:
-                        if message == b"" and completion_acknowledged:
-                            node_closed = True
-                            guardian_socket.close()
-                        elif not message:
-                            revoke()
-                        elif (not requested_start and
-                              message == f"start:{owner_pid}:{owner_identity}".encode("ascii")):
-                            requested_start = True
-                        elif started and not completing and message == b"complete":
-                            if not leader_live or not owner_is_live():
-                                revoke()
-                            completing = True
-                            primary_peer.sendall(b"complete\n")
-                        else:
-                            revoke()
-                    elif not peer_ready and message == b"ready":
-                        peer_ready = True
-                    elif completing and not completion_acknowledged and message == b"complete":
-                        if not leader_is_live() or not owner_is_live():
-                            revoke()
-                        completion_acknowledged = True
-                        guardian_socket.sendall(b"complete\n")
-                    elif retiring and message == b"retired":
-                        primary_peer.sendall(b"reap\n")
-                        # B is our actual, unreaped child. Reap its exact exit
-                        # status without adopting or signalling a positive PID.
-                        while True:
-                            reaped, status = os.waitpid(secondary_pid, os.WNOHANG)
-                            if reaped:
-                                if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
-                                    revoke()
-                                os._exit(0)
-                            if not peer_is_live(secondary_pid, secondary_identity, primary_pid):
-                                # A normal zombie is reaped by the next exact
-                                # waitpid; a stopped/live mismatch is failure.
-                                reaped, status = os.waitpid(secondary_pid, os.WNOHANG)
-                                if not reaped or not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
-                                    revoke()
-                                os._exit(0)
-                            time.sleep(0.05)
-                    else:
-                        revoke()
-                leader_live = leader_is_live()
-                if not leader_live:
-                    # A real Node exit can race an empty select result. Drain
-                    # its already-ready EOF once before judging authorization;
-                    # never wait for or fabricate a missing EOF/complete ACK.
-                    if completion_acknowledged and not node_closed:
-                        if not select.select([guardian_socket], [], [], 0)[0]:
-                            revoke()
-                        if receive_frame(guardian_socket) != b"":
-                            revoke()
-                        node_closed = True
-                        guardian_socket.close()
-                    if not completion_acknowledged or not node_closed:
-                        revoke()
-                    if not retiring:
-                        retiring = True
-                        primary_peer.sendall(b"retire\n")
-                    continue
-                if not owner_is_live() or os.getppid() != group:
-                    # Node may have exited between the preceding probe and
-                    # its owner immediately completing wait/EXIT. Only the
-                    # already-ACKed, EOF-confirmed native exit permits this.
-                    if not completion_acknowledged or not node_closed or leader_is_live():
-                        revoke()
-                    if not retiring:
-                        retiring = True
-                        primary_peer.sendall(b"retire\n")
-                    continue
-                if not started and time.monotonic() >= startup_deadline:
-                    revoke()
-                if peer_ready and requested_start and not started:
-                    started = True
-                    guardian_socket.sendall(b"ready\n")
+            elif not completing and message == b"complete" and node_live:
+                completing = True
+                secondary_peer.sendall(b"complete\n")
+            elif completing and not retiring and message == b"retire" and not node_live:
+                retiring = True
+                secondary_peer.sendall(b"retired\n")
+            elif retiring and message == b"reap" and not node_live:
+                # Authorized B exit is still only an intent until A reaps us.
+                os._exit(0)
+            else:
+                revoke()
+    secondary_peer.close()
+    secondary_identity = native_identity(secondary_pid)
+    require_retirement_peers()
+    node_pid = os.fork()
+    if node_pid == 0:
+        try:
+            guardian_socket.close()
+            primary_peer.close()
+            os.close(failure_fd)
+            failure_fd = None
+            parent_socket.set_inheritable(True)
+            if not primary_is_live() or os.getppid() != group:
+                os._exit(1)
+            arguments = sys.argv[5:]
+            for key, original, replacement in (
+                ("--owner-pid", str(owner_pid), str(group)),
+                ("--owner-start-identity", owner_identity, leader_identity)
+            ):
+                if arguments.count(key) != 1:
+                    os._exit(1)
+                index = arguments.index(key) + 1
+                if index >= len(arguments) or arguments[index] != original:
+                    os._exit(1)
+                arguments[index] = replacement
+            arguments += ["--owner-control-fd", str(parent_socket.fileno())]
+            os.execvp(arguments[0], arguments)
         except (OSError, ValueError, RuntimeError):
+            # EOF/status failure returns signal authority to pinned A/B.
+            os._exit(1)
+    parent_socket.close()
+    node_identity = native_identity(node_pid)
+    primary_peer.sendall(f"node:{node_pid}:{node_identity}\n".encode("ascii"))
+    started = False
+    peer_ready = False
+    requested_start = False
+    completing = False
+    completion_acknowledged = False
+    node_closed = False
+    node_status = None
+    retiring = False
+    reap_authorized = False
+    while True:
+        if not owner_is_live() or not primary_is_live():
             revoke()
-    guardian_socket.close()
-    os.close(failure_fd)
-    failure_fd = None
-    parent_socket.set_inheritable(True)
-    if os.getppid() != owner_pid or not owner_is_live():
-        # EOF makes the already-bound guardian durably fail and revoke.
-        parent_socket.close()
-        raise RuntimeError("owner_startup")
-    arguments = sys.argv[4:] + ["--owner-control-fd", str(parent_socket.fileno())]
-    os.execvp(arguments[0], arguments)
-except (OSError, ValueError, RuntimeError):
-    try:
-        record_failure()
-    except (OSError, RuntimeError):
-        pass
-    raise SystemExit(1)
-' "$owner_pid" "$owner_start_identity" "$failure_path" node "${watcher_args[@]}"
+        # B remains our exact unreaped child even across an unavailable/zombie
+        # probe. WNOHANG 0 is pending, never fabricated success or an exit.
+        reaped, status = os.waitpid(secondary_pid, os.WNOHANG)
+        if reaped:
+            if reaped != secondary_pid or not reap_authorized or not zero_exit(status):
+                revoke()
+            # ORIGINAL_B_REAP_ZERO: no external operation follows B real zero.
+            os._exit(0)
+        pending_child_is_live(secondary_pid, secondary_identity)
+        channels = ([] if reap_authorized else [primary_peer]) + ([] if node_closed else [guardian_socket])
+        for channel in select.select(channels, [], [], 0.05)[0]:
+            message = receive_frame(channel)
+            if message is None:
+                continue
+            if channel is guardian_socket:
+                if message == b"" and completion_acknowledged:
+                    node_closed = True
+                    guardian_socket.close()
+                elif not message:
+                    revoke()
+                elif (not requested_start and
+                      message == f"start:{group}:{leader_identity}".encode("ascii")):
+                    requested_start = True
+                elif started and not completing and message == b"complete":
+                    require_retirement_peers()
+                    if not pending_child_is_live(node_pid, node_identity):
+                        revoke()
+                    completing = True
+                    primary_peer.sendall(b"complete\n")
+                else:
+                    revoke()
+            elif not peer_ready and message == b"ready":
+                peer_ready = True
+            elif completing and not completion_acknowledged and message == b"complete":
+                require_retirement_peers()
+                if not pending_child_is_live(node_pid, node_identity):
+                    revoke()
+                guardian_socket.sendall(b"complete\n")
+                completion_acknowledged = True
+            elif retiring and not reap_authorized and message == b"retired":
+                require_retirement_peers()
+                require_original_empty_failure()
+                # AUTHORIZED_B_REAP: B is the actual child, not a receipt PID.
+                reap_authorized = True
+                primary_peer.sendall(b"reap\n")
+            else:
+                revoke()
+        # ACK does not synthesize EOF. Drain only a really readable endpoint
+        # before waitpid so an ordinary ACK -> EOF -> exit scheduling gap wins.
+        if completion_acknowledged and not node_closed and select.select([guardian_socket], [], [], 0)[0]:
+            if receive_frame(guardian_socket) != b"":
+                revoke()
+            node_closed = True
+            guardian_socket.close()
+        if node_status is None:
+            reaped, status = os.waitpid(node_pid, os.WNOHANG)
+            if reaped:
+                # The real exit can race the preceding zero-time EOF probe.
+                # Re-read the original endpoint now; retain no inferred EOF.
+                if completion_acknowledged and not node_closed:
+                    if not select.select([guardian_socket], [], [], 0)[0]:
+                        revoke()
+                    if receive_frame(guardian_socket) != b"":
+                        revoke()
+                    node_closed = True
+                    guardian_socket.close()
+                if (reaped != node_pid or not completion_acknowledged or
+                        not node_closed or not zero_exit(status)):
+                    revoke()
+                node_status = status
+                # ORIGINAL_NODE_REAP_ZERO: ACK, real EOF and real Node wait0.
+            else:
+                pending_child_is_live(node_pid, node_identity)
+        if node_status is not None and not retiring:
+            require_no_residual_members()
+            require_original_empty_failure()
+            # AUTHORIZED_B_RETIRE: residuals/ambiguous probes never reach here.
+            retiring = True
+            primary_peer.sendall(b"retire\n")
+        if not started and time.monotonic() >= startup_deadline:
+            revoke()
+        if peer_ready and requested_start and not started:
+            require_retirement_peers()
+            if not pending_child_is_live(node_pid, node_identity):
+                revoke()
+            started = True
+            guardian_socket.sendall(b"ready\n")
+except (OSError, ValueError, RuntimeError, ProcessUnavailable):
+    revoke()
+' "$owner_pid" "$owner_start_identity" "$failure_path" "$inventory_path" node "${watcher_args[@]}"
   ) &
   started_pid=$!
   started_identity="$(recovery_process_start_identity "$started_pid")" || {
@@ -11182,13 +11358,204 @@ recovery_require_no_managed_bot_runner_watch_healthy() {
   recovery_process_identity_is_live "$watcher_pid" "$watcher_identity"
 }
 
+recovery_no_managed_bot_runner_watch_failure_identity() {
+  local failure_path="$1" expected_identity="${2:-}"
+  [[ "$failure_path" == /* ]] || return 2
+  command -v python3 >/dev/null 2>&1 || return 127
+  command python3 -I - "$failure_path" "$expected_identity" <<'PY'
+import os
+import stat
+import sys
+
+path, expected = sys.argv[1:]
+descriptor = None
+def identity(info):
+    return (info.st_dev, info.st_ino, info.st_uid, info.st_mode)
+try:
+    named = os.lstat(path)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    opened = os.fstat(descriptor)
+    if (not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid() or
+            stat.S_IMODE(opened.st_mode) != 0o600 or opened.st_size != 0 or
+            identity(named) != identity(opened) or os.read(descriptor, 1) != b""):
+        raise RuntimeError("failure_marker_contract")
+    after = os.fstat(descriptor)
+    named = os.lstat(path)
+    if identity(opened) != identity(after) or identity(after) != identity(named) or after.st_size != 0:
+        raise RuntimeError("failure_marker_identity")
+    value = ":".join(str(part) for part in identity(after))
+    if expected and value != expected:
+        raise RuntimeError("failure_marker_replaced")
+    print(value)
+except (OSError, ValueError, RuntimeError):
+    raise SystemExit(1)
+finally:
+    if descriptor is not None:
+        os.close(descriptor)
+PY
+}
+
+recovery_no_managed_bot_runner_watch_group_is_absent() {
+  local group_id="$1" deadline_milliseconds="$2"
+  local inventory_path="$RECOVERY_SAFETY_DIR/darwin-process-group-inventory.py"
+  [[ "$group_id" =~ ^[1-9][0-9]*$ &&
+     "$deadline_milliseconds" =~ ^[1-9][0-9]*$ ]] || return 2
+  command -v python3 >/dev/null 2>&1 || return 127
+  command python3 -I - "$group_id" "$deadline_milliseconds" "$inventory_path" <<'PY'
+import ctypes
+import importlib.util
+import os
+import pathlib
+import select
+import signal
+import subprocess
+import sys
+
+group, deadline = map(int, sys.argv[1:3])
+inventory_path = sys.argv[3]
+inventory_module = None
+observer = None
+observer_reaped = False
+
+class Timespec(ctypes.Structure):
+    _fields_ = [("seconds", ctypes.c_long), ("nanoseconds", ctypes.c_long)]
+
+clock_id = 1 if sys.platform.startswith("linux") else 6 if sys.platform == "darwin" else -1
+libc = ctypes.CDLL(None, use_errno=True)
+libc.clock_gettime.argtypes = [ctypes.c_int, ctypes.POINTER(Timespec)]
+libc.clock_gettime.restype = ctypes.c_int
+
+def remaining_seconds():
+    value = Timespec()
+    if clock_id < 0 or libc.clock_gettime(clock_id, ctypes.byref(value)) != 0:
+        raise RuntimeError("process_inventory_clock")
+    remaining = deadline - (value.seconds * 1000 + value.nanoseconds // 1000000)
+    if remaining <= 0:
+        raise RuntimeError("process_inventory_deadline")
+    return min(0.05, remaining / 1000)
+
+def close_owned_observer():
+    if observer is None or observer_reaped:
+        return
+    try:
+        reaped, status = os.waitpid(observer.pid, os.WNOHANG)
+        if reaped == observer.pid:
+            observer.returncode = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
+            return
+        if reaped != 0:
+            return
+        # The original Popen child is still unreaped, so this positive PID
+        # cannot be recycled. No assumed/output PID gains signal authority.
+        os.kill(observer.pid, signal.SIGKILL)
+        # WNOHANG 0 after KILL is still pending, not confirmed reap/absence.
+        # The failed query gets neither a successful status nor another grace.
+        os.waitpid(observer.pid, os.WNOHANG)
+    except (OSError, ChildProcessError):
+        pass
+    finally:
+        # Cleanup never supplies a successful status or another wait budget.
+        observer.returncode = -1
+
+try:
+    remaining_seconds()
+    if sys.platform == "darwin":
+        inventory_file = pathlib.Path(inventory_path)
+        if (not inventory_file.is_absolute() or inventory_file.name != "darwin-process-group-inventory.py" or
+                inventory_file.is_symlink() or not inventory_file.is_file()):
+            raise RuntimeError("process_inventory_path")
+        sys.dont_write_bytecode = True
+        inventory_spec = importlib.util.spec_from_file_location("yenhubs_group_inventory", inventory_path)
+        if inventory_spec is None or inventory_spec.loader is None:
+            raise RuntimeError("process_inventory_module")
+        inventory_module = importlib.util.module_from_spec(inventory_spec)
+        inventory_spec.loader.exec_module(inventory_module)
+        remaining_seconds()
+    # This observer belongs to the still-live Bash owner, outside the original
+    # aggregate PGID. Include every original member, even foreign UID/zombies.
+    # The remaining deadline bounds pipe I/O and native join after spawn;
+    # Popen exec setup itself has no separately proved finite kernel bound.
+    observer_command = ([sys.executable, "-I", inventory_path, str(group)]
+                        if sys.platform == "darwin" else
+                        ["/bin/ps", "-axo", "pid=,ppid=,pgid=,uid=,stat="])
+    observer = subprocess.Popen(
+        observer_command,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True
+    )
+    descriptor = observer.stdout.fileno()
+    os.set_blocking(descriptor, False)
+    output = bytearray()
+    while True:
+        if not select.select([descriptor], [], [], remaining_seconds())[0]:
+            continue
+        try:
+            chunk = os.read(descriptor, 65536)
+        except BlockingIOError:
+            continue
+        if not chunk:
+            break
+        output.extend(chunk)
+        if len(output) > 1048576:
+            raise RuntimeError("process_inventory_size")
+    observer.stdout.close()
+    while True:
+        remaining_seconds()
+        try:
+            reaped, status = os.waitpid(observer.pid, os.WNOHANG)
+        except ChildProcessError:
+            # Losing actual child ownership also revokes cleanup authority.
+            observer_reaped = True
+            raise RuntimeError("process_inventory_ownership")
+        if reaped:
+            observer_reaped = True
+            if reaped != observer.pid or not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+                raise RuntimeError("process_inventory_exit")
+            observer.returncode = 0
+            break
+        select.select([], [], [], remaining_seconds())
+    lines = (inventory_module.parse_group_frame(bytes(output), group)
+             if sys.platform == "darwin" else output.decode("ascii").splitlines())
+    if sys.platform != "darwin" and not lines:
+        raise RuntimeError("process_inventory_empty")
+    for line in lines:
+        remaining_seconds()
+        fields = line.split()
+        if (len(fields) != 5 or not all(value.isdigit() for value in fields[:4]) or
+                not fields[4] or fields[4][0] not in "DIRSTUWXZt" or int(fields[0]) <= 0):
+            raise RuntimeError("process_inventory_row")
+        if int(fields[2]) == group:
+            raise RuntimeError("process_inventory_residual")
+    # A table observation alone cannot authorize success across a PGID race.
+    # Probe zero adds no signal authority; only native ESRCH means absent.
+    try:
+        remaining_seconds()
+        os.killpg(group, 0)
+    except ProcessLookupError:
+        remaining_seconds()
+        raise SystemExit(0)
+    raise RuntimeError("process_group_present")
+except (OSError, ValueError, RuntimeError):
+    close_owned_observer()
+    raise SystemExit(1)
+finally:
+    if observer is not None and observer.stdout is not None:
+        observer.stdout.close()
+PY
+}
+
 recovery_stop_no_managed_bot_runner_watch() {
   local stop_path="$1" failure_path="$2" ready_path="$3" watcher_pid="$4"
   local watcher_identity="$5"
   local watcher_status=0 ready_value="" boundary_json="" stop_written=0
+  local failure_identity="" watch_join_deadline=""
   [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" ]] || return 2
   recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" || return 1
-  if boundary_json="$(recovery_runner_watch_boundary_json)"; then
+  failure_identity="$(
+    recovery_no_managed_bot_runner_watch_failure_identity "$failure_path"
+  )" || watcher_status=1
+  # Losing the original marker revokes success, not our existing close duty.
+  # Use the same protected discard/join path as a failed boundary inventory.
+  if [[ "$watcher_status" == 0 ]] &&
+     boundary_json="$(recovery_runner_watch_boundary_json)"; then
     if recovery_process_identity_is_live "$watcher_pid" "$watcher_identity" &&
        recovery_signal_no_managed_bot_runner_watch_stop \
         "$stop_path" "$boundary_json"; then
@@ -11206,7 +11573,8 @@ recovery_stop_no_managed_bot_runner_watch() {
   fi
   if [[ "$stop_written" == 1 ]]; then
     recovery_wait_isolated_process_bounded \
-      "$watcher_pid" "$watcher_identity" "$stop_path" || watcher_status=1
+      "$watcher_pid" "$watcher_identity" "$stop_path" \
+      watch_join_deadline || watcher_status=1
   else
     # A broken marker path must not leave the isolated watcher running forever.
     recovery_stop_process_group "$watcher_pid" "$watcher_identity" || :
@@ -11215,14 +11583,27 @@ recovery_stop_no_managed_bot_runner_watch() {
   recovery_runner_watch_marker_is_exact "$failure_path" || watcher_status=1
   recovery_runner_watch_marker_is_exact "$ready_path" || watcher_status=1
   [[ ! -s "$failure_path" ]] || watcher_status=1
+  if [[ -n "$failure_identity" ]]; then
+    recovery_no_managed_bot_runner_watch_failure_identity \
+      "$failure_path" "$failure_identity" >/dev/null || watcher_status=1
+  else
+    watcher_status=1
+  fi
   if [[ -f "$ready_path" ]]; then ready_value="$(<"$ready_path")"; fi
   [[ "$ready_value" == ready ]] || watcher_status=1
+  if [[ "$watcher_status" == 0 ]]; then
+    # This is the real wait of A, including original Node/B waits. The whole
+    # PGID inventory uses only the remaining ORIGINAL join budget, not a reset.
+    recovery_no_managed_bot_runner_watch_group_is_absent \
+      "$watcher_pid" "$watch_join_deadline" || watcher_status=1
+  fi
   recovery_require_no_managed_bot_runner_pods || watcher_status=1
   [[ "$watcher_status" == 0 ]]
 }
 
 recovery_discard_no_managed_bot_runner_watch() {
   local stop_path="$1" watcher_pid="$2" watcher_identity="$3"
+  local wait_status=0
   if [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" ]] &&
      recovery_process_identity_is_live "$watcher_pid" "$watcher_identity"; then
     if recovery_signal_no_managed_bot_runner_watch_stop \
@@ -11231,6 +11612,14 @@ recovery_discard_no_managed_bot_runner_watch() {
         "$watcher_pid" "$watcher_identity" "$stop_path" 2>/dev/null || :
     else
       recovery_stop_process_group "$watcher_pid" "$watcher_identity" || :
+    fi
+  elif [[ "$watcher_pid" =~ ^[1-9][0-9]*$ && -n "$watcher_identity" ]] &&
+       ! kill -0 "$watcher_pid" 2>/dev/null; then
+    # Reap only this original child with its numeric PID still unoccupied;
+    # subsequent revocation stays PGID-only, never a positive PID fallback.
+    if wait "$watcher_pid" 2>/dev/null; then wait_status=0; else wait_status=$?; fi
+    if [[ "$wait_status" != 127 ]] && ! kill -0 "$watcher_pid" 2>/dev/null; then
+      recovery_stop_reaped_isolated_process_group "$watcher_pid"
     fi
   fi
 }
