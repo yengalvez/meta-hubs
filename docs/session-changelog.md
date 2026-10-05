@@ -3240,3 +3240,26 @@ Revisión focal independiente CLOSED. Foco normal60507 original0 en43071ms,
 46/46; testigos inicial2, rápidos18/13 y ACK3; started/completed presentes.
 Diarios privados /private/tmp/yenhubs-S8004bb6-startup-phase-fixture-20261005.*.
 Esto es una regresión local; recovery/full exactos y Linux siguen pendientes.
+
+## 2026-10-05 — EOF pendiente en el cierre nativo del WATCH
+
+- El diagnóstico aislado reprodujo una carrera legítima: Node terminaba con
+  salida0 y ACK mutuo, pero A podía declarar fallo antes de consumir el EOF ya
+  disponible. El owner seguía vivo y el grupo cerraba; no se ha demostrado
+  que ésta fuera la causa del fallo histórico de H5.
+- A consume únicamente un EOF ya listo, sin esperar ni fabricar confirmación.
+  Canal retenido, datos pendientes o ausencia de ACK siguen revocando el grupo.
+  Identidades, padres/peers, publicación durable y límites permanecen intactos.
+- La regresión deriva el launcher original y altera sólo la planificación:
+  RED2 original1,3/4; GREEN original0,4/4 en4,15s. Comprueba salida nativa,
+  dueño vivo y grupo ausente antes del teardown, incluidos dos negativos.
+- Las regresiones existentes de dueño/guardián y publicación pasaron15/15
+  secuencialmente, original0 en138,71s. La revisión independiente focal CLEAR
+  no encontró hallazgos materiales; no ejecutó runtime ni aceptó el full.
+- Bash-n, ShellCheck del helper/verificador, Actionlint del workflow y nueve
+  pruebas de invalidación/política pasaron. La regresión nueva queda conectada
+  al gate security local y CI. Falta congelar el delta y conciliar los recibos
+  afectados; no hay aceptación recovery/full/Linux/live heredada.
+- Diarios originales privados:
+  /private/tmp/yenhubs-Sd273b9d-completion-{red2,green,owner-regressions}-20261005.*.
+  No hubo clúster, copia real, build, rollout o cambios de datos/permisos.

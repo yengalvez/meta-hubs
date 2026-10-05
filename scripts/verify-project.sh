@@ -729,6 +729,7 @@ run_security() {
   (cd "$ROOT_DIR/hubs-cloud/community-edition/services/bot-orchestrator" && npm ci --ignore-scripts --no-audit)
   node --test "$ROOT_DIR/tests/recovery/runner-cutover-checkpoint-evidence.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/runner-watch-owner.test.mjs"
+  node --test "$ROOT_DIR/tests/recovery/runner-watch-completion.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/runner-watch-failure-publication.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/durable-runner-quiescence-monitor.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/checkpoint-activation-receipt.test.mjs"

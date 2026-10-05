@@ -11074,6 +11074,16 @@ try:
                         revoke()
                 leader_live = leader_is_live()
                 if not leader_live:
+                    # A real Node exit can race an empty select result. Drain
+                    # its already-ready EOF once before judging authorization;
+                    # never wait for or fabricate a missing EOF/complete ACK.
+                    if completion_acknowledged and not node_closed:
+                        if not select.select([guardian_socket], [], [], 0)[0]:
+                            revoke()
+                        if receive_frame(guardian_socket) != b"":
+                            revoke()
+                        node_closed = True
+                        guardian_socket.close()
                     if not completion_acknowledged or not node_closed:
                         revoke()
                     if not retiring:
