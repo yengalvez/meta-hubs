@@ -3,7 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const program = path.basename(process.argv[1]);
+const program = path.basename(process.argv[1]).replace(/-monthly$/, "");
 const args = process.argv.slice(2);
 const state = process.env.STUB_STATE_DIR;
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -39,7 +39,8 @@ function pod(role) {
 if (program === "kubectl") {
   // The snapshot source/worker use these exact direct forms. Ordinary protected
   // observations, watches, CAS mutations and resume stay in the original fake.
-  if (args.some(a => a.startsWith("--request-timeout="))) fakeFallback();
+  // Protected requests must have been exec-dispatched by the shell shim.
+  if (args.some(a => a.startsWith("--request-timeout="))) process.exit(98);
   if (args[0] !== "--context" || args[1] !== "fixture-context") process.exit(98);
   let command = args.slice(2);
   if (command[0] === "-n") {

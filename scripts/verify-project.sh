@@ -777,6 +777,7 @@ run_security() {
 }
 
 run_recovery() {
+  node --test --test-concurrency=1 "$ROOT_DIR/tests/recovery/monthly-provider-dispatch.test.mjs"
   node --test --test-concurrency=1 "$ROOT_DIR/tests/recovery/monthly-native-coordinator.test.mjs"
   "$ROOT_DIR/tests/recovery/test-recovery-safety.sh"
 }

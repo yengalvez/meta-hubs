@@ -58,6 +58,12 @@ with fixture-only provider binaries and a failed media POST without retry;
 shared native process supervision57/57. These do not exercise the complete new
 capture coordinator end-to-end or substitute for its full gate and real restore.
 
+The closed monthly provider fixture exec-dispatches protected kubectl calls
+directly to the original local fake. It must not insert a Node child in that
+fallback: the existing Lease WATCH/GET handoff is keyed by the guard's parent
+identity. A focused native test reproduces the former orphaned handoff and
+verifies its removal plus a real fixture CAS; no production guard is relaxed.
+
 The deployed PostgreSQL source is major12. Physical snapshot recovery must use
 that compatible major/image; the existing local14.23 portable-format fixture does
 not validate a physical12 snapshot. Primary references:
@@ -113,6 +119,7 @@ node --test tests/scripts/monthly-snapshot-source.test.mjs
 node --test tests/scripts/monthly-snapshot-pair.test.mjs
 node --test tests/scripts/monthly-snapshot-worker.test.mjs tests/scripts/monthly-native-bundle.test.mjs tests/scripts/monthly-native-routing.test.mjs
 node --test tests/scripts/monthly-fixture-attestation.test.mjs
+node --test --test-concurrency=1 tests/recovery/monthly-provider-dispatch.test.mjs
 node --test --test-concurrency=1 tests/recovery/monthly-native-coordinator.test.mjs
 node tests/recovery/monthly-portable-postgres-proof.mjs
 ```
@@ -162,5 +169,9 @@ with403 shared-project quota. The installed1.75.1 warning and the
 [official Rclone documentation](https://rclone.org/drive/#making-your-own-client-id)
 state that the shared client is being retired in2026. Do not activate a monthly
 scheduler on this credential as if it were a reliable dedicated connection.
-Owner authorization for a dedicated OAuth client has been requested; no client,
-Cloud project, billing or new consent has been created. Preserve `drive.file`.
+The owner authorized a dedicated OAuth client with only `drive.file`, no billing
+and no new terms. Its isolated Cloud project `yenhubs-backups-20261006` exists;
+no client credentials have been created. Google requires accepting its API
+Services User Data Policy during app setup. Stop at that unchecked box and let
+the owner review/accept it; authorization to configure is not authorization to
+accept new terms. No billing was activated or terms accepted.

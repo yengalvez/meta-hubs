@@ -28,13 +28,8 @@ async function coordinatorFixture(mode) {
     `ROOT_DIR=${JSON.stringify(root)}`);
   // Source/runtime methods may only resolve the two closed fixture programs.
   harness = replaceOnce(harness, 'export PATH="$TMP_DIR/bin:$PATH"', String.raw`
-node - "$TMP_DIR/bin" "$MONTHLY_FIXTURE_ADAPTER" <<'MONTHLY_ADAPTER'
-const fs = require("node:fs"), path = require("node:path");
-const bin = process.argv[2], body = fs.readFileSync(process.argv[3]);
-for (const name of ["kubectl", "doctl"]) {
-  fs.renameSync(path.join(bin, name), path.join(bin, name + "-legacy"));
-  fs.writeFileSync(path.join(bin, name), "#!" + process.execPath + "\n" + body, { mode: 0o700 });
-}
+node - "$TMP_DIR/bin" "$MONTHLY_FIXTURE_ADAPTER" "$MONTHLY_FIXTURE_DISPATCH" <<'MONTHLY_ADAPTER'
+require(process.argv[4]).installMonthlyProviderFixture(process.argv[2], process.argv[3]);
 MONTHLY_ADAPTER
 export PATH="$TMP_DIR/bin:$PATH"`);
   // Stop at the original focus dispatch: setup, real control-plane fixture,
@@ -72,7 +67,8 @@ if [[ "\${YENHUBS_RECOVERY_TEST_FOCUS:-}" == checkpoint-durable ]]; then`
     HOME: evidence, TMPDIR: evidence, YENHUBS_RECOVERY_TEST_KEEP_TMP: "1",
     YENHUBS_RECOVERY_TEST_NATIVE_MONTHLY: "1",
     YENHUBS_RECOVERY_TEST_FOCUS: "monthly-native", MONTHLY_FIXTURE_CASE: mode,
-    MONTHLY_FIXTURE_EVIDENCE: evidence, MONTHLY_FIXTURE_ADAPTER: join(root, "tests/recovery/lib/monthly-provider-fixture.cjs") };
+    MONTHLY_FIXTURE_EVIDENCE: evidence, MONTHLY_FIXTURE_ADAPTER: join(root, "tests/recovery/lib/monthly-provider-fixture.cjs"),
+    MONTHLY_FIXTURE_DISPATCH: join(root, "tests/recovery/lib/monthly-provider-dispatch.cjs") };
   const began = performance.now();
   let result;
   try { result = { ...(await run("bash", [script], { cwd: root, env, timeout: 1200000, maxBuffer: 4 * 1024 * 1024 })), code: 0 }; }

@@ -3381,3 +3381,20 @@ Esto es una regresión local; recovery/full exactos y Linux siguen pendientes.
 - El caso negativo no se inicia si el positivo falla. Ambas pruebas quedan
   incorporadas al gate recovery; validación end-to-end y full exacto pendientes.
 - No hubo operación productiva, snapshots, retry remoto, restore o cambio de datos.
+
+## 2026-10-06 — Causa reproducida del Lease en el adaptador de pruebas mensual
+
+- 43835 terminó1; el coordinador positivo salió143 antes de sync/POST al perder
+  el Lease. El adaptador Node añadía un PPID diferente a cada WATCH/GET del fake
+  establecido, dejando19 handoffs sin retirar; no era una pausa productiva.
+- Se sustituye exclusivamente ese fallback de pruebas por exec de un shim local.
+  Focal nativo49125 pasó3/3 en2,867s: reproduce el fallo anterior, limpia el
+  handoff y permite el CAS exacto, conserva códigos de error y rutas cerradas.
+  ShellCheck/diff check0. Guardas de producción,30/10s y reserva2s intactas.
+- Pasada adversarial acotada por el principal: solo cambia plumbing de pruebas,
+  sin clientes reales, bypass, retry o transferencia de aceptación. No es una
+  revisión independiente; el ensayo integral nuevo y full siguen pendientes.
+- El dueño autorizó OAuth dedicado drive.file. Se creó únicamente el proyecto
+  Google aislado yenhubs-backups-20261006, sin activar facturación ni credenciales.
+  Google exige aceptar su Política de Datos del Usuario; se dejó sin marcar para
+  revisión del dueño, conforme a su condición de no aceptar términos nuevos.
