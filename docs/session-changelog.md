@@ -1,5 +1,25 @@
 # Session Changelog
 
+## 2026-10-06 · Exact monthly source and native pair preparation
+
+Bound both actual10GiB volumes read-only to their PVC/PV/provider identities.
+The installed doctl volume-get silently returned only the first of two IDs;
+replace that multi-ID query with one exact GET per handle and cover it directly.
+The actual PostgreSQL12 data directory/WAL share a filesystem, with no external
+tablespaces and fsync/full_page_writes enabled. No flush, pause or capture occurred.
+Source/layout13/13 and native pair11/11 focused tests passed natively; private
+journal ordering/no-overwrite and ambiguous/second-POST/late-boundary failures
+are covered. Neither mock pairs nor source inventory accept a real checkpoint.
+The pair adapter is not yet connected to the protected coordinator and has no
+stand-alone capture CLI. Existing P guards/evidence and public data are unchanged.
+
+Drive authorization90771 ended0/AUTHORIZED/drive.file; private config metadata
+verified without printing credentials. Folder GET returned403 because the shared
+Rclone client exceeded Google's request quota. Access/transfer/refresh are still
+unaccepted. No repeated OAuth, cloud resource, real snapshot, build or rollout.
+Temporary disk cost authority remains pending. Canonical state is in the owner's
+root PLAN/Plan_activo.md; this branch does not carry independent plan authority.
+
 ## 2026-10-05 · Candidate native aggregate WATCH closure
 
 Controlled macOS RED94777 reproduced Node0, actual B7 reaped by A, the original
