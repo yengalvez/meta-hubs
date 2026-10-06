@@ -3294,3 +3294,21 @@ Esto es una regresión local; recovery/full exactos y Linux siguen pendientes.
 - Diarios originales privados:
   /private/tmp/yenhubs-Sd273b9d-completion-{red2,green,owner-regressions}-20261005.*.
   No hubo clúster, copia real, build, rollout o cambios de datos/permisos.
+
+## 2026-10-06 — Componentes locales para la política mensual
+
+- La ruta nueva conserva dos puntos conjuntos en DO y diez exportaciones cifradas
+  en Drive. La configuración queda desactivada; no hay calendario ni copia real.
+- Planificador de retención de solo lectura:10/10 casos PASS, sin borrar recursos.
+- Transporte estándar age con DB, medios, runtime y manifiesto cifrados:8/8 casos
+  PASS. Rechaza corrupción, clave incorrecta, enlaces y sobrescritura; no expone
+  el manifiesto privado en el directorio de transporte.
+- Prueba nativa local PostgreSQL14.23: dump/restore de dos filas, comparación de
+  dos archivos y configuración, salida0;1,434s en una muestra diminuta. No es una
+  medición productiva ni aceptación de recuperación DO/Drive. Servidor propio sin
+  TCP cerrado al terminar. Evidencia:/private/tmp/yenhubs-mp-HYKHmG/proof-result.json.
+- Revisión adversarial separada del coordinador, no revisión independiente; no se
+  afirmó una ruta de subagente GPT6 sin poder verificar el modelo activo.
+- Ningún snapshot, pausa, restore productivo, build, rollout o cambio de datos.
+  Captura coordinada, acceso desatendido, custodia de clave y recuperación aislada
+  siguen pendientes. Contrato del componente:deployment/monthly-backup-format.md.

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "instanceId": "yenhubs-main",
+  "timezone": "Europe/Madrid",
+  "digitalOcean": { "completeMonthlyPoints": 2 },
+  "googleDrive": {
+    "completeMonthlyPoints": 10,
+    "folderId": "17indYrOSvFBJV03p5ZrAxCtg-gfs8A8H"
+  },
+  "schedule": { "frequency": "monthly", "enabled": false }
+}
