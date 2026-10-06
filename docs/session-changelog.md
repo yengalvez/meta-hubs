@@ -3312,3 +3312,8 @@ Esto es una regresión local; recovery/full exactos y Linux siguen pendientes.
 - Ningún snapshot, pausa, restore productivo, build, rollout o cambio de datos.
   Captura coordinada, acceso desatendido, custodia de clave y recuperación aislada
   siguen pendientes. Contrato del componente:deployment/monthly-backup-format.md.
+- Autorización mínima de Drive preparada, cinco pruebas PASS. El primer arranque
+  se rechazó antes del login por el formato base64 del argumento; corregido contra
+  el código oficial de rclone1.75.1, no mediante ampliación de permisos. La segunda
+  ejecución llegó a Google con solo drive.file. No se pulsó Continuar ni se dio
+  por obtenido acceso desatendido. No se imprimieron tokens.

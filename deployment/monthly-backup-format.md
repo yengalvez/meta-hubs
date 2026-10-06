@@ -56,3 +56,19 @@ compares media hashes and configuration, and stops only that local server.
 It is a small format proof, **not** a production-size timing measurement or either
 of the required DigitalOcean/Drive recovery acceptances. Requires existing
 PostgreSQL tools, standard age and tar. It never installs or downloads software.
+
+## Owner authorization for unattended Drive access
+
+`monthly-drive-authorize.mjs --config NEW_PRIVATE_CONFIG_PATH` starts the official
+rclone browser flow with only `drive.file`, without opening Chrome. Its stdout
+exposes only the loopback login URL and a sanitized terminal result; OAuth token
+output stays in memory and is saved to the dedicated0600 configuration. The parent
+directory must already be private and canonical. Existing configurations are not
+overwritten. A failed attempt may leave an empty claimed file, never usable auth.
+
+Stop at Google's consent screen for the owner's approval. Authorization alone
+does not prove folder access, transfer, refresh or scheduling. `drive.file` may not
+allow access to a folder created by a different connector: verify the chosen
+folder rather than silently broadening scope. Retain recovery access separately
+from the encrypted backups. Five parser/link tests cover the installed rclone
+result format without exposing real credentials.
