@@ -112,16 +112,28 @@ node --test tests/scripts/monthly-portable-point.test.mjs
 node --test tests/scripts/monthly-snapshot-source.test.mjs
 node --test tests/scripts/monthly-snapshot-pair.test.mjs
 node --test tests/scripts/monthly-snapshot-worker.test.mjs tests/scripts/monthly-native-bundle.test.mjs tests/scripts/monthly-native-routing.test.mjs
+node --test tests/scripts/monthly-fixture-attestation.test.mjs
+node --test --test-concurrency=1 tests/recovery/monthly-native-coordinator.test.mjs
 node tests/recovery/monthly-portable-postgres-proof.mjs
 ```
 
-The last command starts its own local PostgreSQL server on a private Unix socket,
+The PostgreSQL proof command starts its own local server on a private Unix socket,
 without a TCP listener or production credentials. It creates a two-row fixture,
 exports all three payloads, encrypts/decrypts them, restores to a second database,
 compares media hashes and configuration, and stops only that local server.
 It is a small format proof, **not** a production-size timing measurement or either
 of the required DigitalOcean/Drive recovery acceptances. Requires existing
 PostgreSQL tools, standard age and tar. It never installs or downloads software.
+
+The coordinator regression reuses a local copy of the existing durable harness,
+with an explicit fixed UUID fixture identity and closed fake provider programs.
+Real pause/fence/monitor/join/publication/resume scripts run unchanged. It checks
+fourteen artifact hashes and writer/Lease recovery, including a failed media
+POST with no retry. The new fixed local attestation has seven focused rejection
+tests; it cannot admit arbitrary UUIDs or any production context. The recovery
+section runs this regression before the established suite. Do not run the whole
+coordinator regression from a dirty source checkout: its original clean-tree
+guard remains mandatory. This test is not a production capture or restore.
 
 ## Owner authorization for unattended Drive access
 

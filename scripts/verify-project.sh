@@ -747,6 +747,7 @@ run_security() {
     "$ROOT_DIR/tests/scripts/monthly-snapshot-worker.test.mjs" \
     "$ROOT_DIR/tests/scripts/monthly-native-bundle.test.mjs" \
     "$ROOT_DIR/tests/scripts/monthly-native-routing.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-fixture-attestation.test.mjs" \
     "$ROOT_DIR/tests/scripts/monthly-backup-retention.test.mjs" \
     "$ROOT_DIR/tests/scripts/monthly-portable-point.test.mjs" \
     "$ROOT_DIR/tests/scripts/monthly-drive-authorize.test.mjs"
@@ -776,6 +777,7 @@ run_security() {
 }
 
 run_recovery() {
+  node --test --test-concurrency=1 "$ROOT_DIR/tests/recovery/monthly-native-coordinator.test.mjs"
   "$ROOT_DIR/tests/recovery/test-recovery-safety.sh"
 }
 

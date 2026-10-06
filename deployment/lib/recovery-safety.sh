@@ -6538,15 +6538,26 @@ recovery_require_pvc_identity() {
 }
 
 recovery_require_local_fixture_attestation() {
+  local fixture_namespace_uid=fixture-uid fixture_pvc_uid=fixture-pvc-uid
+  # Physical-volume tests need syntactically valid UUIDs. Admit only this
+  # explicit, fixed, local pair; never arbitrary UIDs or a production context.
+  case "${YENHUBS_RECOVERY_TEST_NATIVE_MONTHLY:-0}" in
+    0) ;;
+    1)
+      fixture_namespace_uid=00000000-0000-4000-8000-000000000001
+      fixture_pvc_uid=00000000-0000-4000-8000-000000000006
+      ;;
+    *) return 1 ;;
+  esac
   [[ "${YENHUBS_RECOVERY_TEST_MODE:-}" == local-fixture &&
      "${EXPECTED_KUBE_CONTEXT:-}" == fixture-context &&
-     "${EXPECTED_NAMESPACE_UID:-}" == fixture-uid &&
-     "${EXPECTED_RET_PVC_UID:-}" == fixture-pvc-uid &&
+     "${EXPECTED_NAMESPACE_UID:-}" == "$fixture_namespace_uid" &&
+     "${EXPECTED_RET_PVC_UID:-}" == "$fixture_pvc_uid" &&
      "${NAMESPACE:-}" == hcce ]] || return 1
   recovery_require_cluster_identity || return 1
   recovery_require_pvc_identity ret-pvc || return 1
-  [[ "$RECOVERY_NAMESPACE_UID" == fixture-uid &&
-     "$RECOVERY_PVC_UID" == fixture-pvc-uid ]]
+  [[ "$RECOVERY_NAMESPACE_UID" == "$fixture_namespace_uid" &&
+     "$RECOVERY_PVC_UID" == "$fixture_pvc_uid" ]]
 }
 
 recovery_stable_absence_seconds() {

@@ -3365,3 +3365,19 @@ Esto es una regresión local; recovery/full exactos y Linux siguen pendientes.
   No se repite OAuth, se amplía scope, ni se acepta una subida por metadatos.
 - No hubo snapshot, pausa, restore, build, deploy, recursos facturables ni cambios
   de datos/permisos. El Goal mensual sigue incompleto y el calendario desactivado.
+
+## 2026-10-06 — Ensayo integral cerrado del coordinador mensual, pendiente de aceptación
+
+- Añadido banco end-to-end que reutiliza el fixture durable y ejecuta los scripts
+  de producción sin sustituir sus guardas. kubectl/doctl resuelven exclusivamente
+  programas simulados; el entorno no contiene credenciales productivas.
+- Primera ejecución73669 falló antes de capturar por Bash3.2 y el fixture UUID;
+  se usa Bash soportado y una pareja UUID local fija/opt-in. Su attestación pasó
+  siete casos, incluyendo contexto/UID observado incorrectos. No se aceptan
+  UIDs arbitrarios ni se cambian plazos30/10s, reserva2s o guardas productivas.
+- 42102 falló antes del POST por el árbol fuente sucio durante desarrollo. Se
+  conserva esa protección; el siguiente ensayo requiere guardar el delta antes
+  de ejecutar. No es evidencia de fallo del proveedor o multimedia real.
+- El caso negativo no se inicia si el positivo falla. Ambas pruebas quedan
+  incorporadas al gate recovery; validación end-to-end y full exacto pendientes.
+- No hubo operación productiva, snapshots, retry remoto, restore o cambio de datos.
