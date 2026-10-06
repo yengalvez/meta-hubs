@@ -3423,3 +3423,20 @@ Esto es una regresión local; recovery/full exactos y Linux siguen pendientes.
   sin cliente/credenciales/billing, esperando la revisión personal ya solicitada.
 - Falta guardar/congelar, aceptar el integral y full exacto, y luego captura,
   transporte/refresh real, restauraciones y calendario. Sin aceptación heredada.
+
+## 2026-10-06 — WATCH terminal vivo en la fixture mensual
+
+- E2E22190 terminó1: positivo PASS445,907s, native0/14 hashes/cinco writers1;
+  negativo native1 esperado pero writer-stop/watch_stop_contract impidió resume,
+  deployments exit0/signal none324ms. La fixture retuvo lock y Reticulum0; no
+  fue una pausa productiva ni una recuperación aceptada. No repetir a ciegas.
+- El fake default emite un bookmark y termina0. La comparación nativa local
+  reproduce esa vida corta y comprueba que el peer terminal-live existente
+  permanece vivo y termina por su SIGTERM controlado. Focal37720 pasó6/6 en
+  5,473s; tras añadir límite al child solo ese caso52195 pasó1/1 en1,817s.
+- El driver mensual selecciona ese peer y REQUIRE_LIVE_TERMINAL=1. No se acepta
+  code0 como señal, ni cambia el watcher, guardas, timeouts30/10 o reserva2s.
+  Revisión separada del principal, no independiente. No atribuir causa histórica.
+- Falta guardar el delta y aceptar ambos casos/full exacto. OAuth dedicado sigue
+  pendiente de la política personal del dueño; no snapshot, recursos pagados,
+  OAuth nuevo, deploy, restauración productiva o cambio de datos/permisos.

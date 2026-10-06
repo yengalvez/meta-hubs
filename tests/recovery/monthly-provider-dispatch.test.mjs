@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, readdir } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { execFile, spawnSync } from "node:child_process";
+import { execFile, spawnSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
 
@@ -113,4 +113,52 @@ test("the live database query has an unbound SQL hash, unlike a frozen dump arti
   assert.equal(result.status, 0);
   assert.deepEqual(JSON.parse(result.stdout), { ...contract, sql_dump_sha256: null });
   assert.ok(stdout.includes("'critical_inventory'"));
+});
+
+test("the coordinator's terminal WATCH fixture must stay live and close with its owned SIGTERM, not immediate code0", async () => {
+  const f = await fixture("exec");
+  const raw = "/apis/apps/v1/namespaces/hcce/deployments?allowWatchBookmarks=true&" +
+    "resourceVersion=fixture-live-rv&timeoutSeconds=65&watch=true";
+  const args = ["--context", "fixture-context", "--request-timeout=75s", "get", "--raw", raw];
+  // The inherited default is a short BOOKMARK followed by native code0. It is
+  // unsuitable for a terminal overlap Watch requiring a controlled SIGTERM.
+  const short = await run(join(f.bin, "kubectl"), args, { env: f.env, timeout: 5000 });
+  assert.equal(JSON.parse(short.stdout).type, "BOOKMARK");
+  assert.equal(short.stderr, "");
+  const child = spawn(join(f.bin, "kubectl"), args, {
+    env: { ...f.env, STUB_MODE: "checkpoint-writer-terminal-live" }, stdio: ["ignore", "pipe", "pipe"]
+  });
+  let observedClose = false, bytes = "", timer, closeTimer;
+  const closed = new Promise((accept, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => { observedClose = true; accept({ code, signal }); });
+  });
+  const bookmark = new Promise((accept, reject) => {
+    child.once("error", reject);
+    child.stdout.on("data", chunk => {
+      bytes += chunk.toString("utf8");
+      if (bytes.includes("\n")) {
+        try { assert.equal(JSON.parse(bytes.trim()).type, "BOOKMARK"); accept(); }
+        catch (error) { reject(error); }
+      }
+    });
+    timer = setTimeout(() => reject(new Error("closed WATCH fixture did not publish its bookmark")), 5000);
+  });
+  // Always drain stderr; this executable is only the closed fixture peer.
+  child.stderr.resume();
+  try {
+    await bookmark; clearTimeout(timer);
+    await new Promise(accept => setTimeout(accept, 100));
+    assert.equal(observedClose, false);
+    assert.equal(child.exitCode, null);
+    assert.equal(child.kill("SIGTERM"), true);
+    const result = await Promise.race([closed, new Promise((_accept, reject) => {
+      closeTimer = setTimeout(() => reject(new Error("owned fixture WATCH did not close after SIGTERM")), 5000);
+    })]);
+    assert.equal(result.code, null);
+    assert.equal(result.signal, "SIGTERM");
+  } finally {
+    clearTimeout(timer); clearTimeout(closeTimer);
+    if (!observedClose) { child.kill("SIGKILL"); await closed; }
+  }
 });

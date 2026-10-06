@@ -151,6 +151,18 @@ Five dispatch/contract tests passed; the previous integral attempt90597 failed
 before sync/POST and resumed all five simulated writers. No production guard
 was relaxed, and a new integral pass is still required.
 
+Attempt22190 accepted the positive simulated capture (native0, fourteen hashes,
+five writers resumed) but failed its media-error recovery: the terminal Watch
+reported code0/no signal, and the original stop contract correctly refused resume.
+The inherited short-bookmark fake is unsuitable for terminal overlap. A focused
+native comparison confirms that default fake exits0 immediately, while the
+existing `checkpoint-writer-terminal-live` peer remains open and closes with its
+owned SIGTERM. The monthly driver now selects that peer and requires live terminal
+continuity explicitly. Production watcher/stop contract/limits are unchanged;
+six dispatch tests passed, with the changed bounded lifecycle test1/1 afterward.
+This establishes the fixture mismatch, not a historical production cause. Both
+integral cases must pass on the newly frozen bytes before the full gate.
+
 ## Owner authorization for unattended Drive access
 
 `monthly-drive-authorize.mjs --config NEW_PRIVATE_CONFIG_PATH --client-json PRIVATE_INSTALLED_CLIENT_JSON`

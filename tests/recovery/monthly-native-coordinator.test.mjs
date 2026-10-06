@@ -46,11 +46,16 @@ if [[ "\${YENHUBS_RECOVERY_TEST_FOCUS:-}" == monthly-native ]]; then
   # as the live database response or weaken the worker's unbound-contract guard.
   jq '.sql_dump_sha256 = null' "$DATABASE_CONTRACT" >"$TMP_DIR/monthly-live-contract.json"
   chmod 600 "$TMP_DIR/monthly-live-contract.json"
+  # Default legacy WATCH fixtures emit one bookmark and exit0 immediately.
+  # Terminal overlap must instead be live through the owned SIGTERM join.
+  # Reuse the original strict live fixture; never accept code0 as that signal.
   native_status=0
   if env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
     EXPECTED_NAMESPACE_UID=MONTHLY_NAMESPACE_UID EXPECTED_RET_PVC_UID=MONTHLY_MEDIA_UID \
     VALUES_FILE="$VALUES_FIXTURE" STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
     STUB_RUNNER_NAMESPACE=present STUB_RUNNER_POD_PROFILE=fence-stable \
+    STUB_MODE=checkpoint-writer-terminal-live \
+    YENHUBS_WATCH_TEST_REQUIRE_LIVE_TERMINAL=1 \
     STUB_MONITOR_WATCH_PACE=1 RECOVERY_STREAM_POLL_SECONDS=1 \
     STUB_DB_CONTRACT="$TMP_DIR/monthly-live-contract.json" \
     CHECKPOINT_BACKEND=native-monthly MONTHLY_INSTANCE_ID=fixture MONTHLY_REGION=ams3 \
