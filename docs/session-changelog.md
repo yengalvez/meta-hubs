@@ -3337,3 +3337,31 @@ Esto es una regresión local; recovery/full exactos y Linux siguen pendientes.
   el código oficial de rclone1.75.1, no mediante ampliación de permisos. La segunda
   ejecución llegó a Google con solo drive.file. No se pulsó Continuar ni se dio
   por obtenido acceso desatendido. No se imprimieron tokens.
+
+## 2026-10-06 — Captura mensual nativa conectada localmente al padre protegido
+
+- El backend explícito native-monthly reutiliza la pausa/reanudación y el DB
+  child existentes: Lease, tres guardas, contratos DB antes/después, joins
+  originales, recuperación abortada y publicación no-clobber. Legacy sigue
+  siendo la opción predeterminada; no se amplían límites ni se ofrecen bypasses.
+- El worker fijo registra dos POST de snapshots, sincronización previa e
+  identidades exactas. Formato cerrado de14 artefactos distinto al SQL legacy;
+  runtime/configuración/clave se custodian con entradas fijas privadas antes
+  de la pausa y solo viajarán cifradas a Drive.
+- Worker/bundle/routing16/16 PASS, salida nativa0,2,509s; dos casos ejercitan
+  ejecutables fixture sin credenciales/cloud, incluido fallo de medios sin
+  reintento ni pareja completa. No es una copia real.
+- Supervisión compartida multi-stream57/57 PASS, sesión80504 salida0. El primer
+  arranque8872 había terminado1 antes de los tests por submódulos no inicializados;
+  se completó ese contexto exacto, no se modificaron guardas para hacer pasar el test.
+- Hubs137eb876 y Cloud6811d7b inicializados limpios con URLs oficiales; dependencias
+  CE desde el lock existente, sin instalación/upgrade global ni cambios productivos.
+- ShellCheck y diff check PASS. Revisión adversarial separada del coordinador,
+  no independiente: no hay ruta GPT6 heredada verificada. Falta el ensayo completo
+  del backend nuevo, full exacto y aceptación real, exportación y ambos restores.
+- Drive90771 quedó autorizada con drive.file; consultas a Rclone fallan403 por
+  cuota del cliente compartido y la herramienta anuncia su retirada en2026.
+  Conexión OAuth dedicada solicitada al dueño, sin crear proyecto/cliente/billing.
+  No se repite OAuth, se amplía scope, ni se acepta una subida por metadatos.
+- No hubo snapshot, pausa, restore, build, deploy, recursos facturables ni cambios
+  de datos/permisos. El Goal mensual sigue incompleto y el calendario desactivado.

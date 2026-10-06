@@ -1,10 +1,12 @@
-# Monthly portable backup: local component
+# Monthly backup components: local implementation, not operational acceptance
 
-This component encrypts and verifies a portable PostgreSQL/media/runtime package.
-It does **not** capture snapshots, pause services, contact a provider, rotate
-backups, schedule jobs or establish production restore acceptance.
+The portable component encrypts and verifies PostgreSQL/media/runtime packages.
+The explicit native backend is now connected to the existing protected capture
+coordinator. Its code can pause/resume workloads and create native snapshots;
+it is **not yet approved for production use**. No monthly capture, isolated
+DO/Drive restore, rotation or scheduler has been accepted.
 
-## Native capture components (not yet an operational coordinator)
+## Native capture and protected parent
 
 `monthly-snapshot-source.mjs` binds each PVC/PV UID to its actual DigitalOcean
 volume with one native GET per volume. It rejects a rebound claim, another driver,
@@ -17,8 +19,9 @@ inventory is explicitly `inventory-not-captured`.
 `monthly-snapshot-pair.mjs` supplies the native DO adapter and pair engine, **not a
 stand-alone mutating CLI**. The protected parent must provide the real boundary
 checks and filesystem flush while the existing Lease, writer and continuous
-PostgreSQL/control guards remain active. Integration with that parent is still
-pending; an arbitrary callback is not production acceptance.
+PostgreSQL/control guards remain active. The new fixed worker supplies those
+checks only through the existing DB child's gated session. An arbitrary callback
+or a successful worker unit test is not complete-coordinator acceptance.
 
 The engine fsyncs a private intent journal before each single POST, reads back
 both exact native identities, and rejects existing monthly names, another source,
@@ -26,6 +29,34 @@ region/type/time mismatch, changed readback or a late boundary failure. A failed
 or ambiguous POST is never retried automatically; a first snapshot is not erased
 or accepted as a pair. Its output is `captured-not-restore-accepted`; it cannot
 prove parent terminal joins, writer resume, Drive export or either real restore.
+
+`create-checkpoint.sh` retains `CHECKPOINT_BACKEND=legacy` by default. The explicit
+`native-monthly` backend requires the durable-v2 runtime, exact context/UIDs,
+`MONTHLY_INSTANCE_ID`, `MONTHLY_REGION` and an existing private0700
+`MONTHLY_JOURNAL_ROOT`. It preserves the operation Lease, runner/fence and writer
+monitors, complete before/after database contracts, continuous PGSQL source
+monitor, native parent joins, abort recovery and final no-clobber publication.
+The capture does not stream the entire media disk through the paused source.
+
+The fixed `monthly-snapshot-worker.mjs` is not an operator entrypoint. Its five
+arguments are private source inventory, new journal directory, civil month,
+operation ID and the private before-contract. All three original guard kinds
+and Lease supervision are mandatory in `recovery_kubectl_stream_supervised`;
+there is no arbitrary-command switch or weakened30/10s/reserve2s deadline.
+
+`monthly-native-bundle.mjs` validates a separate fourteen-artifact closed set:
+the eleven inventories/contracts, `monthly-source.json`, `native-pair.json` and
+`runtime.tar.gz`. It does not label snapshots as SQL dumps or allow the legacy
+restore validator to accept them. `runtime.tar.gz` contains only fixed regular
+entries `input-values.yaml`, `hcce.yaml` and `cutover.key`, read from pinned
+private0600 files before the pause. This archive remains private locally; only
+the portable component's encrypted output may go to Drive. Recovery/decryption
+key custody is separate and still needs verification.
+
+Local checks: new worker/bundle/routing16/16, including real child execution
+with fixture-only provider binaries and a failed media POST without retry;
+shared native process supervision57/57. These do not exercise the complete new
+capture coordinator end-to-end or substitute for its full gate and real restore.
 
 The deployed PostgreSQL source is major12. Physical snapshot recovery must use
 that compatible major/image; the existing local14.23 portable-format fixture does
@@ -80,6 +111,7 @@ node --test tests/scripts/monthly-backup-retention.test.mjs
 node --test tests/scripts/monthly-portable-point.test.mjs
 node --test tests/scripts/monthly-snapshot-source.test.mjs
 node --test tests/scripts/monthly-snapshot-pair.test.mjs
+node --test tests/scripts/monthly-snapshot-worker.test.mjs tests/scripts/monthly-native-bundle.test.mjs tests/scripts/monthly-native-routing.test.mjs
 node tests/recovery/monthly-portable-postgres-proof.mjs
 ```
 
@@ -112,3 +144,11 @@ nonempty private0600 config. This is not a successful transfer: the read-only
 folder request returned Google's403 shared-client requests-per-minute quota
 error. Do not broaden scope, create a Cloud project/client, or loop retries from
 that failure. Folder access, byte readback and unattended transfer remain pending.
+
+A subsequent single read-only query again failed at root-directory discovery
+with403 shared-project quota. The installed1.75.1 warning and the
+[official Rclone documentation](https://rclone.org/drive/#making-your-own-client-id)
+state that the shared client is being retired in2026. Do not activate a monthly
+scheduler on this credential as if it were a reliable dedicated connection.
+Owner authorization for a dedicated OAuth client has been requested; no client,
+Cloud project, billing or new consent has been created. Preserve `drive.file`.

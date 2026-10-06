@@ -18,6 +18,11 @@ fi
 OUTPUT_PATH="$1"
 OUTPUT_DIR="$(dirname "$OUTPUT_PATH")"
 CONTRACT_OUTPUT_PATH="$OUTPUT_DIR/database-contract.json"
+BACKUP_MODE="${BACKUP_MODE:-sql}"
+case "$BACKUP_MODE" in
+  sql | native-monthly) ;;
+  *) printf 'BACKUP_MODE must be sql or native-monthly.\n' >&2; exit 2 ;;
+esac
 NAMESPACE="${NAMESPACE:-hcce}"
 COORDINATED="${BACKUP_COORDINATED:-0}"
 if [[ "$COORDINATED" != 0 && "$COORDINATED" != 1 ]]; then
@@ -1000,6 +1005,16 @@ require_pgsql_source() {
 
 require_backup_guard
 require_pgsql_source
+if [[ "$BACKUP_MODE" == native-monthly ]]; then
+  [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 &&
+     -z "$PARENT_FREEZE_FENCE_CAPABILITY" &&
+     "${MONTHLY_NATIVE_SOURCE_PATH:-}" == /* &&
+     "${MONTHLY_NATIVE_JOURNAL_PATH:-}" == /* &&
+     "${MONTHLY_NATIVE_MONTH:-}" =~ ^[0-9]{4}-(0[1-9]|1[0-2])$ ]] || {
+    printf 'Native monthly snapshots require the exact durable coordinated parent.\n' >&2
+    exit 2
+  }
+fi
 if ! recovery_capture_live_database_contract "$PGSQL_POD" "$CONTRACT_BEFORE"; then
   printf 'Could not capture the complete pre-dump database contract.\n' >&2
   exit 1
@@ -1031,6 +1046,19 @@ else
   }
 fi
 run_dump_stream() {
+  if [[ "$BACKUP_MODE" == native-monthly ]]; then
+    local monthly_operation_id="$RECOVERY_OPERATION_ID"
+    MONTHLY_PGSQL_POD_UID="$PGSQL_POD_UID" \
+    CHECKPOINT_RUNNER_GENERATION="$CHECKPOINT_RUNNER_GENERATION" \
+    EXPECTED_KUBE_CONTEXT="$EXPECTED_KUBE_CONTEXT" NAMESPACE="$NAMESPACE" \
+    RECOVERY_NAMESPACE_UID="$RECOVERY_NAMESPACE_UID" RECOVERY_PVC_UID="$RECOVERY_PVC_UID" \
+    RECOVERY_OPERATION_ID="$RECOVERY_OPERATION_ID" \
+      recovery_kubectl_stream_guarded 3600 \
+        "${DUMP_STREAM_GUARD_ARGS[@]}" -- --monthly-native-pair \
+        "$MONTHLY_NATIVE_SOURCE_PATH" "$MONTHLY_NATIVE_JOURNAL_PATH" \
+        "$MONTHLY_NATIVE_MONTH" "$monthly_operation_id" "$CONTRACT_BEFORE"
+    return
+  fi
   # Expansion is intentionally deferred to the shell inside the PostgreSQL pod.
   # shellcheck disable=SC2016
   recovery_kubectl_stream_guarded 3600 \
@@ -1038,7 +1066,9 @@ run_dump_stream() {
     exec -n "$NAMESPACE" "$PGSQL_POD" -- \
     sh -ec 'pg_dump -U "$POSTGRES_USER" --format=plain retdb'
 }
-if run_dump_stream | gzip -9 >"$PARTIAL_PATH"; then
+if [[ "$BACKUP_MODE" == native-monthly ]]; then
+  if run_dump_stream >"$PARTIAL_PATH"; then dump_status=0; else dump_status=$?; fi
+elif run_dump_stream | gzip -9 >"$PARTIAL_PATH"; then
   dump_status=0
 else
   dump_status=$?
@@ -1057,8 +1087,10 @@ if [[ "$dump_status" != 0 || "$source_monitor_status" != 0 ]]; then
 fi
 chmod 600 "$PARTIAL_PATH"
 
-gzip -t "$PARTIAL_PATH"
-gzip -cd "$PARTIAL_PATH" > "$SQL_CHECK_PATH"
+if [[ "$BACKUP_MODE" == sql ]]; then
+  gzip -t "$PARTIAL_PATH"
+  gzip -cd "$PARTIAL_PATH" > "$SQL_CHECK_PATH"
+fi
 
 require_backup_guard
 require_pgsql_source
@@ -1070,12 +1102,20 @@ fi
 require_backup_guard
 require_pgsql_source
 
-if ! recovery_bind_database_contract_to_dump \
+if [[ "$BACKUP_MODE" == native-monthly ]]; then
+  # The same complete pre/post SQL contract is required. Physical snapshots
+  # carry its hash, not a fabricated SQL-stream hash or a DB-only acceptance.
+  command node "$SCRIPT_DIR/monthly-native-bundle.mjs" pair \
+    "$MONTHLY_NATIVE_SOURCE_PATH" "$PARTIAL_PATH" "$CONTRACT_AFTER"
+  jq -eS '.' "$CONTRACT_AFTER" >"$CONTRACT_BOUND"
+  chmod 600 "$CONTRACT_BOUND"
+elif ! recovery_bind_database_contract_to_dump \
   "$CONTRACT_AFTER" "$SQL_CHECK_PATH" "$CONTRACT_BOUND"; then
   printf 'Could not bind the complete SQL stream to its database contract.\n' >&2
   exit 1
 fi
 
+if [[ "$BACKUP_MODE" == sql ]]; then
 if ! grep -Eq '^CREATE SCHEMA (ret0|ret0_admin);' "$SQL_CHECK_PATH" ||
    ! recovery_validate_sql_dump_contract "$SQL_CHECK_PATH" ||
    ! recovery_validate_database_contract_against_dump "$CONTRACT_BOUND" "$SQL_CHECK_PATH"; then
@@ -1103,6 +1143,7 @@ if printf '%s\n' "$DUMP_ACTIVE_UUIDS" | sed '/^$/d' | awk '
 '; then
   printf 'Dump verification failed: an unsafe active owned-file UUID is present.\n' >&2
   exit 1
+fi
 fi
 
 # Arm cleanup before each no-clobber hard link. If publication completes but
@@ -1157,8 +1198,12 @@ fi
 SIZE_BYTES="$(recovery_file_size_bytes "$OUTPUT_PATH")"
 SHA256="$(recovery_sha256_file "$OUTPUT_PATH" | awk '{print $1}')"
 
-printf 'Reticulum database backup completed: path=%s schema_tables=%s migrations=%s hubs=%s active_files=%s size_bytes=%s sha256=%s\n' \
-  "$OUTPUT_PATH" "$SCHEMA_TABLES" "$MIGRATIONS" "$HUBS_COUNT" "$ACTIVE_FILES" "$SIZE_BYTES" "$SHA256"
+if [[ "$BACKUP_MODE" == sql ]]; then
+  printf 'Reticulum database backup completed: path=%s schema_tables=%s migrations=%s hubs=%s active_files=%s size_bytes=%s sha256=%s\n' \
+    "$OUTPUT_PATH" "$SCHEMA_TABLES" "$MIGRATIONS" "$HUBS_COUNT" "$ACTIVE_FILES" "$SIZE_BYTES" "$SHA256"
+else
+  printf 'Reticulum native snapshot pair captured: path=%s (parent join/resume still required)\n' "$OUTPUT_PATH"
+fi
 trap '' INT TERM
 BACKUP_SUCCEEDED=1
 cleanup_backup

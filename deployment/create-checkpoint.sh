@@ -15,6 +15,10 @@ MANIFEST_INPUT_FILE="${HCCE_MANIFEST_PATH:-$ROOT_DIR/hubs-cloud/community-editio
 CUTOVER_KEY_INPUT_FILE="${PROCESS_LOCAL_CUTOVER_KEY_PATH:-}"
 VALUES_SOURCE_FILE=""
 CHECKPOINT_FORMAT="${CHECKPOINT_FORMAT:-legacy}"
+CHECKPOINT_BACKEND="${CHECKPOINT_BACKEND:-legacy}"
+MONTHLY_NATIVE_SOURCE_PATH=""
+MONTHLY_NATIVE_JOURNAL_PATH=""
+MONTHLY_NATIVE_MONTH=""
 TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
 FINAL_OUTPUT_DIR="${1:-$ROOT_DIR/output/checkpoints/$TIMESTAMP}"
 OUTPUT_PARENT="$(dirname "$FINAL_OUTPUT_DIR")"
@@ -61,9 +65,24 @@ case "$CHECKPOINT_FORMAT" in
     exit 2
     ;;
 esac
+case "$CHECKPOINT_BACKEND" in
+  legacy) ;;
+  native-monthly)
+    [[ "$CHECKPOINT_FORMAT" == legacy &&
+       "${MONTHLY_INSTANCE_ID:-}" =~ ^[a-z0-9][a-z0-9-]{0,62}$ &&
+       "${MONTHLY_REGION:-}" =~ ^[a-z0-9][a-z0-9-]{0,62}$ &&
+       "${MONTHLY_JOURNAL_ROOT:-}" == /* ]] || {
+      printf 'Native monthly capture needs legacy inventory, instance, region and a private journal root.\n' >&2
+      exit 2
+    }
+    ;;
+  *) printf 'CHECKPOINT_BACKEND must be legacy or native-monthly.\n' >&2; exit 2 ;;
+esac
 
 checkpoint_artifacts() {
-  if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 || "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ]]; then
+  if [[ "${CHECKPOINT_BACKEND:-legacy}" == native-monthly ]]; then
+    command node "$SCRIPT_DIR/monthly-native-bundle.mjs" artifacts
+  elif [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 || "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ]]; then
     recovery_freeze_bundle_artifacts "$TIMESTAMP"
   else
     recovery_checkpoint_artifacts "$TIMESTAMP" "${CHECKPOINT_METADATA_VERSION:-3}"
@@ -72,7 +91,9 @@ checkpoint_artifacts() {
 
 checkpoint_validate_manifest() {
   local directory="$1"
-  if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 || "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ]]; then
+  if [[ "${CHECKPOINT_BACKEND:-legacy}" == native-monthly ]]; then
+    command node "$SCRIPT_DIR/monthly-native-bundle.mjs" manifest "$directory" "$TIMESTAMP"
+  elif [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 || "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ]]; then
     recovery_validate_freeze_bundle_manifest "$directory" "$TIMESTAMP"
   else
     recovery_validate_sha256_manifest "$directory" "$TIMESTAMP" "${CHECKPOINT_METADATA_VERSION:-3}"
@@ -1341,7 +1362,12 @@ cleanup_checkpoint_final_claim() {
 
 verify_checkpoint_staging_directory() {
   local actual expected
-  if [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 || "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ]]; then
+  if [[ "${CHECKPOINT_BACKEND:-legacy}" == native-monthly ]]; then
+    checkpoint_validate_manifest "$OUTPUT_DIR" &&
+      recovery_checkpoint_metadata_is_acceptable \
+        "$OUTPUT_DIR/checkpoint-metadata.json" "$TIMESTAMP" &&
+      recovery_checkpoint_generation_is_acceptable "$OUTPUT_DIR" || return 1
+  elif [[ "$CHECKPOINT_FORMAT" == freeze-bundle-v1 || "$CHECKPOINT_FORMAT" == freeze-bundle-v2 ]]; then
     recovery_verify_freeze_bundle_contents "$OUTPUT_DIR" "$TIMESTAMP" || return 1
   else
     recovery_validate_sha256_manifest "$OUTPUT_DIR" "$TIMESTAMP" "${CHECKPOINT_METADATA_VERSION:-3}" &&
@@ -2431,6 +2457,17 @@ if [[ "$checkpoint_runner_expected" == kubernetes-pod ]]; then
   PROCESS_LOCAL_CUTOVER_KEY_PATH="$CHECKPOINT_CUTOVER_KEY_SNAPSHOT"
   export PROCESS_LOCAL_CUTOVER_KEY_PATH
 fi
+if [[ "$CHECKPOINT_BACKEND" == native-monthly ]]; then
+  [[ "$checkpoint_runner_expected" == kubernetes-pod ]] || {
+    printf 'Native monthly capture requires the durable runtime, before any workload pause.\n' >&2
+    exit 2
+  }
+  # All custody bytes are copied once before the Lease/pause. The archive stays
+  # private locally and is encrypted by the portable exporter before Drive.
+  command node "$SCRIPT_DIR/monthly-native-bundle.mjs" runtime \
+    "$OUTPUT_DIR/runtime.tar.gz" "$CHECKPOINT_VALUES_SNAPSHOT" \
+    "$CHECKPOINT_MANIFEST_SNAPSHOT" "$CHECKPOINT_CUTOVER_KEY_SNAPSHOT" "$MONTHLY_JOURNAL_ROOT"
+fi
 
 recovery_require_cluster_identity
 recovery_require_pvc_identity ret-pvc
@@ -2588,6 +2625,19 @@ CHECKPOINT_RUNNER_GENERATION="$(jq -er '
   printf 'Captured runner mode does not match the pre-downtime authorization.\n' >&2
   exit 1
 }
+if [[ "$CHECKPOINT_BACKEND" == native-monthly ]]; then
+  [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]] || exit 2
+  MONTHLY_NATIVE_SOURCE_PATH="$OUTPUT_DIR/monthly-source.json"
+  MONTHLY_NATIVE_MONTH="$(TZ=Europe/Madrid date '+%Y-%m')"
+  MONTHLY_NATIVE_JOURNAL_PATH="${MONTHLY_JOURNAL_ROOT%/}/$MONTHLY_INSTANCE_ID-$MONTHLY_NATIVE_MONTH-$RECOVERY_OPERATION_ID"
+  [[ ! -e "$MONTHLY_NATIVE_JOURNAL_PATH" && ! -L "$MONTHLY_NATIVE_JOURNAL_PATH" ]] || {
+    printf 'Existing native capture attempt requires reconciliation, not a retry.\n' >&2
+    exit 1
+  }
+  command node "$SCRIPT_DIR/monthly-snapshot-source.mjs" \
+    --context "$EXPECTED_KUBE_CONTEXT" --instance "$MONTHLY_INSTANCE_ID" \
+    --namespace "$NAMESPACE" --region "$MONTHLY_REGION" --output "$MONTHLY_NATIVE_SOURCE_PATH"
+fi
 
 # Persist before the first writer pause. Cleanup owns only its temporary
 # snapshots, never this sibling directory. A failed copy remains invalid;
@@ -2687,7 +2737,18 @@ if [[ "$CHECKPOINT_RUNNER_GENERATION" == durable-v2 ]]; then
   checkpoint_durable_control_baseline_sha256="$CHECKPOINT_WRITER_MONITOR_BASELINE_SHA256"
 fi
 checkpoint_set_failure_context database-backup stream
+database_backup_mode=sql
+database_backup_path="$OUTPUT_DIR/retdb-$TIMESTAMP.sql.gz"
+if [[ "$CHECKPOINT_BACKEND" == native-monthly ]]; then
+  database_backup_mode=native-monthly
+  database_backup_path="$OUTPUT_DIR/native-pair.json"
+fi
 BACKUP_COORDINATED=1 \
+BACKUP_MODE="$database_backup_mode" \
+RECOVERY_OPERATION_ID="$RECOVERY_OPERATION_ID" \
+MONTHLY_NATIVE_SOURCE_PATH="$MONTHLY_NATIVE_SOURCE_PATH" \
+MONTHLY_NATIVE_JOURNAL_PATH="$MONTHLY_NATIVE_JOURNAL_PATH" \
+MONTHLY_NATIVE_MONTH="$MONTHLY_NATIVE_MONTH" \
 CHECKPOINT_RUNNER_GENERATION="$CHECKPOINT_RUNNER_GENERATION" \
 CHECKPOINT_DURABLE_FENCE_BASELINE_PATH="$RUNNER_DURABLE_FENCE_BASELINE_PATH" \
 CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256="$RUNNER_DURABLE_FENCE_BASELINE_SHA256" \
@@ -2717,12 +2778,13 @@ YENHUBS_PARENT_DURABLE_MONITOR_PROGRESS_PATH="$CHECKPOINT_DURABLE_MONITOR_PROGRE
 YENHUBS_PARENT_DURABLE_MONITOR_CAPABILITY_SHA256="$CHECKPOINT_DURABLE_MONITOR_CAPABILITY_SHA256" \
 YENHUBS_PARENT_DURABLE_MONITOR_AUTHORITY_SHA256="$CHECKPOINT_DURABLE_MONITOR_AUTHORITY_SHA256" \
   "$SCRIPT_DIR/backup-retdb.sh" \
-  "$OUTPUT_DIR/retdb-$TIMESTAMP.sql.gz"
+  "$database_backup_path"
 checkpoint_set_failure_context database-backup serialization
 recovery_require_operation_serialization
 checkpoint_set_failure_context database-backup monitor-health
 require_checkpoint_monitors_healthy
 checkpoint_set_failure_context storage-backup stream
+if [[ "$CHECKPOINT_BACKEND" == legacy ]]; then
 CHECKPOINT_RUNNER_GENERATION="$CHECKPOINT_RUNNER_GENERATION" \
 CHECKPOINT_DURABLE_FENCE_BASELINE_PATH="$RUNNER_DURABLE_FENCE_BASELINE_PATH" \
 CHECKPOINT_DURABLE_FENCE_BASELINE_SHA256="$RUNNER_DURABLE_FENCE_BASELINE_SHA256" \
@@ -2754,6 +2816,7 @@ YENHUBS_PARENT_DURABLE_MONITOR_AUTHORITY_SHA256="$CHECKPOINT_DURABLE_MONITOR_AUT
   "$SCRIPT_DIR/backup-ret-storage-quiesced.sh" \
   "$OUTPUT_DIR/ret-storage-$TIMESTAMP.tar.gz" \
   "$OUTPUT_DIR/deployment-images.json"
+fi
 checkpoint_set_failure_context storage-backup serialization
 recovery_require_operation_serialization
 checkpoint_set_failure_context storage-backup monitor-health
@@ -2824,9 +2887,13 @@ mv "$metadata_tmp" "$OUTPUT_DIR/checkpoint-metadata.json"
 chmod 600 "$OUTPUT_DIR/checkpoint-metadata.json"
 
 checkpoint_set_failure_context content-validation validate
+if [[ "$CHECKPOINT_BACKEND" == native-monthly ]]; then
+  command node "$SCRIPT_DIR/monthly-native-bundle.mjs" content "$OUTPUT_DIR" "$TIMESTAMP"
+else
 "$SCRIPT_DIR/validate-checkpoint.sh" \
   "$OUTPUT_DIR/retdb-$TIMESTAMP.sql.gz" \
   "$OUTPUT_DIR/ret-storage-$TIMESTAMP.tar.gz"
+fi
 
 CHECKSUM_TMP="$OUTPUT_DIR/.yenhubs-checksums.next"
 checkpoint_set_failure_context checksum-manifest precondition
@@ -2945,5 +3012,10 @@ cleanup_local_artifacts
 checkpoint_report_timing success
 trap - EXIT ERR INT TERM
 
-printf 'Complete quiescent YenHubs checkpoint published: %s (writers resumed)\n' \
-  "$FINAL_OUTPUT_DIR"
+if [[ "${CHECKPOINT_BACKEND:-legacy}" == native-monthly ]]; then
+  printf 'Native monthly pair published: %s (writers resumed; export and isolated recovery NOT yet accepted)\n' \
+    "$FINAL_OUTPUT_DIR"
+else
+  printf 'Complete quiescent YenHubs checkpoint published: %s (writers resumed)\n' \
+    "$FINAL_OUTPUT_DIR"
+fi

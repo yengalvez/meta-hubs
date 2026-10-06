@@ -742,6 +742,14 @@ run_security() {
   node --test "$ROOT_DIR/tests/scripts/recovery-namespace-fast-path.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/pgsql-guard-round-native.test.mjs"
   node --test "$ROOT_DIR/tests/scripts/pgsql-owned-round.test.mjs"
+  node --test "$ROOT_DIR/tests/scripts/monthly-snapshot-source.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-snapshot-pair.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-snapshot-worker.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-native-bundle.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-native-routing.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-backup-retention.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-portable-point.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-drive-authorize.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/native-checkpoint-source.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/native-checkpoint-restore.test.mjs"
   node --test "$ROOT_DIR/tests/runtime/reticulum-local.test.mjs"

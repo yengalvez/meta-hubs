@@ -1421,7 +1421,7 @@ recovery_report_stream_failure() {
   if [[ -n "$detail" ]]; then
     case "$detail" in
       arguments|guard-authority|guard-arguments|guard-duplicate|\
-      guard-lease-authority-duplicate|poll-interval|initial-deadline|python3|\
+      guard-lease-authority-duplicate|monthly-native-authority|poll-interval|initial-deadline|python3|\
       stream-identity|caller-identity|stream-timeout|command-exit|cancellation-reserve|\
       lease-parameter|lease-authority|lease-window-read|lease-check|lease-budget|\
       post-audit-guard-alignment|post-audit-guard|post-audit-lease|\
@@ -1561,6 +1561,26 @@ recovery_kubectl_stream_supervised() {
     stream_outer_fail 2 arguments
     return $?
   }
+  local -a supervised_command=(kubectl --context "$EXPECTED_KUBE_CONTEXT"
+    --request-timeout="${maximum_seconds}s" "$@")
+  if [[ "$1" == --monthly-native-pair ]]; then
+    # Only the existing durable DB child can select this fixed local worker.
+    # It stays in the same gated session/Lease and under all THREE independent
+    # guards: exact PGSQL source, writers, and durable control/fence. No generic
+    # arbitrary-command or environment override of kubectl is introduced.
+    local monthly_guard_kinds
+    monthly_guard_kinds="$(printf '%s\n' "${guard_authority_kinds[@]}" | LC_ALL=C sort)"
+    if [[ "$require_lease" != 1 || "$#" != 6 ||
+          "${#guard_pids[@]}" != 3 ||
+          "$monthly_guard_kinds" != $'\ncheckpoint-writer-monitor\ndurable-runner-quiescence-monitor' ||
+          "$2" != /* || "$3" != /* || "$6" != /* ||
+          ! "$4" =~ ^[0-9]{4}-(0[1-9]|1[0-2])$ || ! "$5" =~ ^[a-f0-9]{32}$ ]]; then
+      stream_outer_fail 2 monthly-native-authority
+      return $?
+    fi
+    supervised_command=(env YENHUBS_MONTHLY_GUARDED_COMMAND=1 node
+      "${BASH_SOURCE[0]%/*}/../monthly-snapshot-worker.mjs" "$2" "$3" "$4" "$5" "$6")
+  fi
   stream_outer_stage=guard-baseline
   poll_seconds="$(recovery_stream_poll_seconds)" || {
     stream_outer_fail 1 poll-interval
@@ -2769,8 +2789,7 @@ while True:
     time.sleep(0.01)
 os.execvp(sys.argv[3], sys.argv[3:])
 ' "$stream_gate" "$((refresh_deadline_seconds + 10))" \
-      kubectl --context "$EXPECTED_KUBE_CONTEXT" \
-        --request-timeout="${maximum_seconds}s" "$@" <&0 &
+      "${supervised_command[@]}" <&0 &
     stream_pid=$!
     if ! stream_start_identity="$(recovery_process_start_identity "$stream_pid")"; then
       supervised_stream_cleanup
