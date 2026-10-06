@@ -1,5 +1,22 @@
 # Session Changelog
 
+## 2026-10-06 · Narrow proxy-addr advisory repair in the monthly candidate
+
+The original sequential renewal99487 exited1 in advisories; no later section
+or full ran. GHSA-jqcg-44mw-7w3h/CVE-2026-90711 entered GitHub's reviewed
+catalogue on05/10. Pin proxy-addr2.0.8 in Hubs/Admin and the three Express
+services; six version/resolved/integrity triples in five locks are the only
+dependency delta, with identical dependency/engine requirements. No broad
+upgrade, audit waiver, image build or production change.
+
+The installed2.0.7 package reproduced overbroad native-IPv4 trust for the
+short mapped-IPv6 prefix; installed2.0.8 rejected that peer. The frozen P
+was read-only and unchanged. Six real-package regression tests passed natively
+in73.322ms, covering trust boundaries, spoofed forwarding and legitimate
+forwarding. This is a dependency regression, not proof of exploitation live
+or acceptance of the complete monthly candidate. Freeze exact subrepo/root
+bytes and renew only the receipts their verifier invalidates before full.
+
 ## 2026-10-06 · Exact monthly source and native pair preparation
 
 Bound both actual10GiB volumes read-only to their PVC/PV/provider identities.
