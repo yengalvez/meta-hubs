@@ -142,27 +142,44 @@ section runs this regression before the established suite. Do not run the whole
 coordinator regression from a dirty source checkout: its original clean-tree
 guard remains mandatory. This test is not a production capture or restore.
 
+The local monthly SQL response is derived from the complete existing fixture
+contract with `sql_dump_sha256:null`, matching the actual live query; a frozen
+dump-file hash must not be passed off as a live database contract. The closed
+adapter accepts only the worker's five exact timed source-read/sync forms.
+Protected WATCH/Lease/mutations still exec the established fake unchanged.
+Five dispatch/contract tests passed; the previous integral attempt90597 failed
+before sync/POST and resumed all five simulated writers. No production guard
+was relaxed, and a new integral pass is still required.
+
 ## Owner authorization for unattended Drive access
 
-`monthly-drive-authorize.mjs --config NEW_PRIVATE_CONFIG_PATH` starts the official
-rclone browser flow with only `drive.file`, without opening Chrome. Its stdout
+`monthly-drive-authorize.mjs --config NEW_PRIVATE_CONFIG_PATH --client-json PRIVATE_INSTALLED_CLIENT_JSON`
+starts the official rclone browser flow with only `drive.file`, without opening Chrome. Its stdout
 exposes only the loopback login URL and a sanitized terminal result; OAuth token
 output stays in memory and is saved to the dedicated0600 configuration. The parent
 directory must already be private and canonical. Existing configurations are not
 overwritten. A failed attempt may leave an empty claimed file, never usable auth.
 
+The downloaded JSON must be a private0600, canonical, single-link installed-app
+client for the owner-authorized project `yenhubs-backups-20261006`; web clients,
+foreign projects/endpoints, oversized files and INI injection are rejected before
+login. Client ID/secret are passed only through the private child's environment,
+not argv or the base64 scope-only blob. Inherited Rclone overrides are removed,
+global config is excluded via `/dev/null`, and dedicated ID/secret/token are
+preserved together in the new private config for refresh. Twelve focused tests
+use fake credentials and a closed child, not a real Google authorization.
+
 Stop at Google's consent screen for the owner's approval. Authorization alone
 does not prove folder access, transfer, refresh or scheduling. `drive.file` may not
 allow access to a folder created by a different connector: verify the chosen
 folder rather than silently broadening scope. Retain recovery access separately
-from the encrypted backups. Five parser/link tests cover the installed rclone
-result format without exposing real credentials.
+from the encrypted backups. Parsing/login tests do not accept Drive transport.
 
 On06/10 the owner flow90771 completed natively with AUTHORIZED/drive.file and a
 nonempty private0600 config. This is not a successful transfer: the read-only
 folder request returned Google's403 shared-client requests-per-minute quota
-error. Do not broaden scope, create a Cloud project/client, or loop retries from
-that failure. Folder access, byte readback and unattended transfer remain pending.
+error. That failure alone does not authorize scope expansion, Cloud resources or
+retry loops. Folder access, byte readback and unattended transfer remain pending.
 
 A subsequent single read-only query again failed at root-directory discovery
 with403 shared-project quota. The installed1.75.1 warning and the
@@ -175,3 +192,12 @@ no client credentials have been created. Google requires accepting its API
 Services User Data Policy during app setup. Stop at that unchecked box and let
 the owner review/accept it; authorization to configure is not authorization to
 accept new terms. No billing was activated or terms accepted.
+
+Before scheduling monthly operation, finish the dedicated app's publishing state:
+Google documents that External/Testing refresh tokens with Drive scope expire
+after seven days, so Testing cannot be accepted as unattended monthly access.
+Obtain a fresh owner consent after the suitable state is confirmed and verify
+refresh plus exact byte readback without broadening `drive.file`. Stop if Google
+requires new terms, billing or an owner approval. Source:
+[Google OAuth token lifecycle](https://developers.google.com/identity/protocols/oauth2#expiration).
+No publishing state, client, real token or unattended access is accepted yet.

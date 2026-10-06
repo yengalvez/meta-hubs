@@ -3398,3 +3398,28 @@ Esto es una regresión local; recovery/full exactos y Linux siguen pendientes.
   Google aislado yenhubs-backups-20261006, sin activar facturación ni credenciales.
   Google exige aceptar su Política de Datos del Usuario; se dejó sin marcar para
   revisión del dueño, conforme a su condición de no aceptar términos nuevos.
+
+## 2026-10-06 — Contrato live de la fixture y preparación privada de OAuth dedicado
+
+- 90597 terminó nativamente1 en348,958s: quiescencia completa, contrato live
+  rechazado antes de sync/POST y cinco writers simulados reanudados. El fake
+  devolvía un contrato de dump con hash; la consulta live original lo devuelve
+  nulo. El negativo se omitió, sin retry ni operación productiva.
+- Solo cambia la fixture: conserva el contrato completo con hash nulo y cinco
+  rutas timed exactas del worker; WATCH/Lease siguen con exec al fake original.
+  Focal83029 pasó5/5 en3,907s; ShellCheck/diff0. Revisión separada del principal,
+  no independiente. No atribuir a este caso una causa multimedia histórica.
+- OAuth dedicado lee el installed-client JSON por ruta privada0600 del proyecto
+  autorizado, no credentials en argv. Rechaza web/otro proyecto/endpoints/links,
+  elimina overrides heredados de Rclone y no lee su config global. ID/secret/
+  refresh quedan solo en un config nuevo privado. Doce focales pasaron nativamente0
+  en91,95ms, con cliente/token/hijo falsos y sin solicitudes a Google.
+- El clon mensual carecía de remotes/ref upstream. Se completó solo ese contexto
+  Git desde P congelado: URLs oficiales, tags estables y upstream/master exactos,
+  SHA de Hubs/Cloud intactos y ambos árboles limpios. Audit-upstream --no-fetch
+  nativo0; sus conflictos con master no publicado son informativos, no un update.
+- Testing externo con Drive caduca el refresh en siete días según Google: no
+  aceptar ese estado como calendario mensual. La política sigue sin aceptar,
+  sin cliente/credenciales/billing, esperando la revisión personal ya solicitada.
+- Falta guardar/congelar, aceptar el integral y full exacto, y luego captura,
+  transporte/refresh real, restauraciones y calendario. Sin aceptación heredada.

@@ -41,12 +41,18 @@ if [[ "\${YENHUBS_RECOVERY_TEST_FOCUS:-}" == monthly-native ]]; then
   reset_stub
   seed_recovery_operation_fence_binding_state dormant
   mkdir "$TMP_DIR/monthly-journals"
+  # Live SQL contract queries return a null dump hash. The shared harness also
+  # uses a bound SQL-file contract for offline tests; do not reuse that artifact
+  # as the live database response or weaken the worker's unbound-contract guard.
+  jq '.sql_dump_sha256 = null' "$DATABASE_CONTRACT" >"$TMP_DIR/monthly-live-contract.json"
+  chmod 600 "$TMP_DIR/monthly-live-contract.json"
   native_status=0
   if env ALLOW_CHECKPOINT_DOWNTIME=1 EXPECTED_KUBE_CONTEXT=fixture-context \
     EXPECTED_NAMESPACE_UID=MONTHLY_NAMESPACE_UID EXPECTED_RET_PVC_UID=MONTHLY_MEDIA_UID \
     VALUES_FILE="$VALUES_FIXTURE" STUB_DEPLOYMENTS_JSON="$KUBERNETES_DEPLOYMENTS_JSON" \
     STUB_RUNNER_NAMESPACE=present STUB_RUNNER_POD_PROFILE=fence-stable \
     STUB_MONITOR_WATCH_PACE=1 RECOVERY_STREAM_POLL_SECONDS=1 \
+    STUB_DB_CONTRACT="$TMP_DIR/monthly-live-contract.json" \
     CHECKPOINT_BACKEND=native-monthly MONTHLY_INSTANCE_ID=fixture MONTHLY_REGION=ams3 \
     MONTHLY_JOURNAL_ROOT="$TMP_DIR/monthly-journals" \
     "$ROOT_DIR/deployment/create-checkpoint.sh" "$TMP_DIR/monthly-output" \

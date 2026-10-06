@@ -19,11 +19,23 @@ bin="$(dirname "$0")"
 program="$(basename "$0")"
 case "$program" in
   kubectl)
-    for arg in "$@"; do
-      if [[ "$arg" == --request-timeout=* ]]; then
-        exec "$bin/kubectl-legacy" "$@"
-      fi
-    done
+    # Only the new monthly worker's exact source reads/flush are handled by
+    # Node. WATCH, Lease, fences, mutations and all other protected calls retain
+    # their original parent identity in the established fake.
+    case "$*" in
+      "--context fixture-context --request-timeout=30s get namespace hcce -o json"|\
+      "--context fixture-context --request-timeout=30s -n hcce get pvc pgsql-pvc ret-pvc -o json"|\
+      "--context fixture-context --request-timeout=30s get pv pv-database pv-media -o json"|\
+      "--context fixture-context --request-timeout=30s -n hcce get pod pgsql-0 -o json"|\
+      "--context fixture-context --request-timeout=30s -n hcce exec pgsql-0 -c pgsql -- sh -ec sync") ;;
+      *)
+        for arg in "$@"; do
+          if [[ "$arg" == --request-timeout=* ]]; then
+            exec "$bin/kubectl-legacy" "$@"
+          fi
+        done
+        ;;
+    esac
     ;;
   doctl)
     case "\${1:-} \${2:-} \${3:-}" in
