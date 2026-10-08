@@ -231,6 +231,10 @@ test("native adapter prepares CSI clones, proves exports and only cleans UID-bou
   const result = await provider.exportFiles(f.plan, f.point, directory, journal);
   assert.equal(result.nativeExitCode, 0); assert.deepEqual(result.beforeContract, f.point.contract);
   assert.deepEqual(await readFile(join(directory, "database.dump")), cluster.volumeFiles["database.dump"]);
+  const exportCommand = cluster.calls.find(c => c.args.includes("exec") && c.args.some(a => a.includes("pg_dump")));
+  assert.ok(exportCommand, "fixture must observe the actual export invocation");
+  assert.match(exportCommand.args.join(" "), /tar --format=ustar --create --gzip --file=\/work\/media\.tar\.gz --directory=\/media owned(?: |$)/);
+  assert.doesNotMatch(exportCommand.args.join(" "), /--directory=\/media \./);
   await provider.cleanup(f.plan, journal);
   const creates = cluster.calls.filter(c => c.args.includes("create")), deletes = cluster.calls.filter(c => c.args.includes("delete"));
   assert.equal(creates.length, 9); assert.equal(deletes.length, 9);

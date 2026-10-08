@@ -73,6 +73,42 @@ DO snapshots do not themselves flush application/filesystem caches. Preserve the
 coordinated writer pause and verify a flush plus recovery, rather than inferring
 coherence from two successful native requests.
 
+## Isolated data recovery checks
+
+`monthly-restore-input.mjs` downloads only the five IDs pinned in the verified
+Drive record. Root/month ownership, versions, bytes, MD5 and SHA256 are checked
+before/after; changed sharing or an ambiguous read never triggers an upload,
+repair or second attempt. Outputs remain in new private paths. A closed decrypted
+point must match its three payload hashes, native manifest, source snapshots,
+month, operation and PostgreSQL major. An existing COMPLETE materialization may
+be reconciled read-only; a partial one is never filled in or accepted.
+
+Both native runtime and media producers use explicit USTAR. Media export contains
+only `owned`, matching the existing Reticulum two-shard contract; unrelated disk
+directories are not media. The streaming local decoder rejects links, hardlinks,
+PAX, unexpected paths, wrong shards, incomplete pairs and excessive expansion.
+It never invokes `tar -x` on unknown bytes. USTAR does not support a single entry
+of8GiB or greater; such an export must fail, not silently drop the entry. The
+current decoder caps expansion at40GiB and one million entries; this is a bounded
+recovery format, not a promise to accept arbitrary future disk layouts.
+
+`tests/recovery/monthly-portable-restore.mjs` is an opt-in LOCAL data canary,
+not a production restore command. It requires the source's PostgreSQL major,
+starts a new private Unix-only database, compares the complete database contract,
+all COPY rows and canonical SQL, checks every active owned-file pair and all
+media hashes, and proves its owned server stopped before reporting success.
+Runtime/configuration bytes are validated but the app is NOT deployed here.
+
+Native format-only proof on08/10: PG14.23,356 tables,178 rows, one media pair,
+original exit0 in2.870s, source and target servers stopped. This is NOT acceptance
+of the PostgreSQL12 metaverse, either real snapshot route, or an installation.
+Nine media/runtime parser tests and fifteen download/materialization/binding
+tests passed; the actual export-command fixture passed with explicit USTAR and
+`owned`. All new monthly unit components are registered in `run_security`.
+No new full, production effect, key custody or actual calendar acceptance is
+inferred from those focused results. A bounded adversarial primary pass is not
+an independent reviewer result.
+
 ## Producer contract
 
 ### Export from the frozen snapshots

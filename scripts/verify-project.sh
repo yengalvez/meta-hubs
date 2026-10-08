@@ -751,6 +751,16 @@ run_security() {
     "$ROOT_DIR/tests/scripts/monthly-backup-retention.test.mjs" \
     "$ROOT_DIR/tests/scripts/monthly-portable-point.test.mjs" \
     "$ROOT_DIR/tests/scripts/monthly-drive-authorize.test.mjs"
+  node --test --test-concurrency=1 \
+    "$ROOT_DIR/tests/scripts/monthly-drive-store.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-drive-provider.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-drive-retirement.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-snapshot-export.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-retention-executor.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-backup-runtime.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-backup-calendar.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-restore-input.test.mjs" \
+    "$ROOT_DIR/tests/scripts/monthly-restore-joins.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/native-checkpoint-source.test.mjs"
   node --test "$ROOT_DIR/tests/recovery/native-checkpoint-restore.test.mjs"
   node --test "$ROOT_DIR/tests/runtime/reticulum-local.test.mjs"

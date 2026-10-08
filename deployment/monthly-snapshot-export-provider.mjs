@@ -219,14 +219,14 @@ export function nativeSnapshotExportProvider({ run = runExportNative, snapshots 
       const beforeContract = await contract(plan, query);
       requireValue(canonical(beforeContract) === canonical(point.contract), "export_clone_database_contract_changed");
       await events.append({ event: "clone-export-intent", files: ["database.dump", "media.tar.gz"] });
-      await command(plan, ["sh", "-ec", 'set -eu; umask 077; test ! -e /work/database.dump; test ! -e /work/media.tar.gz; pg_dump -h /work/socket -U "$1" --format=custom --file=/work/database.dump retdb; pg_restore --list /work/database.dump >/dev/null; tar --create --gzip --file=/work/media.tar.gz --directory=/media .',
+      await command(plan, ["sh", "-ec", 'set -eu; umask 077; test ! -e /work/database.dump; test ! -e /work/media.tar.gz; pg_dump -h /work/socket -U "$1" --format=custom --file=/work/database.dump retdb; pg_restore --list /work/database.dump >/dev/null; tar --format=ustar --create --gzip --file=/work/media.tar.gz --directory=/media owned',
         "clone-export", plan.databaseUser], { timeout: remaining() });
       for (const name of ["database.dump", "media.tar.gz"]) await getFile(plan, name, directory);
       const afterContract = await contract(plan, query);
       return { nativeExitCode: 0, beforeContract, afterContract };
     },
     async archiveNativeBundle(directory, names, outputFile) {
-      await run("tar", ["-czf", "-", "-C", directory, ...names], { outputFile });
+      await run("tar", ["--format=ustar", "-czf", "-", "-C", directory, ...names], { outputFile });
     },
     async cleanup(plan, events) {
       bound(plan);

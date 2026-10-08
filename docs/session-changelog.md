@@ -1,5 +1,20 @@
 # Session Changelog
 
+## 2026-10-08 · Directed monthly recovery checker and verifier registration
+
+Add read-only pinned-ID Drive download, closed native-runtime materialization and
+streaming USTAR media checks. Reject altered bytes, source/month/operation/major
+drift, changed permissions, partial materialization and unsafe archive entries.
+Align export USTAR/owned with the existing Reticulum storage contract. Register
+Drive/export/retention/runtime/calendar/recovery-input tests in the exact full
+verifier rather than keeping them as unregistered one-off evidence.
+Parser9/9, joins15/15 and affected native export fixture1/1 passed. The opt-in
+local PG14 engine restored356 tables/178 rows/one complete pair in2.870s with
+original exit0 and both servers stopped. It is deliberately NOT a PG12 source,
+real DO/Drive restore or app acceptance. No production, cloud or scheduler effect.
+Independent key custody and real acceptance remain pending; canonical plan stays
+in the owner's root checkout. No unchanged general suite was repeated.
+
 ## 2026-10-08 · Single monthly driver and guarded two/ten retirement
 
 Join capture/export/Drive through a single private fsynced monthly attempt and
