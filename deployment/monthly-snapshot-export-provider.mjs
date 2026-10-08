@@ -14,10 +14,10 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const canonical = value => JSON.stringify(value, (_, item) => item && !Array.isArray(item) && typeof item === "object" ?
   Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 
-export async function runExportNative(program, args, { input = null, outputFile = null, timeout = 30000 } = {}) {
+export async function runExportNative(program, args, { input = null, outputFile = null, timeout = 30000, env = process.env } = {}) {
   // No raw stderr or provider responses ever reach a terminal/error object.
   const child = spawn(program, args, { stdio: [input === null ? "ignore" : "pipe",
-    outputFile ? outputFile.fd : "pipe", "pipe"], timeout });
+    outputFile ? outputFile.fd : "pipe", "pipe"], timeout, env });
   if (input !== null) { child.stdin.on("error", () => {}); child.stdin.end(input); }
   const chunks = []; let size = 0, tooLarge = false;
   child.stdout?.on("data", bytes => {

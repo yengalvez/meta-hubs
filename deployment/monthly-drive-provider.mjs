@@ -3,7 +3,7 @@ import { readPrivateBytes, readPrivateSource } from "./monthly-snapshot-worker.m
 import { portableDriveNames, portableDriveMime } from "./monthly-drive-store.mjs";
 
 const id = /^[a-zA-Z0-9_-]{1,200}$/;
-const fields = "id,name,mimeType,size,version,md5Checksum,parents,appProperties,ownedByMe,trashed,permissions(type,role)";
+const fields = "id,name,mimeType,size,version,md5Checksum,parents,appProperties,ownedByMe,trashed,permissions(type,role),capabilities(canTrash)";
 const requireValue = (condition, reason) => { if (!condition) throw new Error(reason); };
 function requireId(value) { requireValue(id.test(value ?? ""), "drive_provider_id_invalid"); return value; }
 function readIni(bytes, installed) {
@@ -26,10 +26,10 @@ function readIni(bytes, installed) {
 
 export async function dedicatedDriveProvider({configPath, installedClientPath, expectedOwnerEmail,
   projectId = "yenhubs-backups-20261006", transferTimeoutMilliseconds = 3600000,
-  fetchImpl = fetch}) {
+  allowRetentionTrash = false, fetchImpl = fetch}) {
   requireValue(typeof expectedOwnerEmail === "string" && /^[^\s@]+@[^\s@]+$/.test(expectedOwnerEmail) &&
     projectId === "yenhubs-backups-20261006" && Number.isSafeInteger(transferTimeoutMilliseconds) &&
-    transferTimeoutMilliseconds >= 60000 && transferTimeoutMilliseconds <= 3600000,
+    transferTimeoutMilliseconds >= 60000 && transferTimeoutMilliseconds <= 3600000 && typeof allowRetentionTrash === "boolean",
     "drive_provider_options_invalid");
   let client;
   try { client = await readPrivateSource(installedClientPath,16384); }
@@ -106,6 +106,31 @@ export async function dedicatedDriveProvider({configPath, installedClientPath, e
     stat,
     children:parentId => list(parentId),
     namedChildren:(parentId,name) => list(parentId,name),
+    async trashVerifiedFile(expected) {
+      requireValue(allowRetentionTrash && id.test(expected?.id ?? "") && id.test(expected.folderId ?? "") &&
+        portableDriveNames.includes(expected.name) && /^[1-9][0-9]*$/.test(expected.version ?? "") &&
+        Number.isSafeInteger(expected.bytes) && expected.bytes > 0 && /^[a-f0-9]{32}$/.test(expected.md5 ?? ""),
+        "drive_provider_retention_arguments_invalid");
+      const sameFile = value => value.id === expected.id && value.name === expected.name &&
+        value.mimeType === portableDriveMime(expected.name) && value.parents?.length === 1 &&
+        value.parents[0] === expected.folderId && Number(value.size) === expected.bytes &&
+        value.md5Checksum === expected.md5 && value.ownedByMe === true && value.permissions?.length === 1 &&
+        value.permissions[0].type === "user" && value.permissions[0].role === "owner";
+      const before = await stat(expected.id);
+      requireValue(sameFile(before) && before.trashed === false && before.capabilities?.canTrash === true &&
+        String(before.version) === expected.version, "drive_provider_retirement_file_changed");
+      // Only an exact, previously byte-verified binary/receipt is recoverably trashed.
+      // No folder cascade, permanent DELETE, emptyTrash or content update is allowed.
+      const after = await json(`https://www.googleapis.com/drive/v3/files/${expected.id}?fields=${fields}`, {
+        method:"PATCH", headers:{...await headers(),"content-type":"application/json"}, body:JSON.stringify({trashed:true})
+      });
+      requireValue(sameFile(after) && after.trashed === true && /^[1-9][0-9]*$/.test(after.version ?? "") &&
+        BigInt(after.version) > BigInt(expected.version), "drive_provider_retirement_response_changed");
+      const observed = await stat(expected.id);
+      requireValue(sameFile(observed) && observed.trashed === true && String(observed.version) === String(after.version),
+        "drive_provider_retirement_readback_changed");
+      return {nativeHttpStatus:200,fileId:expected.id,trashed:true,version:String(after.version)};
+    },
     async createFolder({parentId,name,properties}) {
       requireId(parentId);
       requireValue(/^[a-z0-9-]{1,80}$/.test(name), "drive_provider_name_invalid");

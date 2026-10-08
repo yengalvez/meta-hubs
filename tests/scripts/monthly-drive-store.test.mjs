@@ -48,6 +48,8 @@ test("complete closed set publishes and reads every exact file without claiming 
   assert.equal(result.state,"transport-verified-not-restore-accepted");
   assert.deepEqual(f.calls,["create",...portableDriveNames.map(n=>`put:${n}`)]);
   assert.equal(Object.keys(result.handles).length,5);
+  assert.deepEqual(Object.keys(result.versions).sort(),[...portableDriveNames].sort());
+  assert.ok(Object.values(result.versions).every(value=>value==="1"));
   for(const name of portableDriveNames) assert.deepEqual(await readFile(join(f.sealed,name)),await readFile(join(f.options.journalDirectory,"readback",name)));
 });
 test("a complete existing operation is reconciled by reads, never uploaded again",async()=>{

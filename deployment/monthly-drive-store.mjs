@@ -127,7 +127,7 @@ async function verifyReadback({provider, folder, rootId, point, downloadDirector
   requireValue(Array.isArray(list) && list.length === portableDriveNames.length &&
     JSON.stringify(list.map(value => value.name).sort()) === JSON.stringify([...portableDriveNames].sort()) &&
     new Set(list.map(value => value.id)).size === list.length, "drive_remote_set_incomplete");
-  await mkdir(downloadDirectory,{mode:0o700}); const handles = {};
+  await mkdir(downloadDirectory,{mode:0o700}); const handles = {}, versions = {};
   for(const name of portableDriveNames) {
     const item = list.find(value => value.name === name), expected = point.files[name];
     ownerOnly(item);
@@ -150,7 +150,7 @@ async function verifyReadback({provider, folder, rootId, point, downloadDirector
     requireValue(after.id === item.id && after.mimeType === item.mimeType && after.name === item.name && String(after.size) === String(item.size) &&
       after.md5Checksum === item.md5Checksum && JSON.stringify(after.parents) === JSON.stringify(item.parents) &&
       String(after.version) === String(item.version), "drive_remote_file_changed");
-    await unchanged(point.pinned[name]); handles[name] = item.id;
+    await unchanged(point.pinned[name]); handles[name] = item.id; versions[name] = String(item.version);
   }
   const after = await provider.children(folder.id);
   requireValue(JSON.stringify(after.map(value => [value.id,value.name]).sort()) ===
@@ -160,7 +160,7 @@ async function verifyReadback({provider, folder, rootId, point, downloadDirector
   requireValue(sameMonth.length === 1 && sameMonth[0].id === folder.id, "drive_remote_month_ambiguous");
   await closedSet(point.directory);
   for(const file of Object.values(point.pinned)) await unchanged(file);
-  return handles;
+  return {handles, versions};
 }
 
 export async function publishSealedDrivePoint({packageDirectory, expectedBinding, rootFolderId, provider, journalDirectory}) {
@@ -200,12 +200,12 @@ export async function publishSealedDrivePoint({packageDirectory, expectedBinding
         await events.append({event:"file-upload-returned",filename});
       }
     }
-    const handles = await verifyReadback({provider,folder,rootId:rootFolderId,point,
+    const {handles, versions} = await verifyReadback({provider,folder,rootId:rootFolderId,point,
       downloadDirectory:join(journalDirectory,"readback")});
     const rootAfter = await provider.stat(rootFolderId); ownerOnly(rootAfter);
     requireValue(rootAfter.id === rootFolderId && rootAfter.mimeType === root.mimeType, "drive_root_invalid");
     const result = {schema:"yenhubs-drive-point-readback-v1",state:"transport-verified-not-restore-accepted",
-      ...point.binding,folderId:folder.id,sha256:point.sha256,files:point.files,handles,reconciledExisting:existing.length===1};
+      ...point.binding,folderId:folder.id,sha256:point.sha256,files:point.files,handles,versions,reconciledExisting:existing.length===1};
     await events.append({event:"transport-verified",result});
     return result;
   } catch(error) {

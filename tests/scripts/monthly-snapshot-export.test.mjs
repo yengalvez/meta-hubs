@@ -279,6 +279,12 @@ test("native command reports real exit0 and refuses a native failure without lea
   await assert.rejects(runExportNative(process.execPath, ["-e", 'process.stderr.write("DO-NOT-LEAK-SECRET");process.exit(13)']),
     error => error.message === "export_native_command_failed_or_ambiguous");
 });
+test("native child receives only the explicitly supplied environment for bound live checks", async () => {
+  const result=await runExportNative(process.execPath,["-e",
+    'if(process.env.YENHUBS_ONLY_FIXTURE_ENV!=="bound-fixture")process.exit(19);process.stdout.write("bound-env-ok")'],
+  {env:{YENHUBS_ONLY_FIXTURE_ENV:"bound-fixture"}});
+  assert.equal(result.nativeExitCode,0);assert.equal(result.stdout,"bound-env-ok");
+});
 test("wrong snapshot or source namespace is rejected before the first creation", async () => {
   const f = await fixture(), cluster = mockCluster(f);
   const get = cluster.snapshots.get;

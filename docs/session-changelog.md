@@ -1,5 +1,25 @@
 # Session Changelog
 
+## 2026-10-08 · Single monthly driver and guarded two/ten retirement
+
+Join capture/export/Drive through a single private fsynced monthly attempt and
+measure its phases. Exact final-code/custody/current-source/current-Drive gates
+precede pause; scheduled mode also requires both isolated restore proofs.
+No incomplete month is retried automatically. Completed months are reconciled
+read-only instead of duplicated. Persist Drive versions from the original byte
+readback. Derive retirement targets from policy, require live keeper identities,
+and use native snapshot DELETE/absence proof or exact recoverable file-only
+Drive trash; never cascade-trash a folder or empty the owner's trash.
+72 directed tests passed; bounded adversarial repairs passed23 relevant tests,
+runtime16 and its last four directed integrations passed. No real effect or
+calendar activation, and no transfer of the earlier candidate's full receipt.
+Producer ciphertext/readback and exact rotation binding repairs passed35 affected
+runtime/retention tests; syntax, staged diff and Gitleaks also returned0.
+Calendar preparation passed six tests and native plutil, without launchctl or
+installation. Its existing-Mac availability/login limitation is explicit.
+Remaining: isolated restore acceptance, calendar activation, key custody and
+exact final candidate gates. Canonical plan stays in the owner's root checkout.
+
 ## 2026-10-08 · Frozen monthly snapshot export component
 
 Add the native-completion-bound exporter and temporary CSI adapter: captured

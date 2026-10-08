@@ -204,6 +204,57 @@ six dispatch tests passed, with the changed bounded lifecycle test1/1 afterward.
 This establishes the fixture mismatch, not a historical production cause. Both
 integral cases must pass on the newly frozen bytes before the full gate.
 
+## Guarded monthly execution and retention (not activated)
+
+`monthly-backup-runtime.mjs --config PRIVATE_RUNTIME_JSON --mode validation`
+joins the original protected capture, isolated snapshot export and dedicated
+Drive transport in one sequential attempt. Before any pause it requires exact
+clean code, final15/15 acceptance, independent key-custody evidence, a currently
+private Drive destination, source UIDs and the approved20GiB source/budget.
+The validation route never rotates history and never claims real restore.
+`--mode scheduled` additionally requires enabled configuration and both isolated
+restore receipts. No scheduler has been installed or enabled.
+
+One private attempt directory is claimed and fsynced per civil Madrid month.
+An incomplete attempt stops subsequent runs for reconciliation; it does not retry
+capture or cloud writes. A completed existing month is checked against provider
+identities/versions and never recaptured. Each original phase records its own
+timing. The runtime binds active private values/manifest/key by route, not the
+historical `deployment/input-values.local.yaml`, and rejects changed inputs.
+
+`monthly-retention-executor.mjs` derives its retirement list from the existing
+two/ten planner and exact producer/readback receipts. Drive receipt versions
+are now persisted alongside the five verified hashes/IDs. Retained originals
+and remote files are rechecked at retirement boundaries. Cross-month reused
+IDs, changed/sharing/extra files, partial upload and ambiguous DELETE/PATCH stop.
+DigitalOcean snapshot deletion is immutable-ID-only, one native request, followed
+by list-absence proof. Native0 alone is not absence evidence.
+
+The dedicated upload provider remains create-only by default. Only an explicit
+retention adapter can move the five exact old backup files to Drive's recoverable
+trash; no folder cascade, permanent DELETE or emptyTrash. Empty folders remain.
+As [Google documents](https://developers.google.com/workspace/drive/api/guides/delete),
+trashed files can be recovered for30days and continue using quota until removal.
+This is not a server-side transaction or a claim of atomic protection against
+concurrent owner edits; metadata checks and recoverable file-only retirement
+bound that risk. No real snapshot or Drive file was retired in these tests.
+
+Local acceptance:72 directed adapter/retention tests natively0; after the bounded
+malformed-version/journal repairs,23 relevant tests natively0. Runtime16/16 and
+the latest directory/fsync/root-sharing integration4/4 passed on fixtures.
+After binding the producer ciphertexts to Drive readback and the rotation result
+to the exact month/operation, the35 affected runtime/retention tests passed.
+These results do NOT accept a real monthly capture, restore, rotation or calendar.
+
+`monthly-backup-calendar.mjs` prepares, but does not install/start, one macOS
+LaunchAgent: day1 at03:00 Europe/Madrid, login catch-up, no KeepAlive/retry loop,
+absolute executable paths and private logs. Six local tests passed, including
+native plutil parsing. It runs Node mechanically, not a Codex Goal or monitor.
+The Mac must be available and the owner logged in; months the machine never runs
+cannot be recovered by pretending they were captured. This is a prepared timer,
+not an accepted always-on cloud service. Activation requires final code, custody,
+isolated real restores and an observed real invocation. No launchctl was called.
+
 ## Owner authorization for unattended Drive access
 
 `monthly-drive-authorize.mjs --config NEW_PRIVATE_CONFIG_PATH --client-json PRIVATE_INSTALLED_CLIENT_JSON`
