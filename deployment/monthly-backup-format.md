@@ -75,6 +75,47 @@ coherence from two successful native requests.
 
 ## Producer contract
 
+### Export from the frozen snapshots
+
+`monthly-snapshot-export.mjs` requires a closed fourteen-artifact native bundle
+plus SHA256SUMS and a completion receipt written only after the original protected
+capture command exits natively0. Missing receipts, incomplete markers, additional
+files or changed source identities are rejected. A disappearing process is not
+capture acceptance.
+
+`monthly-snapshot-export-provider.mjs` generates a separate temporary namespace
+and imports each original snapshot through retained VolumeSnapshotContent,
+VolumeSnapshot and a new CSI PVC. This follows the
+[official DO snapshot import route](https://docs.digitalocean.com/products/kubernetes/how-to/import-snapshot/);
+[API-created volumes cannot be attached directly to DOKS](https://docs.digitalocean.com/products/kubernetes/how-to/add-volumes/).
+No source PVC is mounted. The clone server uses the captured PostgreSQL12 digest,
+a private Unix socket, no API token and no TCP listener. Both complete database
+contracts must match before and after native dump/media export; downloaded bytes
+must match their remote sizes and SHA256.
+
+The encrypted portable runtime payload contains ALL native artifacts and their
+SHA256SUMS, including the fixed inner runtime/configuration archive. It is not
+merely the three configuration files. Export completion is explicitly
+`sealed-not-restore-accepted`; it does not accept either isolated restore.
+
+Temporary objects are removed only with recorded UID/resourceVersion
+preconditions. Original snapshot contents remain Retain. Cleanup checks the
+absence of both new PVs and their DO volumes and retention of both originals.
+Ambiguous creation or cleanup stops without automatic retries/adoption. A stuck
+cleanup can continue accruing costs and must be reported, not labelled complete.
+The one-hour working limit and <=1USD owner gate remain mandatory;
+[volume billing](https://docs.digitalocean.com/products/volumes/details/pricing/)
+is an hourly estimate, not a guaranteed cap if cleanup fails.
+
+Local acceptance:25 focused tests, real age/tar/native-child operations on
+fixtures; four original kubectl exits0 against a loopback-only API in150ms.
+The loopback server initially rejected kubectl's `?timeout=10s` query: URL parsing
+was corrected in the fixture only. No production/export guard was weakened.
+Native syntax and the generated POSIX server's ShellCheck passed. This does not
+prove real CSI provisioning, production-sized export or cleanup. Do not activate
+capture or monthly scheduling until final gates and independent recovery-key
+custody are resolved.
+
 `monthly-portable-point.mjs` exports `sealPortablePoint` and `openPortablePoint`.
 The producer must first establish a coherent, identified DB/media snapshot pair.
 Export from frozen copies, not independently from changing production data.

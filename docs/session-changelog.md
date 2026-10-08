@@ -1,5 +1,18 @@
 # Session Changelog
 
+## 2026-10-08 · Frozen monthly snapshot export component
+
+Add the native-completion-bound exporter and temporary CSI adapter: captured
+PostgreSQL12 image, new snapshot-backed PVCs only, full DB contract comparisons,
+native dump/media readback, closed encrypted runtime inventory and UID-bound
+cleanup. Original snapshots retain Retain; ambiguous writes never auto-retry.
+25 focused fixture tests passed natively, with real age/tar/child executions.
+The real kubectl loopback protocol passed four commands; its initial failure was
+the fixture's rejection of the timeout query, not a production multimedia fault.
+No real capture, CSI resource, restore, upload, scheduler or production mutation.
+Recovery-key custody, actual restores, rotation/calendar and the exact final
+candidate gate remain pending. Canonical plan stays in the owner's root checkout.
+
 ## 2026-10-06 · Narrow proxy-addr advisory repair in the monthly candidate
 
 The original sequential renewal99487 exited1 in advisories; no later section
