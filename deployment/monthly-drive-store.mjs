@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 export const portableDriveNames = Object.freeze([
   "database.dump.age", "manifest.json.age", "media.tar.gz.age", "runtime.tar.gz.age", "portable-point.json"
 ]);
+export const portableDriveMime = name => name === "portable-point.json" ? "application/json" : "application/octet-stream";
 const ciphertextNames = portableDriveNames.filter(name => name.endsWith(".age"));
 const checksum = bytes => createHash("sha256").update(bytes).digest("hex");
 const identifier = /^[a-zA-Z0-9_-]{1,200}$/;
@@ -130,7 +131,7 @@ async function verifyReadback({provider, folder, rootId, point, downloadDirector
   for(const name of portableDriveNames) {
     const item = list.find(value => value.name === name), expected = point.files[name];
     ownerOnly(item);
-    requireValue(item.mimeType === "application/octet-stream" && /^[1-9][0-9]*$/.test(String(item.version ?? "")) &&
+    requireValue(item.mimeType === portableDriveMime(name) && /^[1-9][0-9]*$/.test(String(item.version ?? "")) &&
       item.parents?.length === 1 && item.parents[0] === folder.id &&
       Number(item.size) === expected.bytes && item.md5Checksum === expected.md5,
       "drive_remote_file_binding_changed");

@@ -44,13 +44,15 @@ async function fixture() {
     if(url.pathname==="/upload/drive/v3/files" && options.method==="POST") {
       if(controls.initError)throw new Error("only-fixture-refresh-value-DO-NOT-ECHO");
       if(controls.onInitiate)await controls.onInitiate();
+      controls.uploadRequestMetadata=JSON.parse(options.body);
       return new Response(null,{status:200,headers:{location:controls.location??
         "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=fixture-session"}});
     }
     if(url.pathname==="/upload/drive/v3/files" && options.method==="PUT") {
       if(controls.uploadError)throw new Error("only-fixture-new-access-DO-NOT-ECHO");
       const chunks=[];if(!controls.skipBody)for await(const bytes of options.body)chunks.push(bytes);
-      const data=Buffer.concat(chunks),metadata={...owned(`upload-${++sequence}`,"database.dump.age","application/octet-stream","folder"),
+      const data=Buffer.concat(chunks),metadata={...owned(`upload-${++sequence}`,controls.uploadRequestMetadata.name,
+        controls.uploadRequestMetadata.mimeType,"folder"),
         size:String(data.length),md5Checksum:createHash("md5").update(data).digest("hex"),...controls.uploadMetadata};
       files.set(metadata.id,{metadata,data});return json(metadata);
     }
@@ -186,4 +188,12 @@ test("binary downloads use exact IDs and the dedicated bearer",async()=>{
   assert.deepEqual(Buffer.concat(parts),f.original);
   const request=f.calls.at(-1);assert.equal(request.url.pathname,"/drive/v3/files/requested-file");
   assert.equal(request.url.searchParams.get("alt"),"media");
+});
+test("the public receipt is sent and validated as JSON, not opaque binary",async()=>{
+  const f=await fixture(),provider=await f.make();
+  await f.withSource(source=>provider.put({folderId:"folder",name:"portable-point.json",source,bytes:f.original.length}));
+  const upload=f.calls.filter(c=>c.url.pathname.startsWith("/upload/"));
+  assert.equal(upload[0].options.headers["x-upload-content-type"],"application/json");
+  assert.equal(upload[1].options.headers["content-type"],"application/json");
+  assert.equal(f.files.get("upload-1").metadata.mimeType,"application/json");
 });

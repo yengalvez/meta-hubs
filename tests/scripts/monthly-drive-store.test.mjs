@@ -4,7 +4,7 @@ import { mkdtemp, realpath, mkdir, writeFile, readFile, access, chmod, rename, s
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { publishSealedDrivePoint, portableDriveNames, inspectSealedDrivePoint } from "../../deployment/monthly-drive-store.mjs";
+import { publishSealedDrivePoint, portableDriveNames, portableDriveMime, inspectSealedDrivePoint } from "../../deployment/monthly-drive-store.mjs";
 
 const hash=(bytes,kind="sha256")=>createHash(kind).update(bytes).digest("hex");
 const bound={instanceId:"fixture-monthly",month:"2026-10",operationId:"a".repeat(32)};
@@ -35,7 +35,7 @@ async function fixture() {
       calls.push(`put:${name}`);const chunks=[];
       for await(const bytes of source.file.createReadStream({start:0,autoClose:false})) chunks.push(bytes);
       const actual=Buffer.concat(chunks),fileId=`file-${++sequence}`;
-      entries.set(fileId,{...owned(fileId,name,"application/octet-stream",folderId),size:String(actual.length),md5Checksum:hash(actual,"md5")});
+      entries.set(fileId,{...owned(fileId,name,portableDriveMime(name),folderId),size:String(actual.length),md5Checksum:hash(actual,"md5")});
       objects.set(fileId,actual);return {nativeExit:0};
     },
     content:async id=>(async function*(){const data=objects.get(id);yield data.subarray(0,7);yield data.subarray(7);})()
@@ -178,4 +178,13 @@ test("ciphertext receipt entries cannot carry plaintext side channels",async()=>
   const f=await fixture(),path=join(f.sealed,"portable-point.json"),receipt=JSON.parse(await readFile(path));
   receipt.ciphertexts["database.dump.age"].privateValue="ONLY-A-NEGATIVE-FIXTURE";await writeFile(path,JSON.stringify(receipt));
   await assert.rejects(publishSealedDrivePoint(f.options),/ciphertext_mismatch/);assert.deepEqual(f.calls,[]);
+});
+test("JSON receipt with unchanged bytes reconciles read-only, ciphertext types stay closed",async()=>{
+  const f=await fixture();await publishSealedDrivePoint(f.options);f.calls.length=0;
+  const receipt=[...f.entries.values()].find(v=>v.name==="portable-point.json");assert.equal(receipt.mimeType,"application/json");
+  const result=await publishSealedDrivePoint({...f.options,journalDirectory:join(f.root,"json-reconcile")});
+  assert.equal(result.reconciledExisting,true);assert.deepEqual(f.calls,[]);
+  const cipher=[...f.entries.values()].find(v=>v.name==="database.dump.age");cipher.mimeType="application/vnd.google-apps.document";
+  await assert.rejects(publishSealedDrivePoint({...f.options,journalDirectory:join(f.root,"wrong-type")}),/binding_changed/);
+  assert.deepEqual(f.calls,[]);
 });

@@ -1,5 +1,6 @@
 /** Dedicated drive.file adapter. Create-only uploads; no secret-bearing logs. */
 import { readPrivateBytes, readPrivateSource } from "./monthly-snapshot-worker.mjs";
+import { portableDriveNames, portableDriveMime } from "./monthly-drive-store.mjs";
 
 const id = /^[a-zA-Z0-9_-]{1,200}$/;
 const fields = "id,name,mimeType,size,version,md5Checksum,parents,appProperties,ownedByMe,trashed,permissions(type,role)";
@@ -121,7 +122,7 @@ export async function dedicatedDriveProvider({configPath, installedClientPath, e
     },
     async put({folderId,name,source,bytes}) {
       requireId(folderId);
-      requireValue(["database.dump.age","media.tar.gz.age","runtime.tar.gz.age","manifest.json.age","portable-point.json"].includes(name) &&
+      requireValue(portableDriveNames.includes(name) &&
         Number.isSafeInteger(bytes) && bytes > 0 && bytes <= 32*1024**3 && source?.file &&
         typeof source.file.read === "function", "drive_provider_upload_invalid");
       const before = await source.file.stat({bigint:true});
@@ -132,10 +133,11 @@ export async function dedicatedDriveProvider({configPath, installedClientPath, e
       // files.create POST + PUT to its NEW resumable session, never files.update
       // or rcat's overwrite-by-name path. One request each; no blind retries.
       const uploadHeaders = await headers();
+      const mimeType = portableDriveMime(name);
       const session = await request(`https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=${fields}`,{
         method:"POST",headers:{...uploadHeaders,"content-type":"application/json; charset=UTF-8",
-          "x-upload-content-type":"application/octet-stream","x-upload-content-length":String(bytes)},
-        body:JSON.stringify({name,mimeType:"application/octet-stream",parents:[folderId]})});
+          "x-upload-content-type":mimeType,"x-upload-content-length":String(bytes)},
+        body:JSON.stringify({name,mimeType,parents:[folderId]})});
       let location;
       try { location = new URL(session.headers.get("location")); }
       catch { throw new Error("drive_provider_upload_location_invalid"); }
@@ -156,13 +158,13 @@ export async function dedicatedDriveProvider({configPath, installedClientPath, e
         requireValue(sent === bytes, "drive_provider_upload_size_changed");
       })();
       const result = await json(location.href,{method:"PUT",duplex:"half",headers:{...uploadHeaders,
-        "content-type":"application/octet-stream","content-length":String(bytes)},body:payload,
+        "content-type":mimeType,"content-length":String(bytes)},body:payload,
         signal:AbortSignal.timeout(transferTimeoutMilliseconds)});
       const after = await source.file.stat({bigint:true});
       requireValue(["dev","ino","size","uid","mode","nlink","mtimeNs","ctimeNs"].every(key=>before[key]===after[key]),
         "drive_provider_upload_source_changed");
       requireValue(sent === bytes && id.test(result?.id ?? "") && result.name === name &&
-        result.mimeType === "application/octet-stream" && result.parents?.length === 1 &&
+        result.mimeType === mimeType && result.parents?.length === 1 &&
         result.parents[0] === folderId && Number(result.size) === bytes, "drive_provider_upload_binding_changed");
       return {id:result.id,httpStatus:200,bytes:sent};
     },
