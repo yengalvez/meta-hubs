@@ -97,7 +97,7 @@ def fixture_gate(name):
       '    fixture_note("b-wait", {"pid": secondary_pid, "status": status, "waiter": os.getpid()})\n' + indent +
       "    if reaped != secondary_pid or not reap_authorized or not zero_exit(status):\n",
     "actual owned B waitpid observation");
-  if (mode === "exit-after-select" || mode === "retained-eof") {
+  if (mode === "exit-after-select" || mode === "exit-after-select-fresh-b" || mode === "retained-eof") {
     const seam = [
       '        if completion_acknowledged and not node_closed and not os.path.exists(fixture_directory + "/after-select"):',
       '            with open(fixture_directory + "/after-select", "x", encoding="ascii") as witness:',
@@ -110,6 +110,19 @@ def fixture_gate(name):
     ].join("\n") + "\n";
     result = replaceExactlyOnce(result, /^        # ACK does not synthesize EOF\.[^\n]*\n/gm,
       original => seam + original, "post-select pre-EOF scheduling gap");
+  }
+  if (mode === "exit-after-select-fresh-b") {
+    const seam = [
+      '            if completing and node_live and not os.path.exists(fixture_directory + "/b-live-sample"):',
+      '                fixture_note("b-live-sample", {"pid": os.getpid(), "parent": os.getppid(), "group": os.getpgrp(), "node": node_pid, "node_live": node_live, "completing": completing})',
+      '                while not os.path.exists(fixture_directory + "/b-sample-release"):',
+      '                    if select.select([secondary_peer], [], [], 0)[0] and not os.path.exists(fixture_directory + "/b-retire-pending"):',
+      '                        fixture_note("b-retire-pending", {"readable": True})',
+      '                    time.sleep(0.005)'
+    ].join("\n") + "\n";
+    result = replaceExactlyOnce(result,
+      /^            node_live = node_pid is not None and pending_child_is_live\(node_pid, node_identity\)\n/gm,
+      original => original + seam, "original B pre-select live sample copy-only gate");
   }
   if (mode.startsWith("retirement-")) {
     result = replaceExactlyOnce(result, /^( +)# AUTHORIZED_B_RETIRE: residuals\/ambiguous probes never reach here\.\n/gm,
@@ -558,6 +571,7 @@ test("fake Node mechanism keeps a real unreaped inventory zombie or unavailable 
 for (const [mode, failure] of [
   ["ordered-eof", ""],
   ["exit-after-select", ""],
+  ["exit-after-select-fresh-b", ""],
   ["retained-eof", "runner_watch_failed\n"],
   ["residual-descendant", "runner_watch_failed\n"],
   ["without-complete", "runner_watch_failed\n"],
@@ -576,7 +590,7 @@ for (const [mode, failure] of [
     5000, "complete native handshake witnesses were not reached");
     assert.equal(metadata.owner, f.owner.pid);
     assert.equal(f.result(), undefined, "original owner must remain live");
-    if (mode === "exit-after-select" || mode === "retained-eof") {
+    if (mode === "exit-after-select" || mode === "exit-after-select-fresh-b" || mode === "retained-eof") {
       await until(() => f.present("after-select") && f.read("after-select") === "after_select:ack=1:eof=0\n" &&
         (mode !== "retained-eof" || f.present("holder-ready")), 3000, "controlled post-select boundary was not reached");
       assert.equal(f.read("after-select"), "after_select:ack=1:eof=0\n");
@@ -587,7 +601,24 @@ for (const [mode, failure] of [
       assert.ok(members(metadata.watcher).some(member => member.pid === node.pid &&
         member.ppid === metadata.watcher && member.uid === process.getuid()), "forced exit requires the exact Node parent/UID/PGID");
       f.pinGroup(metadata.watcher);
+      if (mode === "exit-after-select-fresh-b") {
+        await until(() => f.present("b-live-sample"), 1000,
+          "B must retain its original live Node sample before the actual Node exit");
+        const sampled = f.json("b-live-sample", ["pid", "parent", "group", "node", "node_live", "completing"]);
+        assert.equal(sampled.parent, metadata.watcher); assert.equal(sampled.group, metadata.watcher);
+        assert.ok(members(metadata.watcher).some(member => member.pid === sampled.pid &&
+          member.ppid === metadata.watcher && member.uid === process.getuid()),
+        "controlled retirement must use the original direct B child and PGID");
+        assert.equal(sampled.node, node.pid); assert.equal(sampled.node_live, true); assert.equal(sampled.completing, true);
+      }
       f.write("exit-release", "release\n");
+      if (mode === "exit-after-select-fresh-b") {
+        await until(() => f.present("b-retire-pending"), 2000,
+          "A's original retirement message must become readable after actual Node0");
+        assert.deepEqual(f.json("node-wait", waitKeys), { pid: node.pid, status: 0, waiter: metadata.watcher });
+        assert.deepEqual(f.json("b-retire-pending", ["readable"]), { readable: true });
+        f.write("b-sample-release", "release\n");
+      }
     }
     let supervisorExit;
     await until(remaining => (supervisorExit = f.status("wait-exit")) !== undefined && members(metadata.watcher, remaining).length === 0,

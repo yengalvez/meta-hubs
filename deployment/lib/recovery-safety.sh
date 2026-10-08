@@ -11176,6 +11176,11 @@ try:
                 continue
             if not message:
                 revoke()
+            # select/recv can span the real Node exit and the validated A wait0.
+            # Decide this message from a fresh pinned observation, never the
+            # pre-select live sample. Absence still supplies no exit status;
+            # A retains the original ACK/EOF/native wait/residual authority.
+            message_node_live = node_pid is not None and pending_child_is_live(node_pid, node_identity)
             if node_pid is None and message.startswith(b"node:"):
                 fields = message.split(b":", 2)
                 if len(fields) != 3 or not fields[1].isdigit():
@@ -11185,13 +11190,13 @@ try:
                 if node_pid <= 0 or not pending_child_is_live(node_pid, node_identity):
                     revoke()
                 secondary_peer.sendall(b"ready\n")
-            elif not completing and message == b"complete" and node_live:
+            elif not completing and message == b"complete" and message_node_live:
                 completing = True
                 secondary_peer.sendall(b"complete\n")
-            elif completing and not retiring and message == b"retire" and not node_live:
+            elif completing and not retiring and message == b"retire" and not message_node_live:
                 retiring = True
                 secondary_peer.sendall(b"retired\n")
-            elif retiring and message == b"reap" and not node_live:
+            elif retiring and message == b"reap" and not message_node_live:
                 # Authorized B exit is still only an intent until A reaps us.
                 os._exit(0)
             else:

@@ -1,5 +1,23 @@
 # Session Changelog
 
+## 2026-10-08 · Corregida decisión de retiro con muestra Node obsoleta
+
+La cadena local35234 terminó nativamente1 en security: A143 frente a0 en el
+caso exit-after-select; adv/static0 conservados, otras fases no iniciadas.
+El foco sin cambios10924 pasó1/1 y no se atribuyó una causa con ese positivo.
+Experimento copy-only32978 y regresión nueva14999 reprodujeron el mismo143:
+B conserva Node-live antes del select mientras A observa ACK/EOF/wait Node0,
+valida residuos y envía retire. La decisión usaba la muestra anterior al mensaje.
+Se refresca únicamente la observación pinned al recibir cada mensaje, manteniendo
+owner/PGID/UID, ACK/EOF, waits nativos, residuos, failure inode y límites.
+Suite afectada91798 original0:16/16 en26,321s, incluidos retiros SIGKILL/SIGSTOP,
+Node7, fallos iniciales, residuos y ACK/EOF incompletos. Syntax/diff/ShellCheck0;
+el primer ShellCheck detectó un apóstrofo dentro del Python embebido, retirado
+antes de congelar. Revisión adversarial acotada del primario, no independiente;
+no ruta GPT6 heredada verificada en SPRINT. Gitleaks staged0; commit/full exacto pendientes.
+No demuestra la causa de los antiguos streams multimedia. Sin efectos reales,
+capturas, recursos DO, subida/rotación, calendario, build o despliegue.
+
 ## 2026-10-08 · Directed monthly recovery checker and verifier registration
 
 Add read-only pinned-ID Drive download, closed native-runtime materialization and
