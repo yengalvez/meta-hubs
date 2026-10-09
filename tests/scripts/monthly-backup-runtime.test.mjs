@@ -4,7 +4,8 @@ import { mkdtemp, realpath, writeFile, readFile, readdir } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { runMonthlyBackup, validateMonthlyRuntimeConfiguration } from "../../deployment/monthly-backup-runtime.mjs";
+import { runMonthlyBackup, validateMonthlyRuntimeConfiguration, verifyMonthlyLocalDependencies,
+  runMonthlyLiveVerification, MONTHLY_LIVE_OBSERVATION_TIMEOUT_MS } from "../../deployment/monthly-backup-runtime.mjs";
 import { portableDriveNames } from "../../deployment/monthly-drive-store.mjs";
 
 const hash=(value,algorithm="sha256")=>createHash(algorithm).update(value).digest("hex");
@@ -152,4 +153,47 @@ test("a rotation receipt for another month cannot complete the scheduled attempt
   assert.deepEqual(await readdir(join(f.root,"rotations")),[]);
   await assert.rejects(f.run("scheduled"),/monthly_runtime_previous_attempt_unresolved/);
   assert.equal(f.calls.filter(c=>c==="capture").length,1);
+});
+
+test("the permanent operator rejects missing or malformed yaml before native monthly work",()=>{
+  assert.throws(()=>verifyMonthlyLocalDependencies(()=>{throw Error("MODULE_NOT_FOUND");}),/local_dependency_missing/);
+  for(const yaml of [null,{}, {parse(){}}, {stringify(){}}])
+    assert.throws(()=>verifyMonthlyLocalDependencies(()=>yaml),/local_dependency_invalid/);
+  const required=[];
+  assert.equal(verifyMonthlyLocalDependencies(name=>{required.push(name);return {parse(){},stringify(){}};}).state,
+    "required-local-dependencies-present");
+  assert.deepEqual(required,["yaml"]);
+});
+test("the read-only acceptance scan has a finite budget covering the observed 132310ms and keeps exact inputs",async()=>{
+  const f=await fixture();let calls=0;
+  const result=await runMonthlyLiveVerification(f.config,{async run(program,args,options){
+    calls++;assert.match(program,/\/deployment\/verify-live-reactivation\.sh$/);assert.deepEqual(args,[]);
+    assert.equal(options.timeout,MONTHLY_LIVE_OBSERVATION_TIMEOUT_MS);assert.equal(options.timeout,300000);
+    assert.ok(options.timeout>132310);
+    assert.equal(options.env.EXPECTED_KUBE_CONTEXT,f.config.context);
+    assert.equal(options.env.NAMESPACE,f.config.namespace);
+    assert.equal(options.env.EXPECTED_NAMESPACE_UID,f.config.namespaceUid);
+    assert.equal(options.env.EXPECTED_RET_PVC_UID,f.config.retPvcUid);
+    assert.equal(options.env.VALUES_FILE,f.paths.values);
+    assert.equal(options.env.HCCE_MANIFEST_PATH,f.paths.manifest);
+    assert.equal(options.env.PROCESS_LOCAL_CUTOVER_KEY_PATH,f.paths.cutoverKey);
+    return {nativeExitCode:0,stdout:"Summary: 0 failure(s), 0 warning(s)\n"};
+  }});
+  assert.equal(calls,1);assert.equal(result.nativeExitCode,0);assert.equal(result.failures,0);assert.equal(result.warnings,0);
+  assert.match(result.stdoutSha256,/^[a-f0-9]{64}$/);
+});
+test("the read-only observer never accepts nonzero exits, warnings or absent summaries",async()=>{
+  const f=await fixture();
+  for(const result of [
+    {nativeExitCode:1,stdout:"Summary: 0 failure(s), 0 warning(s)\n"},
+    {nativeExitCode:0,stdout:"Summary: 1 failure(s), 0 warning(s)\n"},
+    {nativeExitCode:0,stdout:"Summary: 0 failure(s), 1 warning(s)\n"},
+    {nativeExitCode:0,stdout:""}, {nativeExitCode:0,stdout:null}
+  ]) await assert.rejects(runMonthlyLiveVerification(f.config,{async run(){return result;}}),/live_not_accepted/);
+});
+test("an ambiguous or timed-out read-only native observation is not retried or accepted",async()=>{
+  const f=await fixture();let calls=0;
+  await assert.rejects(runMonthlyLiveVerification(f.config,{async run(){calls++;throw Error("export_native_command_failed_or_ambiguous");}}),
+    /export_native_command_failed_or_ambiguous/);
+  assert.equal(calls,1);
 });

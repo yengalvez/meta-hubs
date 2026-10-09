@@ -6,6 +6,24 @@ coordinator. Its code can pause/resume workloads and create native snapshots;
 it is **not yet approved for production use**. No monthly capture, isolated
 DO/Drive restore, rotation or scheduler has been accepted.
 
+## Permanent operator preflight
+
+The standalone operator must initialize the generator's locked local dependencies
+before use: from `hubs-cloud/community-edition`, run
+`npm ci --ignore-scripts --no-audit --no-fund`. Do not substitute a global library,
+an unpinned upgrade, or dependencies inside a disposable worktree. The monthly
+entrypoint verifies the required `yaml` API before claiming a month or contacting
+any provider. A missing library is a local readiness failure, not cloud drift.
+
+The complete read-only live verifier has a finite five-minute observation budget.
+This scan runs before writer quiescence and after resume; the earlier two-minute
+wrapper cut off a real successful 132,310ms scan. Native exit0 and the exact
+zero-failure/zero-warning summary remain mandatory. No checkpoint watch, PGSQL
+30/10s deadline, two-second reserve, or original child-exit guard is changed.
+An incomplete attempt remains unresolved until evidence-based reconciliation;
+fixing readiness does not authorize an automatic snapshot retry or accepting a
+partial checkpoint.
+
 ## Native capture and protected parent
 
 `monthly-snapshot-source.mjs` binds each PVC/PV UID to its actual DigitalOcean

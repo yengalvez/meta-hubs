@@ -4,6 +4,7 @@ import { resolve, join, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
+import { createRequire } from "node:module";
 import { civilMonth } from "./monthly-backup-retention.mjs";
 import { captureMonthlyForExport, inspectPublishedMonthlyPoint, exportMonthlySnapshotPoint } from "./monthly-snapshot-export.mjs";
 import { nativeSnapshotExportProvider, runExportNative } from "./monthly-snapshot-export-provider.mjs";
@@ -20,6 +21,29 @@ const shaPattern = /^[a-f0-9]{40}$/;
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const monthPattern = /^\d{4}-(0[1-9]|1[0-2])$/;
 const pathNames = ["values","manifest","cutoverKey","recipient","keyCustody","driveClient","driveConfig","driveRuntime","acceptance"];
+// This bounds a read-only acceptance scan BEFORE quiescence or AFTER resume.
+// It does not change checkpoint watches, PGSQL guards or their 30/10s deadlines.
+export const MONTHLY_LIVE_OBSERVATION_TIMEOUT_MS = 300000;
+export function verifyMonthlyLocalDependencies(load = createRequire(join(root,"hubs-cloud/community-edition/package.json"))) {
+  let yaml;
+  try { yaml = load("yaml"); }
+  catch { throw new Error("monthly_runtime_local_dependency_missing"); }
+  requireValue(typeof yaml?.parse === "function" && typeof yaml?.stringify === "function",
+    "monthly_runtime_local_dependency_invalid");
+  return {state:"required-local-dependencies-present",dependencies:["yaml"]};
+}
+export async function runMonthlyLiveVerification(config, {run=runExportNative}={}) {
+  const result=await run(join(root,"deployment/verify-live-reactivation.sh"),[],{
+    timeout:MONTHLY_LIVE_OBSERVATION_TIMEOUT_MS,
+    env:{...process.env,EXPECTED_KUBE_CONTEXT:config.context,NAMESPACE:config.namespace,
+      EXPECTED_NAMESPACE_UID:config.namespaceUid,EXPECTED_RET_PVC_UID:config.retPvcUid,
+      VALUES_FILE:config.paths.values,HCCE_MANIFEST_PATH:config.paths.manifest,
+      PROCESS_LOCAL_CUTOVER_KEY_PATH:config.paths.cutoverKey}
+  });
+  requireValue(result.nativeExitCode===0 && typeof result.stdout === "string" &&
+    /Summary:\s*0 failure\(s\),\s*0 warning\(s\)/.test(result.stdout), "monthly_runtime_live_not_accepted");
+  return {nativeExitCode:result.nativeExitCode,failures:0,warnings:0,stdoutSha256:digest(result.stdout)};
+}
 async function privateDirectory(path) {
   requireValue(isAbsolute(path) && resolve(path) === path && await realpath(path) === path, "monthly_runtime_directory_not_canonical");
   const stat = await lstat(path);
@@ -48,6 +72,8 @@ export function validateMonthlyRuntimeConfiguration(config) {
   return config;
 }
 async function nativeCode() {
+  // Fail before claiming a month or contacting a provider when the copied operator lacks dependencies.
+  verifyMonthlyLocalDependencies();
   const version={};
   for (const [name,path] of Object.entries({root,hubs:join(root,"hubs"),cloud:join(root,"hubs-cloud")})) {
     const top=(await runExportNative("git",["-C",path,"rev-parse","--show-toplevel"])).stdout.trim();
@@ -74,16 +100,7 @@ function nativeOperations() {
         "--context",config.context,"--instance",config.instanceId,"--namespace",config.namespace,"--region",config.region,"--output",path]);
       return readPrivateSource(path,1024*1024);
     },
-    async live(config) {
-      const result=await runExportNative(join(root,"deployment/verify-live-reactivation.sh"),[],{
-        timeout:120000, env:{...process.env,EXPECTED_KUBE_CONTEXT:config.context,NAMESPACE:config.namespace,
-          EXPECTED_NAMESPACE_UID:config.namespaceUid,EXPECTED_RET_PVC_UID:config.retPvcUid,
-          VALUES_FILE:config.paths.values,HCCE_MANIFEST_PATH:config.paths.manifest,
-          PROCESS_LOCAL_CUTOVER_KEY_PATH:config.paths.cutoverKey}
-      });
-      requireValue(/Summary:\s*0 failure\(s\),\s*0 warning\(s\)/.test(result.stdout), "monthly_runtime_live_not_accepted");
-      return {nativeExitCode:result.nativeExitCode,failures:0,warnings:0,stdoutSha256:digest(result.stdout)};
-    }
+    live:config=>runMonthlyLiveVerification(config)
   };
 }
 async function readReadiness(config, code, mode) {
