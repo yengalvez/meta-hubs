@@ -92,7 +92,9 @@ test("closed runtime rejects duplicate, traversal, extended and symlink headers"
 test("pinned plaintext hashes reject public files and symlink paths",async()=>{
   const directory=await root(),file=join(directory,"private.bin");await writeFile(file,"FIXTURE",{mode:0o600});
   assert.deepEqual(await hashMonthlyRestoreFile(file),{bytes:7,sha256:sha("FIXTURE")});
-  const publicFile=join(directory,"public.bin");await writeFile(publicFile,"FIXTURE",{mode:0o644});
+  const publicFile=join(directory,"public.bin");await writeFile(publicFile,"FIXTURE",{mode:0o600});
+  // A restrictive inherited umask must not turn this negative fixture private.
+  chmodSync(publicFile,0o644);
   await assert.rejects(hashMonthlyRestoreFile(publicFile),/file_not_private/);
   const linked=join(directory,"linked.bin");await symlink(file,linked);await assert.rejects(hashMonthlyRestoreFile(linked),/not_canonical/);
 });
