@@ -96,7 +96,7 @@ test("public or linked evidence cannot be accepted", async () => {
 });
 test("native capture helper records its ORIGINAL successful invocation only, without repeating it", async () => {
   const f = await fixture(); let calls = 0;
-  const environment = { CHECKPOINT_BACKEND: "native-monthly", ALLOW_CHECKPOINT_DOWNTIME: "1",
+  const environment = { CHECKPOINT_BACKEND: "native-monthly", CHECKPOINT_FORMAT: "legacy", ALLOW_CHECKPOINT_DOWNTIME: "1",
     MONTHLY_INSTANCE_ID: "fixture-instance", EXPECTED_KUBE_CONTEXT: "fixture", EXPECTED_NAMESPACE_UID: id(1), EXPECTED_RET_PVC_UID: id(6) };
   const run = async (program, args) => {
     calls++; assert.ok(program.endsWith("/deployment/create-checkpoint.sh")); assert.deepEqual(args, [f.directory]);
@@ -110,9 +110,22 @@ test("native capture helper records its ORIGINAL successful invocation only, wit
 test("failed/ambiguous capture never creates a successful completion receipt", async () => {
   const f = await fixture(), completionPath = join(f.parent, "failed-completion.json");
   await assert.rejects(captureMonthlyForExport({ checkpointDirectory: f.directory, completionPath,
-    environment: { CHECKPOINT_BACKEND: "native-monthly", ALLOW_CHECKPOINT_DOWNTIME: "1", MONTHLY_INSTANCE_ID: "fixture-instance" },
+    environment: { CHECKPOINT_BACKEND: "native-monthly", CHECKPOINT_FORMAT: "legacy", ALLOW_CHECKPOINT_DOWNTIME: "1", MONTHLY_INSTANCE_ID: "fixture-instance" },
     run: async () => { throw new Error("DO-NOT-LEAK-PROVIDER-BODY"); } }), /failed_or_ambiguous/);
   await assert.rejects(readFile(completionPath), { code: "ENOENT" });
+});
+test("runner generation or missing archive format stops before capture intent and native execution", async () => {
+  const f = await fixture(); let calls = 0;
+  for (const [index, format] of [undefined, "durable-v2", "freeze-bundle-v1"].entries()) {
+    const completionPath = join(f.parent, `rejected-format-${index}.json`);
+    await assert.rejects(captureMonthlyForExport({ checkpointDirectory: f.directory, completionPath,
+      environment: { CHECKPOINT_BACKEND: "native-monthly", CHECKPOINT_FORMAT: format,
+        ALLOW_CHECKPOINT_DOWNTIME: "1", MONTHLY_INSTANCE_ID: "fixture-instance" },
+      run: async () => { calls++; throw Error("MUST-NOT-RUN"); } }), /export_capture_arguments_invalid/);
+    await assert.rejects(readFile(completionPath + ".intent"), { code: "ENOENT" });
+    await assert.rejects(readFile(completionPath), { code: "ENOENT" });
+  }
+  assert.equal(calls, 0);
 });
 test("generated CSI imports retain original snapshots and never mount live claims", async () => {
   const { plan, point } = await fixture(); assert.equal(plan.objects.length, 9);

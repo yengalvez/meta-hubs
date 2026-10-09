@@ -4,6 +4,7 @@ import { mkdtemp, realpath, writeFile, readFile, readdir } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { runMonthlyBackup, validateMonthlyRuntimeConfiguration, verifyMonthlyLocalDependencies,
   runMonthlyLiveVerification, MONTHLY_LIVE_OBSERVATION_TIMEOUT_MS } from "../../deployment/monthly-backup-runtime.mjs";
 import { portableDriveNames } from "../../deployment/monthly-drive-store.mjs";
@@ -46,7 +47,7 @@ async function fixture() {
     async live(){calls.push("live");return {nativeExitCode:controls.liveExit??0,failures:0,warnings:0,stdoutSha256:manifestSha256};},
     async source(){calls.push("source");return controls.oversize?{...source,volumes:{...source.volumes,database:{...source.volumes.database,sizeGiB:11}}}:source;},
     async capture(args){calls.push("capture");assert.equal(args.environment.CHECKPOINT_BACKEND,"native-monthly");
-      assert.equal(args.environment.CHECKPOINT_FORMAT,"durable-v2");assert.equal(args.environment.VALUES_FILE,paths.values);
+      assert.equal(args.environment.CHECKPOINT_FORMAT,"legacy");assert.equal(args.environment.VALUES_FILE,paths.values);
       if(controls.failCapture)throw Error("export_capture_failed_or_ambiguous");
       return {schema:"yenhubs-monthly-capture-completion-v1",state:"native-command-complete-not-restore-accepted",nativeExitCode:controls.captureExit??0,
         instanceId,month,directory:args.checkpointDirectory};},
@@ -73,6 +74,30 @@ test("validation joins every component once, measures phases and does not rotate
   assert.equal((await readdir(join(f.root,"points"))).length,1);assert.deepEqual(await readdir(join(f.root,"rotations")),[]);
   assert.ok(Object.keys(r.timings).includes("capture"));assert.ok(r.timings.totalMilliseconds>=0);
   const completed=JSON.parse(await readFile(join(f.root,"attempts",month,"completed.json")));assert.equal(completed.nativeExitCode,0);
+});
+test("monthly runtime format passes the original checkpoint startup selection gates",async()=>{
+  const f=await fixture(),source=await readFile(new URL("../../deployment/create-checkpoint.sh",import.meta.url),"utf8");
+  const begin=source.indexOf('case "$CHECKPOINT_FORMAT" in\n');
+  const end=source.indexOf('\ncheckpoint_artifacts() {',begin);
+  assert.ok(begin>=0 && end>begin);
+  assert.equal(source.indexOf('case "$CHECKPOINT_FORMAT" in\n',begin+1),-1);
+  const selection=source.slice(begin,end);
+  // Execute only the original two local selection guards: no inventory, Lease,
+  // directories, provider command, pause or snapshot can run in this test.
+  assert.doesNotMatch(selection,/\b(?:kubectl|doctl|mkdir|source|node|eval)\b/);
+  const capture=f.operations.capture;
+  f.operations.capture=async args=>{
+    const selected=Object.fromEntries(["CHECKPOINT_FORMAT","CHECKPOINT_BACKEND","MONTHLY_INSTANCE_ID",
+      "MONTHLY_REGION","MONTHLY_JOURNAL_ROOT"].map(name=>[name,args.environment[name]]));
+    const original=spawnSync("/bin/bash",["-c",selection],{env:selected,encoding:"utf8",timeout:5000});
+    assert.equal(original.error,undefined);
+    assert.equal(original.signal,null);
+    if(original.status!==0)throw Error("checkpoint_startup_selection_native_exit_"+original.status);
+    return capture(args);
+  };
+  const result=await f.run();
+  assert.equal(result.nativeExitCode,0);
+  assert.equal(f.calls.filter(name=>name==="capture").length,1);
 });
 test("enabled scheduled mode requires both restore proofs before any provider effect",async()=>{
   const f=await fixture();f.config.schedule.enabled=true;await f.json(f.configPath,f.config);

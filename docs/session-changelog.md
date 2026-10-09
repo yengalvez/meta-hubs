@@ -1,5 +1,20 @@
 # Session Changelog
 
+## 2026-10-09 · Monthly capture selector contract repaired locally
+
+Original monthly validation49075 exited1 at the capture entry, after live0/0
+and source preflights. The runtime passed runner generation durable-v2 as
+CHECKPOINT_FORMAT, which the original shell rejects before its publish lock,
+Lease, pause or provider calls. The native reproduction of those two exact
+local selection guards exited2 before repair; this is not the lost original
+capture child's exit journal. Service reconciliation93495 exited0:12/12 Ready,
+five writers active, lock/Lease free, no export namespaces or provider snapshots.
+Only the selector is corrected to legacy with backend native-monthly; the
+durable runner still comes from pinned values and remains required. Invalid
+format now rejects before capture intent/native launch.51 directed runtime/
+export tests passed natively0, including the original shell gate join. No
+real retry, accepted backup/restore/calendar, production change or guard removal.
+
 ## 2026-10-08 · Corregida decisión de retiro con muestra Node obsoleta
 
 La cadena local35234 terminó nativamente1 en security: A143 frente a0 en el

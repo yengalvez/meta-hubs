@@ -26,6 +26,15 @@ partial checkpoint.
 
 ## Native capture and protected parent
 
+The invocation has two independent selectors: `CHECKPOINT_BACKEND=native-monthly`
+and `CHECKPOINT_FORMAT=legacy`. Here `legacy` selects the coordinator's inventory
+path; it does not change the native fourteen-artifact bundle into a SQL/media
+stream or select an old runner. The durable-v2 runner generation remains bound
+to the private values and required by the coordinator. Passing `durable-v2` as
+CHECKPOINT_FORMAT is invalid and must fail locally before the capture intent.
+The runtime regression executes the original two local shell selection guards
+with the actual emitted environment, without provider calls or workload pause.
+
 `monthly-snapshot-source.mjs` binds each PVC/PV UID to its actual DigitalOcean
 volume with one native GET per volume. It rejects a rebound claim, another driver,
 region/capacity mismatch or ambiguous/unready consumer. Its read-only PostgreSQL

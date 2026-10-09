@@ -39,6 +39,7 @@ export async function captureMonthlyForExport({ checkpointDirectory, completionP
   const directory = resolve(checkpointDirectory), completion = resolve(completionPath);
   await privateDirectory(dirname(directory)); await privateDirectory(dirname(completion));
   requireValue(!completion.startsWith(directory + "/") && environment?.CHECKPOINT_BACKEND === "native-monthly" &&
+    environment.CHECKPOINT_FORMAT === "legacy" &&
     environment.ALLOW_CHECKPOINT_DOWNTIME === "1" &&
     /^[a-z0-9][a-z0-9-]{0,62}$/.test(environment.MONTHLY_INSTANCE_ID ?? ""), "export_capture_arguments_invalid");
   // Exclusive claim before launching the one capture. An ambiguous attempt is reconciled, not restarted.

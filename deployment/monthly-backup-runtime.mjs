@@ -216,7 +216,9 @@ export async function runMonthlyBackup({configPath,mode="validation",operations=
       Object.values(source.volumes).every(v=>Number.isSafeInteger(v.sizeGiB) && v.sizeGiB>0) &&
       Object.values(source.volumes).reduce((sum,v)=>sum+v.sizeGiB,0)<=config.maximumSourceGiB,
       "monthly_runtime_source_identity_or_budget_changed");
-    const environment={...process.env,CHECKPOINT_BACKEND:"native-monthly",CHECKPOINT_FORMAT:"durable-v2",
+    // The snapshot backend uses the checkpoint's legacy inventory selector.
+    // durable-v2 is the runner generation in the pinned values, not an archive format.
+    const environment={...process.env,CHECKPOINT_BACKEND:"native-monthly",CHECKPOINT_FORMAT:"legacy",
       ALLOW_CHECKPOINT_DOWNTIME:"1",MONTHLY_INSTANCE_ID:config.instanceId,MONTHLY_REGION:config.region,
       MONTHLY_JOURNAL_ROOT:join(config.stateRoot,"native-journals"),EXPECTED_KUBE_CONTEXT:config.context,
       NAMESPACE:config.namespace,EXPECTED_NAMESPACE_UID:config.namespaceUid,EXPECTED_RET_PVC_UID:config.retPvcUid,
