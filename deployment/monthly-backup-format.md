@@ -214,6 +214,23 @@ Archive path validation, bounded provider/child execution, native provenance,
 actual Drive byte readback, production key custody and isolated restore acceptance
 remain responsibilities of the complete pipeline before production use.
 
+## Owner-private artifact helper deadline
+
+Each native `private-dirfd-ops.py` invocation has a fixed ten-second deadline.
+On expiry, the caller sends SIGKILL to that helper and waits for its native
+termination; it returns only `private_artifact_helper_timeout`, without private
+input, stdout or stderr. There is no retry, missing-artifact adoption or clean
+fallback after a transport failure. Existing files and interrupted publication
+state remain subject to the original guarded reconciliation, never an inferred
+successful copy. Input buffers are cleared on every return path.
+
+This bounds one previously unbounded local IPC wait; it does not establish the
+cause of the observed historical stdin stall or guarantee that future operations
+cannot fail. The Python protocol, four exact reads, UID/dirfd/inode/hash/HMAC,
+custody and no-clobber checks are unchanged, as are PGSQL30/10s and reserve2s.
+The blocked-reader regression uses a real native child that ignores SIGTERM,
+checks SIGKILL/reaping, value-silent rejection and preservation of the artifact.
+
 ## Bounded verification
 
 ```sh

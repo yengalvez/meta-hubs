@@ -454,6 +454,133 @@ test("stable private read uses one dirfd helper and stays fresh", t => {
   assert.deepEqual(fs.readdirSync(state.root), ["artifact.json"]);
 });
 
+test("a stalled dirfd reader is killed at its fixed deadline and fails closed", { concurrency: false }, t => {
+  const state = fixture(t, "helper-deadline");
+  const bytes = Buffer.from("unchanged-synthetic-private-artifact\n", "utf8");
+  fs.writeFileSync(state.outputPath, bytes, { mode: 0o600, flag: "wx" });
+  fs.chmodSync(state.outputPath, 0o600);
+  const before = fs.lstatSync(state.outputPath);
+  const fifoPath = path.join(state.root, "blocked-reader.fifo");
+  const pidPath = path.join(state.root, "blocked-reader.pid");
+  const made = spawnSync("/usr/bin/mkfifo", ["-m", "600", fifoPath]);
+  assert.equal(made.status, 0);
+  const readDescriptor = fs.openSync(fifoPath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+  const writeDescriptor = fs.openSync(fifoPath, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+  const helperPath = path.join(ROOT, "deployment/private-dirfd-ops.py");
+  const sentinel = "synthetic-helper-output-must-not-escape";
+  const source = `
+import fcntl, os, signal, sys
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+descriptor = os.open(${JSON.stringify(pidPath)}, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(descriptor, "w") as opened:
+    opened.write(str(os.getpid()))
+    opened.flush()
+sys.stdout.write(${JSON.stringify(sentinel)})
+sys.stdout.flush()
+sys.stderr.write(${JSON.stringify(sentinel)})
+sys.stderr.flush()
+fcntl.fcntl(5, fcntl.F_SETFL, fcntl.fcntl(5, fcntl.F_GETFL) & ~os.O_NONBLOCK)
+os.read(5, 1)
+`;
+  const originalSpawnSync = cp.spawnSync;
+  let observedResult, observedInput, calls = 0, captured;
+  cp.spawnSync = function (executable, argv, options) {
+    if (executable !== "python3" || argv[0] !== "-I" || argv[1] !== helperPath) {
+      return originalSpawnSync.call(this, executable, argv, options);
+    }
+    calls += 1;
+    // Fail immediately on the old unbounded caller; never launch another
+    // indefinitely blocked reproduction without a real native kill deadline.
+    assert.equal(options.timeout, 10000);
+    assert.equal(options.killSignal, "SIGKILL");
+    observedInput = options.input;
+    observedResult = originalSpawnSync.call(this, executable, ["-I", "-c", source], {
+      ...options, stdio: [...options.stdio, readDescriptor]
+    });
+    return observedResult;
+  };
+  const started = performance.now();
+  try {
+    syncBuiltinESMExports();
+    assert.throws(() => readPublishedPrivateArtifact({
+      outputPath: state.outputPath, maximumBytes: MAXIMUM
+    }), error => {
+      captured = error;
+      return error instanceof PrivateArtifactPublicationError &&
+        error.code === "private_artifact_helper_timeout";
+    });
+  } finally {
+    cp.spawnSync = originalSpawnSync;
+    syncBuiltinESMExports();
+    fs.closeSync(writeDescriptor);
+    fs.closeSync(readDescriptor);
+  }
+  assert.equal(calls, 1);
+  assert.equal(observedResult.error?.code, "ETIMEDOUT");
+  assert.equal(observedResult.signal, "SIGKILL");
+  assert.equal(observedResult.status, null);
+  assert.ok(performance.now() - started < 20000);
+  const pid = Number(fs.readFileSync(pidPath, "utf8"));
+  assert.equal(pid, observedResult.pid);
+  assert.throws(() => process.kill(pid, 0), error => error.code === "ESRCH");
+  assert.ok(observedInput.every(value => value === 0));
+  assert.equal(JSON.stringify(captured).includes(sentinel), false);
+  assert.equal(captured.message.includes(sentinel), false);
+  assert.deepEqual(fs.readFileSync(state.outputPath), bytes);
+  const after = fs.lstatSync(state.outputPath);
+  assert.equal(after.ino, before.ino);
+  assert.equal(after.mode & 0o7777, 0o600);
+});
+
+test("transport failures take precedence over helper missing and fallback sentinels", { concurrency: false }, t => {
+  const state = fixture(t, "helper-transport-precedence");
+  const bytes = Buffer.from("transport-failure-fixture\n", "utf8");
+  fs.writeFileSync(state.outputPath, bytes, { mode: 0o600, flag: "wx" });
+  fs.chmodSync(state.outputPath, 0o600);
+  const before = fs.lstatSync(state.outputPath);
+  const helperPath = path.join(ROOT, "deployment/private-dirfd-ops.py");
+  const originalSpawnSync = cp.spawnSync;
+  try {
+    for (const operation of ["read", "publish"]) {
+      for (const status of [44, 45, 46]) {
+        for (const fault of ["timeout", "signal", "error"]) {
+          let calls = 0, helperInput;
+          cp.spawnSync = function (executable, argv, options) {
+            assert.equal(executable, "python3");
+            assert.deepEqual(argv, ["-I", helperPath]);
+            calls += 1;
+            helperInput = options.input;
+            const request = JSON.parse(helperInput.subarray(0, helperInput.indexOf(10)).toString("utf8"));
+            assert.equal(request.action, operation === "read" ? "read-clean" : "stat");
+            return {
+              status, stdout: Buffer.alloc(0), stderr: Buffer.from("synthetic-private-stderr"),
+              signal: fault === "signal" ? "SIGKILL" : null,
+              error: fault === "signal" ? undefined : Object.assign(new Error("synthetic-private-error"), {
+                code: fault === "timeout" ? "ETIMEDOUT" : "EIO"
+              })
+            };
+          };
+          syncBuiltinESMExports();
+          const invoke = operation === "read" ? () => readPublishedPrivateArtifact({
+            outputPath: state.outputPath, maximumBytes: MAXIMUM
+          }) : () => publishPrivateArtifact({
+            outputPath: state.outputPath, bytes, maximumBytes: MAXIMUM
+          });
+          expectCode(invoke, fault === "timeout" ? "private_artifact_helper_timeout" : "private_artifact_changed");
+          assert.equal(calls, 1);
+          assert.ok(helperInput.every(value => value === 0));
+          assert.deepEqual(fs.readFileSync(state.outputPath), bytes);
+          assert.equal(fs.lstatSync(state.outputPath).ino, before.ino);
+          assert.deepEqual(fs.readdirSync(state.root), ["artifact.json"]);
+        }
+      }
+    }
+  } finally {
+    cp.spawnSync = originalSpawnSync;
+    syncBuiltinESMExports();
+  }
+});
+
 function directorySnapshot(directory) {
   const value = fs.lstatSync(directory, { bigint: true });
   return { dev: value.dev, ino: value.ino, uid: value.uid, mode: value.mode, nlink: value.nlink };

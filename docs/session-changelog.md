@@ -1,5 +1,25 @@
 # Session Changelog
 
+## 2026-10-11 · Bound the native owner-private artifact helper
+
+The security gate stalled with its synthetic Node test waiting in spawnSync
+and the Python helper waiting for stdin. Preserve native samples and journals;
+the deliberate termination of that test makes this security attempt a failure,
+not acceptance. The original HMAC case passes in isolation without instrumentation,
+so its historical transport stall is not claimed reproduced or attributed to Node.
+
+The missing deadline is reproducible: the new regression fails on the old caller
+before launching a blocked child. Add only a fixed native10s/SIGKILL deadline,
+value-silent private_artifact_helper_timeout and transport-error precedence over
+missing/fallback sentinels. No automatic retry or change to publication custody,
+four reads, inode/hash/HMAC/no-clobber or PGSQL30/10s/reserve2s.
+The changed artifact suite passed natively0,19/19 in40.139s, including a real
+blocked child ignoring SIGTERM, kill/reap, cleared input and unchanged bytes/inode.
+Eighteen mocked transport/sentinel combinations fail closed. Original HMAC case
+on the changed source passed natively0,1/1 in27.993s. Separate bounded adversarial
+primary review, not an independent worker; exact full acceptance remains due.
+No production mutation, new real capture, operator/ledger reset or calendar.
+
 ## 2026-10-11 · Narrow Decimal security patch in the monthly candidate
 
 The native advisory gate stopped on CVE-2026-97853, published10/10, before

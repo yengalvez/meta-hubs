@@ -14,6 +14,7 @@ const FILE_MODE = 0o600;
 const DIRECTORY_MODE = 0o700;
 const MAX_CLI_BYTES = 64 * 1024 * 1024;
 const MAX_HELPER_REQUEST_BYTES = 1024 * 1024;
+const DIRFD_HELPER_TIMEOUT_MS = 10000;
 const PYTHON = "python3";
 const HELPER_MISSING = 44;
 const HELPER_INVALID = 45;
@@ -188,20 +189,26 @@ function runDirfdHelper(parent, staging, action, args = {}, {
       input: helperInput,
       encoding: null,
       maxBuffer: maximumOutput,
+      timeout: DIRFD_HELPER_TIMEOUT_MS,
+      killSignal: "SIGKILL",
       env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
       stdio: ["pipe", "pipe", "pipe", parent.descriptor, staging.descriptor]
     });
   } finally {
     helperInput.fill(0);
   }
+  // A stalled transport is never a missing artifact or a clean-path fallback.
+  // Kill and reap this helper only; leave artifacts for guarded reconciliation.
+  if (result.error?.code === "ETIMEDOUT") reject("private_artifact_helper_timeout");
+  if (result.error?.code === "ENOENT") reject("private_artifact_filesystem_unsupported");
+  if (result.error || result.signal) reject("private_artifact_changed");
   if (allowMissing && result.status === HELPER_MISSING) return undefined;
   if (action === "read-clean" && !result.error && !result.signal &&
       Buffer.isBuffer(result.stdout) && result.stdout.length === 0) {
     if (allowCleanFallback && result.status === HELPER_CLEAN_FALLBACK) return undefined;
     if (result.status === HELPER_INVALID) reject("private_artifact_invalid");
   }
-  if (result.error?.code === "ENOENT") reject("private_artifact_filesystem_unsupported");
-  if (result.error || result.signal || result.status !== 0 || !Buffer.isBuffer(result.stdout)) {
+  if (result.status !== 0 || !Buffer.isBuffer(result.stdout)) {
     reject("private_artifact_changed");
   }
   return result.stdout;
