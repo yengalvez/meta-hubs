@@ -18,6 +18,12 @@ CLI contract to the monthly-only gate. Tests and review remain local evidence;
 no real retry, partial acceptance, calendar activation or product rollout follows
 automatically from this repair. Canonical PLAN records subsequent acceptance.
 
+The first monthly gate on95b9eb5 returned original1 in24s, before coordinator
+execution:283/286 passed. Two remaining worker-test fakes still invented create
+JSON and an empty list; align only those fakes to the proven CLI contract. All
+seven worker tests then returned original0, without changing production code,
+failure assertions or the one-POST rule. Preserve the failed gate evidence.
+
 ## 2026-10-12 · Monthly snapshot route, separate from legacy general tests
 
 The owner deleted the old Goal and explicitly requested correction of the route.

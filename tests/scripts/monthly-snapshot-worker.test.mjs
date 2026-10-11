@@ -84,14 +84,16 @@ test("fixed worker binds private inputs, flushes once, journals two simulated PO
       }
       return f.run(program, args);
     }
-    assert.equal(program, "doctl"); assert.equal(options.timeout, 30000);
+    assert.equal(program, "doctl");
+    if (args[2] === "list" && snapshots.size > 0) assert.ok(options.timeout > 0 && options.timeout <= 30000);
+    else assert.equal(options.timeout, 30000);
     assert.deepEqual(args.slice(-2), ["--http-retry-max", "0"]);
-    if (args[2] === "list") return { stdout: "[]" };
+    if (args[2] === "list") return { stdout: JSON.stringify([...snapshots.values()]) };
     if (args[1] === "volume" && args[2] === "snapshot") {
       const value = { id: id(20 + snapshots.size), resource_type: "volume", resource_id: args[3],
         name: args[args.indexOf("--snapshot-name") + 1], regions: ["ams3"], min_disk_size: 10,
-        size_gigabytes: 1, created_at: new Date().toISOString() };
-      snapshots.set(value.id, value); return { stdout: JSON.stringify([value]) };
+        size_gigabytes: 1, created_at: new Date().toISOString(), tags: args[args.indexOf("--tag") + 1].split(",") };
+      snapshots.set(value.id, value); return { stdout: "" };
     }
     assert.equal(args[2], "get"); return { stdout: JSON.stringify([snapshots.get(args[3])]) };
   };
@@ -133,17 +135,20 @@ if (program === "kubectl") {
     process.stdout.write(JSON.stringify(fixture.data[kind]));
   } else if (args.at(-1) !== "sync") process.exit(32);
 } else if (program === "doctl") {
-  if (args[1] === "snapshot" && args[2] === "list") process.stdout.write("[]");
-  else if (args[1] === "volume" && args[2] === "snapshot") {
+  const snapshotDirectory = path.dirname(process.env.MONTHLY_CLI_FIXTURE);
+  if (args[1] === "snapshot" && args[2] === "list") {
+    const values = ["101", "102"].filter(id => fs.existsSync(path.join(snapshotDirectory, id + ".json")))
+      .map(id => JSON.parse(fs.readFileSync(path.join(snapshotDirectory, id + ".json"), "utf8")));
+    process.stdout.write(JSON.stringify(values));
+  } else if (args[1] === "volume" && args[2] === "snapshot") {
     const role = args[3] === fixture.source.volumes.database.volumeId ? "database" : "media";
     if (role === "media" && fixture.mode === "fail-media") process.exit(33);
     const result = { id: role === "database" ? "101" : "102", resource_type: "volume", resource_id: args[3],
       name: args[args.indexOf("--snapshot-name") + 1], regions: ["ams3"], min_disk_size: 10,
-      size_gigabytes: 1, created_at: new Date().toISOString() };
-    fs.writeFileSync(path.join(path.dirname(process.env.MONTHLY_CLI_FIXTURE), result.id + ".json"), JSON.stringify(result), { mode: 0o600 });
-    process.stdout.write(JSON.stringify([result]));
+      size_gigabytes: 1, created_at: new Date().toISOString(), tags: args[args.indexOf("--tag") + 1].split(",") };
+    fs.writeFileSync(path.join(snapshotDirectory, result.id + ".json"), JSON.stringify(result), { mode: 0o600 });
   } else if (args[1] === "snapshot" && args[2] === "get") {
-    process.stdout.write("[" + fs.readFileSync(path.join(path.dirname(process.env.MONTHLY_CLI_FIXTURE), args[3] + ".json"), "utf8") + "]");
+    process.stdout.write("[" + fs.readFileSync(path.join(snapshotDirectory, args[3] + ".json"), "utf8") + "]");
   } else process.exit(34);
 } else process.exit(35);
 `;
