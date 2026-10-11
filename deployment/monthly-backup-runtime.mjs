@@ -13,6 +13,7 @@ import { publishSealedDrivePoint } from "./monthly-drive-store.mjs";
 import { monthlyRetentionRecord, executeMonthlyRetention, nativeRetentionSnapshots,
   verifyRetentionPair, verifyRetentionDriveMetadata } from "./monthly-retention-executor.mjs";
 import { readPrivateBytes, readPrivateSource } from "./monthly-snapshot-worker.mjs";
+import { inspectMonthlyCandidate, readMonthlyVerification } from "./monthly-verification.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const requireValue = (value, reason) => { if (!value) throw new Error(reason); };
@@ -74,15 +75,7 @@ export function validateMonthlyRuntimeConfiguration(config) {
 async function nativeCode() {
   // Fail before claiming a month or contacting a provider when the copied operator lacks dependencies.
   verifyMonthlyLocalDependencies();
-  const version={};
-  for (const [name,path] of Object.entries({root,hubs:join(root,"hubs"),cloud:join(root,"hubs-cloud")})) {
-    const top=(await runExportNative("git",["-C",path,"rev-parse","--show-toplevel"])).stdout.trim();
-    requireValue(top===path,"monthly_runtime_subrepo_uninitialized");
-    const status=await runExportNative("git",["-C",path,"status","--porcelain","--untracked-files=normal"]);
-    requireValue(status.stdout === "", "monthly_runtime_source_dirty");
-    version[name]=(await runExportNative("git",["-C",path,"rev-parse","HEAD"])).stdout.trim();
-  }
-  return version;
+  return inspectMonthlyCandidate(root);
 }
 function nativeOperations() {
   return {
@@ -103,7 +96,8 @@ function nativeOperations() {
     live:config=>runMonthlyLiveVerification(config)
   };
 }
-async function readReadiness(config, code, mode) {
+async function readReadiness(config, candidate, mode) {
+  const code=candidate?.code ?? {};
   requireValue(["root","hubs","cloud"].every(name=>code[name]===config.code[name]), "monthly_runtime_code_changed");
   const bytes=await readPrivateBytes(config.paths.recipient,256);
   let recipient;try{recipient=bytes.toString("utf8").trim();}finally{bytes.fill(0);}
@@ -114,10 +108,10 @@ async function readReadiness(config, code, mode) {
     custody.nativeExitCode===0 && /^[a-f0-9]{64}$/.test(custody.challengeSha256 ?? "") &&
     Number.isFinite(Date.parse(custody.verifiedAt)), "monthly_runtime_key_custody_unproven");
   const acceptance=await readPrivateSource(config.paths.acceptance);
-  requireValue(acceptance.schema==="yenhubs-monthly-runtime-acceptance-v1" && acceptance.recipient===recipient &&
+  requireValue(acceptance.schema==="yenhubs-monthly-runtime-acceptance-v2" && acceptance.recipient===recipient &&
     acceptance.instanceId===config.instanceId && ["root","hubs","cloud"].every(name=>acceptance.code?.[name]===code[name]) &&
-    acceptance.full?.nativeExitCode===0 && acceptance.full.validReceipts===15 &&
-    /^[a-f0-9]{64}$/.test(acceptance.full.evidenceSha256 ?? ""), "monthly_runtime_final_code_gate_unproven");
+    acceptance.monthly && !Object.hasOwn(acceptance,"full"), "monthly_runtime_monthly_code_gate_unproven");
+  await readMonthlyVerification(acceptance.monthly,candidate);
   if(mode==="scheduled") requireValue(config.schedule.enabled &&
     ["digitalOcean","googleDrive"].every(route=>acceptance.restores?.[route]?.nativeExitCode===0 &&
       acceptance.restores[route].state==="isolated-restore-accepted" &&
@@ -216,9 +210,9 @@ export async function runMonthlyBackup({configPath,mode="validation",operations=
       Object.values(source.volumes).every(v=>Number.isSafeInteger(v.sizeGiB) && v.sizeGiB>0) &&
       Object.values(source.volumes).reduce((sum,v)=>sum+v.sizeGiB,0)<=config.maximumSourceGiB,
       "monthly_runtime_source_identity_or_budget_changed");
-    // The snapshot backend uses the checkpoint's legacy inventory selector.
-    // durable-v2 is the runner generation in the pinned values, not an archive format.
-    const environment={...process.env,CHECKPOINT_BACKEND:"native-monthly",CHECKPOINT_FORMAT:"legacy",
+    // Public monthly selectors cannot select a streaming backup. The fixed
+    // entrypoint privately maps the shared coordinator's inventory schema.
+    const environment={...process.env,CHECKPOINT_BACKEND:"native-monthly",CHECKPOINT_FORMAT:"native-monthly-v1",
       ALLOW_CHECKPOINT_DOWNTIME:"1",MONTHLY_INSTANCE_ID:config.instanceId,MONTHLY_REGION:config.region,
       MONTHLY_JOURNAL_ROOT:join(config.stateRoot,"native-journals"),EXPECTED_KUBE_CONTEXT:config.context,
       NAMESPACE:config.namespace,EXPECTED_NAMESPACE_UID:config.namespaceUid,EXPECTED_RET_PVC_UID:config.retPvcUid,
@@ -262,9 +256,13 @@ export async function runMonthlyBackup({configPath,mode="validation",operations=
     await writeJson(join(attempt,"completed.json"),result);await record({event:"attempt-complete",state:result.state});return result;
   } catch(error) {
     const reason=/^[a-z][a-z0-9_]+$/.test(error.message)?error.message:"monthly_runtime_failed_or_ambiguous";
-    try{await record({event:"attempt-incomplete",reason});}catch{}
+    const native={};
+    if(Number.isInteger(error.nativeExitCode) && error.nativeExitCode>=0 && error.nativeExitCode<=255)native.nativeExitCode=error.nativeExitCode;
+    if(error.nativeSignal===null || /^SIG[A-Z0-9]{1,12}$/.test(error.nativeSignal ?? ""))native.nativeSignal=error.nativeSignal;
+    if(typeof error.nativeKilled==="boolean")native.nativeKilled=error.nativeKilled;
+    try{await record({event:"attempt-incomplete",reason,...native});}catch{}
     // Do NOT restart capture, retry cloud writes, accept partials or hide pause recovery failures.
-    throw new Error(reason);
+    throw Object.assign(new Error(reason),native);
   } finally {await events.close();}
 }
 

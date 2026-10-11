@@ -44,6 +44,35 @@ test("the fixed worker stays behind the same Python session gate and original de
   assert.match(child, /recovery_database_contracts_match "\$CONTRACT_BEFORE" "\$CONTRACT_AFTER"/);
 });
 
+test("native pair success and failure both return without falling through to pg_dump", () => {
+  const begin = child.indexOf("run_dump_stream() {\n");
+  const end = child.indexOf('\nif [[ "$BACKUP_MODE" == native-monthly ]]; then\n  if run_dump_stream', begin);
+  assert.ok(begin > 0 && end > begin);
+  const nativeFunction = child.slice(begin, end);
+  for (const status of [0, 23]) {
+    const result = run(`BACKUP_MODE=native-monthly; RECOVERY_OPERATION_ID=${"a".repeat(32)};
+      PGSQL_POD_UID=fixture-pod; CHECKPOINT_RUNNER_GENERATION=durable-v2; NAMESPACE=fixture;
+      RECOVERY_NAMESPACE_UID=fixture-namespace; RECOVERY_PVC_UID=fixture-pvc;
+      MONTHLY_NATIVE_SOURCE_PATH=/source; MONTHLY_NATIVE_JOURNAL_PATH=/journal;
+      MONTHLY_NATIVE_MONTH=2026-10; CONTRACT_BEFORE=/contract; DUMP_STREAM_GUARD_ARGS=();
+      recovery_kubectl_stream_guarded(){ printf '%s\\n' "$*"; return ${status}; };
+      ${nativeFunction}
+      run_dump_stream`);
+    assert.equal(result.status, status, result.stderr);
+    assert.equal(result.stdout.trim(), `3600 -- --monthly-native-pair /source /journal 2026-10 ${"a".repeat(32)} /contract`);
+    assert.doesNotMatch(result.stdout + result.stderr, /pg_dump|gzip/);
+  }
+});
+
+test("native backend selects its pair artifact and keeps the media stream exclusively legacy", () => {
+  assert.match(driver, /if \[\[ "\$CHECKPOINT_BACKEND" == native-monthly \]\]; then\n\s+database_backup_mode=native-monthly\n\s+database_backup_path="\$OUTPUT_DIR\/native-pair\.json"\nfi/);
+  const storageBranch = driver.match(/if \[\[ "\$CHECKPOINT_BACKEND" == legacy \]\]; then\nCHECKPOINT_RUNNER_GENERATION=[^]*?\nfi\ncheckpoint_set_failure_context storage-backup serialization/);
+  assert.ok(storageBranch);
+  assert.match(storageBranch[0], /"\$SCRIPT_DIR\/backup-ret-storage-quiesced\.sh"/);
+  assert.doesNotMatch(storageBranch[0], /\n(?:else|elif)\b/);
+  assert.equal(driver.match(/"\$SCRIPT_DIR\/backup-ret-storage-quiesced\.sh"/g)?.length, 1);
+});
+
 test("native backend preserves abort recovery, parent terminal joins, resume and last-marker publication", () => {
   const positions = ["persist_checkpoint_abort_receipt\n", "quiesce_writers\n", '"$SCRIPT_DIR/backup-retdb.sh"',
     "stop_checkpoint_durable_monitor_before_writer_monitor\n", "stop_checkpoint_writer_monitor_before_resume\n",

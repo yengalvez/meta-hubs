@@ -96,10 +96,11 @@ test("public or linked evidence cannot be accepted", async () => {
 });
 test("native capture helper records its ORIGINAL successful invocation only, without repeating it", async () => {
   const f = await fixture(); let calls = 0;
-  const environment = { CHECKPOINT_BACKEND: "native-monthly", CHECKPOINT_FORMAT: "legacy", ALLOW_CHECKPOINT_DOWNTIME: "1",
+  const environment = { CHECKPOINT_BACKEND: "native-monthly", CHECKPOINT_FORMAT: "native-monthly-v1", ALLOW_CHECKPOINT_DOWNTIME: "1",
     MONTHLY_INSTANCE_ID: "fixture-instance", EXPECTED_KUBE_CONTEXT: "fixture", EXPECTED_NAMESPACE_UID: id(1), EXPECTED_RET_PVC_UID: id(6) };
-  const run = async (program, args) => {
-    calls++; assert.ok(program.endsWith("/deployment/create-checkpoint.sh")); assert.deepEqual(args, [f.directory]);
+  const run = async (program, args, options) => {
+    calls++; assert.ok(program.endsWith("/deployment/create-monthly-snapshot.sh")); assert.deepEqual(args, [f.directory]);
+    assert.equal(options.env, environment);
     return { stdout: `Native monthly pair published: ${f.directory} (writers resumed; export and isolated recovery NOT yet accepted)\n` };
   };
   const completionPath = join(f.parent, "new-completion.json");
@@ -107,20 +108,47 @@ test("native capture helper records its ORIGINAL successful invocation only, wit
   assert.equal((await captureMonthlyForExport(args)).nativeExitCode, 0);
   await assert.rejects(captureMonthlyForExport(args), { code: "EEXIST" }); assert.equal(calls, 1);
 });
-test("failed/ambiguous capture never creates a successful completion receipt", async () => {
-  const f = await fixture(), completionPath = join(f.parent, "failed-completion.json");
-  await assert.rejects(captureMonthlyForExport({ checkpointDirectory: f.directory, completionPath,
-    environment: { CHECKPOINT_BACKEND: "native-monthly", CHECKPOINT_FORMAT: "legacy", ALLOW_CHECKPOINT_DOWNTIME: "1", MONTHLY_INSTANCE_ID: "fixture-instance" },
-    run: async () => { throw new Error("DO-NOT-LEAK-PROVIDER-BODY"); } }), /failed_or_ambiguous/);
-  await assert.rejects(readFile(completionPath), { code: "ENOENT" });
+test("failed/ambiguous capture preserves only native-close evidence and never retries or records success", async () => {
+  const f = await fixture();
+  for (const [index, evidence] of [{ code: 23 }, { signal: "SIGTERM", killed: true },
+    { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", killed: true },
+    { code: "DO-NOT-LEAK", signal: "DO-NOT-LEAK" }].entries()) {
+    const completionPath = join(f.parent, `failed-completion-${index}.json`); let calls = 0;
+    const args = { checkpointDirectory: f.directory, completionPath,
+      environment: { CHECKPOINT_BACKEND: "native-monthly", CHECKPOINT_FORMAT: "native-monthly-v1",
+        ALLOW_CHECKPOINT_DOWNTIME: "1", MONTHLY_INSTANCE_ID: "fixture-instance" },
+      run: async program => {
+        calls++; assert.ok(program.endsWith("/deployment/create-monthly-snapshot.sh"));
+        throw Object.assign(new Error("DO-NOT-LEAK-PROVIDER-BODY"), evidence, {
+          stdout: `Native monthly pair published: ${f.directory} (writers resumed; export and isolated recovery NOT yet accepted)\n`,
+          stderr: "DO-NOT-LEAK-SECRET"
+        });
+      } };
+    await assert.rejects(captureMonthlyForExport(args), error => {
+      assert.equal(error.message, "export_capture_failed_or_ambiguous");
+      assert.equal(error.nativeExitCode, evidence.code === 23 ? 23 : null);
+      assert.equal(error.nativeSignal, evidence.signal === "SIGTERM" ? "SIGTERM" : null);
+      assert.equal(error.nativeKilled, evidence.killed === true);
+      assert.equal(error.cause, undefined); assert.equal(error.stdout, undefined); assert.equal(error.stderr, undefined);
+      assert.doesNotMatch(JSON.stringify(error), /DO-NOT-LEAK/);
+      return true;
+    });
+    await assert.rejects(readFile(completionPath), { code: "ENOENT" });
+    await assert.rejects(captureMonthlyForExport(args), { code: "EEXIST" });
+    assert.equal(calls, 1);
+  }
 });
-test("runner generation or missing archive format stops before capture intent and native execution", async () => {
+test("legacy, conflicting or missing monthly selectors stop before intent and native execution", async () => {
   const f = await fixture(); let calls = 0;
-  for (const [index, format] of [undefined, "durable-v2", "freeze-bundle-v1"].entries()) {
+  const selectors = [
+    ...[undefined, "", "legacy", "durable-v2", "freeze-bundle-v1", "freeze-bundle-v2"].map(CHECKPOINT_FORMAT => ({ CHECKPOINT_FORMAT })),
+    ...[undefined, "", "legacy", "sql"].map(CHECKPOINT_BACKEND => ({ CHECKPOINT_BACKEND }))
+  ];
+  for (const [index, selection] of selectors.entries()) {
     const completionPath = join(f.parent, `rejected-format-${index}.json`);
     await assert.rejects(captureMonthlyForExport({ checkpointDirectory: f.directory, completionPath,
-      environment: { CHECKPOINT_BACKEND: "native-monthly", CHECKPOINT_FORMAT: format,
-        ALLOW_CHECKPOINT_DOWNTIME: "1", MONTHLY_INSTANCE_ID: "fixture-instance" },
+      environment: { CHECKPOINT_BACKEND: "native-monthly", CHECKPOINT_FORMAT: "native-monthly-v1",
+        ALLOW_CHECKPOINT_DOWNTIME: "1", MONTHLY_INSTANCE_ID: "fixture-instance", ...selection },
       run: async () => { calls++; throw Error("MUST-NOT-RUN"); } }), /export_capture_arguments_invalid/);
     await assert.rejects(readFile(completionPath + ".intent"), { code: "ENOENT" });
     await assert.rejects(readFile(completionPath), { code: "ENOENT" });

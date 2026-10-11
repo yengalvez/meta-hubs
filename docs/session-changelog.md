@@ -1,5 +1,26 @@
 # Session Changelog
 
+## 2026-10-12 · Monthly snapshot route, separate from legacy general tests
+
+The owner deleted the old Goal and explicitly requested correction of the route.
+Keep two monthly native DO pairs and ten encrypted portable Drive points.
+Add a fixed snapshot-only entrypoint, reject legacy/conflicting selectors before
+effects and retain shared quiescence, Lease, identity and resume protection.
+Replace the monthly operator's dependence on product full15/15 with a declared,
+exact monthly verification proof; product rollout acceptance is unchanged.
+The previous local general test chain was deliberately stopped, not passed;
+its completed native results remain preserved. No production effect or automatic
+retry follows from this correction. Real capture, both isolated restores and
+calendar still require their own acceptance.
+
+Independent directed review found and then closed two verification defects:
+bind every receipt to the immutable candidate attempt, and join identity-bound
+local test retirement even after the direct parent closes. Retirement covers
+observed lineage, not universal kernel isolation; unknown cleanup fails closed.
+Directed runtime/verifier tests52/52 and process-owner tests7/7 returned native0.
+Snapshot entrypoint/export tests37/37 returned native0. No product-wide suite is
+an implicit monthly gate. The exact frozen monthly gate is still required.
+
 ## 2026-10-11 · Bound the native owner-private artifact helper
 
 The security gate stalled with its synthetic Node test waiting in spawnSync

@@ -1,4 +1,12 @@
-# Estado sencillo de YenHubs
+# Estado histórico de YenHubs — septiembre2026
+
+Esta copia versionada no es el estado actual. Consultar
+`/Users/Shared/Gits/YenHubs/docs/estado-sencillo.md` y el único plan
+`/Users/Shared/Gits/YenHubs/PLAN/Plan_activo.md`.
+La decisión del12/10 exige snapshots mensuales DO y histórico portable en Drive;
+ningún objetivo, despliegue o backup anterior se reabre por leer esta historia.
+
+---
 
 Ultima actualización: **16 de septiembre de 2026**
 

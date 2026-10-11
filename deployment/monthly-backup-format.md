@@ -3,7 +3,7 @@
 The portable component encrypts and verifies PostgreSQL/media/runtime packages.
 The explicit native backend is now connected to the existing protected capture
 coordinator. Its code can pause/resume workloads and create native snapshots;
-it is **not yet approved for production use**. No monthly capture, isolated
+it is **not yet accepted as an operational backup service**. No monthly capture, isolated
 DO/Drive restore, rotation or scheduler has been accepted.
 
 ## Permanent operator preflight
@@ -26,14 +26,25 @@ partial checkpoint.
 
 ## Native capture and protected parent
 
-The invocation has two independent selectors: `CHECKPOINT_BACKEND=native-monthly`
-and `CHECKPOINT_FORMAT=legacy`. Here `legacy` selects the coordinator's inventory
-path; it does not change the native fourteen-artifact bundle into a SQL/media
-stream or select an old runner. The durable-v2 runner generation remains bound
-to the private values and required by the coordinator. Passing `durable-v2` as
-CHECKPOINT_FORMAT is invalid and must fail locally before the capture intent.
-The runtime regression executes the original two local shell selection guards
-with the actual emitted environment, without provider calls or workload pause.
+The public entrypoint is `deployment/create-monthly-snapshot.sh`. Its fixed
+selectors are `CHECKPOINT_BACKEND=native-monthly` and
+`CHECKPOINT_FORMAT=native-monthly-v1`; absent selectors use these defaults.
+Explicit legacy, empty or conflicting selectors reject before effects.
+Only inside that entrypoint is the shared coordinator's inventory schema mapped
+to `legacy`; the backend remains native-monthly, with no fallback or retry.
+The durable-v2 runner generation stays bound to private values, not to the
+public archive-format selector. Regression tests exercise the native parser,
+original failure exit and absence of any old DB/media streaming branch.
+
+## Monthly operator verification, not a product-wide audit
+
+`scripts/verify-monthly-backup.mjs` verifies the declared monthly dependency
+scope and native test results on exact clean code. Its proof is separate from
+the product's fifteen-section full gate. Do not append H5 or the unfiltered
+historical recovery harness. The protected monthly coordinator's success and
+failed-media-snapshot recovery cases still run against simulated providers.
+These checks are development acceptance, not work performed every month, and
+do not accept a real snapshot, Drive export, restore or calendar by inference.
 
 `monthly-snapshot-source.mjs` binds each PVC/PV UID to its actual DigitalOcean
 volume with one native GET per volume. It rejects a rebound claim, another driver,
@@ -78,7 +89,7 @@ restore validator to accept them. `runtime.tar.gz` contains only fixed regular
 entries `input-values.yaml`, `hcce.yaml` and `cutover.key`, read from pinned
 private0600 files before the pause. This archive remains private locally; only
 the portable component's encrypted output may go to Drive. Recovery/decryption
-key custody is separate and still needs verification.
+key custody is separate and must be independently verified before operation.
 
 Local checks: new worker/bundle/routing16/16, including real child execution
 with fixture-only provider binaries and a failed media POST without retry;
@@ -289,7 +300,7 @@ integral cases must pass on the newly frozen bytes before the full gate.
 `monthly-backup-runtime.mjs --config PRIVATE_RUNTIME_JSON --mode validation`
 joins the original protected capture, isolated snapshot export and dedicated
 Drive transport in one sequential attempt. Before any pause it requires exact
-clean code, final15/15 acceptance, independent key-custody evidence, a currently
+clean code, the exact monthly verification proof, independent key-custody evidence, a currently
 private Drive destination, source UIDs and the approved20GiB source/budget.
 The validation route never rotates history and never claims real restore.
 `--mode scheduled` additionally requires enabled configuration and both isolated

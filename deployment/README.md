@@ -1,5 +1,13 @@
 # YenHubs Deployment Guide
 
+Para el servicio de **copias mensuales por snapshots DigitalOcean y Drive**,
+seguir exclusivamente [el contrato mensual](monthly-backup-format.md) y el plan
+`/Users/Shared/Gits/YenHubs/PLAN/Plan_activo.md`. Su entrada es
+`create-monthly-snapshot.sh`, sin fallback al backup streaming. Su aceptación
+local es `scripts/verify-monthly-backup.mjs`, no toda la batería del producto.
+Los procedimientos y estados históricos de despliegue de este documento no
+son órdenes de reanudación del operador mensual.
+
 Para reparaciones visuales estrictamente limitadas al cliente, usar
 [la entrega visual proporcional](client-visual-release.md) antes de lanzar
 pruebas de recuperación o un nuevo respaldo. El resto sigue este runbook.

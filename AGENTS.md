@@ -11,9 +11,13 @@ operating rules only. Session history belongs exclusively in
 - Hubs CE and backend submodule: `hubs-cloud/`, fork `yengalvez/hubs-cloud`,
   base branch `master`.
 - Runtime and recovery source of truth: `deployment/README.md`.
-- Sole authority for current order and task state: `PLAN_ACTUAL.md`.
+- Sole authority for current order and task state:
+  `/Users/Shared/Gits/YenHubs/PLAN/Plan_activo.md`.
+- `PLAN_ACTUAL.md` and dated worktree status copies are historical evidence,
+  not authorization to resume old Goals, product rollouts or legacy backups.
 - Historical H5 plan and evidence: `docs/active-goal-plan-2026-07-18.md`.
-- Human-readable projection of that plan: `docs/estado-sencillo.md`.
+- Current human-readable projection:
+  `/Users/Shared/Gits/YenHubs/docs/estado-sencillo.md`.
 - Latest frozen audit snapshot and residual risks:
   `docs/auditoria-final-h5-2026-08-20.md`.
 - H1 hibernation contract: `docs/client-hibernation-design-v1.md`.
@@ -89,7 +93,7 @@ path runs the normal advisories/static/security/recovery set. Receipts are
 reused only when the declared content closure, harness, toolchain and private
 log match; advisories expire after 24 hours.
 
-Final acceptance requires current evidence for advisories, static/security,
+Final product acceptance requires current evidence for advisories, static/security,
 recovery, Hubs/Admin, browser/capacity, H5, Hubs CE, bot orchestrator, Dialog,
 Photomnemonic, Coturn, Spoke, Reticulum and composition. Do not accept a manual
 sum of PASS labels or receipts copied from another input closure. Do not use
@@ -103,6 +107,27 @@ the guarded image-only apply boundary. It does not certify recovery or the
 whole repository. Never run the full recovery suite merely to preview a visual
 change, or treat this exception as permission for backend or data changes.
 Unknown source paths or manifest drift fail closed to the complete workflow.
+
+### Monthly snapshots: separate operator acceptance
+
+The owner's 12 October 2026 decision selects native DigitalOcean snapshots for
+monthly backups, with two monthly pairs in DigitalOcean and ten encrypted
+portable points in the dedicated Drive folder. Use only
+`deployment/create-monthly-snapshot.sh`; never substitute or automatically
+fall back to the historical streaming backup after a failure.
+
+Changes confined to this operator use `scripts/verify-monthly-backup.mjs` and
+its declared dependencies, original native results and exact code pins.
+Do not append general H5, unfiltered recovery or product-wide full validation
+merely because the root commit changed. Relevant shared-guard changes require
+directed regression coverage; product/deployment changes keep their separate
+product gate. A simulation is not a real backup or restore.
+
+Keep coordinated DB/media consistency, guarded resume, identity, Lease, hashes,
+budgets, key custody and duplicate-attempt protection. Enable the calendar only
+after a real pair, encrypted Drive readback, both isolated restore routes and
+owned-resource cleanup are accepted. Never restore over production for tests.
+Reconcile failed/ambiguous attempts, never retry or accept partials automatically.
 
 After a live rollout:
 
@@ -166,6 +191,11 @@ including reusable-workflow `secrets.*` expressions and GHCR `403` errors.
 ## Backup, Freeze and Restore
 
 A valid checkpoint always contains both PostgreSQL metadata and Reticulum media:
+
+The active monthly policy uses the snapshot-only entrypoint and native pair
+manifest. Drive holds an encrypted portable export from snapshot clones, not a
+downloadable DigitalOcean snapshot image. The following command and archive list
+describe the separate legacy/manual route, never a monthly fallback or prerequisite.
 
 ```bash
 ./deployment/create-checkpoint.sh

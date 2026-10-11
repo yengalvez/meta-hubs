@@ -2,6 +2,7 @@
 import { open, lstat, realpath, readdir, mkdir } from "node:fs/promises";
 import { join, resolve, dirname } from "node:path";
 import { createHash } from "node:crypto";
+import { constants as osConstants } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,7 @@ const requireValue = (value, reason) => { if (!value) throw new Error(reason); }
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const bundleNames = [...nativeMonthlyArtifacts, "SHA256SUMS"].sort();
+const nativeSignals = new Set(Object.keys(osConstants.signals));
 const canonical = value => JSON.stringify(value, (_, entry) => entry && !Array.isArray(entry) &&
   typeof entry === "object" ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b))) : entry);
 
@@ -39,15 +41,23 @@ export async function captureMonthlyForExport({ checkpointDirectory, completionP
   const directory = resolve(checkpointDirectory), completion = resolve(completionPath);
   await privateDirectory(dirname(directory)); await privateDirectory(dirname(completion));
   requireValue(!completion.startsWith(directory + "/") && environment?.CHECKPOINT_BACKEND === "native-monthly" &&
-    environment.CHECKPOINT_FORMAT === "legacy" &&
+    environment.CHECKPOINT_FORMAT === "native-monthly-v1" &&
     environment.ALLOW_CHECKPOINT_DOWNTIME === "1" &&
     /^[a-z0-9][a-z0-9-]{0,62}$/.test(environment.MONTHLY_INSTANCE_ID ?? ""), "export_capture_arguments_invalid");
   // Exclusive claim before launching the one capture. An ambiguous attempt is reconciled, not restarted.
   await writeJson(completion + ".intent", { schema: "yenhubs-monthly-capture-intent-v1", directory });
   let result;
-  try { result = await run(join(root, "deployment/create-checkpoint.sh"), [directory], {
+  try { result = await run(join(root, "deployment/create-monthly-snapshot.sh"), [directory], {
     cwd: root, env: environment, encoding: "utf8", maxBuffer: 1024 * 1024
-  }); } catch { throw new Error("export_capture_failed_or_ambiguous"); }
+  }); } catch (error) {
+    // Preserve bounded native-close evidence, never command text/provider output
+    // or an unsanitized cause. The intent remains claimed: no retry or fallback.
+    const failure = new Error("export_capture_failed_or_ambiguous");
+    failure.nativeExitCode = Number.isSafeInteger(error?.code) && error.code >= 0 && error.code <= 255 ? error.code : null;
+    failure.nativeSignal = nativeSignals.has(error?.signal) ? error.signal : null;
+    failure.nativeKilled = error?.killed === true;
+    throw failure;
+  }
   const expectedLine = `Native monthly pair published: ${directory} (writers resumed; export and isolated recovery NOT yet accepted)`;
   requireValue(result.stdout.split(/\r?\n/).includes(expectedLine), "export_capture_publication_absent");
   const point = await inspectPublishedMonthlyPoint(directory);

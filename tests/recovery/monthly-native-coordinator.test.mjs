@@ -58,9 +58,10 @@ if [[ "\${YENHUBS_RECOVERY_TEST_FOCUS:-}" == monthly-native ]]; then
     YENHUBS_WATCH_TEST_REQUIRE_LIVE_TERMINAL=1 \
     STUB_MONITOR_WATCH_PACE=1 RECOVERY_STREAM_POLL_SECONDS=1 \
     STUB_DB_CONTRACT="$TMP_DIR/monthly-live-contract.json" \
-    CHECKPOINT_BACKEND=native-monthly MONTHLY_INSTANCE_ID=fixture MONTHLY_REGION=ams3 \
+    CHECKPOINT_BACKEND=native-monthly CHECKPOINT_FORMAT=native-monthly-v1 \
+    MONTHLY_INSTANCE_ID=fixture MONTHLY_REGION=ams3 \
     MONTHLY_JOURNAL_ROOT="$TMP_DIR/monthly-journals" \
-    "$ROOT_DIR/deployment/create-checkpoint.sh" "$TMP_DIR/monthly-output" \
+    "$ROOT_DIR/deployment/create-monthly-snapshot.sh" "$TMP_DIR/monthly-output" \
     >"$MONTHLY_FIXTURE_EVIDENCE/native-command.log" 2>&1; then
     native_status=0
   else native_status=$?; fi

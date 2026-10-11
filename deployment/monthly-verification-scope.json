@@ -1,0 +1,120 @@
+{
+  "schema": "yenhubs-monthly-verification-scope-v1",
+  "scope": "monthly-snapshot-pair-portable-drive",
+  "dependencies": {
+    "monthly": [
+      "deployment/create-monthly-snapshot.sh",
+      "deployment/monthly-backup-calendar.mjs",
+      "deployment/monthly-backup-policy.json",
+      "deployment/monthly-backup-retention.mjs",
+      "deployment/monthly-backup-runtime.mjs",
+      "deployment/monthly-drive-authorize.mjs",
+      "deployment/monthly-drive-provider.mjs",
+      "deployment/monthly-drive-store.mjs",
+      "deployment/monthly-native-bundle.mjs",
+      "deployment/monthly-portable-point.mjs",
+      "deployment/monthly-restore-input.mjs",
+      "deployment/monthly-retention-executor.mjs",
+      "deployment/monthly-snapshot-export-provider.mjs",
+      "deployment/monthly-snapshot-export.mjs",
+      "deployment/monthly-snapshot-pair.mjs",
+      "deployment/monthly-snapshot-source.mjs",
+      "deployment/monthly-snapshot-worker.mjs",
+      "deployment/monthly-test-process-owner.mjs",
+      "deployment/monthly-verification.mjs",
+      "deployment/monthly-verification-scope.json",
+      "scripts/verify-monthly-backup.mjs"
+    ],
+    "protectedCaptureAndCoherence": [
+      "deployment/create-checkpoint.sh",
+      "deployment/backup-retdb.sh",
+      "deployment/capture-instance-state.sh",
+      "deployment/validate-checkpoint.sh",
+      "deployment/lib/recovery-safety.sh",
+      "deployment/lib/git-provenance.sh",
+      "deployment/lib/reactivation-gate-functions.sh",
+      "deployment/lib/darwin-process-group-inventory.py",
+      "deployment/checkpoint-backup-formats.mjs",
+      "deployment/checkpoint-recovery-receipt.mjs",
+      "deployment/freeze-checkpoint-admission-fence.mjs",
+      "deployment/parse-local-values.mjs",
+      "deployment/private-artifact-publication.mjs",
+      "deployment/recovery-checkpoint-authority.mjs",
+      "deployment/runner-cutover-checkpoint-evidence.mjs",
+      "deployment/snapshot-private-file.mjs",
+      "deployment/watch-bot-runner-pods.mjs",
+      "deployment/watch-checkpoint-writers.mjs",
+      "deployment/watch-durable-runner-quiescence.mjs",
+      "deployment/verify-live-reactivation.sh",
+      "deployment/verify-bot-image-pull-config.mjs",
+      "deployment/verify-bot-orchestrator-deployment.mjs",
+      "deployment/verify-bot-runner-pods.mjs",
+      "deployment/verify-page-assets.mjs"
+    ],
+    "pinnedCloudContracts": [
+      "hubs-cloud/community-edition/package.json",
+      "hubs-cloud/community-edition/package-lock.json",
+      "hubs-cloud/community-edition/apply/recover-avatar-checkpoint.js",
+      "hubs-cloud/community-edition/apply/runner-activation.js",
+      "hubs-cloud/community-edition/apply/runner-guard-reconciliation.js",
+      "hubs-cloud/community-edition/apply/operation-lease.js",
+      "hubs-cloud/community-edition/apply/manifest-input-contract.js",
+      "hubs-cloud/community-edition/apply/verify-live-runner-control-plane.js",
+      "hubs-cloud/community-edition/generate_script/verify-generated-manifest.js",
+      "hubs-cloud/community-edition/generate_script/product-modules.js",
+      "hubs-cloud/community-edition/services/bot-orchestrator/kubernetes-runner-manager.js"
+    ],
+    "localFixtureInputs": [
+      "tests/recovery/test-recovery-safety.sh",
+      "tests/recovery/lib/monthly-provider-dispatch.cjs",
+      "tests/recovery/lib/monthly-provider-fixture.cjs",
+      "tests/recovery/monthly-portable-restore.mjs",
+      "tests/recovery/native-checkpoint-restore.mjs",
+      "tests/recovery/native-bash.mjs"
+    ]
+  },
+  "checks": [
+    {
+      "id": "monthly-components",
+      "timeoutMilliseconds": 300000,
+      "tests": [
+        "tests/scripts/monthly-backup-calendar.test.mjs",
+        "tests/scripts/monthly-backup-retention.test.mjs",
+        "tests/scripts/monthly-backup-runtime.test.mjs",
+        "tests/scripts/monthly-drive-authorize.test.mjs",
+        "tests/scripts/monthly-drive-provider.test.mjs",
+        "tests/scripts/monthly-drive-retirement.test.mjs",
+        "tests/scripts/monthly-drive-store.test.mjs",
+        "tests/scripts/monthly-fixture-attestation.test.mjs",
+        "tests/scripts/monthly-native-bundle.test.mjs",
+        "tests/scripts/monthly-native-routing.test.mjs",
+        "tests/scripts/monthly-portable-point.test.mjs",
+        "tests/scripts/monthly-restore-input.test.mjs",
+        "tests/scripts/monthly-restore-joins.test.mjs",
+        "tests/scripts/monthly-retention-executor.test.mjs",
+        "tests/scripts/monthly-snapshot-entrypoint.test.mjs",
+        "tests/scripts/monthly-snapshot-export.test.mjs",
+        "tests/scripts/monthly-snapshot-pair.test.mjs",
+        "tests/scripts/monthly-snapshot-source.test.mjs",
+        "tests/scripts/monthly-snapshot-worker.test.mjs",
+        "tests/scripts/monthly-test-process-owner.test.mjs",
+        "tests/scripts/monthly-verification.test.mjs"
+      ]
+    },
+    {
+      "id": "monthly-provider-dispatch",
+      "timeoutMilliseconds": 120000,
+      "tests": ["tests/recovery/monthly-provider-dispatch.test.mjs"]
+    },
+    {
+      "id": "monthly-native-coordinator",
+      "timeoutMilliseconds": 2500000,
+      "expectedTests": 2,
+      "tests": ["tests/recovery/monthly-native-coordinator.test.mjs"],
+      "requiredDiagnostics": [
+        {"state": "SIMULATED_COORDINATOR_PASS", "nativeExit": 0},
+        {"state": "SIMULATED_FAILURE_RECOVERED", "nativeExit": 1}
+      ]
+    }
+  ]
+}

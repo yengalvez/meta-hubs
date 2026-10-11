@@ -1,4 +1,14 @@
-# PLAN ACTUAL — Bots, IA y configurador públicos
+# HISTÓRICO — Bots, IA y configurador públicos (septiembre)
+
+Sustituido como plan activo el12/10/2026. Este contenido conserva evidencia;
+NO autoriza ejecutar despliegues, backups antiguos ni reanudar objetivos.
+La única orden actual está en `/Users/Shared/Gits/YenHubs/PLAN/Plan_activo.md`.
+El trabajo actual es el operador mensual de snapshots DigitalOcean y Drive,
+descrito en `deployment/monthly-backup-format.md`. Si el plan canónico no está
+disponible, no inferir continuación desde las instrucciones históricas de abajo.
+
+---
+
 Actualizado: 16 de septiembre de 2026. Plan v6, actualización productiva autorizada.
 Workspace actual: /Users/Shared/Gits/YenHubs-workflow.
 Rama de entrega: codex/bots-ai-cutover, desde el cierre aceptado `c7d4820`.

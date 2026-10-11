@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, writeFile, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, realpath, mkdir, writeFile, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { runMonthlyBackup, validateMonthlyRuntimeConfiguration, verifyMonthlyLocalDependencies,
   runMonthlyLiveVerification, MONTHLY_LIVE_OBSERVATION_TIMEOUT_MS } from "../../deployment/monthly-backup-runtime.mjs";
 import { portableDriveNames } from "../../deployment/monthly-drive-store.mjs";
+import { monthlyVerificationInputs, runMonthlyVerification } from "../../deployment/monthly-verification.mjs";
 
 const hash=(value,algorithm="sha256")=>createHash(algorithm).update(value).digest("hex");
 const uid=n=>`00000000-0000-4000-8000-${String(n).padStart(12,"0")}`;
@@ -15,13 +16,27 @@ const instanceId="fixture-monthly",month="2026-10",operationId="a".repeat(32),re
 async function fixture() {
   const root=await realpath(await mkdtemp(join(tmpdir(),"yenhubs-monthly-runtime-fixture-"))),configPath=join(root,"config.json");
   const code={root:"c".repeat(40),hubs:"d".repeat(40),cloud:"e".repeat(40)},paths={};
+  const candidate={schema:"yenhubs-monthly-candidate-v1",clean:true,code,
+    inputs:Object.fromEntries(monthlyVerificationInputs.map(path=>[path,hash("ONLY FIXTURE: "+path)]))};
   for(const name of ["values","manifest","cutoverKey","recipient","keyCustody","driveClient","driveConfig","driveRuntime","acceptance"]) {
     paths[name]=join(root,name+".fixture");await writeFile(paths[name],name==="recipient"?recipient+"\n":"ONLY FIXTURE: "+name,{mode:0o600});
   }
   const custody={schema:"yenhubs-recovery-key-custody-v1",recipient,state:"independent-copy-decryption-verified",locationKind:"usb",
     nativeExitCode:0,challengeSha256:"f".repeat(64),verifiedAt:"2026-10-08T00:00:00Z"};
-  const acceptance={schema:"yenhubs-monthly-runtime-acceptance-v1",instanceId,recipient,code,
-    full:{nativeExitCode:0,validReceipts:15,evidenceSha256:"1".repeat(64)},restores:{}};
+  const evidenceDirectory=join(root,"verification");await mkdir(evidenceDirectory,{mode:0o700});
+  // Deliberately simulated local receipts. Native admission recomputes actual
+  // HEAD blobs and cannot accept these fixture commits/content hashes.
+  const monthly=await runMonthlyVerification({evidenceDirectory,inspect:async()=>candidate,run:async check=>{
+    const count=check.expectedTests??3;
+    return {nativeExitCode:0,signal:null,nativeCloseObserved:true,processRetirement:{
+      schema:"yenhubs-monthly-test-process-retirement-v1",coverage:"observed-lineage",absenceVerified:true,
+      observationUnproven:false,registered:1,termSent:0,killSent:0,remaining:[]},
+      timedOut:false,interrupted:false,outputLimitExceeded:false,launchFailed:false,
+      durationMilliseconds:1,stderr:"",stdout:"TAP version 13\n"+
+      (check.requiredDiagnostics??[]).map(value=>"# "+JSON.stringify({...value,actualCaptureAccepted:false})+"\n").join("")+
+      `# tests ${count}\n# pass ${count}\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n`};
+  }});
+  const acceptance={schema:"yenhubs-monthly-runtime-acceptance-v2",instanceId,recipient,code,monthly,restores:{}};
   const driveRuntime={ownerOnlyVerified:true,folderId:"fixture-root",expectedOwnerEmail:"fixture@example.invalid"};
   const config={schema:"yenhubs-monthly-runtime-v1",instanceId,timezone:"Europe/Madrid",context:"do-ams3-hubs-ce",region:"ams3",namespace:"hcce",
     namespaceUid:uid(1),retPvcUid:uid(2),databasePvcUid:uid(3),code,paths,stateRoot:root,
@@ -42,12 +57,13 @@ async function fixture() {
   const calls=[],controls={},drive={async stat(id){return {id,mimeType:"application/vnd.google-apps.folder",ownedByMe:true,
     trashed:false,permissions:controls.sharedRoot?[{type:"user",role:"owner"},{type:"anyone",role:"reader"}]:[{type:"user",role:"owner"}]};}};
   const operations={
-    async code(){calls.push("code");return controls.changedCode?{...code,root:"9".repeat(40)}:code;},
+    async code(){calls.push("code");return controls.changedCode?{...candidate,code:{...code,root:"9".repeat(40)}}:candidate;},
     async drive(){calls.push("drive");return drive;},
     async live(){calls.push("live");return {nativeExitCode:controls.liveExit??0,failures:0,warnings:0,stdoutSha256:manifestSha256};},
     async source(){calls.push("source");return controls.oversize?{...source,volumes:{...source.volumes,database:{...source.volumes.database,sizeGiB:11}}}:source;},
     async capture(args){calls.push("capture");assert.equal(args.environment.CHECKPOINT_BACKEND,"native-monthly");
-      assert.equal(args.environment.CHECKPOINT_FORMAT,"legacy");assert.equal(args.environment.VALUES_FILE,paths.values);
+      assert.equal(args.environment.CHECKPOINT_FORMAT,"native-monthly-v1");assert.equal(args.environment.VALUES_FILE,paths.values);
+      if(controls.captureNativeError)throw controls.captureNativeError;
       if(controls.failCapture)throw Error("export_capture_failed_or_ambiguous");
       return {schema:"yenhubs-monthly-capture-completion-v1",state:"native-command-complete-not-restore-accepted",nativeExitCode:controls.captureExit??0,
         instanceId,month,directory:args.checkpointDirectory};},
@@ -65,7 +81,7 @@ async function fixture() {
   };
   const enable=async()=>{config.schedule.enabled=true;for(const route of ["digitalOcean","googleDrive"])acceptance.restores[route]={nativeExitCode:0,
     state:"isolated-restore-accepted",evidenceSha256:"2".repeat(64)};await json(configPath,config);await json(paths.acceptance,acceptance);};
-  return {root,configPath,config,paths,custody,acceptance,driveRuntime,code,calls,controls,operations,source,json,enable,
+  return {root,configPath,config,paths,custody,acceptance,driveRuntime,code,candidate,calls,controls,operations,source,json,enable,
     run:mode=>runMonthlyBackup({configPath,mode:mode??"validation",operations,now:()=>new Date("2026-10-08T03:00:00Z")})};
 }
 test("validation joins every component once, measures phases and does not rotate or claim real restore",async()=>{
@@ -75,12 +91,11 @@ test("validation joins every component once, measures phases and does not rotate
   assert.ok(Object.keys(r.timings).includes("capture"));assert.ok(r.timings.totalMilliseconds>=0);
   const completed=JSON.parse(await readFile(join(f.root,"attempts",month,"completed.json")));assert.equal(completed.nativeExitCode,0);
 });
-test("monthly runtime format passes the original checkpoint startup selection gates",async()=>{
-  const f=await fixture(),source=await readFile(new URL("../../deployment/create-checkpoint.sh",import.meta.url),"utf8");
-  const begin=source.indexOf('case "$CHECKPOINT_FORMAT" in\n');
-  const end=source.indexOf('\ncheckpoint_artifacts() {',begin);
+test("monthly runtime format passes only the fixed monthly entrypoint selection gates",async()=>{
+  const f=await fixture(),source=await readFile(new URL("../../deployment/create-monthly-snapshot.sh",import.meta.url),"utf8");
+  const begin=source.indexOf('[[ "${CHECKPOINT_BACKEND-native-monthly}"');
+  const end=source.indexOf('\n[[ "$#"',begin);
   assert.ok(begin>=0 && end>begin);
-  assert.equal(source.indexOf('case "$CHECKPOINT_FORMAT" in\n',begin+1),-1);
   const selection=source.slice(begin,end);
   // Execute only the original two local selection guards: no inventory, Lease,
   // directories, provider command, pause or snapshot can run in this test.
@@ -115,9 +130,25 @@ test("changed root/subrepo bytes cannot borrow earlier final acceptance",async()
   const f=await fixture();f.controls.changedCode=true;
   await assert.rejects(f.run(),/monthly_runtime_code_changed/);assert.deepEqual(f.calls,["code"]);
 });
-test("a missing exact full receipt stops before credentials or pause",async()=>{
-  const f=await fixture();f.acceptance.full.validReceipts=14;await f.json(f.paths.acceptance,f.acceptance);
-  await assert.rejects(f.run(),/monthly_runtime_final_code_gate_unproven/);assert.deepEqual(f.calls,["code"]);
+test("an old fifteen-section full receipt cannot substitute for exact monthly proof",async()=>{
+  const f=await fixture();delete f.acceptance.monthly;
+  f.acceptance.full={nativeExitCode:0,validReceipts:15,evidenceSha256:"1".repeat(64)};
+  await f.json(f.paths.acceptance,f.acceptance);
+  await assert.rejects(f.run(),/monthly_runtime_monthly_code_gate_unproven/);assert.deepEqual(f.calls,["code"]);
+});
+test("changed monthly proof or source bytes stop before credentials or pause",async()=>{
+  for(const change of ["proof","input"]) {
+    const f=await fixture();
+    if(change==="proof")await f.json(f.acceptance.monthly.evidencePath,{schema:"tampered"});
+    else f.candidate.inputs[monthlyVerificationInputs[0]]="0".repeat(64);
+    await assert.rejects(f.run(),/monthly_verification_(evidence_changed|proof_stale_or_invalid)/);
+    assert.deepEqual(f.calls,["code"]);
+  }
+});
+test("missing monthly proof stops before any provider effect",async()=>{
+  const f=await fixture();f.acceptance.monthly.evidencePath=join(f.root,"missing-proof.json");
+  await f.json(f.paths.acceptance,f.acceptance);
+  await assert.rejects(f.run(),{code:"ENOENT"});assert.deepEqual(f.calls,["code"]);
 });
 test("larger/new source exceeds the approved preparation before a real snapshot command",async()=>{
   const f=await fixture();f.controls.oversize=true;
@@ -129,6 +160,24 @@ test("capture failure is not hidden, retried or converted into export/rotation",
   await assert.rejects(f.run(),/export_capture_failed_or_ambiguous/);assert.equal(f.calls.filter(c=>c==="capture").length,1);
   assert.ok(!f.calls.includes("export"));assert.deepEqual(await readdir(join(f.root,"points")),[]);
   await assert.rejects(f.run(),/monthly_runtime_previous_attempt_unresolved/);assert.equal(f.calls.filter(c=>c==="capture").length,1);
+});
+test("original bounded native capture failure survives the failed-attempt journal and thrown error",async()=>{
+  const f=await fixture();f.controls.captureNativeError=Object.assign(Error("export_capture_failed_or_ambiguous"),
+    {nativeExitCode:23,nativeSignal:null,nativeKilled:false,stderr:"NOT SAFE TO LOG"});
+  await assert.rejects(f.run(),error=>error.nativeExitCode===23 && error.nativeSignal===null && error.nativeKilled===false);
+  const log=await readFile(join(f.root,"attempts",month,"events.jsonl"),"utf8");
+  const terminal=log.trim().split("\n").map(JSON.parse).at(-1);
+  assert.equal(terminal.nativeExitCode,23);assert.equal(terminal.nativeSignal,null);assert.equal(terminal.nativeKilled,false);
+  assert.doesNotMatch(log,/NOT SAFE TO LOG/);
+  await assert.rejects(f.run(),/monthly_runtime_previous_attempt_unresolved/);
+  assert.equal(f.calls.filter(c=>c==="capture").length,1);
+});
+test("unknown native failure fields are never invented or copied from untrusted output",async()=>{
+  const f=await fixture();f.controls.captureNativeError=Object.assign(Error("export_capture_failed_or_ambiguous"),
+    {nativeExitCode:"1",nativeSignal:"private payload",nativeKilled:"true"});
+  await assert.rejects(f.run(),error=>!("nativeExitCode" in error) && !("nativeSignal" in error) && !("nativeKilled" in error));
+  const terminal=JSON.parse((await readFile(join(f.root,"attempts",month,"events.jsonl"),"utf8")).trim().split("\n").at(-1));
+  assert.ok(!("nativeExitCode" in terminal) && !("nativeSignal" in terminal) && !("nativeKilled" in terminal));
 });
 test("a nonzero original capture exit cannot borrow a published bundle",async()=>{
   const f=await fixture();f.controls.captureExit=1;
