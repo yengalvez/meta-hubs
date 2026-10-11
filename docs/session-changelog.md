@@ -1,5 +1,18 @@
 # Session Changelog
 
+## 2026-10-11 · Narrow Decimal security patch in the monthly candidate
+
+The native advisory gate stopped on CVE-2026-97853, published10/10, before
+recovery/full. Update only the Decimal lock entry3.1.1→3.1.2 and its official
+Hex checksums; preserve every other dependency and all production images.
+Add loaded-version-gated, bounded-scale regression canaries and ordinary
+Ecto/Jason/Postgrex numeric compatibility tests. Do not run the old allocation
+PoC, waive the advisory, infer production exploitation or accept a backup from
+these local checks. Seven directed tests passed natively0 in0.04s; checked
+lock resolution, formatting, full Reticulum compilation and Hex audit also
+returned0. Separate bounded adversarial review by the primary, not an
+independent worker. Exact final candidate acceptance remains due.
+
 ## 2026-10-09 · Monthly capture selector contract repaired locally
 
 Original monthly validation49075 exited1 at the capture entry, after live0/0
