@@ -1,12 +1,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { captureMonthlyPair, nativeSnapshotProvider, validateNativeSnapshot, claimPairJournal } from "../../deployment/monthly-snapshot-pair.mjs";
-import { mkdtemp, readFile, stat, realpath } from "node:fs/promises";
+import { mkdtemp, readFile, stat, realpath, symlink, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { performance } from "node:perf_hooks";
+import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const instant = Date.parse("2026-10-06T12:00:00Z");
+const nativeArgs = { volumeId: id(2), name: "fixture-2026-10-database", operationId: "a".repeat(32),
+  instanceId: "fixture", month: "2026-10" };
+const nativeTags = ["yenhubs-monthly", nativeArgs.instanceId, `month-${nativeArgs.month}`, `operation-${nativeArgs.operationId}`];
+const nativeSnapshot = { id: id(10), name: nativeArgs.name, resource_id: nativeArgs.volumeId,
+  resource_type: "volume", regions: ["ams3"], min_disk_size: 10, size_gigabytes: 1,
+  created_at: new Date(instant).toISOString(), tags: nativeTags };
 function fixture() {
   const source = { schema: "yenhubs-monthly-source-v1", state: "inventory-not-captured",
     context: "fixture-context", instanceId: "local-fixture", region: "ams3",
@@ -106,18 +116,144 @@ test("invalid layout and a foreign month cannot start provider calls", async () 
   }
 });
 
-test("native adapter uses exact GET/POST arguments, no automatic retry and bounded output", async () => {
-  const calls = [];
+test("native adapter uses empty POST output, exact list/GET identity, no retry and bounded output", async () => {
+  const calls = []; let posted = false;
   const provider = nativeSnapshotProvider(async (program, args, options) => {
-    calls.push({ program, args, options }); return { stdout: JSON.stringify([{ id: id(10) }]) };
+    calls.push({ program, args, options });
+    if (args[1] === "volume") { posted = true; return { stdout: "" }; }
+    return { stdout: JSON.stringify(posted ? [nativeSnapshot] : []) };
   });
-  await provider.create({ volumeId: id(2), name: "fixture-2026-10-database", operationId: "a".repeat(32), instanceId: "fixture", month: "2026-10" });
-  await provider.get(id(10));
-  assert.deepEqual(calls[0].args.slice(0, 4), ["compute", "volume", "snapshot", id(2)]);
+  assert.deepEqual(await provider.list(), []);
+  assert.deepEqual(await provider.create(nativeArgs), nativeSnapshot);
+  assert.deepEqual(await provider.get(id(10)), nativeSnapshot);
+  assert.deepEqual(calls.map(call => call.args.slice(0, 3).join(" ")), ["compute snapshot list", "compute volume snapshot",
+    "compute snapshot list", "compute snapshot get"]);
+  assert.deepEqual(calls[1].args.slice(0, -4), ["compute", "volume", "snapshot", id(2),
+    "--snapshot-name", nativeArgs.name, "--tag", nativeTags.join(",")]);
   for (const call of calls) {
     assert.equal(call.program, "doctl");
     assert.deepEqual(call.args.slice(-4), ["--output", "json", "--http-retry-max", "0"]);
-    assert.equal(call.options.timeout, 30000);
+    assert.ok(call.options.timeout > 0 && call.options.timeout <= 30000);
+    assert.equal(call.options.maxBuffer, 8 * 1024 * 1024);
+  }
+  assert.equal(calls[1].options.timeout, 30000);
+});
+
+test("native discovery rejects absent, ambiguous, foreign or untagged identities after exactly one POST", async () => {
+  for (const values of [[], [nativeSnapshot, { ...nativeSnapshot, id: id(11) }],
+    [{ ...nativeSnapshot, name: "other-name" }], [{ ...nativeSnapshot, id: "invalid" }],
+    [{ ...nativeSnapshot, resource_id: id(99) }], [{ ...nativeSnapshot, resource_type: "droplet" }],
+    ...[undefined, [], nativeTags.slice(1), [...nativeTags, "operation-foreign"], [nativeTags[0], ...nativeTags.slice(0, 3)]]
+      .map(tags => [{ ...nativeSnapshot, tags }])]) {
+    const calls = [];
+    const provider = nativeSnapshotProvider(async (_, args) => {
+      calls.push(args.slice(0, 3).join(" "));
+      return { stdout: args[1] === "volume" ? "" : JSON.stringify(values) };
+    });
+    await assert.rejects(provider.create(nativeArgs), /monthly_snapshot_identity_(?:unresolved|mismatch)/);
+    assert.deepEqual(calls, ["compute volume snapshot", "compute snapshot list"]);
+  }
+});
+
+test("native guarded GET preserves the created identity and all exact tags, independent of tag order", async () => {
+  for (const delta of [{ id: id(99) }, { name: "other" }, { resource_id: id(99) }, { resource_type: "droplet" },
+    { tags: undefined }, { tags: nativeTags.slice(1) }, { tags: [...nativeTags, "operation-foreign"] }]) {
+    const provider = nativeSnapshotProvider(async (_, args) => ({ stdout: args[1] === "volume" ? "" :
+      JSON.stringify([{ ...nativeSnapshot, ...(args[2] === "get" ? delta : {}) }]) }));
+    await provider.create(nativeArgs);
+    await assert.rejects(provider.get(id(10)), /monthly_snapshot_identity_mismatch/);
+  }
+  const provider = nativeSnapshotProvider(async (_, args) => ({ stdout: args[1] === "volume" ? "" :
+    JSON.stringify([{ ...nativeSnapshot, tags: [...nativeTags].reverse() }]) }));
+  await provider.create(nativeArgs);
+  assert.deepEqual((await provider.get(id(10))).tags, [...nativeTags].reverse());
+});
+
+test("native nonempty POST output and failed/timeout POST cannot be treated as successful discovery", async () => {
+  for (const result of ["[]", JSON.stringify([nativeSnapshot]), " \n",
+    Object.assign(new Error("fixture_private_detail"), { code: 1 }),
+    Object.assign(new Error("fixture_private_detail"), { killed: true, signal: "SIGTERM" })]) {
+    const calls = [];
+    const provider = nativeSnapshotProvider(async (_, args) => {
+      calls.push(args.slice(0, 3).join(" "));
+      if (result instanceof Error) throw result;
+      return { stdout: result };
+    });
+    await assert.rejects(provider.create(nativeArgs), { message: result instanceof Error ?
+      "monthly_provider_command_failed_or_ambiguous" : "monthly_provider_response_invalid" });
+    assert.deepEqual(calls, ["compute volume snapshot"]);
+  }
+});
+
+test("failed or malformed native list cannot cause another POST or a fabricated snapshot", async () => {
+  for (const result of ["", "{}", "null", new Error("fixture_private_detail")]) {
+    const calls = [];
+    const provider = nativeSnapshotProvider(async (_, args) => {
+      calls.push(args.slice(0, 3).join(" "));
+      if (args[1] === "volume") return { stdout: "" };
+      if (result instanceof Error) throw result;
+      return { stdout: result };
+    });
+    await assert.rejects(provider.create(nativeArgs), { message: result instanceof Error ?
+      "monthly_provider_command_failed_or_ambiguous" : "monthly_provider_response_invalid" });
+    assert.deepEqual(calls, ["compute volume snapshot", "compute snapshot list"]);
+  }
+});
+
+test("native creation and immediate identity discovery share the original total 30-second budget", async t => {
+  let clock = 0;
+  t.mock.method(performance, "now", () => clock);
+  for (const [postMilliseconds, readMilliseconds, accepted] of [[12000, 100, true], [30001, 0, false], [12000, 18001, false]]) {
+    clock = 0; const calls = [];
+    const provider = nativeSnapshotProvider(async (_, args, options) => {
+      calls.push({ args, timeout: options.timeout });
+      clock += args[1] === "volume" ? postMilliseconds : readMilliseconds;
+      return { stdout: args[1] === "volume" ? "" : JSON.stringify([nativeSnapshot]) };
+    });
+    if (accepted) assert.deepEqual(await provider.create(nativeArgs), nativeSnapshot);
+    else await assert.rejects(provider.create(nativeArgs), /monthly_provider_command_failed_or_ambiguous/);
+    assert.equal(calls[0].timeout, 30000);
+    assert.equal(calls.filter(call => call.args[1] === "volume").length, 1);
+    if (postMilliseconds > 30000) assert.equal(calls.length, 1);
+    else { assert.equal(calls.length, 2); assert.equal(calls[1].timeout, 30000 - postMilliseconds); }
+  }
+});
+
+test("coordinator fixture persists list/get snapshots and tags while native create stdout stays empty", async () => {
+  const execute = promisify(execFile);
+  for (const failMedia of [false, true]) {
+    const state = await realpath(await mkdtemp(join(tmpdir(), "yenhubs-monthly-provider-")));
+    const script = join(state, "doctl");
+    await symlink(fileURLToPath(new URL("../recovery/lib/monthly-provider-fixture.cjs", import.meta.url)), script);
+    await Promise.all([
+      ...["reticulum", "pgbouncer", "pgbouncer-t", "bot-orchestrator", "coturn"].map(writer => ["replicas-" + writer, "0"]),
+      ["serialization-lease.json", JSON.stringify({ spec: { holderIdentity: "fixture" } })],
+      ["restore-lock.yaml", "{}\n"], ["recovery-operation-fence-binding-state", "active"]
+    ].map(([file, bytes]) => writeFile(join(state, file), bytes, { mode: 0o600, flag: "wx" })));
+    const native = [];
+    const provider = nativeSnapshotProvider(async (program, args, options) => {
+      assert.equal(program, "doctl");
+      try {
+        const result = await execute(process.execPath, [script, ...args], { ...options,
+          env: { STUB_STATE_DIR: state, MONTHLY_FIXTURE_CASE: failMedia ? "fail-media" : "success" } });
+        native.push({ command: args.slice(0, 3).join(" "), code: 0, stdout: result.stdout }); return result;
+      } catch (error) { native.push({ command: args.slice(0, 3).join(" "), code: error.code }); throw error; }
+    });
+    assert.deepEqual(await provider.list(), []);
+    const database = await provider.create({ ...nativeArgs, volumeId: id(4) });
+    assert.equal(database.id, "101"); assert.deepEqual(database.tags, nativeTags);
+    assert.deepEqual(await provider.get("101"), database);
+    const mediaArgs = { ...nativeArgs, volumeId: id(8), name: "fixture-2026-10-media" };
+    if (failMedia) await assert.rejects(provider.create(mediaArgs), /monthly_provider_command_failed_or_ambiguous/);
+    else assert.equal((await provider.create(mediaArgs)).id, "102");
+    assert.deepEqual((await provider.list()).map(value => value.id), failMedia ? ["101"] : ["101", "102"]);
+    const posts = native.filter(value => value.command === "compute volume snapshot");
+    assert.equal(posts.length, 2);
+    assert.equal(posts[0].code, 0); assert.equal(posts[0].stdout, "");
+    assert.equal(posts[1].code, failMedia ? 33 : 0);
+    if (!failMedia) assert.equal(posts[1].stdout, "");
+    const recorded = (await readFile(join(state, "monthly-provider-calls.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
+    assert.deepEqual(recorded, [{ event: "snapshot-post", role: "database" }, { event: "snapshot-post", role: "media" }]);
   }
 });
 

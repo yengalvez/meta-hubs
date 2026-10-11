@@ -94,6 +94,7 @@
         "tests/scripts/monthly-retention-executor.test.mjs",
         "tests/scripts/monthly-snapshot-entrypoint.test.mjs",
         "tests/scripts/monthly-snapshot-export.test.mjs",
+        "tests/scripts/monthly-snapshot-cli-contract.test.mjs",
         "tests/scripts/monthly-snapshot-pair.test.mjs",
         "tests/scripts/monthly-snapshot-source.test.mjs",
         "tests/scripts/monthly-snapshot-worker.test.mjs",

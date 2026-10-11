@@ -74,8 +74,10 @@ if (program === "kubectl") {
     const volume = Object.values(roles).find(v => v.volumeId === args[3]);
     if (!volume) process.exit(98);
     emit([{ id: volume.volumeId, region: { slug: "ams3" }, size_gigabytes: 10 }]);
-  } else if (args[1] === "snapshot" && args[2] === "list") emit([]);
-  else if (args[1] === "volume" && args[2] === "snapshot") {
+  } else if (args[1] === "snapshot" && args[2] === "list") {
+    emit(fs.readdirSync(state).filter(name => /^monthly-snapshot-[1-9][0-9]*\.json$/.test(name)).sort()
+      .map(name => JSON.parse(fs.readFileSync(path.join(state, name), "utf8"))));
+  } else if (args[1] === "volume" && args[2] === "snapshot") {
     requirePausedBoundary();
     const role = Object.keys(roles).find(r => roles[r].volumeId === args[3]);
     if (!role || args.at(-2) !== "--http-retry-max" || args.at(-1) !== "0") process.exit(98);
@@ -83,9 +85,9 @@ if (program === "kubectl") {
     if (role === "media" && process.env.MONTHLY_FIXTURE_CASE === "fail-media") process.exit(33);
     const snapshot = { id: role === "database" ? "101" : "102", resource_type: "volume", resource_id: args[3],
       name: args[args.indexOf("--snapshot-name") + 1], regions: ["ams3"], min_disk_size: 10,
-      size_gigabytes: 1, created_at: new Date().toISOString() };
+      size_gigabytes: 1, created_at: new Date().toISOString(), tags: args[args.indexOf("--tag") + 1].split(",") };
     fs.writeFileSync(path.join(state, "monthly-snapshot-" + snapshot.id + ".json"), JSON.stringify(snapshot), { mode: 0o600 });
-    emit([snapshot]);
+    // The real doctl RunVolumeSnapshot command emits nothing on native exit 0.
   } else if (args[1] === "snapshot" && args[2] === "get") {
     emit([JSON.parse(fs.readFileSync(path.join(state, "monthly-snapshot-" + args[3] + ".json"), "utf8"))]);
   } else fakeFallback();

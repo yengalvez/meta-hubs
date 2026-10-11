@@ -1,5 +1,23 @@
 # Session Changelog
 
+## 2026-10-12 · Match the native doctl snapshot output contract
+
+The first8a1623f monthly verification passed on its exact code, but real capture
+49818 returned original1: one database snapshot was created and the adapter
+rejected the command's empty successful stdout. No media snapshot, valid pair or
+Drive point was accepted. Read-only reconciliation confirmed12/12 Deployments,
+five writers Ready and free operation lock/Lease after protected recovery.
+
+The defect is reproduced with installed doctl1.163.0 against loopback: HTTP201
+returns native0/stdout0; HTTP500 returns native1, with onePOST and no retry.
+Correct the adapter to identify the single created point by immediate read-only
+list and guarded GET, including source/name/type/operation tags. Retain one30s
+creation/identification budget, no retry and every existing consistency guard.
+Correct the misleading fixture, which returned JSON from create; add the real
+CLI contract to the monthly-only gate. Tests and review remain local evidence;
+no real retry, partial acceptance, calendar activation or product rollout follows
+automatically from this repair. Canonical PLAN records subsequent acceptance.
+
 ## 2026-10-12 · Monthly snapshot route, separate from legacy general tests
 
 The owner deleted the old Goal and explicitly requested correction of the route.

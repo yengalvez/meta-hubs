@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, open, lstat, realpath } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { civilMonth } from "./monthly-backup-retention.mjs";
 import { bindPostgresLayout } from "./monthly-snapshot-source.mjs";
 
@@ -28,27 +29,58 @@ export function validateNativeSnapshot(value, { name, volumeId, region, since, u
 }
 
 export function nativeSnapshotProvider(run = execute) {
-  async function call(args) {
+  const createdIdentities = new Map();
+  async function command(args, timeout = 30000) {
     let result;
     try { result = await run("doctl", [...args, "--output", "json", "--http-retry-max", "0"],
-      { timeout: 30000, maxBuffer: 8 * 1024 * 1024 }); }
+      { timeout, maxBuffer: 8 * 1024 * 1024 }); }
     catch { throw new Error("monthly_provider_command_failed_or_ambiguous"); }
+    return result;
+  }
+  async function call(args, timeout) {
+    const result = await command(args, timeout);
     let value;
     try { value = JSON.parse(result.stdout); } catch { throw new Error("monthly_provider_response_invalid"); }
     requireValue(Array.isArray(value), "monthly_provider_response_invalid");
     return value;
   }
+  function requireIdentity(value, expected) {
+    requireValue(value && snapshotId(value.id) && value.name === expected.name &&
+      value.resource_type === "volume" && value.resource_id === expected.volumeId &&
+      Array.isArray(value.tags) && value.tags.length === expected.tags.length &&
+      expected.tags.every(tag => value.tags.includes(tag)), "monthly_snapshot_identity_mismatch");
+  }
+  const listArgs = ["compute", "snapshot", "list", "--resource", "volume"];
   return {
-    list: () => call(["compute", "snapshot", "list", "--resource", "volume"]),
+    list: () => call(listArgs),
     async create({ volumeId, name, operationId, instanceId, month }) {
-      const values = await call(["compute", "volume", "snapshot", volumeId,
-        "--snapshot-name", name, "--tag", `yenhubs-monthly,${instanceId},month-${month},operation-${operationId}`]);
-      requireValue(values.length === 1, "monthly_provider_response_invalid");
-      return values[0];
+      const expected = { volumeId, name,
+        tags: ["yenhubs-monthly", instanceId, `month-${month}`, `operation-${operationId}`] };
+      const deadline = performance.now() + 30000;
+      // doctl 1.163.0 deliberately discards the successful POST response body,
+      // even with --output json. A command error/timeout never permits readback.
+      const result = await command(["compute", "volume", "snapshot", volumeId,
+        "--snapshot-name", name, "--tag", expected.tags.join(",")]);
+      requireValue(result.stdout === "", "monthly_provider_response_invalid");
+      // One immediate read, no polling or second POST, inside the original 30s
+      // budget. A missing/ambiguous point remains incomplete for reconciliation.
+      const remaining = Math.floor(deadline - performance.now());
+      requireValue(remaining > 0, "monthly_provider_command_failed_or_ambiguous");
+      const values = await call(listArgs, remaining);
+      requireValue(performance.now() <= deadline, "monthly_provider_command_failed_or_ambiguous");
+      const matches = values.filter(value => value?.name === name);
+      requireValue(matches.length === 1, "monthly_snapshot_identity_unresolved");
+      requireIdentity(matches[0], expected);
+      createdIdentities.set(matches[0].id, expected);
+      return matches[0];
     },
     async get(id) {
       const values = await call(["compute", "snapshot", "get", id]);
       requireValue(values.length === 1, "monthly_provider_response_invalid");
+      requireValue(values[0]?.id === id, "monthly_snapshot_identity_mismatch");
+      // The coordinator's guarded GET must retain the identity/tags discovered
+      // after POST, not merely the timestamp/region/size checked by the engine.
+      if (createdIdentities.has(id)) requireIdentity(values[0], createdIdentities.get(id));
       return values[0];
     }
   };

@@ -68,6 +68,15 @@ or ambiguous POST is never retried automatically; a first snapshot is not erased
 or accepted as a pair. Its output is `captured-not-restore-accepted`; it cannot
 prove parent terminal joins, writer resume, Drive export or either real restore.
 
+The installed doctl1.163.0 `compute volume snapshot` command returns no stdout
+on success, even with `--output json`; list/get return JSON. The adapter therefore
+uses one successful creation followed by one immediate read-only list, requiring
+one exact name/source/type/operation-tag identity within the original30s budget.
+The guarded GET checks those tags again. Missing or ambiguous readback is a failed
+attempt, never permission to repeat the POST. The local contract test runs the
+installed CLI against loopback with fictitious credentials and no forwarding;
+the simulated coordinator must also persist snapshots and emit empty create output.
+
 `create-checkpoint.sh` retains `CHECKPOINT_BACKEND=legacy` by default. The explicit
 `native-monthly` backend requires the durable-v2 runtime, exact context/UIDs,
 `MONTHLY_INSTANCE_ID`, `MONTHLY_REGION` and an existing private0700
