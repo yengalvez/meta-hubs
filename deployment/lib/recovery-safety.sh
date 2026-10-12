@@ -235,24 +235,15 @@ PY
 recovery_monotonic_milliseconds() {
   command -v python3 >/dev/null 2>&1 || return 127
   command python3 -I - <<'PY'
-import ctypes
 import sys
-
-
-class Timespec(ctypes.Structure):
-    _fields_ = [("seconds", ctypes.c_long), ("nanoseconds", ctypes.c_long)]
-
+import time
 
 clock_id = 1 if sys.platform.startswith("linux") else 6 if sys.platform == "darwin" else -1
-if clock_id < 0:
+if clock_id < 0 or time.CLOCK_MONOTONIC != clock_id:
     raise SystemExit(1)
-libc = ctypes.CDLL(None, use_errno=True)
-libc.clock_gettime.argtypes = [ctypes.c_int, ctypes.POINTER(Timespec)]
-libc.clock_gettime.restype = ctypes.c_int
-value = Timespec()
-if libc.clock_gettime(clock_id, ctypes.byref(value)) != 0:
-    raise SystemExit(1)
-print(value.seconds * 1000 + value.nanoseconds // 1_000_000)
+# The same native clock_gettime ID and millisecond flooring as before.
+# time is built in: avoid importing ctypes and loading libc on every sample.
+print(time.clock_gettime_ns(clock_id) // 1_000_000)
 PY
 }
 
@@ -2544,6 +2535,7 @@ while True:
     }
     observe_running_stream_guard_progress() {
       local sample_index sample_time sample_progress sample_previous_observation
+      local child_pending=0
       # The nested budget reader uses `index` dynamically. Do not let it
       # overwrite the outer continuity loop's current capability.
       local index current_milliseconds remaining_milliseconds
@@ -2555,14 +2547,18 @@ while True:
       # the tail of this round can consume the first guard's reserve itself.
       # This is observation, not realignment: an exhausted inherited reserve
       # is fatal BEFORE a new counter can be credited. No waiting or rearming.
+      observe_supervised_stream_child_completion || return 1
+      [[ "$stream_child_completion_observed" == 0 ]] || return 0
       for sample_index in "${!guard_pids[@]}"; do
-        observe_supervised_stream_child_completion || return 1
-        [[ "$stream_child_completion_observed" == 0 ]] || return 0
         sample_previous_observation="${guard_last_observation_milliseconds[$sample_index]}"
-        sample_time="$(recovery_monotonic_milliseconds)" || {
-          stream_record_diagnostic "guard-clock:$sample_index"
-          return 1
-        }
+        # The immediately preceding reserve check (initial completion or the
+        # prior counter) ended with a native monotonic read and validation.
+        # Only Bash assignments
+        # separate that boundary from this read: use its timestamp instead of
+        # launching duplicate readers for the same local boundary.
+        # The after-read check below still measures elapsed time BEFORE any
+        # increment is credited, including a completed or stopped child.
+        sample_time="$current_milliseconds"
         if ! sample_progress="$(recovery_stream_guard_progress_value \
           "${guard_progress_markers[$sample_index]}" \
           "${guard_authority_sha256s[$sample_index]}")"; then
@@ -2573,14 +2569,22 @@ while True:
           stream_record_diagnostic "guard-progress-regression:$sample_index"
           return 1
         fi
-        observe_supervised_stream_child_completion || return 1
-        [[ "$stream_child_completion_observed" == 0 ]] || return 0
+        # A fresh native clock after EVERY file read validates the inherited
+        # reserve before credit. Do not postpone these checks to the end of a
+        # vector read: multiple slow reads could otherwise overrun revocation.
+        supervised_stream_guard_has_cancellation_reserve || return 1
         if ((sample_progress > guard_last_progress[sample_index])); then
           guard_last_progress[sample_index]="$sample_progress"
           guard_last_progress_milliseconds[sample_index]="$sample_previous_observation"
         fi
         guard_last_observation_milliseconds[sample_index]="$sample_time"
       done
+      # The last after-read check is also this job query's before-boundary:
+      # only Bash assignments separate them. Measure again after the query,
+      # including pending/STOP jobs. This shares work, never the deadline.
+      supervised_stream_child_is_running && child_pending=1
+      supervised_stream_guard_has_cancellation_reserve || return 1
+      [[ "$child_pending" == 1 ]] || stream_child_completion_observed=1
     }
     supervised_stream_guards_are_continuously_healthy() {
       local guard_failure_detail="" running_observation=0

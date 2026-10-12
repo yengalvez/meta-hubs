@@ -101,6 +101,7 @@
         "tests/scripts/monthly-test-process-owner.test.mjs",
         "tests/scripts/monthly-verification.test.mjs",
         "tests/scripts/stream-running-budget.test.mjs",
+        "tests/scripts/pgsql-supervisor-latency.test.mjs",
         "tests/scripts/stream-prelaunch-alignment.test.mjs",
         "tests/scripts/recovery-stream-diagnostics.test.mjs"
       ]

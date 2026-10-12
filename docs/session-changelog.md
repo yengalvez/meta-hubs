@@ -1,5 +1,24 @@
 # Session Changelog
 
+## 2026-10-12 · Remove redundant native reader cost from the snapshot supervisor
+
+Local-only repair after the real b17 attempt failed with guard0 cancellation
+reserve1814ms. A deterministic counterexample and identical native RED/GREEN
+workloads prove unnecessary observer work can consume a healthy publisher's
+causal window. Use six, not fifteen, clock reads per three-guard sweep; preserve
+every predicate and a fresh reserve check after every counter read. Jobs queries
+retain before/after boundaries, stopped-job handling, original wait/retirement
+and post-audits. Native CLOCK_MONOTONIC IDs1/6 and flooring are unchanged; use
+the built-in time reader instead of importing ctypes/libc for every sample.
+
+Directed review caught and closed a local pending-state scope defect and a
+fixture partial-spawn cleanup gap, with dedicated regressions. The monthly gate
+now declares the original PGSQL publisher/guardian/join workload plus a pinned
+b17 RED control. Exact acceptance is recorded only after its native receipt.
+Extreme reader/scheduler latency can still fail closed; the lost real trace
+does not prove this is the only historical cause. No operator installation,
+real capture, production pause, calendar, restore or old streaming fallback.
+
 ## 2026-10-12 · Hand completed snapshot children to their original native wait early
 
 The first local fix f58e7e4 passed its focused cases but failed the simulated

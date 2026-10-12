@@ -8,6 +8,17 @@ DO/Drive restore, rotation or scheduler has been accepted.
 
 ## Permanent operator preflight
 
+The running supervisor's three-guard sweep shares native read boundaries (six
+clock samples, not fifteen). It checks the fixed cancellation reserve after
+each counter read and before/after native jobs queries, including stopped jobs.
+Counter credit retains the PREVIOUS observation time: no wall-clock freshness,
+new deadline, late-completion exemption or skipped PGSQL/W/D/Lease audit.
+The kernel CLOCK_MONOTONIC IDs remain Linux1/Darwin6. Excessive scheduler or
+reader latency must still fail closed; local RED/GREEN proves only its declared
+workload, not arbitrary load or historical production causality. The monthly
+gate declares that workload; no full product/H5 suite or real retry follows
+automatically. Installing a locally accepted delta needs separate authority.
+
 The standalone operator must initialize the generator's locked local dependencies
 before use: from `hubs-cloud/community-edition`, run
 `npm ci --ignore-scripts --no-audit --no-fund`. Do not substitute a global library,

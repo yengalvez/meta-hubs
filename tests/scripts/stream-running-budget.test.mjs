@@ -111,6 +111,158 @@ test("completion cannot hide an already observed counter regression", () => {
   assert.equal(result.diagnostic, "guard-progress-regression:0");
 });
 
+test("counter-read boundaries do not pay for duplicate native clock observations", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "yenhubs-clock-boundary-"));
+  const script = String.raw`
+set -u
+clock_path="$1"
+printf '5800\n' >"$clock_path"
+stream_is_gated=0 stream_child_reaped=0 stream_diagnostic_stage=running
+stream_diagnostic_detail= stream_child_completion_observed=0
+stream_pid=41 stream_start_identity=exact
+guard_cancel_reserve_milliseconds=2000
+guard_pids=(11 12 13) guard_progress_markers=(p0 p1 p2)
+guard_authority_sha256s=('' '' '') guard_maximum_stale_seconds=(10 10 10)
+guard_last_progress=(1 1 1) guard_last_progress_milliseconds=(0 0 0)
+guard_last_observation_milliseconds=(4000 4000 4000)
+recovery_monotonic_milliseconds(){
+  local clock
+  IFS= read -r clock <"$clock_path"
+  clock=$((clock+200))
+  printf '%s\n' "$clock" >"$clock_path"
+  printf '%s\n' "$clock"
+}
+supervised_stream_child_is_running(){ return 0; }
+recovery_stream_guard_progress_value(){ printf '2\n'; }
+result=0
+observe_running_stream_guard_progress || result=$?
+printf 'result=%s\nclock=%s\ndiagnostic=%s\n' "$result" "$(<"$clock_path")" "$stream_diagnostic_detail"
+(IFS=,; printf 'bounds=%s\nprogress=%s\n' "@{guard_last_progress_milliseconds[*]}" "@{guard_last_progress[*]}")
+`.replaceAll("@{", "${");
+  const result = spawnSync(resolveNativeBash(), ["--noprofile", "--norc", "-c",
+    ["stream_record_diagnostic", "supervised_stream_guard_remaining_milliseconds",
+      "supervised_stream_guard_has_cancellation_reserve", "observe_supervised_stream_child_completion",
+      "observe_running_stream_guard_progress"].map(extract).join("\n") + script,
+    "fixture", join(fixture, "clock")], { env: nativeShellEnvironment(), encoding: "utf8", timeout: 5000 });
+  assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^result=0\nclock=7000\ndiagnostic=\nbounds=4000,4000,4000\nprogress=2,2,2\n$/);
+});
+
+for (const callerHasPending of [false, true]) test(`completion during a sweep does not inherit or leak pending state (${callerHasPending})`, () => {
+  const script = String.raw`
+set -u
+[[ "$1" != true ]] || child_pending=1
+stream_is_gated=0 stream_child_reaped=0 stream_diagnostic_stage=running
+stream_diagnostic_detail= stream_child_completion_observed=0
+stream_pid=41 stream_start_identity=exact
+guard_cancel_reserve_milliseconds=2000
+guard_pids=(11) guard_progress_markers=(p0) guard_authority_sha256s=('')
+guard_maximum_stale_seconds=(10) guard_last_progress=(1)
+guard_last_progress_milliseconds=(0) guard_last_observation_milliseconds=(4000)
+table_checks=0
+recovery_monotonic_milliseconds(){ printf '5000\n'; }
+supervised_stream_child_is_running(){ table_checks=$((table_checks+1)); [[ "$table_checks" == 1 ]]; }
+recovery_stream_guard_progress_value(){ printf '2\n'; }
+result=0
+observe_running_stream_guard_progress || result=$?
+printf '%s %s %s %s\n' "$result" "$stream_child_completion_observed" \
+  "@{child_pending-unset}" "$table_checks"
+`.replaceAll("@{", "${");
+  const result = spawnSync(resolveNativeBash(), ["--noprofile", "--norc", "-c",
+    ["stream_record_diagnostic", "supervised_stream_guard_remaining_milliseconds",
+      "supervised_stream_guard_has_cancellation_reserve", "observe_supervised_stream_child_completion",
+      "observe_running_stream_guard_progress"].map(extract).join("\n") + script,
+    "fixture", String(callerHasPending)], { env: nativeShellEnvironment(), encoding: "utf8", timeout: 5000 });
+  assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, `0 1 ${callerHasPending ? "1" : "unset"} 2\n`);
+});
+
+for (const pending of [false, true]) test(`counter read cannot erase an exhausted reserve (pending ${pending})`, () => {
+  const fixture = mkdtempSync(join(tmpdir(), "yenhubs-counter-deadline-"));
+  const script = String.raw`
+set -u
+clock_path="$1" pending="$2"
+printf '7900\n' >"$clock_path"
+stream_is_gated=0 stream_child_reaped=0 stream_diagnostic_stage=running
+stream_diagnostic_detail= stream_child_completion_observed=0
+stream_pid=41 stream_start_identity=exact
+guard_cancel_reserve_milliseconds=2000
+guard_pids=(11) guard_progress_markers=(p0) guard_authority_sha256s=('')
+guard_maximum_stale_seconds=(10) guard_last_progress=(1)
+guard_last_progress_milliseconds=(0) guard_last_observation_milliseconds=(4000)
+table_checks=0
+recovery_monotonic_milliseconds(){ printf '%s\n' "$(<"$clock_path")"; }
+supervised_stream_child_is_running(){
+  table_checks=$((table_checks+1))
+  [[ "$table_checks" == 1 || "$pending" == true ]]
+}
+recovery_stream_guard_progress_value(){ printf '8100\n' >"$clock_path"; printf '2\n'; }
+result=0
+observe_running_stream_guard_progress || result=$?
+printf '%s %s %s %s %s\n' "$result" "$stream_child_completion_observed" \
+  "@{guard_last_progress[0]}" "@{guard_last_progress_milliseconds[0]}" "$stream_diagnostic_detail"
+`.replaceAll("@{", "${");
+  const result = spawnSync(resolveNativeBash(), ["--noprofile", "--norc", "-c",
+    ["stream_record_diagnostic", "supervised_stream_guard_remaining_milliseconds",
+      "supervised_stream_guard_has_cancellation_reserve", "observe_supervised_stream_child_completion",
+      "observe_running_stream_guard_progress"].map(extract).join("\n") + script,
+    "fixture", join(fixture, "clock"), String(pending)], { env: nativeShellEnvironment(), encoding: "utf8", timeout: 5000 });
+  assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "1 0 1 0 cancellation-reserve:0:remaining-ms:1900:required-ms:2000\n");
+});
+
+for (const pending of [false, true]) test(`final jobs query cannot outlive its shared reserve (pending ${pending})`, () => {
+  const fixture = mkdtempSync(join(tmpdir(), "yenhubs-jobs-boundary-"));
+  const script = String.raw`
+set -u
+clock_path="$1" pending="$2"
+printf '7900\n' >"$clock_path"
+stream_is_gated=0 stream_child_reaped=0 stream_diagnostic_stage=running
+stream_diagnostic_detail= stream_child_completion_observed=0
+stream_pid=41 stream_start_identity=exact
+guard_cancel_reserve_milliseconds=2000
+guard_pids=(11) guard_progress_markers=(p0) guard_authority_sha256s=('')
+guard_maximum_stale_seconds=(10) guard_last_progress=(1)
+guard_last_progress_milliseconds=(0) guard_last_observation_milliseconds=(4000)
+table_checks=0
+recovery_monotonic_milliseconds(){ printf '%s\n' "$(<"$clock_path")"; }
+supervised_stream_child_is_running(){
+  table_checks=$((table_checks+1))
+  if [[ "$table_checks" == 2 ]]; then printf '8100\n' >"$clock_path"; fi
+  [[ "$table_checks" == 1 || "$pending" == true ]]
+}
+recovery_stream_guard_progress_value(){ printf '1\n'; }
+result=0
+observe_running_stream_guard_progress || result=$?
+printf '%s %s %s %s %s\n' "$result" "$stream_child_completion_observed" \
+  "@{guard_last_progress[0]}" "@{guard_last_progress_milliseconds[0]}" "$stream_diagnostic_detail"
+`.replaceAll("@{", "${");
+  const result = spawnSync(resolveNativeBash(), ["--noprofile", "--norc", "-c",
+    ["stream_record_diagnostic", "supervised_stream_guard_remaining_milliseconds",
+      "supervised_stream_guard_has_cancellation_reserve", "observe_supervised_stream_child_completion",
+      "observe_running_stream_guard_progress"].map(extract).join("\n") + script,
+    "fixture", join(fixture, "clock"), String(pending)], { env: nativeShellEnvironment(), encoding: "utf8", timeout: 5000 });
+  assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "1 0 1 0 cancellation-reserve:0:remaining-ms:1900:required-ms:2000\n");
+});
+
+test("native clock uses the same kernel CLOCK_MONOTONIC and integer milliseconds", () => {
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const script = String.raw`
+before="$(python3 -I -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC)//1000000)')"
+value="$(recovery_monotonic_milliseconds)"
+after="$(python3 -I -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC)//1000000)')"
+printf '%s %s %s\n' "$before" "$value" "$after"
+`;
+  const result = spawnSync(resolveNativeBash(), nativeBashArguments(join(root, "deployment/lib/recovery-safety.sh"), script),
+    { env: nativeShellEnvironment(), encoding: "utf8", timeout: 5000 });
+  assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
+  const values = result.stdout.trim().split(" ").map(Number);
+  assert.equal(values.length, 3);
+  assert.ok(values.every(Number.isSafeInteger));
+  assert.ok(values[0] <= values[1] && values[1] <= values[2], result.stdout);
+});
+
 for (const [clock, tableCost, pending, expected] of [[7900, 0, 0, 0], [8100, 0, 0, 1],
   [10000, 0, 0, 1], [7900, 200, 0, 1], [7900, 0, 1, 0],
   [7900, 200, 1, 1], [7900, 2200, 1, 1]]) {
