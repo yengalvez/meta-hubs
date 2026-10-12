@@ -9,6 +9,7 @@ import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { nativeSnapshotProvider } from "../../deployment/monthly-snapshot-pair.mjs";
+import { selectDoctlCredential } from "../../deployment/monthly-snapshot-api.mjs";
 
 const token = "FICTIONAL-LOOPBACK-FIXTURE-NOT-A-REAL-DIGITALOCEAN-TOKEN";
 const volumeId = "00000000-0000-4000-8000-000000000001";
@@ -28,11 +29,12 @@ for (const directory of (process.env.PATH ?? "").split(delimiter).filter(Boolean
 }
 const cliTest = { timeout: 30000 };
 
-async function withLoopback(t, { list = values => values, get = value => value, httpFailure = false } = {}, check) {
+async function withLoopback(t, { list = values => values, get = value => value, httpFailure = false,
+  credentialConfig = {}, credentialEnv = {}, explicitToken = token, expectedToken = token } = {}, check) {
   assert.ok(binary, "installed doctl is required; the real CLI contract cannot be skipped");
   const home = await mkdtemp(join(tmpdir(), "yenhubs-monthly-cli-"));
   const config = join(home, "doctl.yaml");
-  await writeFile(config, "{}\n", { flag: "wx", mode: 0o600 });
+  await writeFile(config, JSON.stringify(credentialConfig)+"\n", { flag: "wx", mode: 0o600 });
   const requests = [], sockets = new Set(), nativeCloses = [], rejectedProxyRequests = [];
   const stored = []; let fixtureError;
   const server = createServer(async (request, reply) => {
@@ -40,7 +42,7 @@ async function withLoopback(t, { list = values => values, get = value => value, 
     requests.push(item);
     try {
       assert.equal(request.socket.remoteAddress, "127.0.0.1");
-      assert.equal(request.headers.authorization, `Bearer ${token}`);
+      assert.equal(request.headers.authorization, `Bearer ${expectedToken}`);
       const url = new URL(request.url, "http://127.0.0.1");
       const chunks = []; let length = 0;
       for await (const bytes of request) { length += bytes.length; assert.ok(length <= 8192); chunks.push(bytes); }
@@ -79,8 +81,8 @@ async function withLoopback(t, { list = values => values, get = value => value, 
   const apiUrl = `http://127.0.0.1:${server.address().port}/`;
   const env = { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), PATH: "/usr/bin:/bin",
     LANG: "C", LC_ALL: "C", TZ: "UTC", NO_COLOR: "1", HTTP_PROXY: apiUrl, HTTPS_PROXY: apiUrl,
-    ALL_PROXY: apiUrl, NO_PROXY: "127.0.0.1,localhost" };
-  const globals = ["--config", config, "--access-token", token, "--api-url", apiUrl];
+    ALL_PROXY: apiUrl, NO_PROXY: "127.0.0.1,localhost", ...credentialEnv };
+  const globals = ["--config", config, ...(explicitToken ? ["--access-token", explicitToken] : []), "--api-url", apiUrl];
   async function native(args, options = { timeout: 30000 }) {
     assert.ok(options.timeout > 0 && options.timeout <= 30000);
     const result = await new Promise(resolve => {
@@ -208,4 +210,20 @@ test("native adapter rechecks operation tags on the guarded real CLI GET", cliTe
     await assert.rejects(provider.get(snapshotId), /monthly_snapshot_identity_mismatch/);
     assert.deepEqual(requests.map(value => value.method), ["POST", "GET", "GET", "GET"]);
   });
+});
+
+test("installed doctl and the API adapter select the same fictitious context/environment credential",cliTest,async t=>{
+  const config={context:'active','access-token':'FICTITIOUS-ROOT','auth-contexts':{active:'FICTITIOUS-ACTIVE',alternate:'FICTITIOUS-ALTERNATE'}};
+  for(const [source,env] of [[config,{}],[config,{DIGITALOCEAN_CONTEXT:'alternate'}],
+    [config,{DIGITALOCEAN_ACCESS_TOKEN:'FICTITIOUS-ENV'}],
+    [config,{DIGITALOCEAN_CONTEXT:'alternate',DIGITALOCEAN_ACCESS_TOKEN:'FICTITIOUS-ENV'}],
+    [{...config,context:'default'},{DIGITALOCEAN_ACCESS_TOKEN:'FICTITIOUS-ENV'}],[{...config,context:'default'},{}],
+    [{...config,context:undefined},{DIGITALOCEAN_ACCESS_TOKEN:'FICTITIOUS-ENV'}]]){
+    const expected=selectDoctlCredential(source,env);
+    await withLoopback(t,{credentialConfig:source,credentialEnv:env,explicitToken:null,expectedToken:expected},async({native,requests})=>{
+      const result=await native(['compute','snapshot','list','--resource','volume','--output','json','--http-retry-max','0']);
+      assert.equal(result.evidence.nativeExitCode,0);assert.equal(result.evidence.signal,null);
+      assert.deepEqual(JSON.parse(result.stdout),[]);assert.equal(requests.length,1);
+    });
+  }
 });

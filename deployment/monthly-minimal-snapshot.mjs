@@ -7,6 +7,7 @@ import { captureMonthlyPair, nativeSnapshotProvider } from "./monthly-snapshot-p
 import { civilMonth } from "./monthly-backup-retention.mjs";
 import { writeMonthlyRuntimeArchive, minimalMonthlyArtifacts, validateMonthlyNativeManifest } from "./monthly-native-bundle.mjs";
 import { createMinimalKubernetes } from "./monthly-minimal-kubernetes.mjs";
+import { nativeVolumeSnapshotAPI } from "./monthly-snapshot-api.mjs";
 
 const sha = bytes => createHash("sha256").update(bytes).digest("hex");
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -118,7 +119,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const cluster = createMinimalKubernetes({ env, root });
     const source = await cluster.source();
     const result = await runMinimalSnapshot({ output: process.argv[2], source, cluster,
-      snapshots: nativeSnapshotProvider(), signal: abort.signal,
+      snapshots: nativeSnapshotProvider(undefined, {api: nativeVolumeSnapshotAPI()}), signal: abort.signal,
       runtimePaths: { valuesPath: env.VALUES_FILE, manifestPath: env.HCCE_MANIFEST_PATH,
         keyPath: env.PROCESS_LOCAL_CUTOVER_KEY_PATH } });
     console.log(`Native monthly pair published: ${result.directory} (writers resumed; export and isolated recovery NOT yet accepted)`);

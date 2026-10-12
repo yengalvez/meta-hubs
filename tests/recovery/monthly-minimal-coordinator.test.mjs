@@ -14,7 +14,9 @@ async function fixture(options = {}) {
   const bin = join(directory,"bin"); await mkdir(bin, { mode: 0o700 });
   const code = await readFile(join(root, "tests/scripts/fixtures/monthly-minimal-cli.cjs"), "utf8");
   const script = join(bin, "fixture.cjs"); await writeFile(script, `#!${process.execPath}\n`+code, { mode: 0o700 });
-  for (const name of ["kubectl", "doctl"]) await symlink(script, join(bin, name));
+  for (const name of ["kubectl", "doctl", "curl"]) await symlink(script, join(bin, name));
+  const credentials=join(directory,"Library/Application Support/doctl");await mkdir(credentials,{recursive:true,mode:0o700});
+  await writeFile(join(credentials,"config.yaml"),JSON.stringify({context:"fixture","auth-contexts":{fixture:"PUBLIC-FIXTURE-DOCTL-TOKEN"}}),{mode:0o600});
   const statePath = join(directory, "state.json"), output = join(directory, "checkpoint");
   const names = ["bot-orchestrator", "reticulum", "pgbouncer", "pgbouncer-t", "coturn", "pgsql"];
   const state = { commands: [], posts: [], snapshots: [], scales: [], objects: [],
@@ -42,7 +44,7 @@ async function fixture(options = {}) {
 }
 
 test("native monthly entrypoint executes the minimal route, resumes, publishes and never launches historical commands", { timeout: 30000 }, async () => {
-  const f = await fixture({ botReplicas: 1, runners: [{ metadata: { name: "bot-runner-fixture", uid: id(500),
+  const f = await fixture({ staleCatalogue:true, botReplicas: 1, runners: [{ metadata: { name: "bot-runner-fixture", uid: id(500),
     labels: { app: "bot-runner", "yenhubs.org/managed-by": "bot-orchestrator" } }, status: { phase: "Running" } }] }), result = await f.run();
   assert.equal(result.code, 0, result.stderr); assert.equal(result.signal, null);
   assert.deepEqual(result.state.posts, ["database","media"]);
@@ -54,7 +56,8 @@ test("native monthly entrypoint executes the minimal route, resumes, publishes a
   assert.equal(result.state.scales.filter(value => value.replicas === 1)[0].name, "pgsql");
   const point = await inspectPublishedMonthlyPoint(f.output);
   assert.equal(point.metadata.runtime_generation,"minimal-snapshot-v1");
-  assert.ok(result.state.commands.every(value => ["kubectl","doctl"].includes(value.tool)));
+  assert.ok(result.state.commands.every(value => ["kubectl","doctl","curl"].includes(value.tool)));
+  assert.equal(result.state.commands.filter(value=>value.tool==="curl"&&value.args.includes("POST")).length,2);
   assert.ok(result.state.commands.every(value => !value.args.join(" ").includes("guardian")));
   console.log(JSON.stringify({ state: "SIMULATED_MINIMAL_PASS", nativeExit: result.code, actualCaptureAccepted: false }));
 });

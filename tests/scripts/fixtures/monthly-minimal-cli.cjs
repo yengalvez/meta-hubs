@@ -19,6 +19,23 @@ const finish = (value, status = 0) => {
 };
 const after = key => args[args.indexOf(key)+1];
 state.commands.push({ tool, args });
+if(tool==="curl"){
+  const input=fs.readFileSync(0,"utf8"),url=new URL(after("--url")),method=after("--request");
+  if(url.origin!=="https://api.digitalocean.com"||!input.includes("PUBLIC-FIXTURE-DOCTL-TOKEN"))throw Error("fixture API target invalid");
+  if(method==="POST"){
+    const body=JSON.parse(JSON.parse(/^data = (.+)$/m.exec(input)[1]));
+    const volumeId=url.pathname.split("/")[3],role=volumeId===id(2)?"database":"media";state.posts.push(role);
+    if(role===state.failRole)return finish(JSON.stringify({message:"ONLY FIXTURE FAILURE"})+"\n__YENHUBS_HTTP__500");
+    const snapshot={id:id(100+state.snapshots.length),name:body.name,resource_id:volumeId,resource_type:"volume",regions:["ams3"],
+      min_disk_size:10,size_gigabytes:1,created_at:new Date().toISOString(),tags:body.tags};state.snapshots.push(snapshot);
+    if(state.expireLease&&role==="database")state.lease.spec.renewTime=new Date(Date.now()-121000).toISOString().replace(/(\.\d{3})Z$/,"$1000Z");
+    if(role===state.ambiguousRole)return finish(null,17);
+    return finish(JSON.stringify({snapshot})+"\n__YENHUBS_HTTP__201");
+  }
+  const snapshot=state.snapshots.find(s=>s.id===url.pathname.split("/").at(-1));
+  if(method!=="GET"||!snapshot)throw Error("fixture unexpected API GET");
+  return finish(JSON.stringify({snapshot})+"\n__YENHUBS_HTTP__200");
+}
 if (tool === "doctl") {
   if (args[1] === "volume" && args[2] === "get") return finish([{ id: args[3], region: { slug: "ams3" }, size_gigabytes: 10 }]);
   if (args[1] === "volume" && args[2] === "snapshot") {
@@ -32,7 +49,7 @@ if (tool === "doctl") {
     if (state.ambiguousRole === role) return finish(null, 17);
     return finish(""); // installed doctl contract: successful POST emits no JSON
   }
-  if (args[1] === "snapshot" && args[2] === "list") return finish(state.snapshots);
+  if (args[1] === "snapshot" && args[2] === "list") return finish(state.staleCatalogue?[]:state.snapshots);
   if (args[1] === "snapshot" && args[2] === "get") return finish(state.snapshots.filter(value => value.id === args[3]));
   throw Error("unexpected doctl operation");
 }

@@ -25,11 +25,16 @@ names, has named get/patch RBAC, no snapshot permission and backoffLimit=0.
 
 The sequence stops writers, captures the database contract, runs sync and stops
 PostgreSQL gracefully. Two native volume snapshots are created during this same
-pause, one POST per volume with the installed doctl empty-stdout contract and
-identity readback. There is no continuously sampled source/counter guardian.
-LIST resolves only a unique name and ID; canonical GET of that pinned ID supplies
-the metadata validated before acceptance. Both reads share the original total
-30-second native budget, with no polling or repeated POST. Private journal events
+pause, one POST per volume through the official HTTPS API. The installed doctl
+discards the POST response and the global catalogue can lag behind it; the
+minimal route instead retains the POST response ID and GETs that exact volume
+snapshot directly. There is no continuously sampled source/counter guardian.
+POST and canonical GET share the original total30-second native budget, including
+credential resolution, with no catalogue discovery, polling or repeated POST.
+The API uses the same existing active doctl auth context; a non-default context
+does not silently switch to an environment/root token. Credentials go through
+curl stdin only, with fixed HTTPS origin, verified TLS and no redirects.
+Private journal events
 record field presence/types/matches before validation, without raw provider
 output or unknown tag values. An incomplete canonical GET remains a failure.
 The ordinary five-minute operation limit is for this new method; the old
@@ -63,8 +68,9 @@ a complete real pair, Drive readback and one isolated restore per format.
 ## Local verification
 
 `node scripts/verify-monthly-backup.mjs --evidence-dir /absolute/empty-private-dir`
-runs only the declared affected components, installed doctl against a
-non-forwarding loopback server and the direct minimal CLI against fictitious
+runs only the declared affected components, installed curl against verified
+loopback TLS, installed doctl against a non-forwarding loopback server and the
+direct minimal CLI against fictitious
 Kubernetes/DO executables. Its checks record original native exits and code pins.
 No historical H5/full recovery coordinator is selected. These are development
 tests, not an audit performed before every monthly snapshot.

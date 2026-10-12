@@ -35,6 +35,7 @@
     ],
     "minimalCaptureAndResume": [
       "deployment/monthly-minimal-snapshot.mjs",
+      "deployment/monthly-snapshot-api.mjs",
       "deployment/monthly-minimal-kubernetes.mjs",
       "deployment/monthly-minimal-recovery.mjs",
       "deployment/monthly-database-contract.sql"
@@ -46,6 +47,7 @@
       "timeoutMilliseconds": 180000,
       "tests": [
         "tests/scripts/monthly-minimal-snapshot.test.mjs",
+        "tests/scripts/monthly-snapshot-api.test.mjs",
         "tests/scripts/monthly-backup-runtime.test.mjs",
         "tests/scripts/monthly-native-bundle.test.mjs",
         "tests/scripts/monthly-snapshot-entrypoint.test.mjs",

@@ -28,7 +28,7 @@ export function validateNativeSnapshot(value, { name, volumeId, region, since, u
     billableGiB: value.size_gigabytes };
 }
 
-export function nativeSnapshotProvider(run = execute) {
+export function nativeSnapshotProvider(run = execute, {api = null} = {}) {
   const createdIdentities = new Map();
   async function command(args, timeout = 30000) {
     let result;
@@ -69,6 +69,18 @@ export function nativeSnapshotProvider(run = execute) {
       const expected = { volumeId, name, region,
         tags: ["yenhubs-monthly", instanceId, `month-${month}`, `operation-${operationId}`] };
       const deadline = performance.now() + 30000;
+      if(api){
+        const created=await api.create(expected,30000);
+        await observe({event:'snapshot-observed',view:'post',matches:1,candidates:[diagnose(created,expected)]});
+        requireValue(snapshotId(created?.id),'monthly_snapshot_identity_mismatch');
+        const remaining=Math.floor(deadline-performance.now());
+        requireValue(remaining>0,'monthly_provider_command_failed_or_ambiguous');
+        const canonical=await api.get(created.id,remaining);
+        await observe({event:'snapshot-observed',view:'canonical',requestedId:created.id,matches:1,candidates:[diagnose(canonical,expected)]});
+        requireValue(performance.now()<=deadline,'monthly_provider_command_failed_or_ambiguous');
+        requireValue(canonical?.id===created.id,'monthly_snapshot_identity_mismatch');
+        requireIdentity(canonical,expected);createdIdentities.set(created.id,expected);return canonical;
+      }
       // doctl 1.163.0 deliberately discards the successful POST response body,
       // even with --output json. A command error/timeout never permits readback.
       const result = await command(["compute", "volume", "snapshot", volumeId,
@@ -98,6 +110,8 @@ export function nativeSnapshotProvider(run = execute) {
       return canonical[0];
     },
     async get(id) {
+      if(api){const value=await api.get(id,30000);requireValue(value?.id===id,'monthly_snapshot_identity_mismatch');
+        if(createdIdentities.has(id))requireIdentity(value,createdIdentities.get(id));return value;}
       const values = await call(["compute", "snapshot", "get", id]);
       requireValue(values.length === 1, "monthly_provider_response_invalid");
       requireValue(values[0]?.id === id, "monthly_snapshot_identity_mismatch");

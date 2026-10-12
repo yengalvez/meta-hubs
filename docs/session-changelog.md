@@ -1,5 +1,24 @@
 # Session Changelog
 
+## 2026-10-13 · Keep the snapshot ID returned by the official POST
+
+The next real minimal attempt on f66d62e returned original1: successful DB
+POST followed by a recorded empty immediate global LIST; the same snapshot
+appeared later. No media/Drive point was accepted. Primary resume was unproven;
+the finite deferred Job completed0 and service reconciliation returned12/12,
+live0/0 and a cold room. The missing primary-resume cause remains unknown.
+
+Repair only the demonstrated discovery defect locally: official POST201 JSON
+retains its ID; GET200 reads that exact volume snapshot under the same total30s,
+including credentials. Use the existing doctl auth context, no token in argv,
+fixed HTTPS/verified TLS/no redirects and no catalogue/retry/old guardian.
+Directed review closed a credential-time-budget finding and verified selection
+against installed doctl with fictitious contexts. Installed curl wire coverage
+uses verified, non-forwarding loopback TLS; the native monthly fixture also
+passes with a deliberately stale catalogue. Exact local proof belongs in the
+canonical plan. No third real capture, install, calendar or restore acceptance
+is authorized by these local results.
+
 ## 2026-10-13 · Canonical snapshot readback and field diagnostics
 
 The first real minimal attempt stopped after one database POST with
