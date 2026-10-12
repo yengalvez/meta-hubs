@@ -166,6 +166,18 @@ capture command exits natively0. Missing receipts, incomplete markers, additiona
 files or changed source identities are rejected. A disappearing process is not
 capture acceptance.
 
+Before launching capture, the wrapper exclusively reserves private 0600
+`.capture.stdout`, `.capture.stderr` and `.capture.json` files beside the
+completion receipt. The intent binds their paths to the capture attempt. Held
+descriptors preserve at most 1 MiB per stream, with availability, lengths, hashes,
+truncation and the known original native exit/signal in the diagnostic metadata.
+Existing evidence blocks launch; failed diagnostic persistence leaves the attempt
+ambiguous. Do not print private stream contents or mistake diagnostic files for
+acceptance. Review only the necessary redacted error classification. Abrupt death
+of the wrapper itself may leave reservations without a closed diagnostic; absence
+is neither success nor permission to retry. A failed capture must be reconciled
+without accepting its partial snapshots or automatically launching another pause.
+
 `monthly-snapshot-export-provider.mjs` generates a separate temporary namespace
 and imports each original snapshot through retained VolumeSnapshotContent,
 VolumeSnapshot and a new CSI PVC. This follows the

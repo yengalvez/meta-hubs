@@ -1,11 +1,12 @@
 /** Export a published native point through isolated CSI clones, never live PVCs. */
 import { open, lstat, realpath, readdir, mkdir } from "node:fs/promises";
 import { join, resolve, dirname } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants as osConstants } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { performance } from "node:perf_hooks";
 import { nativeMonthlyArtifacts, validateMonthlyNativeManifest } from "./monthly-native-bundle.mjs";
 import { readPrivateBytes, readPrivateSource } from "./monthly-snapshot-worker.mjs";
 import { claimPairJournal } from "./monthly-snapshot-pair.mjs";
@@ -18,6 +19,7 @@ const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const bundleNames = [...nativeMonthlyArtifacts, "SHA256SUMS"].sort();
 const nativeSignals = new Set(Object.keys(osConstants.signals));
+const captureOutputLimit = 1024 * 1024;
 const canonical = value => JSON.stringify(value, (_, entry) => entry && !Array.isArray(entry) &&
   typeof entry === "object" ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b))) : entry);
 
@@ -33,6 +35,100 @@ async function writeJson(path, value) {
   finally { await file.close(); }
 }
 
+function captureFailure(reason, native = {}) {
+  return Object.assign(new Error(reason), native);
+}
+
+async function claimCaptureDiagnostics(directory, completion, instanceId) {
+  const parent = dirname(completion), files = {};
+  const paths = { intent: completion + ".intent", stdout: completion + ".capture.stdout",
+    stderr: completion + ".capture.stderr", diagnostic: completion + ".capture.json" };
+  requireValue([completion, ...Object.values(paths)].every(path => path !== directory &&
+    !path.startsWith(directory + "/")), "export_capture_arguments_invalid");
+  let parentFile, parentIdentity, closed = false;
+  async function close() {
+    if (closed) return;
+    closed = true;
+    const results = await Promise.allSettled([...Object.values(files).map(value => value.file.close()),
+      ...(parentFile ? [parentFile.close()] : [])]);
+    requireValue(results.every(value => value.status === "fulfilled"), "export_capture_diagnostic_unavailable");
+  }
+  async function verifyParent() {
+    await privateDirectory(parent);
+    const named = await lstat(parent), held = await parentFile.stat();
+    requireValue(named.isDirectory() && !named.isSymbolicLink() && held.isDirectory() &&
+      named.uid === process.getuid() && held.uid === named.uid &&
+      (named.mode & 0o777) === 0o700 && (held.mode & 0o777) === 0o700 &&
+      named.dev === parentIdentity.dev && named.ino === parentIdentity.ino &&
+      held.dev === named.dev && held.ino === named.ino, "export_capture_diagnostic_identity_changed");
+  }
+  async function verifyFile(value) {
+    const held = await value.file.stat(), named = await lstat(value.path);
+    requireValue(held.isFile() && named.isFile() && !named.isSymbolicLink() && held.nlink === 1 && named.nlink === 1 &&
+      held.uid === process.getuid() && named.uid === held.uid && (held.mode & 0o777) === 0o600 &&
+      (named.mode & 0o777) === 0o600 && held.dev === value.dev && held.ino === value.ino &&
+      named.dev === held.dev && named.ino === held.ino && held.size === value.size && named.size === value.size,
+      "export_capture_diagnostic_identity_changed");
+  }
+  async function verify() {
+    await verifyParent();
+    for (const value of Object.values(files)) await verifyFile(value);
+  }
+  async function write(name, bytes) {
+    const value = files[name];
+    await verifyParent(); await verifyFile(value);
+    // Write only to the exclusively reserved descriptor, never reopen a path.
+    await value.file.writeFile(bytes); await value.file.sync(); value.size = Buffer.byteLength(bytes);
+    await verifyFile(value); await verifyParent();
+  }
+  try {
+    await privateDirectory(parent);
+    parentFile = await open(parent, "r"); parentIdentity = await parentFile.stat();
+    await verifyParent();
+    // An existing completion or ANY diagnostic forbids another invocation.
+    for (const path of [completion, ...Object.values(paths)]) {
+      try { await lstat(path); throw Object.assign(new Error(), { code: "EEXIST" }); }
+      catch (error) { if (error.code !== "ENOENT") throw error; }
+    }
+    for (const [name, path] of Object.entries(paths)) {
+      const file = await open(path, "wx", 0o600);
+      files[name] = { file, path, size: 0 };
+      const stat = await file.stat(); Object.assign(files[name], { dev: stat.dev, ino: stat.ino });
+      await verifyFile(files[name]);
+    }
+    const binding = { captureAttemptId: randomUUID(), checkpointDirectory: directory, completionPath: completion,
+      instanceId, intentPath: paths.intent };
+    const intent = Buffer.from(JSON.stringify({ schema: "yenhubs-monthly-capture-intent-v1", directory,
+      ...binding, claimedAt: new Date().toISOString(), diagnosticPaths: paths }) + "\n");
+    await write("intent", intent); await verify(); await parentFile.sync();
+    return {
+      close,
+      async persist(value, metadata) {
+        await verify();
+        const streams = {};
+        for (const name of ["stdout", "stderr"]) {
+          const original = value?.[name];
+          const available = Buffer.isBuffer(original) || typeof original === "string";
+          const observed = Buffer.isBuffer(original) ? original : Buffer.from(typeof original === "string" ? original : "");
+          const retained = observed.subarray(0, captureOutputLimit);
+          await write(name, retained);
+          streams[name] = { path: paths[name], available, observedBytes: available ? observed.length : null,
+            storedBytes: retained.length, sha256: sha(retained), truncated: available ? observed.length > retained.length : null };
+        }
+        await write("diagnostic", Buffer.from(JSON.stringify({ schema: "yenhubs-monthly-capture-diagnostic-v1",
+          state: "native-result-recorded-not-capture-accepted", ...binding, intentSha256: sha(intent),
+          ...metadata, outputLimitBytes: captureOutputLimit, ...streams }) + "\n"));
+        await verify(); await parentFile.sync();
+      }
+    };
+  } catch (error) {
+    await close().catch(() => {});
+    const failure = captureFailure("export_capture_diagnostic_claim_failed");
+    if (error?.code === "EEXIST") failure.code = "EEXIST";
+    throw failure;
+  }
+}
+
 /** A receipt is written only after the ORIGINAL protected command exits natively 0.
  * No CLI is provided here: the monthly driver must supply its approved runtime inputs.
  * Timeout/exit errors never produce the receipt, even if the publication marker disappeared.
@@ -44,22 +140,40 @@ export async function captureMonthlyForExport({ checkpointDirectory, completionP
     environment.CHECKPOINT_FORMAT === "native-monthly-v1" &&
     environment.ALLOW_CHECKPOINT_DOWNTIME === "1" &&
     /^[a-z0-9][a-z0-9-]{0,62}$/.test(environment.MONTHLY_INSTANCE_ID ?? ""), "export_capture_arguments_invalid");
-  // Exclusive claim before launching the one capture. An ambiguous attempt is reconciled, not restarted.
-  await writeJson(completion + ".intent", { schema: "yenhubs-monthly-capture-intent-v1", directory });
-  let result;
-  try { result = await run(join(root, "deployment/create-monthly-snapshot.sh"), [directory], {
-    cwd: root, env: environment, encoding: "utf8", maxBuffer: 1024 * 1024
-  }); } catch (error) {
-    // Preserve bounded native-close evidence, never command text/provider output
-    // or an unsanitized cause. The intent remains claimed: no retry or fallback.
-    const failure = new Error("export_capture_failed_or_ambiguous");
-    failure.nativeExitCode = Number.isSafeInteger(error?.code) && error.code >= 0 && error.code <= 255 ? error.code : null;
-    failure.nativeSignal = nativeSignals.has(error?.signal) ? error.signal : null;
-    failure.nativeKilled = error?.killed === true;
-    throw failure;
+  // Reserve all private evidence before launching the one capture. Partial
+  // claims remain ambiguous and cannot authorize a retry or overwrite.
+  const diagnostic = await claimCaptureDiagnostics(directory, completion, environment.MONTHLY_INSTANCE_ID);
+  const invokedAt = new Date().toISOString(), began = performance.now();
+  let result, failure, execution, rejected = false;
+  try {
+    execution = run(join(root, "deployment/create-monthly-snapshot.sh"), [directory], {
+      cwd: root, env: environment, encoding: "buffer", maxBuffer: captureOutputLimit
+    });
+    result = await execution;
+  } catch (error) { rejected = true; failure = error; }
+  const child = execution?.child;
+  const exitCode = rejected ? child?.exitCode ?? failure?.code : 0;
+  const signal = child?.signalCode ?? failure?.signal;
+  const native = {
+    nativeExitCode: Number.isSafeInteger(exitCode) && exitCode >= 0 && exitCode <= 255 ? exitCode : null,
+    nativeSignal: nativeSignals.has(signal) ? signal : null,
+    nativeKilled: typeof failure?.killed === "boolean" ? failure.killed :
+      (typeof child?.killed === "boolean" ? child.killed : null)
+  };
+  try {
+    await diagnostic.persist(rejected ? failure : result, { ...native, executionOutcome: rejected ? "rejected" : "resolved",
+      invokedAt, settledAt: new Date().toISOString(), durationMilliseconds: Math.round(performance.now() - began),
+      stdioLimitExceeded: failure?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
+    await diagnostic.close();
+  } catch {
+    await diagnostic.close().catch(() => {});
+    throw captureFailure("export_capture_diagnostic_unavailable", native);
   }
+  // No command text, provider output or unsanitized cause crosses this boundary.
+  if (rejected) throw captureFailure("export_capture_failed_or_ambiguous", native);
+  const stdout = Buffer.isBuffer(result?.stdout) ? result.stdout.toString("utf8") : result?.stdout;
   const expectedLine = `Native monthly pair published: ${directory} (writers resumed; export and isolated recovery NOT yet accepted)`;
-  requireValue(result.stdout.split(/\r?\n/).includes(expectedLine), "export_capture_publication_absent");
+  requireValue(typeof stdout === "string" && stdout.split(/\r?\n/).includes(expectedLine), "export_capture_publication_absent");
   const point = await inspectPublishedMonthlyPoint(directory);
   requireValue(point.pair.instanceId === environment.MONTHLY_INSTANCE_ID &&
     point.pair.context === environment.EXPECTED_KUBE_CONTEXT &&

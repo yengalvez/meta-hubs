@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, realpath, mkdir, writeFile, readFile, chmod, symlink, open } from "node:fs/promises";
+import { mkdtemp, realpath, mkdir, writeFile, readFile, chmod, symlink, open, lstat, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 import { nativeMonthlyArtifacts, writeMonthlyRuntimeArchive } from "../../deployment/monthly-native-bundle.mjs";
 import { inspectPublishedMonthlyPoint, captureMonthlyForExport, buildSnapshotExportPlan,
   requireClonePVCBinding, exportMonthlySnapshotPoint } from "../../deployment/monthly-snapshot-export.mjs";
@@ -15,6 +16,37 @@ import { openPortablePoint } from "../../deployment/monthly-portable-point.mjs";
 const sha = bytes => createHash("sha256").update(bytes).digest("hex");
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const image = "docker.io/mozillareality/postgres@sha256:" + "d".repeat(64);
+const execute = promisify(execFile);
+const captureEnvironment = { CHECKPOINT_BACKEND: "native-monthly", CHECKPOINT_FORMAT: "native-monthly-v1",
+  ALLOW_CHECKPOINT_DOWNTIME: "1", MONTHLY_INSTANCE_ID: "fixture-instance", EXPECTED_KUBE_CONTEXT: "fixture",
+  EXPECTED_NAMESPACE_UID: id(1), EXPECTED_RET_PVC_UID: id(6) };
+const diagnosticPaths = completion => ({ intent: completion + ".intent", stdout: completion + ".capture.stdout",
+  stderr: completion + ".capture.stderr", diagnostic: completion + ".capture.json" });
+async function readCaptureDiagnostics(completion) {
+  const paths = diagnosticPaths(completion);
+  for (const path of Object.values(paths)) {
+    const stat = await lstat(path);
+    assert.equal(stat.isFile(), true); assert.equal(stat.isSymbolicLink(), false);
+    assert.equal(stat.uid, process.getuid()); assert.equal(stat.nlink, 1); assert.equal(stat.mode & 0o777, 0o600);
+  }
+  const intentBytes = await readFile(paths.intent), intent = JSON.parse(intentBytes);
+  const diagnostic = JSON.parse(await readFile(paths.diagnostic));
+  assert.equal(diagnostic.schema, "yenhubs-monthly-capture-diagnostic-v1");
+  assert.equal(diagnostic.state, "native-result-recorded-not-capture-accepted");
+  assert.equal(diagnostic.captureAttemptId, intent.captureAttemptId);
+  assert.equal(diagnostic.intentSha256, sha(intentBytes));
+  assert.equal(diagnostic.checkpointDirectory, intent.directory);
+  assert.equal(diagnostic.completionPath, completion); assert.equal(diagnostic.intentPath, paths.intent);
+  assert.deepEqual(intent.diagnosticPaths, paths);
+  assert.ok(Number.isFinite(Date.parse(diagnostic.invokedAt)) && Number.isFinite(Date.parse(diagnostic.settledAt)));
+  assert.ok(Number.isSafeInteger(diagnostic.durationMilliseconds) && diagnostic.durationMilliseconds >= 0);
+  const stdout = await readFile(paths.stdout), stderr = await readFile(paths.stderr);
+  for (const [name, bytes] of Object.entries({ stdout, stderr })) {
+    assert.equal(diagnostic[name].path, paths[name]); assert.equal(diagnostic[name].storedBytes, bytes.length);
+    assert.equal(diagnostic[name].sha256, sha(bytes)); assert.ok(bytes.length <= diagnostic.outputLimitBytes);
+  }
+  return { intent, diagnostic, stdout, stderr };
+}
 async function fixture() {
   const parent = await realpath(await mkdtemp(join(tmpdir(), "yenhubs-export-fixture-")));
   await chmod(parent, 0o700);
@@ -94,21 +126,35 @@ test("public or linked evidence cannot be accepted", async () => {
   await symlink(f.directory, join(f.parent, "linked"));
   await assert.rejects(inspectPublishedMonthlyPoint(join(f.parent, "linked")), /not_private/);
 });
-test("native capture helper records its ORIGINAL successful invocation only, without repeating it", async () => {
+test("native capture helper privately records its ORIGINAL successful invocation only, without repeating it", async t => {
   const f = await fixture(); let calls = 0;
-  const environment = { CHECKPOINT_BACKEND: "native-monthly", CHECKPOINT_FORMAT: "native-monthly-v1", ALLOW_CHECKPOINT_DOWNTIME: "1",
-    MONTHLY_INSTANCE_ID: "fixture-instance", EXPECTED_KUBE_CONTEXT: "fixture", EXPECTED_NAMESPACE_UID: id(1), EXPECTED_RET_PVC_UID: id(6) };
-  const run = async (program, args, options) => {
+  const environment = captureEnvironment;
+  const stdout = `Native monthly pair published: ${f.directory} (writers resumed; export and isolated recovery NOT yet accepted)\n`;
+  const stderr = "PRIVATE-FIXTURE-SUCCESS-NOT-A-REAL-SECRET";
+  const run = (program, args, options) => {
     calls++; assert.ok(program.endsWith("/deployment/create-monthly-snapshot.sh")); assert.deepEqual(args, [f.directory]);
     assert.equal(options.env, environment);
-    return { stdout: `Native monthly pair published: ${f.directory} (writers resumed; export and isolated recovery NOT yet accepted)\n` };
+    assert.equal(options.encoding, "buffer"); assert.equal(options.maxBuffer, 1024 * 1024);
+    return execute(process.execPath, ["-e", "process.stdout.write(process.argv[1]);process.stderr.write(process.argv[2])", stdout, stderr],
+      { ...options, env: {} });
   };
   const completionPath = join(f.parent, "new-completion.json");
   const args = { checkpointDirectory: f.directory, completionPath, environment, run };
-  assert.equal((await captureMonthlyForExport(args)).nativeExitCode, 0);
+  const receipt = await captureMonthlyForExport(args);
+  assert.equal(receipt.nativeExitCode, 0);
+  assert.deepEqual(Object.keys(receipt).sort(), ["schema", "state", "directory", "nativeExitCode", "instanceId", "month",
+    "operationId", "manifestSha256", "stdoutSha256"].sort());
+  assert.doesNotMatch(JSON.stringify(receipt), /PRIVATE-FIXTURE|recovery_stream/);
+  const saved = await readCaptureDiagnostics(completionPath);
+  assert.equal(saved.stdout.toString(), stdout); assert.equal(saved.stderr.toString(), stderr);
+  assert.equal(saved.diagnostic.executionOutcome, "resolved"); assert.equal(saved.diagnostic.nativeExitCode, 0);
+  assert.equal(saved.diagnostic.nativeSignal, null); assert.equal(saved.diagnostic.nativeKilled, false);
+  assert.equal(saved.diagnostic.stdout.available, true); assert.equal(saved.diagnostic.stdout.truncated, false);
+  assert.equal(saved.diagnostic.stdioLimitExceeded, false);
   await assert.rejects(captureMonthlyForExport(args), { code: "EEXIST" }); assert.equal(calls, 1);
+  t.diagnostic("fictional native capture: exit 0; private stdout/stderr retained; public receipt unchanged");
 });
-test("failed/ambiguous capture preserves only native-close evidence and never retries or records success", async () => {
+test("failed/ambiguous capture preserves private output and only sanitized native-close evidence in errors", async () => {
   const f = await fixture();
   for (const [index, evidence] of [{ code: 23 }, { signal: "SIGTERM", killed: true },
     { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", killed: true },
@@ -128,14 +174,165 @@ test("failed/ambiguous capture preserves only native-close evidence and never re
       assert.equal(error.message, "export_capture_failed_or_ambiguous");
       assert.equal(error.nativeExitCode, evidence.code === 23 ? 23 : null);
       assert.equal(error.nativeSignal, evidence.signal === "SIGTERM" ? "SIGTERM" : null);
-      assert.equal(error.nativeKilled, evidence.killed === true);
+      assert.equal(error.nativeKilled, typeof evidence.killed === "boolean" ? evidence.killed : null);
       assert.equal(error.cause, undefined); assert.equal(error.stdout, undefined); assert.equal(error.stderr, undefined);
       assert.doesNotMatch(JSON.stringify(error), /DO-NOT-LEAK/);
       return true;
     });
+    const saved = await readCaptureDiagnostics(completionPath);
+    assert.equal(saved.diagnostic.executionOutcome, "rejected");
+    assert.equal(saved.diagnostic.nativeExitCode, evidence.code === 23 ? 23 : null);
+    assert.equal(saved.diagnostic.nativeSignal, evidence.signal === "SIGTERM" ? "SIGTERM" : null);
+    assert.equal(saved.diagnostic.nativeKilled, typeof evidence.killed === "boolean" ? evidence.killed : null);
+    assert.equal(saved.diagnostic.stdioLimitExceeded, evidence.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER");
+    assert.equal(saved.stderr.toString(), "DO-NOT-LEAK-SECRET");
+    assert.match(saved.stdout.toString(), /^Native monthly pair published:/);
+    assert.doesNotMatch(JSON.stringify(saved.diagnostic), /DO-NOT-LEAK/);
     await assert.rejects(readFile(completionPath), { code: "ENOENT" });
     await assert.rejects(captureMonthlyForExport(args), { code: "EEXIST" });
     assert.equal(calls, 1);
+  }
+});
+
+test("real local execFile exit 23 and signal preserve original bytes and recovery diagnostics privately", async t => {
+  const f = await fixture();
+  const stdout = Buffer.from([0, 255, 254, 65, 10]);
+  const stderr = Buffer.from("recovery_stream_stage:running\nrecovery_stream_status:1\nrecovery_stream_detail:guard-stale:0\nFICTIONAL-SECRET-NOT-FOR-ERRORS\n");
+  const consoleCalls = [];
+  t.mock.method(console, "error", (...args) => consoleCalls.push(args));
+  t.mock.method(console, "log", (...args) => consoleCalls.push(args));
+  for (const [label, ending, code, signal] of [["exit", "process.exit(23)", 23, null],
+    ["signal", 'process.kill(process.pid,"SIGTERM")', null, "SIGTERM"]]) {
+    const completionPath = join(f.parent, `native-${label}.json`); let original, calls = 0;
+    const run = (_program, _args, options) => {
+      calls++;
+      const command = `const fs=require("node:fs");fs.writeSync(1,Buffer.from(process.argv[1],"base64"));` +
+        `fs.writeSync(2,Buffer.from(process.argv[2],"base64"));${ending}`;
+      const pending = execute(process.execPath, ["-e", command, stdout.toString("base64"), stderr.toString("base64")], { ...options, env: {} });
+      pending.catch(error => { original = error; });
+      return pending;
+    };
+    await assert.rejects(captureMonthlyForExport({ checkpointDirectory: f.directory, completionPath,
+      environment: captureEnvironment, run }), error => {
+      assert.equal(error.message, "export_capture_failed_or_ambiguous");
+      assert.equal(error.nativeExitCode, code); assert.equal(error.nativeSignal, signal); assert.equal(error.nativeKilled, false);
+      assert.equal(error.cause, undefined); assert.equal(error.stdout, undefined); assert.equal(error.stderr, undefined);
+      assert.doesNotMatch(error.stack + JSON.stringify(error), /FICTIONAL-SECRET|recovery_stream/);
+      return true;
+    });
+    assert.equal(original.code, code); assert.equal(original.signal, signal); assert.equal(original.killed, false);
+    assert.deepEqual(original.stdout, stdout); assert.deepEqual(original.stderr, stderr);
+    const saved = await readCaptureDiagnostics(completionPath);
+    assert.deepEqual(saved.stdout, original.stdout); assert.deepEqual(saved.stderr, original.stderr);
+    assert.equal(saved.diagnostic.nativeExitCode, original.code); assert.equal(saved.diagnostic.nativeSignal, original.signal);
+    assert.equal(saved.diagnostic.nativeKilled, original.killed);
+    assert.equal(saved.diagnostic.stdout.observedBytes, stdout.length); assert.equal(saved.diagnostic.stderr.observedBytes, stderr.length);
+    await assert.rejects(readFile(completionPath), { code: "ENOENT" }); assert.equal(calls, 1);
+    t.diagnostic(JSON.stringify({ fixture: label, nativeExitCode: original.code, nativeSignal: original.signal,
+      stdoutBytes: saved.stdout.length, stderrBytes: saved.stderr.length }));
+  }
+  assert.deepEqual(consoleCalls, []);
+});
+
+test("bounded capture logs distinguish a retained prefix from unknown original output", async () => {
+  const f = await fixture(), limit = 1024 * 1024;
+  for (const [label, output] of [["bounded", { stdout: Buffer.alloc(limit + 19, 65), stderr: Buffer.alloc(limit + 31, 66) }],
+    ["unknown", {}]]) {
+    const completionPath = join(f.parent, label + ".json");
+    await assert.rejects(captureMonthlyForExport({ checkpointDirectory: f.directory, completionPath,
+      environment: captureEnvironment, run: async () => { throw Object.assign(new Error("PRIVATE-DETAIL"), output); } }), error => {
+      assert.equal(error.nativeExitCode, null); assert.equal(error.nativeSignal, null); assert.equal(error.nativeKilled, null);
+      return error.message === "export_capture_failed_or_ambiguous";
+    });
+    const saved = await readCaptureDiagnostics(completionPath);
+    for (const name of ["stdout", "stderr"]) {
+      assert.equal(saved.diagnostic[name].available, label === "bounded");
+      assert.equal(saved.diagnostic[name].observedBytes, output[name]?.length ?? null);
+      assert.equal(saved.diagnostic[name].storedBytes, label === "bounded" ? limit : 0);
+      assert.equal(saved.diagnostic[name].truncated, label === "bounded" ? true : null);
+      if (label === "bounded") assert.deepEqual(saved[name], output[name].subarray(0, limit));
+    }
+  }
+});
+
+test("any preexisting capture evidence blocks execution without overwriting even the intent", async () => {
+  const f = await fixture(); let calls = 0;
+  for (const [index, selected] of ["completion", "intent", "stdout", "stderr", "diagnostic"].entries()) {
+    const completionPath = join(f.parent, `existing-${index}.json`);
+    const paths = { completion: completionPath, ...diagnosticPaths(completionPath) };
+    const original = Buffer.from("EXISTING-PRIVATE-FIXTURE-" + selected);
+    await writeFile(paths[selected], original, { flag: "wx", mode: 0o600 });
+    await assert.rejects(captureMonthlyForExport({ checkpointDirectory: f.directory, completionPath,
+      environment: captureEnvironment, run: async () => { calls++; throw Error("MUST-NOT-RUN"); } }), { code: "EEXIST" });
+    assert.deepEqual(await readFile(paths[selected]), original);
+    for (const [name, path] of Object.entries(paths)) if (name !== selected) await assert.rejects(lstat(path), { code: "ENOENT" });
+  }
+  assert.equal(calls, 0);
+});
+
+test("capture evidence refuses a public or linked parent directory before invoking the command", async () => {
+  const f = await fixture(); let calls = 0;
+  const publicParent = join(f.parent, "public"); await mkdir(publicParent, { mode: 0o755 }); await chmod(publicParent, 0o755);
+  const linkedParent = join(f.parent, "linked"); await symlink(f.parent, linkedParent);
+  for (const parent of [publicParent, linkedParent]) {
+    await assert.rejects(captureMonthlyForExport({ checkpointDirectory: f.directory, completionPath: join(parent, "completion.json"),
+      environment: captureEnvironment, run: async () => { calls++; throw Error("MUST-NOT-RUN"); } }), /export_directory_not_private/);
+  }
+  assert.equal(calls, 0);
+});
+
+test("changed reserved file or directory identity fails closed without writing a replacement", async () => {
+  for (const change of ["file", "directory"]) {
+    const f = await fixture(); const completionPath = join(f.parent, "identity.json"), paths = diagnosticPaths(completionPath);
+    const replacement = Buffer.from("FOREIGN-REPLACEMENT-FIXTURE"); let calls = 0;
+    const run = async () => {
+      calls++;
+      if (change === "file") {
+        await rename(paths.stderr, paths.stderr + ".original");
+        await writeFile(paths.stderr, replacement, { flag: "wx", mode: 0o600 });
+      } else {
+        await rename(f.parent, f.parent + ".original"); await mkdir(f.parent, { mode: 0o700 });
+        await writeFile(paths.stderr, replacement, { flag: "wx", mode: 0o600 });
+      }
+      throw Object.assign(new Error("DO-NOT-LEAK"), { code: 23, stdout: "PRIVATE-STDOUT", stderr: "PRIVATE-STDERR" });
+    };
+    await assert.rejects(captureMonthlyForExport({ checkpointDirectory: f.directory, completionPath,
+      environment: captureEnvironment, run }), error => error.message === "export_capture_diagnostic_unavailable" && error.nativeExitCode === 23);
+    assert.deepEqual(await readFile(paths.stderr), replacement); assert.equal(calls, 1);
+    await assert.rejects(readFile(completionPath), { code: "ENOENT" });
+    const originalIntent = change === "file" ? paths.intent : join(f.parent + ".original", "identity.json.intent");
+    assert.equal(JSON.parse(await readFile(originalIntent)).schema, "yenhubs-monthly-capture-intent-v1");
+  }
+});
+
+test("diagnostic write failure retains the claimed attempt, does not leak the disk error and cannot retry", async t => {
+  const f = await fixture();
+  const handle = await open(join(f.parent, "prototype-fixture"), "wx", 0o600);
+  const prototype = Object.getPrototypeOf(handle), originalWrite = prototype.writeFile; await handle.close();
+  t.mock.method(prototype, "writeFile", function (bytes, ...args) {
+    if (Buffer.isBuffer(bytes) && bytes.toString().startsWith('{"schema":"yenhubs-monthly-capture-diagnostic-v1"')) {
+      throw new Error("DO-NOT-LEAK-DISK-DETAIL");
+    }
+    return originalWrite.call(this, bytes, ...args);
+  });
+  for (const code of [23, 0]) {
+    const completionPath = join(f.parent, `disk-failure-${code}.json`); let calls = 0;
+    const stdout = code ? "PRIVATE-OUT" : `Native monthly pair published: ${f.directory} (writers resumed; export and isolated recovery NOT yet accepted)\n`;
+    const args = { checkpointDirectory: f.directory, completionPath, environment: captureEnvironment,
+      run: async () => {
+        calls++;
+        if (code) throw Object.assign(new Error("PRIVATE-ERROR"), { code, stdout, stderr: "PRIVATE-ERR" });
+        return { stdout, stderr: "PRIVATE-ERR" };
+      } };
+    await assert.rejects(captureMonthlyForExport(args), error => {
+      assert.equal(error.message, "export_capture_diagnostic_unavailable"); assert.equal(error.nativeExitCode, code);
+      assert.equal(error.cause, undefined); assert.doesNotMatch(error.stack + JSON.stringify(error), /PRIVATE|DO-NOT-LEAK/); return true;
+    });
+    assert.equal((await readFile(diagnosticPaths(completionPath).stdout)).toString(), stdout);
+    assert.equal((await readFile(diagnosticPaths(completionPath).stderr)).toString(), "PRIVATE-ERR");
+    assert.equal((await readFile(diagnosticPaths(completionPath).diagnostic)).length, 0);
+    await assert.rejects(readFile(completionPath), { code: "ENOENT" });
+    await assert.rejects(captureMonthlyForExport(args), { code: "EEXIST" }); assert.equal(calls, 1);
   }
 });
 test("legacy, conflicting or missing monthly selectors stop before intent and native execution", async () => {

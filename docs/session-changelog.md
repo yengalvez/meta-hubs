@@ -1,5 +1,24 @@
 # Session Changelog
 
+## 2026-10-12 · Preserve the original failed snapshot-capture diagnosis privately
+
+The exact monthly gate on bde838c returned native 0, but subsequent real capture
+88706 returned original capture exit 1. Its native journal stops after database
+create-intent; one DB snapshot exists, with no media pair or export. Read-only
+reconciliation confirmed 12/12 Deployments and five writers Ready, free lock/Lease
+and unchanged source UIDs. The wrapper discarded the original stdout/stderr, so
+the historical cause cannot be distinguished from a guard revocation or a
+different worker/journal failure.
+
+Preserve that missing diagnostic in exclusive private 0600 descriptors alongside
+the attempt, with bound paths, times, lengths/hashes and known native exit/signal.
+Do not expose private content through errors, replace the first failure with a
+success marker, retry, or accept a partial. Reserve evidence before launching;
+failed persistence leaves the attempt ambiguous. Capture guards and deadlines
+are unchanged. Local export tests 33/33 and runtime integration 28/28 returned 0;
+native fictitious children exercise exit 23 and SIGTERM. This fixes observability,
+not the unknown historical interruption; it authorizes no real retry or calendar.
+
 ## 2026-10-12 · Match the native doctl snapshot output contract
 
 The first8a1623f monthly verification passed on its exact code, but real capture
