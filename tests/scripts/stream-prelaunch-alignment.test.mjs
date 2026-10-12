@@ -20,6 +20,7 @@ const functions = [
   "stream_record_diagnostic",
   "require_reaped_stream_guard_freshness",
   "observe_inactive_stream_guard_progress",
+  "observe_supervised_stream_child_completion",
   "observe_running_stream_guard_progress",
   "invoke_complete_stream_guard_audit",
   "refresh_supervised_stream_guards_for_launch",
@@ -37,6 +38,7 @@ IFS=, read -r -a counter_periods <<<"@{6:-1000,1000,1000}"
 IFS=, read -r -a audit_costs <<<"@{7:-$full_cost,$full_cost,$full_cost}"
 clock=0 full_audits=0 continuity_checks=0 lease_reads=0 identity_checks=0
 stream_is_gated=1 stream_child_reaped=0 stream_diagnostic_stage=refresh stream_diagnostic_detail=
+stream_child_completion_observed=0
 post_stream_guard_deadline_failed=0
 supervised_stream_guard_failure_kind=
 refresh_deadline_seconds=30 guard_cancel_reserve_milliseconds=2000
@@ -51,6 +53,7 @@ guard_authority_sha256s=(synthetic synthetic synthetic) guard_authority_kinds=(s
 guard_maximum_stale_seconds=(10 10 10) guard_last_progress=(1 1 1)
 guard_last_progress_milliseconds=(0 0 0) guard_last_observation_milliseconds=(0 0 0)
 recovery_monotonic_milliseconds(){ printf '%s\n' "$clock"; }
+supervised_stream_child_is_running(){ return 0; }
 recovery_stream_guard_process_is_healthy(){
   if [[ "$#" == 8 ]]; then
     full_audits=$((full_audits+1))

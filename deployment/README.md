@@ -2377,6 +2377,13 @@ Failure diagnostics distinguish a clock-read failure from an exhausted reserve,
 and report only the guard index and remaining/required milliseconds, never paths
 or marker contents. Local regressions cover serial-cost reproduction, frozen
 publishers and exact native abort/reap; these are not real snapshot acceptance.
+Between running observations, also check whether the native child already
+finished. Require the unchanged two-second reserve before AND after that job
+query, including when it remains running/stopped. If complete, stop observing
+without crediting any counter and hand off immediately to the original native
+wait and every final audit. Disappearance alone is never success; a counter
+regression already observed cannot be hidden by this handoff. There is no late
+completion exemption, new grace period or changed cleanup/signal authority.
 The sustained-capability regression uses three real publishers for 20 seconds
 at production timing, then verifies a frozen publisher aborts and reaps the
 stream within the original ten-second deadline.

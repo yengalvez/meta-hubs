@@ -1,5 +1,23 @@
 # Session Changelog
 
+## 2026-10-12 · Hand completed snapshot children to their original native wait early
+
+The first local fix f58e7e4 passed its focused cases but failed the simulated
+monthly coordinator. Timing-only diagnosis observed a finished job during serial
+checks, not its native result. Stop that extra observer work as soon as completion
+is observed, but require the original 2s reserve both before and after each job
+query, even for running/stopped children. Credit no counter at handoff and reject
+an already observed regression. Original wait, cleanup and all post-audits remain
+unchanged; no job-table disappearance is accepted as success.
+
+A late-reserve exemption was independently rejected and reproduced with a real
+TERM-ignoring descendant. It is preserved ONLY in diagnostic branch40947e3, not
+integrated. No new guardian or signal authority is introduced. The first focused
+suite on early handoff returned original0,183/183; the final review added budget
+checks after a pending-job query and regression-at-completion negatives. Exact
+monthly acceptance belongs in the canonical plan. This is local-only work: no
+permanent operator update, real capture, calendar or service mutation.
+
 ## 2026-10-12 · Keep healthy snapshot guard observations within their causal budget
 
 The owner authorized a local supervisor repair only: no new real capture,

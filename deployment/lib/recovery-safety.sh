@@ -1726,6 +1726,7 @@ recovery_kubectl_stream_supervised() {
     local supervised_stream_guard_remaining_index=""
     local supervised_stream_guard_failure_kind=""
     local stream_is_gated=0 stream_child_reaped=0
+    local stream_child_completion_observed=0
     local post_stream_guard_deadline_failed=0
     local guard_cancel_reserve_milliseconds=2000
     local guard_audit_pid="" guard_audit_read_fd="" guard_audit_control_fd=""
@@ -2555,7 +2556,8 @@ while True:
       # This is observation, not realignment: an exhausted inherited reserve
       # is fatal BEFORE a new counter can be credited. No waiting or rearming.
       for sample_index in "${!guard_pids[@]}"; do
-        supervised_stream_guard_has_cancellation_reserve || return 1
+        observe_supervised_stream_child_completion || return 1
+        [[ "$stream_child_completion_observed" == 0 ]] || return 0
         sample_previous_observation="${guard_last_observation_milliseconds[$sample_index]}"
         sample_time="$(recovery_monotonic_milliseconds)" || {
           stream_record_diagnostic "guard-clock:$sample_index"
@@ -2567,11 +2569,13 @@ while True:
           stream_record_diagnostic "guard-progress-read:$sample_index"
           return 1
         fi
-        supervised_stream_guard_has_cancellation_reserve || return 1
         if ((sample_progress < guard_last_progress[sample_index])); then
           stream_record_diagnostic "guard-progress-regression:$sample_index"
           return 1
-        elif ((sample_progress > guard_last_progress[sample_index])); then
+        fi
+        observe_supervised_stream_child_completion || return 1
+        [[ "$stream_child_completion_observed" == 0 ]] || return 0
+        if ((sample_progress > guard_last_progress[sample_index])); then
           guard_last_progress[sample_index]="$sample_progress"
           guard_last_progress_milliseconds[sample_index]="$sample_previous_observation"
         fi
@@ -2589,6 +2593,7 @@ while True:
             -n "$stream_pid" && -n "$stream_start_identity" ]]; then
         running_observation=1
         observe_running_stream_guard_progress || return 1
+        [[ "$stream_child_completion_observed" == 0 ]] || return 0
       fi
       # A complete immutable authority/baseline audit accepts each capability
       # before launch. During the stream, the monitor's authority-bound counter
@@ -2628,6 +2633,7 @@ while True:
           # Check the inherited reserve after the costly predicate BEFORE
           # crediting any newer publication; an expired interval is fatal.
           observe_running_stream_guard_progress || return 1
+          [[ "$stream_child_completion_observed" == 0 ]] || return 0
           continue
         fi
         require_reaped_stream_guard_freshness || return 1
@@ -2766,10 +2772,23 @@ while True:
     }
     supervised_stream_child_is_running() {
       local running_pid
+      # Stopped jobs are pending too; they cannot authorize completion wait.
       while IFS= read -r running_pid; do
         [[ "$running_pid" == "$stream_pid" ]] && return 0
-      done < <(jobs -r -p)
+      done < <(jobs -r -p; jobs -s -p)
       return 1
+    }
+    observe_supervised_stream_child_completion() {
+      local child_pending=0
+      # Stop spending the child's reserve on observations after it finishes.
+      # Never waive that reserve, even for a finished job: require it both
+      # before and after checking the native job table. This flag is only a
+      # handoff to the ORIGINAL wait/cleanup/post-audit block, not acceptance.
+      supervised_stream_guard_has_cancellation_reserve || return 1
+      supervised_stream_child_is_running && child_pending=1
+      supervised_stream_guard_has_cancellation_reserve || return 1
+      [[ "$child_pending" == 1 ]] || stream_child_completion_observed=1
+      return 0
     }
     supervised_stream_cleanup() {
       supervised_stream_audit_cleanup
@@ -2944,6 +2963,7 @@ os.execvp(sys.argv[3], sys.argv[3:])
         supervised_stream_cleanup
         return 1
       fi
+      [[ "$stream_child_completion_observed" == 0 ]] || break
       if [[ "$require_lease" == 1 && -z "$lease_authority_guard_index" ]]; then
         if ! supervised_stream_require_lease_within_guard_budget; then
           stream_record_diagnostic "${supervised_stream_lease_failure_detail:-lease-budget}"
@@ -2956,6 +2976,7 @@ os.execvp(sys.argv[3], sys.argv[3:])
           supervised_stream_cleanup
           return 1
         fi
+        [[ "$stream_child_completion_observed" == 0 ]] || break
       fi
       if ! supervised_stream_guard_has_cancellation_reserve; then
         stream_record_diagnostic cancellation-reserve
