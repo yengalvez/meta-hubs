@@ -1,4 +1,4 @@
-/** One monthly attempt: protected capture -> frozen export -> Drive -> guarded rotation. */
+/** One monthly attempt: minimal snapshots -> resume -> frozen export -> Drive. */
 import { lstat, realpath, mkdir, readdir, open } from "node:fs/promises";
 import { resolve, join, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,6 +44,23 @@ export async function runMonthlyLiveVerification(config, {run=runExportNative}={
   requireValue(result.nativeExitCode===0 && typeof result.stdout === "string" &&
     /Summary:\s*0 failure\(s\),\s*0 warning\(s\)/.test(result.stdout), "monthly_runtime_live_not_accepted");
   return {nativeExitCode:result.nativeExitCode,failures:0,warnings:0,stdoutSha256:digest(result.stdout)};
+}
+/** Monthly health is two Kubernetes reads and an HTTP check, not a product audit. */
+export async function runMonthlyServiceHealth(config, { run = runExportNative, request = fetch } = {}) {
+  const kube = ["--context", config.context, "--request-timeout=20s"];
+  const [ns, deployments] = await Promise.all([
+    run("kubectl", [...kube, "get", "namespace", config.namespace, "-o", "json"]),
+    run("kubectl", [...kube, "-n", config.namespace, "get", "deployments", "-o", "json"])
+  ]);
+  const namespace = JSON.parse(ns.stdout), list = JSON.parse(deployments.stdout);
+  requireValue(namespace.metadata?.uid === config.namespaceUid && Array.isArray(list.items) && list.items.length > 0 &&
+    list.items.every(item => Number(item.status?.readyReplicas || 0) === Number(item.spec?.replicas || 0) &&
+      item.status?.observedGeneration >= item.metadata.generation), "monthly_runtime_service_not_ready");
+  const response = await request("https://meta-hubs.org/VJopCY3", { signal: AbortSignal.timeout(10000) });
+  await response.body?.cancel();
+  requireValue(response.status === 200, "monthly_runtime_room_unavailable");
+  return { state: "monthly-service-ready", nativeExitCode: 0, failures: 0, warnings: 0,
+    stdoutSha256: digest(JSON.stringify({ namespaceUid: config.namespaceUid, deployments: list.items.length, status: response.status })) };
 }
 async function privateDirectory(path) {
   requireValue(isAbsolute(path) && resolve(path) === path && await realpath(path) === path, "monthly_runtime_directory_not_canonical");
@@ -93,7 +110,7 @@ function nativeOperations() {
         "--context",config.context,"--instance",config.instanceId,"--namespace",config.namespace,"--region",config.region,"--output",path]);
       return readPrivateSource(path,1024*1024);
     },
-    live:config=>runMonthlyLiveVerification(config)
+    live:config=>runMonthlyServiceHealth(config)
   };
 }
 async function readReadiness(config, candidate, mode) {
@@ -210,12 +227,12 @@ export async function runMonthlyBackup({configPath,mode="validation",operations=
       Object.values(source.volumes).every(v=>Number.isSafeInteger(v.sizeGiB) && v.sizeGiB>0) &&
       Object.values(source.volumes).reduce((sum,v)=>sum+v.sizeGiB,0)<=config.maximumSourceGiB,
       "monthly_runtime_source_identity_or_budget_changed");
-    // Public monthly selectors cannot select a streaming backup. The fixed
-    // entrypoint privately maps the shared coordinator's inventory schema.
+    // The fixed monthly entrypoint invokes only the minimal snapshot executor.
     const environment={...process.env,CHECKPOINT_BACKEND:"native-monthly",CHECKPOINT_FORMAT:"native-monthly-v1",
       ALLOW_CHECKPOINT_DOWNTIME:"1",MONTHLY_INSTANCE_ID:config.instanceId,MONTHLY_REGION:config.region,
       MONTHLY_JOURNAL_ROOT:join(config.stateRoot,"native-journals"),EXPECTED_KUBE_CONTEXT:config.context,
       NAMESPACE:config.namespace,EXPECTED_NAMESPACE_UID:config.namespaceUid,EXPECTED_RET_PVC_UID:config.retPvcUid,
+      EXPECTED_DB_PVC_UID:config.databasePvcUid,
       VALUES_FILE:config.paths.values,HCCE_MANIFEST_PATH:config.paths.manifest,PROCESS_LOCAL_CUTOVER_KEY_PATH:config.paths.cutoverKey};
     const checkpointDirectory=join(attempt,"checkpoint"),captureCompletionPath=join(attempt,"capture-completion.json");
     const captured=await phase("capture",()=>operations.capture({checkpointDirectory,completionPath:captureCompletionPath,environment}));
@@ -229,6 +246,7 @@ export async function runMonthlyBackup({configPath,mode="validation",operations=
       ["database","media"].every(role=>["pvcUid","pvUid","volumeId","sizeGiB"].every(key=>
         point.source.volumes[role][key]===source.volumes[role][key])),
       "monthly_runtime_capture_identity_changed");
+    const after=await phase("live-after",()=>operations.live(config));requireLive(after);
     const exported=await phase("export",()=>operations.export({checkpointDirectory,captureCompletionPath,
       outputDirectory:join(attempt,"export"),journalDirectory:join(attempt,"export-journal"),recipient:readiness.recipient,
       maximumTemporaryUSD:config.budgets.temporaryUSD}));
@@ -240,7 +258,6 @@ export async function runMonthlyBackup({configPath,mode="validation",operations=
       try{requireValue(digest(bytes)===readiness.pinned[name],"monthly_runtime_input_changed");}finally{bytes.fill(0);}
     }
     await writeJson(join(config.stateRoot,"points",month+".json"),retained);
-    const after=await phase("live-after",()=>operations.live(config));requireLive(after);
     if(mode==="scheduled") {
       const rotation=await phase("rotation",()=>operations.rotate({instanceId:config.instanceId,month,operationId:point.pair.operationId,
         points:[...previous,retained],rootFolderId:readiness.driveRuntime.folderId,drive,journalDirectory:join(attempt,"rotation-journal")}));

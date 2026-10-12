@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { nativeMonthlyArtifacts, writeMonthlyRuntimeArchive } from "../../deployment/monthly-native-bundle.mjs";
+import { nativeMonthlyArtifacts, minimalMonthlyArtifacts, writeMonthlyRuntimeArchive } from "../../deployment/monthly-native-bundle.mjs";
 import { inspectPublishedMonthlyPoint, captureMonthlyForExport, buildSnapshotExportPlan,
   requireClonePVCBinding, exportMonthlySnapshotPoint } from "../../deployment/monthly-snapshot-export.mjs";
 import { nativeSnapshotExportProvider, runExportNative } from "../../deployment/monthly-snapshot-export-provider.mjs";
@@ -47,7 +47,7 @@ async function readCaptureDiagnostics(completion) {
   }
   return { intent, diagnostic, stdout, stderr };
 }
-async function fixture() {
+async function fixture({ minimal = false } = {}) {
   const parent = await realpath(await mkdtemp(join(tmpdir(), "yenhubs-export-fixture-")));
   await chmod(parent, 0o700);
   const directory = join(parent, "capture"); await mkdir(directory, { mode: 0o700 });
@@ -73,6 +73,8 @@ async function fixture() {
     ret_pvc_uid: source.volumes.media.pvcUid, stamp: "20261006-120000", writer_quiescence: {
       required: true, started_at_utc: "2026-10-06T12:00:00Z", completed_at_utc: "2026-10-06T12:00:04Z" } };
   const images = { deployments: [{ name: "pgsql", containers: [{ name: "pgsql", image }] }] };
+  if (minimal) Object.assign(metadata,{schema_version:5,runtime_generation:"minimal-snapshot-v1",
+    recovery:{servicesResumed:true,deferredRecoveryDisarmed:true}});
   const content = { "monthly-source.json": source, "native-pair.json": pair, "database-contract.json": contract,
     "checkpoint-metadata.json": metadata, "deployment-images.json": images };
   const paths = ["values", "manifest", "key"].map(name => join(parent, name));
@@ -80,7 +82,7 @@ async function fixture() {
   await writeMonthlyRuntimeArchive({ output: join(directory, "runtime.tar.gz"), valuesPath: paths[0],
     manifestPath: paths[1], keyPath: paths[2], journalRoot: parent });
   const sums = [];
-  for (const name of nativeMonthlyArtifacts) {
+  for (const name of minimal ? minimalMonthlyArtifacts : nativeMonthlyArtifacts) {
     if (name !== "runtime.tar.gz") await writeFile(join(directory, name), JSON.stringify(content[name] ?? {}), { mode: 0o600 });
     sums.push(`${sha(await readFile(join(directory, name)))}  ${name}`);
   }
@@ -580,8 +582,8 @@ test("a failed cleanup is not automatically retried or labelled complete", async
     outputDirectory: join(f.parent, "result"), journalDirectory: join(f.parent, "journal"), recipient, provider }), /resources_still_present/);
   assert.equal(cleanupCalls, 1); await assert.rejects(readFile(join(f.parent, "result", "export-result.json")), { code: "ENOENT" });
 });
-test("snapshot producer seals a complete native evidence archive and never self-accepts restore", async () => {
-  const f = await fixture(), cluster = mockCluster(f), provider = nativeSnapshotExportProvider(cluster);
+for (const minimal of [false,true]) test(`snapshot producer seals the ${minimal ? "compact" : "previous"} evidence archive and never self-accepts restore`, async () => {
+  const f = await fixture({minimal}), cluster = mockCluster(f), provider = nativeSnapshotExportProvider(cluster);
   const identityPath = join(f.parent, "fixture-age.key");
   execFileSync("age-keygen", ["-o", identityPath], { stdio: "pipe" }); await chmod(identityPath, 0o600);
   const recipient = execFileSync("age-keygen", ["-y", identityPath], { encoding: "utf8" }).trim();
@@ -593,7 +595,7 @@ test("snapshot producer seals a complete native evidence archive and never self-
   assert.equal(manifest.binding.nativeManifestSha256, f.point.manifestSha256);
   assert.deepEqual(await readFile(join(opened, "database.dump")), cluster.volumeFiles["database.dump"]);
   const list = execFileSync("tar", ["-tzf", join(opened, "runtime.tar.gz")], { encoding: "utf8" }).trim().split("\n").sort();
-  assert.deepEqual(list, [...nativeMonthlyArtifacts, "SHA256SUMS"].sort());
+  assert.deepEqual(list, [...(minimal ? minimalMonthlyArtifacts : nativeMonthlyArtifacts), "SHA256SUMS"].sort());
   await assert.rejects(exportMonthlySnapshotPoint({ checkpointDirectory: f.directory, captureCompletionPath: f.completionPath,
     outputDirectory: join(f.parent, "result"), journalDirectory: join(f.parent, "journal"), recipient, provider }), { code: "EEXIST" });
 });

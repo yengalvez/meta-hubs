@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
-import { nativeMonthlyArtifacts, validateMonthlyNativeManifest } from "./monthly-native-bundle.mjs";
+import { monthlyArtifacts, validateMonthlyNativeManifest } from "./monthly-native-bundle.mjs";
 import { readPrivateBytes, readPrivateSource } from "./monthly-snapshot-worker.mjs";
 import { claimPairJournal } from "./monthly-snapshot-pair.mjs";
 import { sealPortablePoint } from "./monthly-portable-point.mjs";
@@ -17,7 +17,6 @@ const sha = bytes => createHash("sha256").update(bytes).digest("hex");
 const requireValue = (value, reason) => { if (!value) throw new Error(reason); };
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const bundleNames = [...nativeMonthlyArtifacts, "SHA256SUMS"].sort();
 const nativeSignals = new Set(Object.keys(osConstants.signals));
 const captureOutputLimit = 1024 * 1024;
 const canonical = value => JSON.stringify(value, (_, entry) => entry && !Array.isArray(entry) &&
@@ -188,11 +187,12 @@ export async function captureMonthlyForExport({ checkpointDirectory, completionP
 
 export async function inspectPublishedMonthlyPoint(path, completionPath = null) {
   const directory = await privateDirectory(path);
-  requireValue(JSON.stringify((await readdir(directory)).sort()) === JSON.stringify(bundleNames),
-    "export_native_point_incomplete_or_extra");
   const [source, pair, contract, metadata, images] = await Promise.all([
     "monthly-source.json", "native-pair.json", "database-contract.json", "checkpoint-metadata.json", "deployment-images.json"
   ].map(name => readPrivateSource(join(directory, name), 16 * 1024 * 1024)));
+  const artifacts = [...monthlyArtifacts(metadata), "SHA256SUMS"].sort();
+  requireValue(JSON.stringify((await readdir(directory)).sort()) === JSON.stringify(artifacts),
+    "export_native_point_incomplete_or_extra");
   await validateMonthlyNativeManifest(directory, metadata.stamp);
   const sums = await readPrivateBytes(join(directory, "SHA256SUMS"), 65536);
   const manifestSha256 = sha(sums); sums.fill(0);
@@ -204,7 +204,7 @@ export async function inspectPublishedMonthlyPoint(path, completionPath = null) 
       ["instanceId", "month", "operationId"].every(key => receipt[key] === pair[key]) &&
       /^[a-f0-9]{64}$/.test(receipt.stdoutSha256 ?? ""), "export_original_capture_exit_unproven");
   }
-  return { directory, source, pair, contract, metadata, images, manifestSha256 };
+  return { directory, source, pair, contract, metadata, images, manifestSha256, artifacts };
 }
 
 /** Generated TEMPORARY objects only. Official DO import route: retained content ->
@@ -327,7 +327,7 @@ export async function exportMonthlySnapshotPoint({ checkpointDirectory, captureC
     // Preserve ALL native evidence plus its fixed inner runtime/configuration archive.
     const runtime = join(plaintext, "runtime.tar.gz");
     const file = await open(runtime, "wx", 0o600);
-    try { await provider.archiveNativeBundle(point.directory, bundleNames, file); await file.sync(); }
+    try { await provider.archiveNativeBundle(point.directory, point.artifacts, file); await file.sync(); }
     finally { await file.close(); }
     requireValue((await inspectPublishedMonthlyPoint(point.directory, captureCompletionPath)).manifestSha256 ===
       point.manifestSha256, "export_capture_bytes_changed");

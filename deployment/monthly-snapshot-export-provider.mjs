@@ -1,9 +1,8 @@
 /** Native CSI export adapter. No apply, source-PVC mount, live DB or credential copy. */
 import { spawn } from "node:child_process";
-import { open } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { nativeSnapshotProvider, validateNativeSnapshot } from "./monthly-snapshot-pair.mjs";
 import { buildSnapshotExportPlan, requireClonePVCBinding } from "./monthly-snapshot-export.mjs";
 
@@ -213,8 +212,7 @@ export function nativeSnapshotExportProvider({ run = runExportNative, snapshots 
     },
     async exportFiles(plan, point, directory, events) {
       bound(plan); requireValue(prepared, "export_clones_not_prepared");
-      const query = (await run("bash", ["-c", 'source "$1"; recovery_database_contract_sql', "export-contract",
-        fileURLToPath(new URL("./lib/recovery-safety.sh", import.meta.url))])).stdout;
+      const query = await readFile(new URL("./monthly-database-contract.sql", import.meta.url), "utf8");
       requireValue(query.length > 100 && query.length < 65536, "export_contract_query_unavailable");
       const beforeContract = await contract(plan, query);
       requireValue(canonical(beforeContract) === canonical(point.contract), "export_clone_database_contract_changed");

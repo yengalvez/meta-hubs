@@ -1,5 +1,20 @@
 # Session Changelog
 
+## 2026-10-12 · Implement the minimal monthly snapshot route locally
+
+Replace the monthly entrypoint's shared coordinator with direct pause, native
+pair and resume. Save state under the operation mutex; one finite Kubernetes Job
+requests recovery if the executor disappears. Remove guardian/streaming from
+the selected route and keep original replica counts, exact disks, one POST per
+disk, incomplete-point rejection and scoped cleanup. Reuse the DO adapter,
+encrypted clone export/Drive and ledger; check the room before transport.
+Add compact native bundles/readers and a small local verification selection.
+Local tests use fictitious providers only. Independent directed review corrected
+recovery-after-error, expired Lease, baseline ordering and health ordering;
+native regression also covers a concurrent renewal. No operator install,
+production pause, real snapshot, deploy, calendar or Goal change occurred.
+Exact local proof and limits are indexed in the canonical Plan_activo.md.
+
 ## 2026-10-12 · Make local lineage proof diagnostics durable and boundary-fresh
 
 Exact monthly gate98672 passed all489 component tests natively but rejected

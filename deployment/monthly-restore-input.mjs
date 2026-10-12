@@ -7,7 +7,7 @@ import { gunzipSync, createGunzip } from "node:zlib";
 import { portableDriveNames } from "./monthly-drive-store.mjs";
 import { verifyRetentionDriveMetadata } from "./monthly-retention-executor.mjs";
 import { inspectPublishedMonthlyPoint } from "./monthly-snapshot-export.mjs";
-import { nativeMonthlyArtifacts } from "./monthly-native-bundle.mjs";
+import { nativeMonthlyArtifacts, minimalMonthlyArtifacts, monthlyArtifacts } from "./monthly-native-bundle.mjs";
 import { readPrivateBytes, readPrivateSource } from "./monthly-snapshot-worker.mjs";
 
 const requireValue=(value,reason)=>{if(!value)throw new Error(reason);};
@@ -99,13 +99,16 @@ export function closedMonthlyRuntimeEntries(compressed) {
       if(header.every(value=>value===0)) {requireValue(bytes.length-position>=1024 && bytes.subarray(position).every(value=>value===0),
         "monthly_restore_tar_trailing_bytes");ended=true;break;}
       const entry=tarHeader(header);position+=512;
-      requireValue(entry.type==="0" && [...nativeMonthlyArtifacts,"SHA256SUMS"].includes(entry.name) &&
+      requireValue(entry.type==="0" && [...nativeMonthlyArtifacts,...minimalMonthlyArtifacts,"SHA256SUMS"].includes(entry.name) &&
         !entries.has(entry.name) && entry.size>0 && entry.size<=50*1024*1024 && position+entry.size<=bytes.length,
         "monthly_restore_runtime_set_invalid");
       entries.set(entry.name,Buffer.from(bytes.subarray(position,position+entry.size)));
       position+=Math.ceil(entry.size/512)*512;
     }
-    requireValue(ended && [...entries.keys()].sort().join()===[...nativeMonthlyArtifacts,"SHA256SUMS"].sort().join(),
+    let metadata;
+    try { metadata = JSON.parse(entries.get("checkpoint-metadata.json").toString("utf8")); }
+    catch { throw new Error("monthly_restore_runtime_set_invalid"); }
+    requireValue(ended && [...entries.keys()].sort().join()===[...monthlyArtifacts(metadata),"SHA256SUMS"].sort().join(),
       "monthly_restore_runtime_set_invalid");
     return entries;
   }catch(error){for(const value of entries.values())value.fill(0);throw error;}

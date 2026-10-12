@@ -11,6 +11,7 @@ su sustituto para el trabajo nuevo es `PLAN_ACTUAL.md` (creador integrado).
 
 | Ruta | Motivo | Sustituto activo |
 | --- | --- | --- |
+| `OLD/docs/monthly-backup-format-protected-20261012.md` | contrato del coordinador mensual con supervisor continuo, sustituido por decisión del dueño | `deployment/monthly-backup-format.md` |
 | `OLD/docs/hubs-ce-digitalocean-deploy-guide.md` | guia inicial sustituida | `deployment/README.md` |
 | `OLD/docs/project_maintenance.md` | mezclaba mantenimiento e historial | `AGENTS.md`, `docs/development-workflow.md` |
 | `OLD/docs/reactivation-audit-2026-07.md` | plan/evidencia de reactivacion ya ejecutada | `docs/audit-2026-07.md` |

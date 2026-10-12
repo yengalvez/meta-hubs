@@ -19,9 +19,6 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# "legacy" is only the shared coordinator's inventory/metadata schema selector.
-# The fixed backend below chooses native-pair.json instead of SQL/media streams.
-# Keep its Lease, quiescence monitors, abort recovery, resume and publication
-# gates in the original process; an error exits here without retry or fallback.
-exec env CHECKPOINT_BACKEND=native-monthly CHECKPOINT_FORMAT=legacy \
-  "$SCRIPT_DIR/create-checkpoint.sh" "$1"
+# Direct monthly route. It never invokes the historical coordinator/guardian.
+exec env CHECKPOINT_BACKEND=native-monthly CHECKPOINT_FORMAT=native-monthly-v1 \
+  node "$SCRIPT_DIR/monthly-minimal-snapshot.mjs" "$1"

@@ -123,6 +123,13 @@ merely because the root commit changed. Relevant shared-guard changes require
 directed regression coverage; product/deployment changes keep their separate
 product gate. A simulation is not a real backup or restore.
 
+The current minimum route invokes `monthly-minimal-snapshot.mjs` directly:
+ordered writer/PGSQL stop, two native snapshots and restore of saved counts.
+One finite Kubernetes resume Job covers executor loss; there is no continuous
+PGSQL/counter guardian. Historical shared-coordinator modules are not a fallback.
+The operator's small dependency scope, not legacy supervisor suites, defines
+its local acceptance. Service health must precede export and Drive.
+
 Keep coordinated DB/media consistency, guarded resume, identity, Lease, hashes,
 budgets, key custody and duplicate-attempt protection. Enable the calendar only
 after a real pair, encrypted Drive readback, both isolated restore routes and

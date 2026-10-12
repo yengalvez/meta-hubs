@@ -43,15 +43,16 @@ async function fixture() {
 
 test("the closed monthly selection contains native integration and no general/H5 command", () => {
   assert.deepEqual(monthlyVerificationScope.checks.map(check => check.id),
-    ["monthly-components", "monthly-provider-dispatch", "monthly-native-coordinator"]);
+    ["monthly-components", "monthly-provider-cli", "monthly-minimal-coordinator"]);
   const tests = monthlyVerificationScope.checks.flatMap(check => check.tests);
   assert.ok(tests.includes("tests/scripts/monthly-snapshot-entrypoint.test.mjs"));
-  assert.ok(tests.includes("tests/scripts/monthly-native-routing.test.mjs"));
-  assert.ok(tests.includes("tests/recovery/monthly-native-coordinator.test.mjs"));
+  assert.ok(tests.includes("tests/scripts/monthly-minimal-snapshot.test.mjs"));
+  assert.ok(tests.includes("tests/recovery/monthly-minimal-coordinator.test.mjs"));
   assert.equal(new Set(tests).size, tests.length);
-  assert.ok(monthlyVerificationInputs.includes("deployment/lib/recovery-safety.sh"));
-  assert.ok(monthlyVerificationInputs.includes("deployment/backup-retdb.sh"));
-  assert.ok(monthlyVerificationInputs.includes("tests/recovery/test-recovery-safety.sh"));
+  assert.ok(monthlyVerificationInputs.includes("deployment/monthly-minimal-kubernetes.mjs"));
+  assert.ok(monthlyVerificationInputs.includes("deployment/monthly-database-contract.sql"));
+  assert.ok(!monthlyVerificationInputs.includes("deployment/backup-retdb.sh"));
+  assert.ok(!monthlyVerificationInputs.includes("tests/recovery/test-recovery-safety.sh"));
   for (const check of monthlyVerificationScope.checks) {
     assert.doesNotMatch(monthlyVerificationArguments(check).join(" "), /verify-project|test-recovery-safety|h5-|--full/);
   }
@@ -194,7 +195,7 @@ test("native zero cannot hide a skipped suite, filtered command or missing coord
   const filtered = makeReceipt(check); filtered.arguments.push("--test-name-pattern=irrelevant");
   assert.throws(() => validateMonthlyCheckReceipt(filtered, check, fixtureAttemptSha256), /native_check_failed/);
   const coordinator = monthlyVerificationScope.checks.at(-1), receipt = makeReceipt(coordinator);
-  receipt.result.stdout = receipt.result.stdout.replace(/^# \{.+SIMULATED_FAILURE_RECOVERED.+\}\n/m, "");
+  receipt.result.stdout = receipt.result.stdout.replace(/^# \{.+SIMULATED_MINIMAL_FAILURE_RECOVERED.+\}\n/m, "");
   assert.throws(() => validateMonthlyCheckReceipt(receipt, coordinator, fixtureAttemptSha256), /coordinator_unproven/);
 });
 

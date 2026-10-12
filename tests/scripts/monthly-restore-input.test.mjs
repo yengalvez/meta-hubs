@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmodSync } from "node:fs";
 import { extractMonthlyMediaArchive,closedMonthlyRuntimeEntries,hashMonthlyRestoreFile } from "../../deployment/monthly-restore-input.mjs";
-import { nativeMonthlyArtifacts } from "../../deployment/monthly-native-bundle.mjs";
+import { nativeMonthlyArtifacts, minimalMonthlyArtifacts } from "../../deployment/monthly-native-bundle.mjs";
 
 const sha=bytes=>createHash("sha256").update(bytes).digest("hex");
 async function root(){return realpath(await mkdtemp(join(tmpdir(),"yenhubs-monthly-restore-fixture-")));}
@@ -73,11 +73,19 @@ test("a missing metadata peer or a foreign shard fails the restore",async()=>{
 });
 test("closed runtime parser accepts exactly fourteen artifacts and their checksum file",async()=>{
   const directory=await root();for(const name of [...nativeMonthlyArtifacts,"SHA256SUMS"])
-    await writeFile(join(directory,name),"ONLY FIXTURE: "+name,{mode:0o600});
+    await writeFile(join(directory,name),name === "checkpoint-metadata.json" ? JSON.stringify({runtime_generation:"durable-v2"}) : "ONLY FIXTURE: "+name,{mode:0o600});
   const bytes=execFileSync("tar",["--format=ustar","-czf","-","-C",directory,...nativeMonthlyArtifacts,"SHA256SUMS"],{stdio:"pipe"});
   const entries=closedMonthlyRuntimeEntries(bytes);assert.equal(entries.size,15);
-  for(const [name,value] of entries){assert.equal(value.toString(),"ONLY FIXTURE: "+name);value.fill(0);}
+  for(const [name,value] of entries){assert.equal(value.toString(),name === "checkpoint-metadata.json" ? JSON.stringify({runtime_generation:"durable-v2"}) : "ONLY FIXTURE: "+name);value.fill(0);}
   const incomplete=execFileSync("tar",["--format=ustar","-czf","-","-C",directory,...nativeMonthlyArtifacts],{stdio:"pipe"});
+  assert.throws(()=>closedMonthlyRuntimeEntries(incomplete),/runtime_set_invalid/);
+});
+test("closed runtime accepts the compact seven-file format and refuses an incomplete compact point",async()=>{
+  const directory=await root();for(const name of [...minimalMonthlyArtifacts,"SHA256SUMS"])
+    await writeFile(join(directory,name),name === "checkpoint-metadata.json" ? JSON.stringify({runtime_generation:"minimal-snapshot-v1"}) : "ONLY FIXTURE: "+name,{mode:0o600});
+  const bytes=execFileSync("tar",["--format=ustar","-czf","-","-C",directory,...minimalMonthlyArtifacts,"SHA256SUMS"],{stdio:"pipe"});
+  const entries=closedMonthlyRuntimeEntries(bytes);assert.equal(entries.size,8);for(const value of entries.values())value.fill(0);
+  const incomplete=execFileSync("tar",["--format=ustar","-czf","-","-C",directory,...minimalMonthlyArtifacts],{stdio:"pipe"});
   assert.throws(()=>closedMonthlyRuntimeEntries(incomplete),/runtime_set_invalid/);
 });
 test("closed runtime rejects duplicate, traversal, extended and symlink headers",async()=>{

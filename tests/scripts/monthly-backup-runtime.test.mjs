@@ -86,7 +86,7 @@ async function fixture() {
 }
 test("validation joins every component once, measures phases and does not rotate or claim real restore",async()=>{
   const f=await fixture(),r=await f.run();assert.equal(r.state,"captured-exported-not-restore-accepted");assert.equal(r.nativeExitCode,0);
-  assert.deepEqual(f.calls,["code","drive","live","source","capture","inspect","export","publish","live"]);
+  assert.deepEqual(f.calls,["code","drive","live","source","capture","inspect","live","export","publish"]);
   assert.equal((await readdir(join(f.root,"points"))).length,1);assert.deepEqual(await readdir(join(f.root,"rotations")),[]);
   assert.ok(Object.keys(r.timings).includes("capture"));assert.ok(r.timings.totalMilliseconds>=0);
   const completed=JSON.parse(await readFile(join(f.root,"attempts",month,"completed.json")));assert.equal(completed.nativeExitCode,0);
@@ -113,6 +113,12 @@ test("monthly runtime format passes only the fixed monthly entrypoint selection 
   const result=await f.run();
   assert.equal(result.nativeExitCode,0);
   assert.equal(f.calls.filter(name=>name==="capture").length,1);
+});
+test("service failure after resume stops before clone export or Drive",async()=>{
+  const f=await fixture(), live=f.operations.live;let count=0;
+  f.operations.live=async()=>{const result=await live();return ++count===2?{...result,nativeExitCode:1}:result;};
+  await assert.rejects(f.run(),/monthly_runtime_live_not_accepted/);
+  assert.ok(f.calls.includes("capture"));assert.equal(f.calls.includes("export"),false);assert.equal(f.calls.includes("publish"),false);
 });
 test("enabled scheduled mode requires both restore proofs before any provider effect",async()=>{
   const f=await fixture();f.config.schedule.enabled=true;await f.json(f.configPath,f.config);

@@ -20,6 +20,14 @@ export const nativeMonthlyArtifacts = Object.freeze([
   "monthly-source.json", "native-pair.json", "runtime.tar.gz"
 ]);
 
+export const minimalMonthlyArtifacts = Object.freeze([
+  "checkpoint-metadata.json", "database-contract.json", "deployment-images.json",
+  "monthly-source.json", "native-pair.json", "runtime.tar.gz", "attempt.jsonl"
+]);
+export function monthlyArtifacts(metadata) {
+  return metadata?.runtime_generation === "minimal-snapshot-v1" ? minimalMonthlyArtifacts : nativeMonthlyArtifacts;
+}
+
 export function validateMonthlyNativePair({ source, pair, contract, metadata = null }) {
   requireValue(source?.schema === "yenhubs-monthly-source-v1" && source.state === "inventory-not-captured" &&
     pair?.schema === "yenhubs-native-monthly-pair-v1" && pair.state === "captured-not-restore-accepted" &&
@@ -54,7 +62,9 @@ export function validateMonthlyNativePair({ source, pair, contract, metadata = n
   requireValue(source.volumes.database.volumeId !== source.volumes.media.volumeId &&
     pair.snapshots.database.id !== pair.snapshots.media.id, "monthly_pair_not_distinct");
   if (metadata) {
-    requireValue([3, 4].includes(metadata.schema_version) && metadata.runtime_generation === "durable-v2" &&
+    const minimal = metadata.schema_version === 5 && metadata.runtime_generation === "minimal-snapshot-v1" &&
+      metadata.recovery?.servicesResumed === true && metadata.recovery.deferredRecoveryDisarmed === true;
+    requireValue((minimal || ([3, 4].includes(metadata.schema_version) && metadata.runtime_generation === "durable-v2")) &&
       metadata.operation_id === pair.operationId && metadata.kube_context === pair.context &&
       metadata.namespace === pair.namespace.name && metadata.namespace_uid === pair.namespace.uid &&
       metadata.ret_pvc_uid === source.volumes.media.pvcUid && metadata.writer_quiescence?.required === true &&
@@ -149,17 +159,19 @@ export async function validateMonthlyNativeContent(directory, stamp) {
   const runtime = await readPrivateBytes(resolve(directory, "runtime.tar.gz"), 64 * 1024 * 1024);
   try { inspectMonthlyRuntimeArchive(runtime); }
   finally { runtime.fill(0); }
-  return { state: "capture-only-not-restore-accepted", artifacts: nativeMonthlyArtifacts.length };
+  return { state: "capture-only-not-restore-accepted", artifacts: monthlyArtifacts(metadata).length };
 }
 
 export async function validateMonthlyNativeManifest(directory, stamp) {
+  const metadata = await readPrivateSource(resolve(directory, "checkpoint-metadata.json"));
+  const artifacts = monthlyArtifacts(metadata);
   const bytes = await readPrivateBytes(resolve(directory, "SHA256SUMS"));
   let lines;
   try { lines = bytes.toString("utf8").trimEnd().split("\n"); } finally { bytes.fill(0); }
   const entries = lines.map(line => /^([a-f0-9]{64})  ([a-zA-Z0-9.-]+)$/.exec(line));
-  requireValue(entries.length === nativeMonthlyArtifacts.length && entries.every(Boolean) &&
+  requireValue(entries.length === artifacts.length && entries.every(Boolean) &&
     new Set(entries.map(v => v[2])).size === entries.length &&
-    entries.every(v => nativeMonthlyArtifacts.includes(v[2])), "monthly_bundle_checksum_set_invalid");
+    entries.every(v => artifacts.includes(v[2])), "monthly_bundle_checksum_set_invalid");
   for (const [, sha256, name] of entries) {
     const content = await readPrivateBytes(resolve(directory, name), 64 * 1024 * 1024);
     try { requireValue(digest(content) === sha256, "monthly_bundle_checksum_changed"); }
