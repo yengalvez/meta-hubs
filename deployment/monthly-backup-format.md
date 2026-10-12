@@ -27,6 +27,11 @@ The sequence stops writers, captures the database contract, runs sync and stops
 PostgreSQL gracefully. Two native volume snapshots are created during this same
 pause, one POST per volume with the installed doctl empty-stdout contract and
 identity readback. There is no continuously sampled source/counter guardian.
+LIST resolves only a unique name and ID; canonical GET of that pinned ID supplies
+the metadata validated before acceptance. Both reads share the original total
+30-second native budget, with no polling or repeated POST. Private journal events
+record field presence/types/matches before validation, without raw provider
+output or unknown tag values. An incomplete canonical GET remains a failure.
 The ordinary five-minute operation limit is for this new method; the old
 guardian's 30/10-second rules have not been enlarged or bypassed.
 

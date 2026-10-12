@@ -1,5 +1,18 @@
 # Session Changelog
 
+## 2026-10-13 · Canonical snapshot readback and field diagnostics
+
+The first real minimal attempt stopped after one database POST with
+monthly_snapshot_identity_mismatch; service recovered12/12 and live0/0.
+The initially rejected provider record was not saved. Later all its expected
+fields matched; do not infer which initial field failed. The local repair makes
+LIST discovery require only a unique name/ID and validates a canonical GET of
+that pinned ID, within the unchanged total30s. Journal field checks/types before
+validation. No polling, POST retry, capture acceptance or second real pause.
+Directed regressions cover incomplete LIST, foreign/incomplete GET, wrong field
+types and deadline exhaustion. Exact candidate proof is indexed in canonical
+Plan_activo.md; the installed operator remains d8036a6 until a separate rollout.
+
 ## 2026-10-12 · Implement the minimal monthly snapshot route locally
 
 Replace the monthly entrypoint's shared coordinator with direct pause, native

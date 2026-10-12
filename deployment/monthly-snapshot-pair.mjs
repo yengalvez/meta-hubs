@@ -50,11 +50,23 @@ export function nativeSnapshotProvider(run = execute) {
       Array.isArray(value.tags) && value.tags.length === expected.tags.length &&
       expected.tags.every(tag => value.tags.includes(tag)), "monthly_snapshot_identity_mismatch");
   }
+  function diagnose(value, expected) {
+    return { id: snapshotId(value?.id) ? value.id : null,
+      types: Object.fromEntries(["id","name","resource_id","resource_type","regions","min_disk_size","size_gigabytes","created_at"].map(key=>[key,typeof value?.[key]])),
+      checks: { id: snapshotId(value?.id), name: value?.name === expected.name,
+        volume: value?.resource_id === expected.volumeId, resourceType: value?.resource_type === "volume",
+        tags: Array.isArray(value?.tags) && value.tags.length === expected.tags.length && expected.tags.every(tag=>value.tags.includes(tag)),
+        region: expected.region ? Array.isArray(value?.regions) && value.regions.includes(expected.region) : null,
+        minimumDisk: Number.isSafeInteger(value?.min_disk_size) && value.min_disk_size > 0,
+        storedSize: typeof value?.size_gigabytes === "number" && Number.isFinite(value.size_gigabytes) && value.size_gigabytes >= 0,
+        timestamp: Number.isFinite(Date.parse(value?.created_at)) },
+      tagCount: Array.isArray(value?.tags) ? value.tags.length : null };
+  }
   const listArgs = ["compute", "snapshot", "list", "--resource", "volume"];
   return {
     list: () => call(listArgs),
-    async create({ volumeId, name, operationId, instanceId, month }) {
-      const expected = { volumeId, name,
+    async create({ volumeId, name, operationId, instanceId, month, region, observe = async () => {} }) {
+      const expected = { volumeId, name, region,
         tags: ["yenhubs-monthly", instanceId, `month-${month}`, `operation-${operationId}`] };
       const deadline = performance.now() + 30000;
       // doctl 1.163.0 deliberately discards the successful POST response body,
@@ -62,17 +74,28 @@ export function nativeSnapshotProvider(run = execute) {
       const result = await command(["compute", "volume", "snapshot", volumeId,
         "--snapshot-name", name, "--tag", expected.tags.join(",")]);
       requireValue(result.stdout === "", "monthly_provider_response_invalid");
-      // One immediate read, no polling or second POST, inside the original 30s
-      // budget. A missing/ambiguous point remains incomplete for reconciliation.
+      // LIST discovers only a unique name/ID. Read the canonical GET before
+      // requiring its metadata; no polling or second POST, same total 30s.
       const remaining = Math.floor(deadline - performance.now());
       requireValue(remaining > 0, "monthly_provider_command_failed_or_ambiguous");
       const values = await call(listArgs, remaining);
       requireValue(performance.now() <= deadline, "monthly_provider_command_failed_or_ambiguous");
       const matches = values.filter(value => value?.name === name);
+      await observe({ event: "snapshot-observed", view: "list", matches: matches.length,
+        candidates: matches.slice(0,2).map(value=>diagnose(value,expected)) });
       requireValue(matches.length === 1, "monthly_snapshot_identity_unresolved");
-      requireIdentity(matches[0], expected);
-      createdIdentities.set(matches[0].id, expected);
-      return matches[0];
+      const id = matches[0].id;
+      requireValue(snapshotId(id), "monthly_snapshot_identity_mismatch");
+      const left = Math.floor(deadline - performance.now());
+      requireValue(left > 0, "monthly_provider_command_failed_or_ambiguous");
+      const canonical = await call(["compute", "snapshot", "get", id], left);
+      await observe({ event: "snapshot-observed", view: "canonical", requestedId: id,
+        matches: canonical.length, candidates: canonical.slice(0,2).map(value=>diagnose(value,expected)) });
+      requireValue(performance.now() <= deadline, "monthly_provider_command_failed_or_ambiguous");
+      requireValue(canonical.length === 1 && canonical[0]?.id === id, "monthly_snapshot_identity_mismatch");
+      requireIdentity(canonical[0], expected);
+      createdIdentities.set(id, expected);
+      return canonical[0];
     },
     async get(id) {
       const values = await call(["compute", "snapshot", "get", id]);
@@ -151,7 +174,8 @@ export async function captureMonthlyPair({ source, month, operationId, provider,
       await journal.append({ event: "create-intent", role, name: names[role], volumeId: source.volumes[role].volumeId });
       stage = `${role}-create`;
       const value = await provider.create({ volumeId: source.volumes[role].volumeId,
-        name: names[role], operationId, instanceId: source.instanceId, month });
+        name: names[role], operationId, instanceId: source.instanceId, month, region: source.region,
+        observe: event => journal.append({ ...event, role }) });
       const expected = { name: names[role], volumeId: source.volumes[role].volumeId,
         region: source.region, since: startedAt, until: now() };
       const snapshot = validateNativeSnapshot(value, expected);

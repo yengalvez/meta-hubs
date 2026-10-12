@@ -161,7 +161,7 @@ test("native adapter accepts one real CLI POST only after unique list and exact 
     assert.deepEqual(await provider.list(), []);
     assert.deepEqual(await provider.create(createArgs), snapshot);
     assert.deepEqual(await provider.get(snapshotId), snapshot);
-    assert.deepEqual(requests.map(value => value.method), ["GET", "POST", "GET", "GET"]);
+    assert.deepEqual(requests.map(value => value.method), ["GET", "POST", "GET", "GET", "GET"]);
     assert.ok(nativeCloses.every(value => value.nativeExitCode === 0 && value.signal === null));
     assert.equal(nativeCloses[1].stdoutLength, 0);
   });
@@ -177,9 +177,7 @@ test("native adapter preserves real CLI HTTP failure and never repeats its POST"
 
 for (const [label, list] of [
   ["absent", () => []],
-  ["duplicate", values => [...values, { ...values[0], id: "00000000-0000-4000-8000-000000000003" }]],
-  ["wrong-volume", values => [{ ...values[0], resource_id: "00000000-0000-4000-8000-000000000004" }]],
-  ["wrong-tag", values => [{ ...values[0], tags: tags.filter(value => !value.startsWith("operation-")) }]]
+  ["duplicate", values => [...values, { ...values[0], id: "00000000-0000-4000-8000-000000000003" }]]
 ]) test(`native adapter rejects ${label} real CLI list readback without another POST`, cliTest, async t => {
   await withLoopback(t, { list }, async ({ provider, requests }) => {
     await assert.rejects(provider.create(createArgs), /monthly_snapshot_identity_(?:unresolved|mismatch)/);
@@ -187,10 +185,27 @@ for (const [label, list] of [
   });
 });
 
+for(const [label,change] of [["wrong-volume",{resource_id:"00000000-0000-4000-8000-000000000004"}],["wrong-tag",{tags:tags.filter(t=>!t.startsWith("operation-"))}]])
+test(`native adapter rejects ${label} canonical real CLI GET without another POST`,cliTest,async t=>{
+  await withLoopback(t,{get:value=>({...value,...change})},async({provider,requests})=>{
+    await assert.rejects(provider.create(createArgs),/monthly_snapshot_identity_mismatch/);
+    assert.deepEqual(requests.map(v=>v.method),["POST","GET","GET"]);
+  });
+});
+test("installed CLI accepts an incomplete LIST only after a complete GET of the same ID",cliTest,async t=>{
+  const observed=[];
+  await withLoopback(t,{list:values=>values.map(v=>({id:v.id,name:v.name}))},async({provider,requests})=>{
+    assert.deepEqual(await provider.create({...createArgs,observe:async e=>observed.push(e)}),snapshot);
+    assert.deepEqual(requests.map(v=>v.method),["POST","GET","GET"]);
+    assert.equal(observed[0].candidates[0].checks.tags,false);assert.equal(observed[1].candidates[0].checks.tags,true);
+  });
+});
+
 test("native adapter rechecks operation tags on the guarded real CLI GET", cliTest, async t => {
-  await withLoopback(t, { get: value => ({ ...value, tags: ["wrong-operation"] }) }, async ({ provider, requests }) => {
+  let gets=0;
+  await withLoopback(t, { get: value => ++gets>1 ? ({ ...value, tags: ["wrong-operation"] }) : value }, async ({ provider, requests }) => {
     await provider.create(createArgs);
     await assert.rejects(provider.get(snapshotId), /monthly_snapshot_identity_mismatch/);
-    assert.deepEqual(requests.map(value => value.method), ["POST", "GET", "GET"]);
+    assert.deepEqual(requests.map(value => value.method), ["POST", "GET", "GET", "GET"]);
   });
 });

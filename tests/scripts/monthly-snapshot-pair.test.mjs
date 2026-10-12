@@ -127,7 +127,7 @@ test("native adapter uses empty POST output, exact list/GET identity, no retry a
   assert.deepEqual(await provider.create(nativeArgs), nativeSnapshot);
   assert.deepEqual(await provider.get(id(10)), nativeSnapshot);
   assert.deepEqual(calls.map(call => call.args.slice(0, 3).join(" ")), ["compute snapshot list", "compute volume snapshot",
-    "compute snapshot list", "compute snapshot get"]);
+    "compute snapshot list", "compute snapshot get", "compute snapshot get"]);
   assert.deepEqual(calls[1].args.slice(0, -4), ["compute", "volume", "snapshot", id(2),
     "--snapshot-name", nativeArgs.name, "--tag", nativeTags.join(",")]);
   for (const call of calls) {
@@ -151,15 +151,17 @@ test("native discovery rejects absent, ambiguous, foreign or untagged identities
       return { stdout: args[1] === "volume" ? "" : JSON.stringify(values) };
     });
     await assert.rejects(provider.create(nativeArgs), /monthly_snapshot_identity_(?:unresolved|mismatch)/);
-    assert.deepEqual(calls, ["compute volume snapshot", "compute snapshot list"]);
+    assert.deepEqual(calls, ["compute volume snapshot", "compute snapshot list",
+      ...(values.length === 1 && values[0].name === nativeArgs.name && /^([a-f0-9-]{36}|[1-9][0-9]*)$/.test(values[0].id) ? ["compute snapshot get"] : [])]);
   }
 });
 
 test("native guarded GET preserves the created identity and all exact tags, independent of tag order", async () => {
   for (const delta of [{ id: id(99) }, { name: "other" }, { resource_id: id(99) }, { resource_type: "droplet" },
     { tags: undefined }, { tags: nativeTags.slice(1) }, { tags: [...nativeTags, "operation-foreign"] }]) {
+    let gets = 0;
     const provider = nativeSnapshotProvider(async (_, args) => ({ stdout: args[1] === "volume" ? "" :
-      JSON.stringify([{ ...nativeSnapshot, ...(args[2] === "get" ? delta : {}) }]) }));
+      JSON.stringify([{ ...nativeSnapshot, ...(args[2] === "get" && ++gets > 1 ? delta : {}) }]) }));
     await provider.create(nativeArgs);
     await assert.rejects(provider.get(id(10)), /monthly_snapshot_identity_mismatch/);
   }
@@ -215,8 +217,62 @@ test("native creation and immediate identity discovery share the original total 
     assert.equal(calls[0].timeout, 30000);
     assert.equal(calls.filter(call => call.args[1] === "volume").length, 1);
     if (postMilliseconds > 30000) assert.equal(calls.length, 1);
-    else { assert.equal(calls.length, 2); assert.equal(calls[1].timeout, 30000 - postMilliseconds); }
+    else { assert.equal(calls.length, accepted ? 3 : 2); assert.equal(calls[1].timeout, 30000 - postMilliseconds);
+      if(accepted)assert.equal(calls[2].timeout,30000-postMilliseconds-readMilliseconds); }
   }
+});
+
+test("LIST needs only a unique name and ID; canonical GET supplies metadata before acceptance", async()=>{
+  const calls=[],observed=[];
+  const provider=nativeSnapshotProvider(async(_,args)=>{calls.push(args.slice(0,3).join(" "));
+    return {stdout:args[1]==="volume"?"":JSON.stringify(args[2]==="list"?[{id:nativeSnapshot.id,name:nativeSnapshot.name}]:[nativeSnapshot])};});
+  assert.deepEqual(await provider.create({...nativeArgs,region:"ams3",observe:async e=>observed.push(e)}),nativeSnapshot);
+  assert.deepEqual(calls,["compute volume snapshot","compute snapshot list","compute snapshot get"]);
+  assert.equal(observed[0].candidates[0].checks.tags,false);assert.equal(observed[1].candidates[0].checks.tags,true);
+});
+test("canonical GET uses and cannot exceed the remaining original deadline",async t=>{
+  let clock=0;t.mock.method(performance,"now",()=>clock);const calls=[],observed=[];
+  const provider=nativeSnapshotProvider(async(_,args,options)=>{
+    calls.push({kind:args[2],timeout:options.timeout});clock+=args[1]==="volume"?12000:args[2]==="get"?18001:100;
+    return {stdout:args[1]==="volume"?"":JSON.stringify([nativeSnapshot])};
+  });
+  await assert.rejects(provider.create({...nativeArgs,observe:async e=>observed.push(e)}),/monthly_provider_command_failed_or_ambiguous/);
+  assert.equal(calls.length,3);assert.equal(calls[2].timeout,17900);assert.equal(observed.at(-1).view,"canonical");
+});
+test("malformed region types are recorded, never thrown away by the diagnostic",async()=>{
+  for(const regions of ["ams3",{}]){
+    const observed=[],value={...nativeSnapshot,regions};
+    const provider=nativeSnapshotProvider(async(_,args)=>({stdout:args[1]==="volume"?"":JSON.stringify([value])}));
+    const canonical=await provider.create({...nativeArgs,region:"ams3",observe:async e=>observed.push(e)});
+    assert.throws(()=>validateNativeSnapshot(canonical,{name:nativeArgs.name,volumeId:nativeArgs.volumeId,region:"ams3",since:instant,until:instant}),/monthly_snapshot_identity_mismatch/);
+    assert.equal(observed.at(-1).candidates[0].checks.region,false);
+    assert.equal(observed.at(-1).candidates[0].types.regions,typeof regions);
+  }
+});
+test("canonical GET cannot change the discovered ID or lose tags; diagnostic is recorded before rejecting",async()=>{
+  for(const change of [{id:id(99)},{tags:[]},{resource_id:id(99)}]){
+    const calls=[],observed=[];const provider=nativeSnapshotProvider(async(_,args)=>{
+      calls.push(args.slice(0,3).join(" "));return {stdout:args[1]==="volume"?"":JSON.stringify([{...nativeSnapshot,...(args[2]==="get"?change:{})}])};});
+    await assert.rejects(provider.create({...nativeArgs,observe:async e=>observed.push(e)}),/monthly_snapshot_identity_mismatch/);
+    assert.equal(calls.filter(c=>c==="compute volume snapshot").length,1);
+    assert.equal(observed.at(-1).view,"canonical");assert.equal(observed.at(-1).requestedId,nativeSnapshot.id);
+    assert.equal(observed.at(-1).candidates[0].id,change.id??nativeSnapshot.id);
+  }
+});
+test("decimal stored size is valid but wrong types are diagnosed before the engine rejects them",async()=>{
+  const f=fixture(),observations=[];let created;
+  f.args.provider=nativeSnapshotProvider(async(_,args)=>{
+    if(args[1]==="volume"){created={...nativeSnapshot,name:args[args.indexOf("--snapshot-name")+1],
+      tags:args[args.indexOf("--tag")+1].split(","),size_gigabytes:"0.2888"};return {stdout:""};}
+    return {stdout:JSON.stringify(created?[created]:[])};
+  });
+  const append=f.args.journal.append;f.args.journal.append=async e=>{observations.push(e);await append(e);};
+  await assert.rejects(captureMonthlyPair(f.args),/monthly_snapshot_identity_mismatch/);
+  const reading=observations.find(e=>e.event==="snapshot-observed"&&e.view==="canonical");
+  assert.equal(reading.candidates[0].checks.storedSize,false);assert.equal(reading.candidates[0].types.size_gigabytes,"string");
+  assert.equal(reading.role,"database");
+  const correct={...nativeSnapshot,size_gigabytes:0.2888};assert.equal(validateNativeSnapshot(correct,
+    {name:nativeArgs.name,volumeId:nativeArgs.volumeId,region:"ams3",since:instant,until:instant}).billableGiB,0.2888);
 });
 
 test("coordinator fixture persists list/get snapshots and tags while native create stdout stays empty", async () => {
