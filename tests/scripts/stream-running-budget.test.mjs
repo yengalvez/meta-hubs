@@ -397,7 +397,7 @@ exit "$result"
     assert.ok(existsSync(join(evidence, "child-start")), `local child did not start: ${closedResult?.stderr ?? "deadline"}`);
     const fixturePids = readFileSync(join(evidence, "child-processes"), "utf8").trim().split(" ").map(Number);
     assert.equal(fixturePids.length, 2);
-    const running = await owner.observe();
+    const running = await owner.observeFresh();
     const fixtureIdentities = fixturePids.map(pid => running.members.find(row => row.pid === pid));
     assert.ok(fixtureIdentities.every(Boolean), "bind the local child and its sleep descendant before acceptance");
     const result = await completion;
@@ -408,7 +408,7 @@ exit "$result"
     assert.equal(result.signal, null);
     // Observe native identities BEFORE test cleanup. A return timestamp or an
     // absent completion marker cannot prove the supervised descendants stopped.
-    const absent = await owner.observe();
+    const absent = await owner.observeFresh();
     assert.equal(absent.unproven, false);
     assert.equal(absent.tracking, 0);
     assert.deepEqual(absent.members, []);

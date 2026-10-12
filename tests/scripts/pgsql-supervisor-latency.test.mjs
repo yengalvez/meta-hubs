@@ -151,7 +151,8 @@ exit "$result"
       "consumer-bot-orchestrator", "consumer-coturn", "W-end", "D-end", "pgsql"]) {
       assert.ok(events.some(row => row.endsWith(`:${required}`)), required);
     }
-    const absent = await owner.observe();
+    const absent = await owner.observeFresh();
+    writeFileSync(join(evidence, "native-absence.json"), JSON.stringify(absent) + "\n", { mode: 0o600 });
     assert.equal(absent.unproven, false);
     assert.equal(absent.tracking, 0);
     assert.deepEqual(absent.members, []);

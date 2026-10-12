@@ -1,5 +1,22 @@
 # Session Changelog
 
+## 2026-10-12 · Make local lineage proof diagnostics durable and boundary-fresh
+
+Exact monthly gate98672 passed all489 component tests natively but rejected
+its retirement receipt: an earlier observation failure was latched without a
+cause. Preserve the first closed reason/phase, never raw errors or private data;
+leave native failure exits, the latch, bounds and signalling policy unchanged.
+The single diagnostic77180 did not reproduce that observation error. It found
+a RED fixture assertion receiving a pre-close in-flight inventory instead.
+
+Reproduce that coalescing race deterministically; observeFresh joins any prior
+probe and then obtains a new kernel inventory. Post-close and initial identity
+fixtures use that API without clearing any historical error. Native RED/GREEN,
+partial-spawn cleanup and owner controls46672 passed12/12; the controlled
+freshness regression also passed separately after removing an unnecessary20s
+unit-test timer. No diagnostic acceptance is transferred to a frozen candidate.
+No permanent operator update, real backup, production pause or streaming route.
+
 ## 2026-10-12 · Remove redundant native reader cost from the snapshot supervisor
 
 Local-only repair after the real b17 attempt failed with guard0 cancellation

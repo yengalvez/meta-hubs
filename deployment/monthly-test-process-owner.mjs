@@ -6,7 +6,14 @@ import { setTimeout as delay } from "node:timers/promises";
 const execute = promisify(execFile);
 const MAX_OWNED = 512;
 const identity = row => `${row.uid}:${row.pid}:${row.birth}`;
-const failure = () => new Error("monthly_test_process_ownership_unproven");
+const REASONS = new Set(["ownership_contract", "root_unbound", "identity_unavailable", "identity_invalid",
+  "platform_unsupported", "inventory_overflow", "inventory_invalid", "inventory_duplicate", "inventory_timeout",
+  "signal_target_invalid", "native_probe_timeout", "native_error"]);
+const failure = (reason = "ownership_contract") => {
+  const error = new Error("monthly_test_process_ownership_unproven");
+  error.reason = REASONS.has(reason) ? reason : "ownership_contract";
+  return error;
+};
 
 // Reuse recovery-safety.sh's native birth identity, not ps lstart or comm.
 // The helper is short-lived and returns process metadata only. No environment,
@@ -177,7 +184,11 @@ try:
         raise RuntimeError("inventory_overflow")
     value = observe() if request["action"] == "observe" else send()
     print(json.dumps(value, separators=(",", ":")))
-except Exception:
+except Exception as error:
+    allowed = {"root_unbound", "identity_unavailable", "identity_invalid", "platform_unsupported",
+               "inventory_overflow", "inventory_invalid", "inventory_duplicate", "signal_target_invalid"}
+    reason = str(error) if str(error) in allowed else "inventory_timeout" if isinstance(error, subprocess.TimeoutExpired) else "native_error"
+    print(json.dumps({"failureReason": reason}, separators=(",", ":")))
     raise SystemExit(1)
 `;
 
@@ -188,7 +199,18 @@ async function invokeNative(request, timeoutMilliseconds) {
       env: { PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", LANG: "C" }
     });
     return JSON.parse(stdout);
-  } catch { throw failure(); }
+  } catch (error) {
+    let reason = error?.killed ? "native_probe_timeout" : "native_error";
+    // Only a bounded enum may escape. Never copy error text, command/argv,
+    // stderr, request metadata or a private value into a receipt.
+    if (typeof error?.stdout === "string" && error.stdout.length <= 256) {
+      try {
+        const value = JSON.parse(error.stdout);
+        if (REASONS.has(value?.failureReason)) reason = value.failureReason;
+      } catch { /* Keep the closed native_error category. */ }
+    }
+    throw failure(reason);
+  }
 }
 
 function validRow(row, uid = null) {
@@ -220,6 +242,11 @@ export function createMonthlyTestProcessOwner(child, {
   let active = [], unresolved = [], timer, pending, retiring, stopped = false, unproven = false, initialized = false;
   let registered = 0;
   let termSent = 0, killSent = 0;
+  let firstFailure = null;
+  const recordFailure = (error, phase) => {
+    unproven = true;
+    firstFailure ??= { phase, reason: REASONS.has(error?.reason) ? error.reason : "ownership_contract" };
+  };
   const request = extra => ({ ownerPid, rootPid, uid, ...extra });
   const observe = () => {
     if (pending) return pending;
@@ -257,7 +284,7 @@ export function createMonthlyTestProcessOwner(child, {
         initialized = true; active = next; unresolved = nextUnresolved;
         return { members: active.map(row => ({ ...row })), registered, tracking: known.size,
           unattributed: unresolved.map(row => ({ ...row })), unproven: unproven || unresolved.length > 0 };
-      } catch { unproven = true; throw failure(); }
+      } catch (error) { recordFailure(error, "observe"); throw failure(firstFailure.reason); }
       finally { pending = undefined; }
     })();
     return pending;
@@ -266,6 +293,13 @@ export function createMonthlyTestProcessOwner(child, {
     if (stopped) return;
     timer = setTimeout(async () => { try { await observe(); } catch {} poll(); }, pollMilliseconds);
     timer.unref();
+  };
+  // A proof requested after native close must not reuse a poll whose kernel
+  // inventory started before that boundary. Join it, then start a new probe.
+  // Any earlier observation error remains latched; freshness never forgives it.
+  const observeFresh = async () => {
+    if (pending) await pending;
+    return observe();
   };
   const ready = observe();
   ready.then(poll, () => {});
@@ -277,7 +311,7 @@ export function createMonthlyTestProcessOwner(child, {
           result.outcomes.some(value => !["sent", "changed_or_absent", "zombie"].includes(value))) throw failure();
       const count = result.outcomes.filter(value => value === "sent").length;
       if (signal === "SIGTERM") termSent += count; else killSent += count;
-    } catch { unproven = true; }
+    } catch (error) { recordFailure(error, "signal"); }
   };
   const sweep = async () => { try { await observe(); } catch {} };
   const settle = async milliseconds => {
@@ -297,7 +331,7 @@ export function createMonthlyTestProcessOwner(child, {
     retiring = (async () => {
       try { await ready; } catch {}
       if (!initialized) return { schema: "yenhubs-monthly-test-process-retirement-v1", coverage: "observed-lineage",
-        absenceVerified: false, observationUnproven: true, registered,
+        absenceVerified: false, observationUnproven: true, registered, firstFailure,
         termSent, killSent, remaining: active.map(row => ({ ...row })), unattributed: unresolved.map(row => ({ ...row })) };
       await sweep();
       const parent = active.filter(row => row.pid === rootPid);
@@ -310,10 +344,10 @@ export function createMonthlyTestProcessOwner(child, {
       if (firstEmpty) { await delay(pollMilliseconds); await sweep(); }
       return { schema: "yenhubs-monthly-test-process-retirement-v1", coverage: "observed-lineage",
         absenceVerified: initialized && !unproven && firstEmpty && known.size === 0 && active.length === 0 && unresolved.length === 0,
-        observationUnproven: unproven || unresolved.length > 0, registered, termSent, killSent,
+        observationUnproven: unproven || unresolved.length > 0, registered, termSent, killSent, firstFailure,
         remaining: active.map(row => ({ ...row })), unattributed: unresolved.map(row => ({ ...row })) };
     })();
     return retiring;
   };
-  return { ready, observe, retire, close };
+  return { ready, observe, observeFresh, retire, close };
 }

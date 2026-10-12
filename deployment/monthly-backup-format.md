@@ -19,6 +19,14 @@ workload, not arbitrary load or historical production causality. The monthly
 gate declares that workload; no full product/H5 suite or real retry follows
 automatically. Installing a locally accepted delta needs separate authority.
 
+The local test-lineage observer retains the first failed probe as a closed
+reason/phase; successful later inventories cannot erase its failure latch.
+Native helper errors retain exit1 and no raw error, argv or private values enter
+the receipt. Boundary-sensitive test proofs use observeFresh after native close,
+not a coalesced poll that may have started earlier. This changes neither the
+live backup supervisor nor cleanup limits or signal authority. A failed or
+diagnostic-only check remains unaccepted even if its other tests passed.
+
 The standalone operator must initialize the generator's locked local dependencies
 before use: from `hubs-cloud/community-edition`, run
 `npm ci --ignore-scripts --no-audit --no-fund`. Do not substitute a global library,

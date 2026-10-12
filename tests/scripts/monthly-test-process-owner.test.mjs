@@ -126,7 +126,59 @@ test("PID reuse is never adopted, and unproved observation remains fail-closed a
   phase = 2; rows = [];
   const result = await owner.retire();
   assert.equal(result.absenceVerified, false); assert.equal(result.observationUnproven, true);
+  assert.deepEqual(result.firstFailure, { phase: "observe", reason: "ownership_contract" });
   assert.equal(signals, 0); assert.deepEqual(result.remaining, []);
+});
+
+test("the first closed observation failure survives later empty inventories without leaking raw errors", async () => {
+  const original = fakeRow(10001); let phase = 0;
+  const native = async request => {
+    if (phase === 1) {
+      const error = new Error("PRIVATE-ERROR-MUST-NOT-ESCAPE");
+      error.reason = "inventory_timeout";
+      throw error;
+    }
+    if (phase === 2) {
+      const error = new Error("PRIVATE-SECOND-ERROR"); error.reason = "PRIVATE-REASON"; throw error;
+    }
+    return frame(request, phase === 0 ? [original] : []);
+  };
+  const owner = createMonthlyTestProcessOwner({ pid: original.pid }, { ...settings, native });
+  await owner.ready; phase = 1; await assert.rejects(owner.observe(), /ownership_unproven/);
+  phase = 2; await assert.rejects(owner.observe(), /ownership_unproven/);
+  phase = 3;
+  const result = await owner.retire();
+  assert.equal(result.absenceVerified, false); assert.equal(result.observationUnproven, true);
+  assert.deepEqual(result.firstFailure, { phase: "observe", reason: "inventory_timeout" });
+  assert.deepEqual(result.remaining, []); assert.deepEqual(result.unattributed, []);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE/);
+});
+
+test("a post-close fresh inventory cannot reuse an in-flight pre-close frame", async () => {
+  const root = fakeRow(10001); let rows = [root], hold = false, release, calls = 0;
+  const native = async request => {
+    assert.equal(request.action, "observe"); calls++;
+    const captured = frame(request, [...rows]);
+    if (hold) { hold = false; await new Promise(resolve => { release = resolve; }); }
+    return captured;
+  };
+  const owner = createMonthlyTestProcessOwner({ pid: root.pid }, { ...settings, native });
+  try {
+    await owner.ready;
+    owner.close(); // No automatic timer may race this controlled unit seam.
+    hold = true;
+    const stale = owner.observe();
+    rows = []; // The original root has now closed, AFTER the probe snapshot.
+    const fresh = owner.observeFresh();
+    assert.equal(calls, 2, "fresh must join the one in-flight probe first");
+    release();
+    assert.equal((await stale).tracking, 1, "the old coalesced API really yields the pre-close frame");
+    const current = await fresh;
+    assert.equal(calls, 3);
+    assert.equal(current.tracking, 0); assert.equal(current.unproven, false);
+    const receipt = await owner.retire();
+    assert.equal(receipt.absenceVerified, true); assert.equal(receipt.firstFailure, null);
+  } finally { owner.close(); }
 });
 
 test("missing first identity, observation failure and surviving originals produce bounded failure", async () => {
