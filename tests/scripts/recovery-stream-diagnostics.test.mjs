@@ -44,7 +44,8 @@ test("success is silent and does not invent a failure", () => {
   assert.equal(result.stderr, "");
 });
 
-for (const detail of ["/private/secret-sentinel", "guard-process:0:private-sentinel", "EOF token=private-sentinel", "command:1\nprivate-sentinel"]) {
+for (const detail of ["/private/secret-sentinel", "guard-process:0:private-sentinel", "EOF token=private-sentinel", "command:1\nprivate-sentinel",
+  "cancellation-reserve:0:remaining-ms:100:required-ms:2000\nprivate-sentinel", "cancellation-reserve:0:remaining-ms:100:required-ms:999999"]) {
   test(`untrusted detail is never printed (${JSON.stringify(detail)})`, () => {
     const result = run('recovery_report_stream_failure 1 "$TEST_STAGE" "$TEST_DETAIL"', {
       TEST_STAGE: "private-stage-sentinel", TEST_DETAIL: detail,
@@ -55,7 +56,8 @@ for (const detail of ["/private/secret-sentinel", "guard-process:0:private-senti
   });
 }
 
-for (const detail of ["guard-stale:0", "guard-process:1:watch:watch_terminated", "guard-refresh-timeout:0:-8:counter:3:age-ms:10008:observation-ms:777", "lease-window:0:1900", "cancellation-reserve", "guard-progress-regression:2"]) {
+for (const detail of ["guard-stale:0", "guard-process:1:watch:watch_terminated", "guard-refresh-timeout:0:-8:counter:3:age-ms:10008:observation-ms:777", "lease-window:0:1900", "cancellation-reserve", "cancellation-clock",
+  "cancellation-reserve:0:remaining-ms:1999:required-ms:2000", "cancellation-reserve:2:remaining-ms:-100:required-ms:2000", "guard-progress-regression:2"]) {
   test(`allowlisted failure remains actionable: ${detail}`, () => {
     const result = run('recovery_report_stream_failure 1 running "$TEST_DETAIL"', { TEST_DETAIL: detail });
     assert.equal(result.status, 0);

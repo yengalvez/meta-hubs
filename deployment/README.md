@@ -2366,6 +2366,17 @@ During continuous polling, the already validated capability keeps its exact
 absolute READY-to-authority path binding and one owner/mode/hash-checked read
 of the immutable authority. Repeating the same authority lookup adds no
 independent evidence and consumes the unchanged freshness/cancellation budget.
+In the running phase, observe every progress marker between serial local
+identity/authority predicates. An increment is still dated to the previous
+observation, not to discovery time. The inherited two-second cancellation
+reserve is checked before and after each read, BEFORE crediting that increment;
+an exhausted reserve cannot be refreshed or rearmed. All process/failure/hash
+checks and final joint freshness still run. This prevents observer cost alone
+from dating healthy publications to an unnecessarily old full-round boundary.
+Failure diagnostics distinguish a clock-read failure from an exhausted reserve,
+and report only the guard index and remaining/required milliseconds, never paths
+or marker contents. Local regressions cover serial-cost reproduction, frozen
+publishers and exact native abort/reap; these are not real snapshot acceptance.
 The sustained-capability regression uses three real publishers for 20 seconds
 at production timing, then verifies a frozen publisher aborts and reaps the
 stream within the original ten-second deadline.

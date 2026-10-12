@@ -20,6 +20,7 @@ const functions = [
   "stream_record_diagnostic",
   "require_reaped_stream_guard_freshness",
   "observe_inactive_stream_guard_progress",
+  "observe_running_stream_guard_progress",
   "invoke_complete_stream_guard_audit",
   "refresh_supervised_stream_guards_for_launch",
   "supervised_stream_guards_are_healthy",
@@ -69,7 +70,9 @@ recovery_stream_guard_process_is_healthy(){
     [[ "$fault" != full-process && "$fault" != full-authority ]] || return 1
   else
     continuity_checks=$((continuity_checks+1))
-    if [[ "$mode" == persistent ||
+    if [[ "$mode" == running-overrun ]]; then
+      clock=$((clock+8500))
+    elif [[ "$mode" == persistent ||
           ( "$mode" == lease-transient && "$continuity_checks" -ge 4 && "$continuity_checks" -le 6 ) ||
           ( "$mode" != fast && "$mode" != asymmetric && "$mode" != lease-transient && "$continuity_checks" -le 3 ) ]]; then
       clock=$((clock+3500))
@@ -301,11 +304,18 @@ test("the existing cancellation guard rejects exactly 2000ms and accepts 2001ms"
 
 for (const phase of ["running", "closed-flag"]) {
   test(`${phase} cannot opt into temporal realignment`, () => {
-    const r = run({ phase });
-    assert.equal(r.status, 1);
-    assert.equal(r.clock, 16500, "same pre-change fail-close at the first stale observation");
+    // Healthy running counters can now be observed between serial predicates.
+    // A single overrun must still abort, never use prelaunch realignment.
+    const r = run({ phase, mode: phase === "running" ? "running-overrun" : "transient" });
+    assert.equal(r.status, 1, JSON.stringify(r));
     assert.equal(r.full_audits, 6);
-    assert.match(r.diagnostic, /^guard-stale:0:counter:10:age-ms:12500:observation-ms:9500$/);
+    if (phase === "running") {
+      assert.ok(r.clock <= 16500, JSON.stringify(r));
+      assert.equal(r.diagnostic, "cancellation-reserve:2:remaining-ms:-1500:required-ms:2000");
+    } else {
+      assert.equal(r.clock, 16500);
+      assert.match(r.diagnostic, /^guard-stale:0:counter:10:age-ms:12500:observation-ms:9500$/);
+    }
   });
 }
 

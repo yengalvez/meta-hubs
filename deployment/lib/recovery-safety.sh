@@ -1422,7 +1422,7 @@ recovery_report_stream_failure() {
     case "$detail" in
       arguments|guard-authority|guard-arguments|guard-duplicate|\
       guard-lease-authority-duplicate|monthly-native-authority|poll-interval|initial-deadline|python3|\
-      stream-identity|caller-identity|stream-timeout|command-exit|cancellation-reserve|\
+      stream-identity|caller-identity|stream-timeout|command-exit|cancellation-reserve|cancellation-clock|\
       lease-parameter|lease-authority|lease-window-read|lease-check|lease-budget|\
       post-audit-guard-alignment|post-audit-guard|post-audit-lease|\
       guard-audit-setup|guard-audit-timeout|guard-audit-handshake) ;;
@@ -1433,6 +1433,7 @@ recovery_report_stream_failure() {
               ! "$detail" =~ ^guard-process:[0-9]{1,4}:[a-z][a-z0-9_-]{0,63}:[a-z][a-z0-9_-]{0,63}$ &&
               ! "$detail" =~ ^guard-stale:[0-9]{1,4}:[0-9]{1,18}:[0-9]{1,18}$ &&
               ! "$detail" =~ ^guard-(stale|refresh-timeout):[0-9]{1,4}(:-?[0-9]{1,18})?:counter:[0-9]{1,18}:age-ms:-?[0-9]{1,18}:observation-ms:[0-9]{1,18}$ &&
+              ! "$detail" =~ ^cancellation-reserve:[0-9]{1,4}:remaining-ms:-?[0-9]{1,18}:required-ms:2000$ &&
               ! "$detail" =~ ^lease-window:-?[0-9]{1,4}:-?[0-9]{1,18}$ ]]; then
           detail=redacted
         fi
@@ -2540,12 +2541,55 @@ while True:
       # not merely at different points inside the serial loop above.
       supervised_stream_guards_are_continuously_healthy
     }
+    observe_running_stream_guard_progress() {
+      local sample_index sample_time sample_progress sample_previous_observation
+      # The nested budget reader uses `index` dynamically. Do not let it
+      # overwrite the outer continuity loop's current capability.
+      local index current_milliseconds remaining_milliseconds
+      [[ "$stream_is_gated" == 0 && "$stream_child_reaped" == 0 &&
+         "$stream_diagnostic_stage" == running &&
+         -n "$stream_pid" && -n "$stream_start_identity" ]] || return 0
+      # Observe ALL publishers between the serial identity/authority checks.
+      # Otherwise a healthy increment is dated to the previous *round*, and
+      # the tail of this round can consume the first guard's reserve itself.
+      # This is observation, not realignment: an exhausted inherited reserve
+      # is fatal BEFORE a new counter can be credited. No waiting or rearming.
+      for sample_index in "${!guard_pids[@]}"; do
+        supervised_stream_guard_has_cancellation_reserve || return 1
+        sample_previous_observation="${guard_last_observation_milliseconds[$sample_index]}"
+        sample_time="$(recovery_monotonic_milliseconds)" || {
+          stream_record_diagnostic "guard-clock:$sample_index"
+          return 1
+        }
+        if ! sample_progress="$(recovery_stream_guard_progress_value \
+          "${guard_progress_markers[$sample_index]}" \
+          "${guard_authority_sha256s[$sample_index]}")"; then
+          stream_record_diagnostic "guard-progress-read:$sample_index"
+          return 1
+        fi
+        supervised_stream_guard_has_cancellation_reserve || return 1
+        if ((sample_progress < guard_last_progress[sample_index])); then
+          stream_record_diagnostic "guard-progress-regression:$sample_index"
+          return 1
+        elif ((sample_progress > guard_last_progress[sample_index])); then
+          guard_last_progress[sample_index]="$sample_progress"
+          guard_last_progress_milliseconds[sample_index]="$sample_previous_observation"
+        fi
+        guard_last_observation_milliseconds[sample_index]="$sample_time"
+      done
+    }
     supervised_stream_guards_are_continuously_healthy() {
-      local guard_failure_detail=""
+      local guard_failure_detail="" running_observation=0
       # Explicit classification is consumed only by the gated prelaunch
       # caller. All other callers still fail immediately on any nonzero exit.
       supervised_stream_guard_failure_kind=error
       require_reaped_stream_guard_freshness || return 1
+      if [[ "$stream_is_gated" == 0 && "$stream_child_reaped" == 0 &&
+            "$stream_diagnostic_stage" == running &&
+            -n "$stream_pid" && -n "$stream_start_identity" ]]; then
+        running_observation=1
+        observe_running_stream_guard_progress || return 1
+      fi
       # A complete immutable authority/baseline audit accepts each capability
       # before launch. During the stream, the monitor's authority-bound counter
       # is its causal attestation that another complete live sweep passed.
@@ -2579,6 +2623,12 @@ while True:
             stream_record_diagnostic "guard-process:$index"
             return 1
           fi
+        fi
+        if [[ "$running_observation" == 1 ]]; then
+          # Check the inherited reserve after the costly predicate BEFORE
+          # crediting any newer publication; an expired interval is fatal.
+          observe_running_stream_guard_progress || return 1
+          continue
         fi
         require_reaped_stream_guard_freshness || return 1
         previous_observation_milliseconds="${guard_last_observation_milliseconds[$index]}"
@@ -2704,9 +2754,15 @@ while True:
     }
     supervised_stream_guard_has_cancellation_reserve() {
       [[ "${#guard_pids[@]}" != 0 ]] || return 0
-      supervised_stream_guard_remaining_milliseconds >/dev/null || return 1
+      supervised_stream_guard_remaining_milliseconds >/dev/null || {
+        stream_record_diagnostic cancellation-clock
+        return 1
+      }
       remaining_milliseconds="$supervised_stream_guard_remaining_milliseconds_value"
-      ((remaining_milliseconds > guard_cancel_reserve_milliseconds))
+      if ((remaining_milliseconds <= guard_cancel_reserve_milliseconds)); then
+        stream_record_diagnostic "cancellation-reserve:${supervised_stream_guard_remaining_index}:remaining-ms:${remaining_milliseconds}:required-ms:${guard_cancel_reserve_milliseconds}"
+        return 1
+      fi
     }
     supervised_stream_child_is_running() {
       local running_pid

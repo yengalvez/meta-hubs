@@ -1,5 +1,30 @@
 # Session Changelog
 
+## 2026-10-12 · Keep healthy snapshot guard observations within their causal budget
+
+The owner authorized a local supervisor repair only: no new real capture,
+production pause, deployment or legacy streaming fallback. The prior real
+attempt preserved running/cancellation-reserve without a guard index or remaining
+budget; this does not establish its historical cause. A deterministic test and
+a native local child reproduce that same rejection with three healthy publishers:
+serial predicate cost makes a previous-round causal observation unnecessarily old.
+
+Observe all counters between serial identity/authority predicates, retaining the
+previous-observation lower bound and checking the inherited two-second reserve
+before each read and before credit. Do not refresh expired authority, retry or
+alter the 30/10-second limits. All process/failure/hash checks remain. Diagnostics
+retain only a closed guard-index and numerical-budget form, or a clock-read error.
+The snapshot-only entrypoint and protected permanent operator are unchanged.
+
+The directed running/prelaunch/diagnostic suite returned native0,175/175. Independent
+review found a test-oracle gap: return time alone did not prove descendants absent.
+Bind child and sleep identities while alive, observe their absence BEFORE test
+cleanup and timestamp that observation. The strengthened native cases returned
+original0,2/2; frozen-guard absence was observed at8000ms and cleanup sent no signals.
+The reviewer closed that specific finding. Add these regressions to the exact
+monthly-only gate; its frozen-candidate result belongs in the canonical PLAN.
+Local validation is not real backup, restore or calendar acceptance.
+
 ## 2026-10-12 · Preserve the original failed snapshot-capture diagnosis privately
 
 The exact monthly gate on bde838c returned native 0, but subsequent real capture
