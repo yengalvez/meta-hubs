@@ -31,7 +31,11 @@
       "hubs-cloud/community-edition/apply/operation-lease.js"
     ],
     "localFixtureInputs": [
-      "tests/scripts/fixtures/monthly-minimal-cli.cjs"
+      "tests/scripts/fixtures/monthly-minimal-cli.cjs",
+      "tests/recovery/monthly-portable-restore.mjs",
+      "tests/recovery/native-checkpoint-restore.mjs",
+      "tests/recovery/native-bash.mjs",
+      "deployment/lib/recovery-safety.sh"
     ],
     "minimalCaptureAndResume": [
       "deployment/monthly-minimal-snapshot.mjs",
@@ -58,6 +62,8 @@
         "tests/scripts/monthly-snapshot-pair.test.mjs",
         "tests/scripts/monthly-snapshot-source.test.mjs",
         "tests/scripts/monthly-restore-input.test.mjs",
+        "tests/scripts/monthly-restore-comparison.test.mjs",
+        "tests/scripts/monthly-drive-store.test.mjs",
         "tests/scripts/monthly-verification.test.mjs"
       ]
     },

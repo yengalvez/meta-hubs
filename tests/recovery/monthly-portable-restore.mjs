@@ -23,6 +23,11 @@ function canonicalDump(sql) {
   }
   requireValue(rows===null,"monthly_local_restore_copy_truncated");return result.join("\n");
 }
+export function verifyMonthlyRestoreComparisons({sourceData,restoredData,referenceSchema,restoredSchema}) {
+  requireValue(canonicalDump(sourceData)===canonicalDump(restoredData),"monthly_local_restore_data_dump_changed");
+  requireValue(logicalDump(referenceSchema)===logicalDump(restoredSchema),"monthly_local_restore_schema_changed");
+  return {dataSha256:sha(canonicalDump(restoredData)),schemaSha256:sha(logicalDump(restoredSchema))};
+}
 export function requireLocalRestoreMajor(version,expectedMajor) {
   requireValue(/^[1-9][0-9]?$/.test(expectedMajor) &&
     new RegExp(`^pg_ctl \\(PostgreSQL\\) ${expectedMajor}\\.`).test(version),"monthly_local_restore_major_mismatch");
@@ -84,9 +89,21 @@ export async function restoreLocalMonthlyData({inputs,expectedContract,postgresM
       const original=await readPrivateBytes(join(work,"source.sql"),64*1024*1024),restored=await readPrivateBytes(join(work,"restored.sql"),64*1024*1024);
       try {
         const sourceRows=copyRows(original.toString("utf8"));verifyCopyRows(sourceRows,copyRows(restored.toString("utf8")));
-        requireValue(canonicalDump(original.toString("utf8"))===canonicalDump(restored.toString("utf8")),"monthly_local_restore_logical_dump_changed");
+        // pg_restore retains source-minor DDL text, whereas pg_dump deparses on
+        // the target minor. Canonicalize ALL source DDL using the same native
+        // PG12 engine; do not erase constraints or whitelist particular names.
+        await psql("postgres","CREATE DATABASE monthly_reference OWNER postgres TEMPLATE template0;");
+        await pg("pg_restore",["--exit-on-error","--schema-only","--host",socket,"--port",env.PGPORT,
+          "--username","postgres","--dbname","monthly_reference",inputs.database]);
+        const schema=async database=>(await pg("pg_dump",["--host",socket,"--port",env.PGPORT,"--username","postgres",
+          "--schema-only","--format=plain",database])).stdout;
+        const compared=verifyMonthlyRestoreComparisons({
+          sourceData:(await pg("pg_restore",["--data-only","--file","-",inputs.database])).stdout,
+          restoredData:(await pg("pg_dump",["--host",socket,"--port",env.PGPORT,"--username","postgres",
+            "--data-only","--format=plain","monthly_verify"])).stdout,
+          referenceSchema:await schema("monthly_reference"),restoredSchema:await schema("monthly_verify")});
         return {tables:sourceRows.size,rows:[...sourceRows.values()].reduce((sum,values)=>sum+values.length,0),
-          canonicalDumpSha256:sha(canonicalDump(restored.toString("utf8")))};
+          canonicalDumpSha256:sha(canonicalDump(restored.toString("utf8"))),...compared,schemaCanonicalizedOnTarget:true};
       }finally{original.fill(0);restored.fill(0);}
     });
     const media=await phase("media",()=>extractMonthlyMediaArchive({archive:inputs.media,outputDirectory:join(work,"media")}));
@@ -100,6 +117,7 @@ export async function restoreLocalMonthlyData({inputs,expectedContract,postgresM
     result={schema:"yenhubs-monthly-local-data-restore-v1",state:"native-local-data-verified-not-installation-accepted",
       nativeExitCode:0,postgresMajor,completeDatabaseContract:true,copyTables:rows.tables,copyRows:rows.rows,
       logicalDumpSha256:rows.canonicalDumpSha256,completeMediaPairs:media.completePairs,mediaInventorySha256:media.sha256,
+      dataDumpSha256:rows.dataSha256,schemaDumpSha256:rows.schemaSha256,schemaCanonicalizedOnTarget:rows.schemaCanonicalizedOnTarget,
       activeMediaPairs:contract.critical_inventory.active_owned_file_uuids.length,sourceUnchanged:true,productionRestored:false};
   }catch(error){failure=/^[a-z][a-z0-9_]+$/.test(error.message)?error.message:"monthly_local_restore_failed_or_ambiguous";}
   finally {

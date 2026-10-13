@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-10-13 · Compare restored schemas on the native target engine
+
+The real isolated PG12 restore completed SQL, its database contract and all
+COPY rows; it returned1 only because two CHECK constraints deparsed differently
+between PG12 minor versions (array casts and AND parentheses). Preserve that1.
+Restore the original archive's schema into a second disposable reference DB
+on the SAME engine; compare all reference/restored schema SQL without removing
+constraints, functions, grants or names. Independently compare all data-only SQL
+(COPY ordering alone canonicalized, sequences preserved), all rows and contract.
+Eight directed cases reject changed data, NULLs, duplicates, sequence values,
+constraints and grants; retain the exact major-version gate. No source mutation.
+Declare the exact isolated-restore source dependencies and Drive-store regressions
+in the monthly-only gate; these are not an unfiltered recovery/product suite.
+
 ## 2026-10-13 · Pin the canonical Drive GET for byte readback
 
 All five real files uploaded; original Drive command returned1 at file-change
