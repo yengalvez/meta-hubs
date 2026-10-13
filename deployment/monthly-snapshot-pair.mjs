@@ -12,6 +12,13 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const snapshotId = value => typeof value === "string" && (uuid.test(value) || /^[1-9][0-9]*$/.test(value));
 function requireValue(condition, reason) { if (!condition) throw new Error(reason); }
 
+/** Compare immutable normalized identity, not the provider's delayed billing statistic. */
+export function nativeSnapshotIdentity(snapshot) {
+  const identity = { ...snapshot };
+  delete identity.billableGiB;
+  return identity;
+}
+
 export function validateNativeSnapshot(value, { name, volumeId, region, since, until }) {
   requireValue(value && snapshotId(value.id) && value.name === name &&
     value.resource_type === "volume" && value.resource_id === volumeId &&
@@ -197,7 +204,8 @@ export async function captureMonthlyPair({ source, month, operationId, provider,
       stage = `${role}-readback`;
       await checkBoundary(stage);
       const observed = validateNativeSnapshot(await provider.get(snapshot.id), { ...expected, until: now() });
-      requireValue(JSON.stringify(observed) === JSON.stringify(snapshot), "monthly_snapshot_readback_changed");
+      requireValue(JSON.stringify(nativeSnapshotIdentity(observed)) === JSON.stringify(nativeSnapshotIdentity(snapshot)),
+        "monthly_snapshot_readback_changed");
       snapshots[role] = snapshot;
       await journal.append({ event: "readback-verified", role, snapshot });
     }

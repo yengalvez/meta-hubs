@@ -82,6 +82,13 @@ test("twelve complete months preserve two native points and ten Drive points",as
 test("first complete month creates no imaginary history or deletion",async()=>{
   const f=await fixture(["2026-10"]),r=await f.run();assert.equal(r.state,"rotation-complete");assert.deepEqual(f.calls,[]);
 });
+test("delayed billing updates do not block keepers or rewrite captured monthly records",async()=>{
+  const f=await fixture(["2026-08","2026-09","2026-10"]),original=structuredClone(f.points);
+  for(const value of f.snapshotMap.values())value.size_gigabytes=0.3328;
+  const result=await f.run();
+  assert.equal(result.state,"rotation-complete");assert.equal(f.snapshotMap.size,4);
+  assert.deepEqual(f.points,original);
+});
 test("failed upload preserves every older native/Drive point without a mutation",async()=>{
   const f=await fixture(["2026-08","2026-09","2026-10"]);f.points.at(-1).googleDrive={status:"uploading"};
   assert.equal((await f.run()).state,"blocked-no-retirements");assert.deepEqual(f.calls,[]);assert.equal(f.snapshotMap.size,6);
@@ -145,6 +152,31 @@ test("native DELETE exit0 is not absence proof",async()=>{
   const adapter=nativeRetentionSnapshots({snapshots:f.snapshots,run:async(...args)=>{calls.push(args);return {nativeExitCode:0};}});
   await assert.rejects(adapter.remove(f.points[0].digitalOcean.pair.snapshots.database),/snapshot_still_present/);assert.equal(calls.length,1);
 });
+test("native retirement tolerates only updated billing, retains exact identity and issues one DELETE",async()=>{
+  const f=await fixture(["2026-10"]),s=f.points[0].digitalOcean.pair.snapshots.database,calls=[];
+  f.snapshotMap.get(s.id).size_gigabytes=0.2927;
+  const adapter=nativeRetentionSnapshots({snapshots:f.snapshots,run:async(program,args)=>{
+    calls.push([program,args]);f.snapshotMap.delete(s.id);return {nativeExitCode:0};}});
+  assert.equal((await adapter.remove(s)).absenceVerified,true);assert.equal(calls.length,1);
+  assert.equal(s.billableGiB,1);
+});
+for(const [field,value] of Object.entries({id:"987654321",name:"foreign",resource_id:"another-volume",
+  resource_type:"droplet",created_at:"2026-10-01T00:00:03Z",min_disk_size:11,regions:["nyc3"]})) {
+  test(`updated billing cannot excuse native retirement identity change ${field}`,async()=>{
+    const f=await fixture(["2026-10"]),s=f.points[0].digitalOcean.pair.snapshots.database;
+    Object.assign(f.snapshotMap.get(s.id),{size_gigabytes:0.2927,[field]:value});let writes=0;
+    const adapter=nativeRetentionSnapshots({snapshots:f.snapshots,run:async()=>{writes++;return {nativeExitCode:0};}});
+    await assert.rejects(adapter.remove(s),/retention_snapshot_changed/);assert.equal(writes,0);
+  });
+}
+for(const value of [-1,NaN,Infinity,"0.2927",null]) {
+  test(`invalid retirement billing ${String(value)} blocks DELETE`,async()=>{
+    const f=await fixture(["2026-10"]),s=f.points[0].digitalOcean.pair.snapshots.database;
+    f.snapshotMap.get(s.id).size_gigabytes=value;let writes=0;
+    const adapter=nativeRetentionSnapshots({snapshots:f.snapshots,run:async()=>{writes++;return {nativeExitCode:0};}});
+    await assert.rejects(adapter.remove(s),/retention_snapshot_changed/);assert.equal(writes,0);
+  });
+}
 test("foreign native volume/name is refused before DELETE",async()=>{
   const f=await fixture(["2026-10"]),s=f.points[0].digitalOcean.pair.snapshots.database;
   f.snapshotMap.get(s.id).resource_id="another-volume";let writes=0;

@@ -98,8 +98,18 @@ test("foreign source/region/type, old timestamp and altered readback are rejecte
   }
   assert.throws(() => validateNativeSnapshot({ ...value, created_at: "2026-09-01T00:00:00Z" }, expected), /monthly_snapshot_time_mismatch/);
   const f2 = fixture(); const get = f2.args.provider.get;
-  f2.args.provider.get = async snapshotId => ({ ...await get(snapshotId), size_gigabytes: 2 });
+  f2.args.provider.get = async snapshotId => ({ ...await get(snapshotId), min_disk_size: 11 });
   await assert.rejects(captureMonthlyPair(f2.args), /monthly_snapshot_readback_changed/);
+});
+
+test("delayed billing statistics during capture do not replace or invalidate snapshot identity", async () => {
+  const f = fixture(), get = f.args.provider.get;
+  f.args.provider.get = async snapshotId => ({ ...await get(snapshotId), size_gigabytes: 2 });
+  const result = await captureMonthlyPair(f.args);
+  assert.equal(result.state, "captured-not-restore-accepted");
+  assert.equal(f.created.length, 2);
+  assert.notEqual(result.snapshots.database.billableGiB, 2);
+  assert.equal(f.entries.filter(e => e.event === "readback-verified").length, 2);
 });
 
 test("flush failure and final guard failure cannot produce a complete receipt", async () => {

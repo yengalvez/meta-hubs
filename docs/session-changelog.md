@@ -1,5 +1,16 @@
 # Session Changelog
 
+## 2026-10-13 · Close the billing-statistic comparison in monthly capture and retention
+
+The active goal requires the agreed monthly backup end to end. Preserve the
+successful existing capture; no new pause, snapshot or legacy fallback.
+Use one normalized identity helper excluding only delayed billableGiB in capture,
+export and retention. Retirement retains every immutable raw binding, validates
+finite/nonnegative provider size, and keeps one DELETE plus absence verification.
+Do not rewrite any captured record. Directed capture/retention/policy63/63 PASS;
+include the retention tests in the monthly-only final gate. Canonical PLAN owns
+exact pins and real export/Drive/isolated-restore/calendar acceptance still pending.
+
 ## 2026-10-13 · Local export repair for delayed snapshot billing metadata
 
 Native GET readback reproduced only billableGiB0→0.2927/0.3328 changes after

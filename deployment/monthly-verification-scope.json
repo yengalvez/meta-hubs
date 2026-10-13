@@ -49,6 +49,8 @@
         "tests/scripts/monthly-minimal-snapshot.test.mjs",
         "tests/scripts/monthly-minimal-detach.test.mjs",
         "tests/scripts/monthly-snapshot-api.test.mjs",
+        "tests/scripts/monthly-backup-retention.test.mjs",
+        "tests/scripts/monthly-retention-executor.test.mjs",
         "tests/scripts/monthly-backup-runtime.test.mjs",
         "tests/scripts/monthly-native-bundle.test.mjs",
         "tests/scripts/monthly-snapshot-entrypoint.test.mjs",

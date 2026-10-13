@@ -1,7 +1,7 @@
 /** Execute the owner's two/ten retention policy, never accept a caller's deletion list. */
 import { createHash } from "node:crypto";
 import { planMonthlyRetention } from "./monthly-backup-retention.mjs";
-import { claimPairJournal, nativeSnapshotProvider, validateNativeSnapshot } from "./monthly-snapshot-pair.mjs";
+import { claimPairJournal, nativeSnapshotProvider, validateNativeSnapshot, nativeSnapshotIdentity } from "./monthly-snapshot-pair.mjs";
 import { portableDriveNames, portableDriveMime } from "./monthly-drive-store.mjs";
 import { runExportNative } from "./monthly-snapshot-export-provider.mjs";
 
@@ -96,7 +96,8 @@ export async function verifyRetentionPair(point, snapshots) {
     const expected = pair.snapshots[role];
     const observed = validateNativeSnapshot(await snapshots.get(expected.id), {name:expected.name,volumeId:expected.volumeId,
       region:expected.region,since:Date.parse(pair.startedAt),until:Date.parse(pair.capturedAt)});
-    requireValue(canonical(observed) === canonical({...expected,createdAt:new Date(expected.createdAt).toISOString()}),
+    requireValue(canonical(nativeSnapshotIdentity(observed)) === canonical(nativeSnapshotIdentity({...expected,
+      createdAt:new Date(expected.createdAt).toISOString()})),
       "retention_snapshot_changed");
   }
 }
@@ -107,7 +108,8 @@ export function nativeRetentionSnapshots({snapshots = nativeSnapshotProvider(),r
     const observed = await snapshots.get(snapshot.id);
     requireValue(observed.id === snapshot.id && observed.resource_type === "volume" && observed.resource_id === snapshot.volumeId &&
       observed.name === snapshot.name && new Date(observed.created_at).toISOString() === new Date(snapshot.createdAt).toISOString() &&
-      observed.min_disk_size === snapshot.minimumDiskGiB && observed.size_gigabytes === snapshot.billableGiB &&
+      observed.min_disk_size === snapshot.minimumDiskGiB && typeof observed.size_gigabytes === "number" &&
+      Number.isFinite(observed.size_gigabytes) && observed.size_gigabytes >= 0 &&
       observed.regions?.includes(snapshot.region), "retention_snapshot_changed");
     // Native UUID deletion only, one request, no retry and no arbitrary volume deletion.
     const result = await run("doctl",["compute","snapshot","delete",snapshot.id,"--force","--http-retry-max","0"]);
