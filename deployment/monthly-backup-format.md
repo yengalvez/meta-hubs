@@ -76,6 +76,11 @@ valid provider metadata; its successful exit is not proof of subsequent absence.
 For generated deny-all NetworkPolicies, the API may omit empty ingress/egress
 arrays. Normalize only those absent arrays for comparison. Keep both policyTypes,
 an exact match-all selector and rejection of any real allow rule or ownership drift.
+Before starting cloned PostgreSQL, restore only its cloned PGDATA directory to
+0700: volume fsGroup handling may widen permissions that PostgreSQL refuses.
+The non-root owner performs this operation only on a verified new clone, never
+on an original PVC/snapshot. A terminated container aborts clone readiness even
+if the sleeping export sidecar leaves the overall Pod phase Running.
 
 ## Local verification
 

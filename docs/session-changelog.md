@@ -1,5 +1,18 @@
 # Session Changelog
 
+## 2026-10-13 · Correct cloned PGDATA permissions and fail on container termination
+
+The corrected-policy real export created both distinct snapshot-derived volumes,
+but its PostgreSQL container exited1: native log FATAL invalid directory permissions.
+An owned read-only probe confirms UID/GID999, PG12 and mode2770; source untouched.
+Local PG12 reproduces exit1 with0770 and starts/queries/stops0 with0700.
+Normalize only the verified clone's data directory before exec, as non-root owner.
+Readiness now rejects terminated containers immediately instead of waiting for a
+Running Pod whose export sidecar is sleeping. Two directed regressions PASS.
+The old worker was signaled only after original container exit1/restartNever,
+exact PID/UID/birth/argv proof and no data-export intent; retain SIGTERM, not exit0.
+Owned clone/probe cleanup and exact monthly gate remain canonical-plan evidence.
+
 ## 2026-10-13 · Native API serialization of deny-all policy
 
 The first goal-continuation export7f7075f returned original1 after Namespace and

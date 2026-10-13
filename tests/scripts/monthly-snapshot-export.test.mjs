@@ -380,6 +380,16 @@ test("different PostgreSQL majors, mutable images, oversized budget and shell-li
   assert.throws(() => buildSnapshotExportPlan(point, { maximumTemporaryUSD: 2 }), /budget_invalid/);
   assert.throws(() => buildSnapshotExportPlan(point, { databaseUser: "postgres; touch /other" }), /binding_invalid/);
 });
+test("clone startup restores private PGDATA permissions before exec without modifying the source", async () => {
+  const { plan } = await fixture({ minimal: true });
+  const pod = plan.objects.find(o => o.kind === "Pod"), database = pod.spec.containers.find(c => c.name === "database");
+  const script = database.command[2];
+  assert.ok(script.indexOf('chmod 0700 "$data"') > script.indexOf('test ! -e "$data/recovery.signal"'));
+  assert.ok(script.indexOf('chmod 0700 "$data"') < script.indexOf('exec postgres -D "$data"'));
+  assert.equal(database.securityContext.runAsNonRoot, true);
+  assert.equal(database.securityContext.runAsUser, 999);
+  assert.ok(!plan.originalVolumeIds.some(id => JSON.stringify(pod).includes(id)));
+});
 function cloneBinding(plan, role) {
   const pvc = structuredClone(plan.objects.find(o => o.kind === "PersistentVolumeClaim" && o.metadata.name === role));
   pvc.metadata.uid = id(role === "database" ? 31 : 32); pvc.metadata.resourceVersion = "1";
@@ -592,6 +602,29 @@ test("pod drift and restart fail before data is read", async () => {
   });
   const provider = nativeSnapshotExportProvider(cluster); await provider.prepare(f.plan, f.point, events()); change = true;
   await assert.rejects(provider.exportFiles(f.plan, f.point, f.parent, events()), /pod_not_ready_exact/);
+});
+test("a terminated DB container fails immediately even while the export sidecar keeps the Pod Running", async () => {
+  const f = await fixture(), cluster = mockCluster(f), original = cluster.run;
+  cluster.run = async (program, args, options) => {
+    const result = await original(program, args, options);
+    if (args.includes("--raw")) {
+      const object = JSON.parse(result.stdout);
+      if (object.kind === "Pod") {
+        object.status.phase = "Running";
+        object.status.containerStatuses[0].ready = false;
+        object.status.containerStatuses[0].state = { terminated: { exitCode: 1, reason: "Error" } };
+        result.stdout = JSON.stringify(object);
+      }
+    }
+    return result;
+  };
+  let delays = 0;
+  const provider = nativeSnapshotExportProvider({ ...cluster, delay: async () => { delays++; throw Error("must not wait for a dead container"); } });
+  await assert.rejects(provider.prepare(f.plan, f.point, events()), /export_container_terminated/);
+  assert.equal(delays, 0);
+  assert.ok(!cluster.calls.some(c => c.args.includes("exec")));
+  await provider.cleanup(f.plan, events());
+  assert.equal(cluster.objects.size, 1);
 });
 test("Retain drift stops local snapshot deletion before it could delete the original snapshot", async () => {
   const f = await fixture(); let change = false;

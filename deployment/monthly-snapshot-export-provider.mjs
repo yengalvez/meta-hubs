@@ -114,6 +114,8 @@ export function nativeSnapshotExportProvider({ run = runExportNative, snapshots 
     for (;;) {
       remaining(); await ownNamespace(plan);
       const value = await readOwned(plan, object);
+      requireValue(object.kind !== "Pod" || !value.status?.containerStatuses?.some(container => container.state?.terminated),
+        "export_container_terminated");
       requireValue(!value.status?.error && !(value.status?.phase === "Failed"), "export_resource_failed");
       if (predicate(value)) return value;
       await delay(Math.min(2000, remaining()));
