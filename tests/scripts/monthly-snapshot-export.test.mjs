@@ -47,7 +47,7 @@ async function readCaptureDiagnostics(completion) {
   }
   return { intent, diagnostic, stdout, stderr };
 }
-async function fixture({ minimal = false } = {}) {
+async function fixture({ minimal = false, billableGiB = 1 } = {}) {
   const parent = await realpath(await mkdtemp(join(tmpdir(), "yenhubs-export-fixture-")));
   await chmod(parent, 0o700);
   const directory = join(parent, "capture"); await mkdir(directory, { mode: 0o700 });
@@ -66,7 +66,7 @@ async function fixture({ minimal = false } = {}) {
       isolatedDigitalOceanRestore: false, isolatedDriveRestore: false }, snapshots: {} };
   for (const [i, role] of ["database", "media"].entries()) pair.snapshots[role] = {
     id: id(10 + i), name: `fixture-instance-2026-10-${role}`, volumeId: source.volumes[role].volumeId,
-    region: "ams3", minimumDiskGiB: 10, billableGiB: 1, createdAt: "2026-10-06T12:00:02Z"
+    region: "ams3", minimumDiskGiB: 10, billableGiB, createdAt: "2026-10-06T12:00:02Z"
   };
   const metadata = { schema_version: 3, runtime_generation: "durable-v2", operation_id: pair.operationId,
     kube_context: pair.context, namespace: source.namespace.name, namespace_uid: source.namespace.uid,
@@ -481,6 +481,62 @@ test("native adapter prepares CSI clones, proves exports and only cleans UID-bou
   assert.ok(!cluster.calls.some(c => c.args.includes("apply") || c.args.includes("patch") || c.args.includes("snapshot")));
   assert.equal(cluster.objects.size, 1); // original namespace remains untouched
 });
+test("billing metadata finalized after capture does not prevent the complete local export", async () => {
+  const f = await fixture({ minimal: true, billableGiB: 0 }), cluster = mockCluster(f);
+  const get = cluster.snapshots.get;
+  cluster.snapshots.get = async snapshotId => ({ ...await get(snapshotId),
+    size_gigabytes: snapshotId === f.point.pair.snapshots.database.id ? 0.2927 : 0.3328 });
+  const originalPair = await readFile(join(f.directory, "native-pair.json"));
+  const provider = nativeSnapshotExportProvider(cluster);
+  const identityPath = join(f.parent, "fixture-billing-age.key");
+  execFileSync("age-keygen", ["-o", identityPath], { stdio: "pipe" });
+  const recipient = execFileSync("age-keygen", ["-y", identityPath], { encoding: "utf8" }).trim();
+  const result = await exportMonthlySnapshotPoint({ checkpointDirectory: f.directory,
+    captureCompletionPath: f.completionPath, outputDirectory: join(f.parent, "result"),
+    journalDirectory: join(f.parent, "journal"), recipient, provider });
+  assert.equal(result.nativeExportExitCode, 0);
+  assert.equal(result.state, "sealed-not-restore-accepted");
+  assert.equal(result.cloneCleanupVerified, true);
+  const opened = join(f.parent, "opened");
+  const manifest = await openPortablePoint({ packageDirectory: result.packageDirectory, outputDirectory: opened, identityPath });
+  assert.equal(manifest.binding.nativeManifestSha256, f.point.manifestSha256);
+  assert.deepEqual(await readFile(join(opened, "database.dump")), cluster.volumeFiles["database.dump"]);
+  assert.deepEqual(await readFile(join(opened, "media.tar.gz")), cluster.volumeFiles["media.tar.gz"]);
+  assert.deepEqual(await readFile(join(f.directory, "native-pair.json")), originalPair);
+  assert.ok(cluster.calls.some(c => c.args.includes("exec") && c.args.some(a => a.includes("pg_dump"))));
+  assert.equal(cluster.calls.filter(c => c.args.includes("create")).length, 9);
+  assert.equal(cluster.calls.filter(c => c.args.includes("delete")).length, 9);
+  assert.equal(cluster.objects.size, 1);
+  assert.ok(!cluster.calls.some(c => c.args.includes("apply") || c.args.includes("patch")));
+  assert.ok(cluster.calls.filter(c => c.program === "doctl").every(c =>
+    c.args.slice(0, 3).join(" ") === "compute volume list")); // mocked cleanup read only
+  assert.equal(buildSnapshotExportPlan(f.point).estimatedTemporaryUSD, f.plan.estimatedTemporaryUSD);
+});
+for (const role of ["database", "media"]) {
+  for (const [field, value] of Object.entries({ id: id(99), name: "foreign-snapshot", resource_id: id(98),
+    resource_type: "droplet", regions: ["nyc3"], min_disk_size: 11, created_at: "2026-10-06T12:00:01Z" })) {
+    test(`updated billing does not excuse changed ${role} snapshot ${field}`, async () => {
+      const f = await fixture({ minimal: true, billableGiB: 0 }), cluster = mockCluster(f), get = cluster.snapshots.get;
+      cluster.snapshots.get = async snapshotId => ({ ...await get(snapshotId), size_gigabytes: 0.3328,
+        ...(snapshotId === f.point.pair.snapshots[role].id ? { [field]: value } : {}) });
+      const provider = nativeSnapshotExportProvider(cluster), journal = events();
+      await assert.rejects(provider.prepare(f.plan, f.point, journal),
+        /(?:monthly_snapshot_identity_mismatch|export_source_snapshot_changed)/);
+      assert.equal(cluster.calls.filter(c => c.args.includes("create")).length, 0);
+      assert.equal(journal.entries.length, 0);
+    });
+  }
+  for (const value of [-1, NaN, Infinity, "0.3328", null]) {
+    test(`invalid ${role} billing value ${String(value)} still fails before creation`, async () => {
+      const f = await fixture({ minimal: true, billableGiB: 0 }), cluster = mockCluster(f), get = cluster.snapshots.get;
+      cluster.snapshots.get = async snapshotId => ({ ...await get(snapshotId),
+        size_gigabytes: snapshotId === f.point.pair.snapshots[role].id ? value : 0.3328 });
+      const provider = nativeSnapshotExportProvider(cluster);
+      await assert.rejects(provider.prepare(f.plan, f.point, events()), /monthly_snapshot_identity_mismatch/);
+      assert.equal(cluster.calls.filter(c => c.args.includes("create")).length, 0);
+    });
+  }
+}
 test("changed generated plan is rejected before any cloud read/write", async () => {
   const f = await fixture(), cluster = mockCluster(f), provider = nativeSnapshotExportProvider(cluster);
   const plan = structuredClone(f.plan); plan.objects.at(-1).spec.volumes[0].persistentVolumeClaim.claimName = "pgsql-pvc";

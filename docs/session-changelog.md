@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-10-13 · Local export repair for delayed snapshot billing metadata
+
+Native GET readback reproduced only billableGiB0→0.2927/0.3328 changes after
+successful capture. Export had included this mutable statistic in exact identity.
+Exclude only that field from export identity equality; retain provider numeric
+validation, every other normalized field, original hashes, capacity budgets,
+clone isolation/cleanup and no retry. A new compact fixture reproduces the old
+export_source_snapshot_changed and exercises export, actual age encryption,
+local decryption/readback and owned cleanup with synthetic data after the fix.
+Directed negatives reject substitution of either snapshot and malformed sizes
+before any mock resource creation. Monthly-only acceptance is recorded in the
+canonical PLAN/Plan_activo.md, not inferred as online, Drive or restore acceptance.
+No operator installation, metaverse pause, snapshots, cloud calls or calendar.
+
 ## 2026-10-13 · Settle native disk detach before snapshot/resume
 
 Read-only CSI logs, provider actions and existing Pod conditions show the new

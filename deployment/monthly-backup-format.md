@@ -65,6 +65,13 @@ retention (two DO pairs/ten Drive months) and the existing monthly ledger are
 reused. No Spaces, Velero or new Google billing. Enable the calendar only after
 a complete real pair, Drive readback and one isolated restore per format.
 
+Export rechecks each exact snapshot ID, name, source volume, region, creation
+time and minimum disk capacity. `billableGiB` is a mutable provider billing
+statistic, not snapshot identity: an update after capture must not reject export.
+Its GET value still must be finite and nonnegative. Capacity-based clone budgets
+and the hashed native capture remain unchanged; this exception does not permit
+a different snapshot, rewritten capture or acceptance of a failed monthly attempt.
+
 ## Local verification
 
 `node scripts/verify-monthly-backup.mjs --evidence-dir /absolute/empty-private-dir`

@@ -12,6 +12,13 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const canonical = value => JSON.stringify(value, (_, item) => item && !Array.isArray(item) && typeof item === "object" ?
   Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
+function snapshotIdentity(snapshot) {
+  // DO finalizes this billing statistic after capture; it is not identity.
+  // Keep the hashed capture unchanged and compare every other normalized field.
+  const identity = { ...snapshot };
+  delete identity.billableGiB;
+  return identity;
+}
 
 export async function runExportNative(program, args, { input = null, outputFile = null, timeout = 30000, env = process.env } = {}) {
   // No raw stderr or provider responses ever reach a terminal/error object.
@@ -175,7 +182,8 @@ export function nativeSnapshotExportProvider({ run = runExportNative, snapshots 
         const observed = validateNativeSnapshot(await snapshots.get(expected.id), { name: expected.name,
           volumeId: expected.volumeId, region: expected.region, since: Date.parse(point.pair.startedAt),
           until: Date.parse(point.pair.capturedAt) });
-        requireValue(canonical(observed) === canonical({ ...expected, createdAt: new Date(expected.createdAt).toISOString() }),
+        requireValue(canonical(snapshotIdentity(observed)) === canonical(snapshotIdentity({ ...expected,
+          createdAt: new Date(expected.createdAt).toISOString() })),
           "export_source_snapshot_changed");
       }
       for (const object of plan.objects) {
