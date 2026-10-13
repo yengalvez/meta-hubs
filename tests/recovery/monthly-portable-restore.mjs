@@ -23,10 +23,28 @@ function canonicalDump(sql) {
   }
   requireValue(rows===null,"monthly_local_restore_copy_truncated");return result.join("\n");
 }
+export function canonicalMonthlyDataDump(sql) {
+  const lines=canonicalDump(sql).split("\n"),markers=[];let copy=false;
+  for(let i=0;i<lines.length;i++) {
+    if(copy){if(lines[i]==="\\.")copy=false;continue;}
+    if(/^COPY .* FROM stdin;$/.test(lines[i])){copy=true;continue;}
+    if(/^-- (?:Data for )?Name: .+; Type: (?:TABLE DATA|SEQUENCE SET|BLOB|BLOBS); Schema: /.test(lines[i])) {
+      requireValue(lines[i-1]==="--","monthly_local_restore_data_section_invalid");markers.push(i-1);
+    }
+  }
+  if(!markers.length)return lines.join("\n");
+  const complete=lines.lastIndexOf("-- PostgreSQL database dump complete");
+  requireValue(complete>markers.at(-1)&&lines[complete-1]==="--","monthly_local_restore_data_section_invalid");
+  const end=complete-1,sections=markers.map((start,i)=>lines.slice(start,markers[i+1]??end).join("\n"));
+  requireValue(new Set(markers.map(i=>lines[i+1])).size===markers.length,"monthly_local_restore_duplicate_data_section");
+  // Physical OIDs and restore creation order change TOC section order, not data.
+  // Keep every whole section, sequence statement, row value and duplicate.
+  return [...lines.slice(0,markers[0]),...sections.sort(),...lines.slice(end)].join("\n");
+}
 export function verifyMonthlyRestoreComparisons({sourceData,restoredData,referenceSchema,restoredSchema}) {
-  requireValue(canonicalDump(sourceData)===canonicalDump(restoredData),"monthly_local_restore_data_dump_changed");
+  requireValue(canonicalMonthlyDataDump(sourceData)===canonicalMonthlyDataDump(restoredData),"monthly_local_restore_data_dump_changed");
   requireValue(logicalDump(referenceSchema)===logicalDump(restoredSchema),"monthly_local_restore_schema_changed");
-  return {dataSha256:sha(canonicalDump(restoredData)),schemaSha256:sha(logicalDump(restoredSchema))};
+  return {dataSha256:sha(canonicalMonthlyDataDump(restoredData)),schemaSha256:sha(logicalDump(restoredSchema))};
 }
 export function requireLocalRestoreMajor(version,expectedMajor) {
   requireValue(/^[1-9][0-9]?$/.test(expectedMajor) &&

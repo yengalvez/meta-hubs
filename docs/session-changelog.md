@@ -1,5 +1,17 @@
 # Session Changelog
 
+## 2026-10-13 · Preserve whole data sections while normalizing native TOC order
+
+The next isolated comparison returned1 only because native data-only exports
+ordered complete TABLE DATA sections differently after restoration; all COPY
+rows remained identical. A bounded local diagnostic started/stopped only that
+owned disposable PG12 server and retained the original failure. Canonicalize
+whole typed TOC sections and COPY row order, not any SQL/value: sequence states,
+duplicates, per-section text and the prelude/epilogue remain compared exactly.
+Ten directed regressions plus the exact real dump comparison PASS. Preserve
+same-major schema comparison on the native target and independent all-row/contract
+checks. No new snapshot, export, upload, production pause or legacy fallback.
+
 ## 2026-10-13 · Compare restored schemas on the native target engine
 
 The real isolated PG12 restore completed SQL, its database contract and all

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {verifyMonthlyRestoreComparisons,requireLocalRestoreMajor} from '../recovery/monthly-portable-restore.mjs';
+import {verifyMonthlyRestoreComparisons,requireLocalRestoreMajor,canonicalMonthlyDataDump} from '../recovery/monthly-portable-restore.mjs';
 const schema="CREATE TABLE proof (id integer, state varchar(12), CHECK ((state)::text = ANY (ARRAY[('a'::varchar)::text, ('b'::varchar)::text])));\n";
 const data="COPY proof (id, state) FROM stdin;\n1\ta\n2\tb\n\\.\nSELECT pg_catalog.setval('proof_seq', 2, true);\n";
 const input=()=>({sourceData:data,restoredData:data,referenceSchema:schema,restoredSchema:schema});
@@ -19,4 +19,15 @@ for(const [name,change]of [
 test('the restore engine keeps its exact same-major gate',()=>{
   assert.doesNotThrow(()=>requireLocalRestoreMajor('pg_ctl (PostgreSQL) 12.22','12'));
   assert.throws(()=>requireLocalRestoreMajor('pg_ctl (PostgreSQL) 14.20','12'),/major_mismatch/);
+});
+const section=(table,row)=>`--\n-- Data for Name: ${table}; Type: TABLE DATA; Schema: public; Owner: postgres\n--\n\nCOPY public.${table} (id) FROM stdin;\n${row}\n\\.\n\n`;
+const ending='--\n-- PostgreSQL database dump complete\n--\n';
+test('same tables and rows compare identically across native TOC section order',()=>{
+  const a='SET row_security = off;\n'+section('a',1)+section('b',2)+ending;
+  const b='SET row_security = off;\n'+section('b',2)+section('a',1)+ending;
+  assert.equal(canonicalMonthlyDataDump(a),canonicalMonthlyDataDump(b));
+  assert.notEqual(canonicalMonthlyDataDump(a),canonicalMonthlyDataDump(b.replace('SET row_security = off','SET row_security = on')));
+});
+test('a duplicate data section is rejected instead of collapsed',()=>{
+  assert.throws(()=>canonicalMonthlyDataDump(section('a',1)+section('a',1)+ending),/duplicate_data_section/);
 });
