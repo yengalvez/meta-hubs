@@ -430,7 +430,14 @@ function mockCluster(f, mutation = () => {}) {
         let value;
         if (uri.searchParams.has("fieldSelector")) {
           const name = uri.searchParams.get("fieldSelector").slice("metadata.name=".length);
-          const object = objects.get(uri.pathname + "/" + name); value = { items: object ? [object] : [] };
+          const object = objects.get(uri.pathname + "/" + name);
+          const kinds = { namespaces: ["v1", "Namespace"], pods: ["v1", "Pod"],
+            persistentvolumeclaims: ["v1", "PersistentVolumeClaim"], persistentvolumes: ["v1", "PersistentVolume"],
+            networkpolicies: ["networking.k8s.io/v1", "NetworkPolicy"],
+            volumesnapshots: ["snapshot.storage.k8s.io/v1", "VolumeSnapshot"],
+            volumesnapshotcontents: ["snapshot.storage.k8s.io/v1", "VolumeSnapshotContent"] };
+          const [apiVersion, kind] = kinds[uri.pathname.split("/").at(-1)];
+          value = { apiVersion, kind: kind + "List", items: object ? [object] : [] };
         } else { value = objects.get(path); assert.ok(value, `Missing ${path}`); }
         const copied = structuredClone(value); mutation(copied, path, verb); return response(copied);
       }
@@ -649,6 +656,47 @@ test("ambiguous create is not repeated, adopted or cascaded away", async () => {
   assert.equal(cluster.calls.filter(c => c.args.includes("create") && c.args.some(a => a.includes("persistentvolumeclaims"))).length, 1);
   assert.equal(cluster.calls.filter(c => c.args.includes("delete")).length, 0);
 });
+test("native cleanup accepts omitted item TypeMeta only under an exact typed collection envelope", async () => {
+  const f = await fixture(), cluster = mockCluster(f), original = cluster.run;
+  cluster.run = async (program, args, options) => {
+    const result = await original(program, args, options);
+    if (args.includes("--raw")) {
+      const value = JSON.parse(result.stdout);
+      if (Array.isArray(value.items)) for (const item of value.items) { delete item.kind; delete item.apiVersion; }
+      result.stdout = JSON.stringify(value);
+    }
+    return result;
+  };
+  const provider = nativeSnapshotExportProvider(cluster);
+  await provider.prepare(f.plan, f.point, events());
+  await provider.cleanup(f.plan, events());
+  assert.equal(cluster.calls.filter(c => c.args.includes("delete")).length, 9);
+  assert.equal(cluster.objects.size, 1);
+});
+for (const change of ["list-kind", "list-version", "item-kind", "item-version"]) {
+  test(`native cleanup rejects changed collection type binding ${change}`, async () => {
+    const f = await fixture(), cluster = mockCluster(f), original = cluster.run;
+    let cleanup = false;
+    cluster.run = async (program, args, options) => {
+      const result = await original(program, args, options);
+      if (cleanup && args.includes("--raw")) {
+        const value = JSON.parse(result.stdout);
+        if (value.kind === "PodList") {
+          if (change === "list-kind") value.kind = "SecretList";
+          if (change === "list-version") value.apiVersion = "other/v1";
+          if (change === "item-kind") value.items[0].kind = "Secret";
+          if (change === "item-version") value.items[0].apiVersion = "other/v1";
+        }
+        result.stdout = JSON.stringify(value);
+      }
+      return result;
+    };
+    const provider = nativeSnapshotExportProvider(cluster);
+    await provider.prepare(f.plan, f.point, events()); cleanup = true;
+    await assert.rejects(provider.cleanup(f.plan, events()), /export_(?:cleanup_identity_not_unique|owned_resource_changed)/);
+    assert.equal(cluster.calls.filter(c => c.args.includes("delete")).length, 0);
+  });
+}
 test("native command reports real exit0 and refuses a native failure without leaking stderr", async () => {
   const value = await runExportNative(process.execPath, ["-e", 'process.stdout.write("native-ok")']);
   assert.equal(value.nativeExitCode, 0); assert.equal(value.stdout, "native-ok");

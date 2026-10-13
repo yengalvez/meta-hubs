@@ -107,8 +107,12 @@ export function nativeSnapshotExportProvider({ run = runExportNative, snapshots 
   async function named(plan, object) {
     const path = resourcePath(object);
     const response = await kube(plan, "get", `${path.collection}?fieldSelector=${encodeURIComponent("metadata.name=" + object.metadata.name)}`);
-    requireValue(Array.isArray(response.items) && response.items.length <= 1, "export_cleanup_identity_not_unique");
-    return response.items[0];
+    requireValue(response.apiVersion === object.apiVersion && response.kind === object.kind + "List" &&
+      Array.isArray(response.items) && response.items.length <= 1, "export_cleanup_identity_not_unique");
+    // Individual list items omit TypeMeta in the native API. Ground it only in
+    // the verified typed envelope, never overwrite an explicitly different type.
+    const item = response.items[0];
+    return item && { apiVersion: object.apiVersion, kind: object.kind, ...item };
   }
   async function waitFor(plan, object, predicate) {
     for (;;) {

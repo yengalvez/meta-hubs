@@ -1,5 +1,16 @@
 # Session Changelog
 
+## 2026-10-13 · Preserve typed Kubernetes list identity during clone cleanup
+
+The real export4cac9fb starts PostgreSQL, verifies the captured database contract
+before and after export and seals all payloads. Original native1 remains a failure:
+cleanup rejected PodList items lacking kind/apiVersion before its first DELETE.
+Native list items omit TypeMeta. Fill only missing fields from an exact typed
+collection envelope; never override explicit item types or accept wrong envelope
+kind/version, multiple objects, UID changes or spec changes. Five directed cases
+PASS, including four fail-closed type substitutions. No new source pause/snapshot,
+streaming fallback, cloud build or copied acceptance from prior bytes.
+
 ## 2026-10-13 · Correct cloned PGDATA permissions and fail on container termination
 
 The corrected-policy real export created both distinct snapshot-derived volumes,
