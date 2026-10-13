@@ -56,7 +56,20 @@ function subset(expected, actual) {
   return actual && Object.entries(expected).every(([key, value]) => value === undefined || subset(value, actual[key]));
 }
 function ownResource(desired, observed, uid = null, allowDeleting = false) {
-  requireValue(observed && subset(desired, observed) && uuid.test(observed.metadata?.uid ?? "") &&
+  let comparable = observed;
+  if (desired.kind === "NetworkPolicy" && observed?.spec) {
+    // Kubernetes omits empty rule arrays. Missing rules still mean deny-all
+    // for our explicit Ingress/Egress policyTypes; never ignore actual rules.
+    const spec = { ...observed.spec };
+    for (const direction of ["ingress", "egress"]) {
+      if (!Object.hasOwn(spec, direction) && Array.isArray(desired.spec[direction]) &&
+        desired.spec[direction].length === 0) spec[direction] = [];
+    }
+    requireValue(canonical(spec.podSelector) === canonical(desired.spec.podSelector),
+      "export_owned_resource_changed");
+    comparable = { ...observed, spec };
+  }
+  requireValue(observed && subset(desired, comparable) && uuid.test(observed.metadata?.uid ?? "") &&
     typeof observed.metadata.resourceVersion === "string" && (!uid || observed.metadata.uid === uid) &&
     (allowDeleting || !observed.metadata.deletionTimestamp), "export_owned_resource_changed");
   if (desired.kind === "Pod") {

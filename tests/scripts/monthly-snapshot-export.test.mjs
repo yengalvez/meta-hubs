@@ -481,6 +481,49 @@ test("native adapter prepares CSI clones, proves exports and only cleans UID-bou
   assert.ok(!cluster.calls.some(c => c.args.includes("apply") || c.args.includes("patch") || c.args.includes("snapshot")));
   assert.equal(cluster.objects.size, 1); // original namespace remains untouched
 });
+for (const omitted of [["ingress"], ["egress"], ["ingress", "egress"]]) {
+  test(`native API omission of empty NetworkPolicy ${omitted.join("/")} preserves deny-all isolation`, async () => {
+    const f = await fixture({ minimal: true }), cluster = mockCluster(f), run = cluster.run;
+    cluster.run = async (program, args, options) => {
+      const result = await run(program, args, options);
+      if (args.includes("--raw")) {
+        const value = JSON.parse(result.stdout);
+        if (value.kind === "NetworkPolicy") {
+          for (const field of omitted) delete value.spec[field];
+          result.stdout = JSON.stringify(value);
+        }
+      }
+      return result;
+    };
+    const provider = nativeSnapshotExportProvider(cluster), journal = events();
+    await provider.prepare(f.plan, f.point, journal);
+    assert.equal(cluster.calls.filter(c => c.args.includes("create")).length, 9);
+    await provider.cleanup(f.plan, journal);
+    assert.equal(cluster.objects.size, 1);
+    assert.equal(journal.entries.at(-1).event, "clones-cleanup-verified");
+  });
+}
+for (const [field, value] of Object.entries({ ingress: [{}], egress: [{}],
+  podSelector: { matchLabels: { unselected: "fixture" } }, policyTypes: ["Ingress"] })) {
+  test(`NetworkPolicy drift ${field} is not normalized away`, async () => {
+    const f = await fixture({ minimal: true }), cluster = mockCluster(f), run = cluster.run;
+    cluster.run = async (program, args, options) => {
+      const result = await run(program, args, options);
+      if (args.includes("--raw")) {
+        const valueFromAPI = JSON.parse(result.stdout);
+        if (valueFromAPI.kind === "NetworkPolicy") {
+          delete valueFromAPI.spec.ingress; delete valueFromAPI.spec.egress;
+          valueFromAPI.spec[field] = value; result.stdout = JSON.stringify(valueFromAPI);
+        }
+      }
+      return result;
+    };
+    const provider = nativeSnapshotExportProvider(cluster), journal = events();
+    await assert.rejects(provider.prepare(f.plan, f.point, journal), /export_owned_resource_changed/);
+    assert.equal(cluster.calls.filter(c => c.args.includes("create")).length, 2);
+    assert.equal(cluster.calls.filter(c => c.args.includes("delete")).length, 0);
+  });
+}
 test("billing metadata finalized after capture does not prevent the complete local export", async () => {
   const f = await fixture({ minimal: true, billableGiB: 0 }), cluster = mockCluster(f);
   const get = cluster.snapshots.get;

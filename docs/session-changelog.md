@@ -1,5 +1,17 @@
 # Session Changelog
 
+## 2026-10-13 · Native API serialization of deny-all policy
+
+The first goal-continuation export7f7075f returned original1 after Namespace and
+NetworkPolicy creation, before any PVC/Pod/native disk clone. Read-only GET of
+the bound policy shows the API omitted empty ingress/egress arrays while retaining
+the exact selector and Ingress/Egress types. This reproduces in three local cases.
+Normalize only absent empty rule arrays; keep real rule rejection and tighten
+selector equality so a narrower selector cannot open export Pod networking.
+Three positive and four security negatives PASS. Cleanup reconciliation preserves
+the original failure, uses original Namespace UID plus observed policy UID/versions,
+and never cascades over unknown namespace work. No pause or new snapshots.
+
 ## 2026-10-13 · Close the billing-statistic comparison in monthly capture and retention
 
 The active goal requires the agreed monthly backup end to end. Preserve the

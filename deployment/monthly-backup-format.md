@@ -73,6 +73,9 @@ and the hashed native capture remain unchanged; this exception does not permit
 a different snapshot, rewritten capture or acceptance of a failed monthly attempt.
 Retirement still issues one UUID-bound DELETE only after immutable identity and
 valid provider metadata; its successful exit is not proof of subsequent absence.
+For generated deny-all NetworkPolicies, the API may omit empty ingress/egress
+arrays. Normalize only those absent arrays for comparison. Keep both policyTypes,
+an exact match-all selector and rejection of any real allow rule or ownership drift.
 
 ## Local verification
 
