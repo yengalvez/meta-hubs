@@ -1,5 +1,18 @@
 # Session Changelog
 
+## 2026-10-13 · Pin the canonical Drive GET for byte readback
+
+All five real files uploaded; original Drive command returned1 at file-change
+comparison. The original compared field was not logged: do not invent its cause.
+One read-only diagnostic finds the complete owner-only set stable before/after
+downloads. A directed fixture reproduces the same rejection with a stale LIST
+revision. Use LIST only to discover the ID and pin a canonical GET before readback;
+keep version/identity/parent/MIME/size/MD5 and exact downloaded SHA256 checks.
+Five focused cases PASS, including version changes during actual download and
+ID/name/invalid-version substitutions. Journal the exact comparison booleans for
+any later failure. Reconcile complete existing files read-only; never re-upload
+missing files, overwrite a point, create duplicates or call a failed upload0.
+
 ## 2026-10-13 · Preserve typed Kubernetes list identity during clone cleanup
 
 The real export4cac9fb starts PostgreSQL, verifies the captured database contract

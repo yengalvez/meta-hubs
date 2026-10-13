@@ -171,6 +171,24 @@ test("a remote file revision changed during download is refused",async()=>{
   f.provider.content=async id=>{f.entries.get(id).version="2";return content(id);};
   await assert.rejects(publishSealedDrivePoint(f.options),/remote_file_changed/);
 });
+test("a stale list revision is discovery only; pin the canonical GET before download",async()=>{
+  const f=await fixture(),children=f.provider.children;
+  f.provider.children=async id=>{const values=await children(id);return values.map(v=>({...v,version:"1"}));};
+  const put=f.provider.put;
+  f.provider.put=async args=>{const result=await put(args);for(const item of f.entries.values())if(item.parents.includes(args.folderId))item.version="2";return result;};
+  const result=await publishSealedDrivePoint(f.options);
+  assert.ok(Object.values(result.versions).every(value=>value==="2"));
+  assert.equal(f.calls.filter(v=>v.startsWith("put:")).length,5);
+});
+for(const field of ["id","name","version"])test(`canonical GET rejects substituted file ${field}`,async()=>{
+  const f=await fixture(),stat=f.provider.stat;
+  f.provider.stat=async id=>{const value=await stat(id);if(value?.size){
+    if(field==="id")value.id="other-owned-file";
+    if(field==="name")value.name="other-backup-file.age";
+    if(field==="version")value.version="0";
+  }return value;};
+  await assert.rejects(publishSealedDrivePoint(f.options),/remote_file_binding_changed/);
+});
 test("the public receipt cannot carry unapproved plaintext fields",async()=>{
   const f=await fixture(),path=join(f.sealed,"portable-point.json"),receipt=JSON.parse(await readFile(path));
   receipt.privateValue="ONLY-A-NEGATIVE-FIXTURE";await writeFile(path,JSON.stringify(receipt));

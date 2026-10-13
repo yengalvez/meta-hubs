@@ -121,7 +121,7 @@ async function journal(directory, expected) {
   };
 }
 
-async function verifyReadback({provider, folder, rootId, point, downloadDirectory}) {
+async function verifyReadback({provider, folder, rootId, point, downloadDirectory, events}) {
   requirePointFolder(await provider.stat(folder.id),rootId,point.binding,folder.id);
   const list = await provider.children(folder.id);
   requireValue(Array.isArray(list) && list.length === portableDriveNames.length &&
@@ -129,9 +129,13 @@ async function verifyReadback({provider, folder, rootId, point, downloadDirector
     new Set(list.map(value => value.id)).size === list.length, "drive_remote_set_incomplete");
   await mkdir(downloadDirectory,{mode:0o700}); const handles = {}, versions = {};
   for(const name of portableDriveNames) {
-    const item = list.find(value => value.name === name), expected = point.files[name];
+    const discovered = list.find(value => value.name === name), expected = point.files[name];
+    // A listing discovers the ID, not the revision used for readback. Pin the
+    // canonical file GET immediately before downloading that exact ID.
+    const item = await provider.stat(discovered.id);
     ownerOnly(item);
-    requireValue(item.mimeType === portableDriveMime(name) && /^[1-9][0-9]*$/.test(String(item.version ?? "")) &&
+    requireValue(item.id === discovered.id && item.name === name &&
+      item.mimeType === portableDriveMime(name) && /^[1-9][0-9]*$/.test(String(item.version ?? "")) &&
       item.parents?.length === 1 && item.parents[0] === folder.id &&
       Number(item.size) === expected.bytes && item.md5Checksum === expected.md5,
       "drive_remote_file_binding_changed");
@@ -147,9 +151,13 @@ async function verifyReadback({provider, folder, rootId, point, downloadDirector
     } finally { await output.close(); }
     requireValue(size === expected.bytes && hash.digest("hex") === expected.sha256, "drive_remote_bytes_mismatch");
     const after = await provider.stat(item.id); ownerOnly(after);
-    requireValue(after.id === item.id && after.mimeType === item.mimeType && after.name === item.name && String(after.size) === String(item.size) &&
-      after.md5Checksum === item.md5Checksum && JSON.stringify(after.parents) === JSON.stringify(item.parents) &&
-      String(after.version) === String(item.version), "drive_remote_file_changed");
+    const compared = { id: after.id === item.id, mimeType: after.mimeType === item.mimeType,
+      name: after.name === item.name, size: String(after.size) === String(item.size),
+      md5: after.md5Checksum === item.md5Checksum, parents: JSON.stringify(after.parents) === JSON.stringify(item.parents),
+      version: String(after.version) === String(item.version) };
+    await events.append({ event: "file-readback-compared", filename: name, compared,
+      expectedVersion: String(item.version), observedVersion: String(after.version) });
+    requireValue(Object.values(compared).every(Boolean), "drive_remote_file_changed");
     await unchanged(point.pinned[name]); handles[name] = item.id; versions[name] = String(item.version);
   }
   const after = await provider.children(folder.id);
@@ -201,7 +209,7 @@ export async function publishSealedDrivePoint({packageDirectory, expectedBinding
       }
     }
     const {handles, versions} = await verifyReadback({provider,folder,rootId:rootFolderId,point,
-      downloadDirectory:join(journalDirectory,"readback")});
+      downloadDirectory:join(journalDirectory,"readback"),events});
     const rootAfter = await provider.stat(rootFolderId); ownerOnly(rootAfter);
     requireValue(rootAfter.id === rootFolderId && rootAfter.mimeType === root.mimeType, "drive_root_invalid");
     const result = {schema:"yenhubs-drive-point-readback-v1",state:"transport-verified-not-restore-accepted",
