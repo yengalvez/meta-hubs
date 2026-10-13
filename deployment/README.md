@@ -8,6 +8,15 @@ local es `scripts/verify-monthly-backup.mjs`, no toda la batería del producto.
 Los procedimientos y estados históricos de despliegue de este documento no
 son órdenes de reanudación del operador mensual.
 
+El operador mínimo espera a que desaparezcan los `VolumeAttachment` de sus dos
+PV y a que los GET nativos de DigitalOcean confirmen `droplet_ids: []` antes de
+los dos snapshots. La ausencia de Pods no prueba que el controlador haya terminado
+de desconectar los discos: arrancar en ese intervalo causó una conexión CSI
+aparentemente lista con dispositivo ausente el13/10. La espera de desconexión es
+finita (90s), bajo la misma Lease/identidad y presupuesto total de5min; reanudación
+sigue limitada a180s. No fuerza desconexiones, cambios de PV, nuevos recursos,
+guardianes o reintentos. Su aceptación local no autoriza otra pausa/copia real.
+
 Para reparaciones visuales estrictamente limitadas al cliente, usar
 [la entrega visual proporcional](client-visual-release.md) antes de lanzar
 pruebas de recuperación o un nuevo respaldo. El resto sigue este runbook.

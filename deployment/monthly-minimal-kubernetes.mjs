@@ -41,11 +41,11 @@ export function createMinimalKubernetes({ env, root }, { run = runExportNative, 
   async function patch(kind, name, value, type = "merge") {
     return json(["-n", namespace, "patch", kind, name, `--type=${type}`, "--patch-file=/dev/stdin"], JSON.stringify(value));
   }
-  async function waitUntil(read, acceptable, timeout = 90000) {
+  async function waitUntil(read, acceptable, timeout = 90000, reason = "monthly_minimal_wait_timeout") {
     const until = now() + timeout;
     for (;;) {
       const value = await read(); if (acceptable(value)) return value;
-      need(now() < until, "monthly_minimal_wait_timeout"); checkDeadline(); await delay(1000);
+      need(now() < until, reason); checkDeadline(); await delay(1000);
     }
   }
   async function statePhase() {
@@ -78,6 +78,40 @@ export function createMinimalKubernetes({ env, root }, { run = runExportNative, 
     const list = await get("pods");
     return !list.items.some(pod => writerPod(pod) && running(pod) &&
       (includeDatabase || pod.metadata?.labels?.app !== "pgsql"));
+  }
+  async function disksDetached() {
+    // Pod deletion can precede CSI/provider detach. Resuming in that gap can
+    // publish a stale "already attached" result while the device disappears.
+    // Let the existing controllers finish; never force detach or change a PV.
+    await requireLease();
+    const selected = Object.values(sourceValue.volumes);
+    const pvs = await json(["get", "pv", ...selected.map(v => v.pv)]);
+    need(Array.isArray(pvs.items) && pvs.items.length === selected.length && selected.every(v => pvs.items.some(p =>
+      p.metadata?.name === v.pv && p.metadata.uid === v.pvUid && !p.metadata.deletionTimestamp &&
+      p.status?.phase === "Bound" && p.spec?.claimRef?.uid === v.pvcUid && p.spec.claimRef.name === v.pvc &&
+      p.spec.claimRef.namespace === namespace && p.spec.csi?.driver === "dobs.csi.digitalocean.com" &&
+      p.spec.csi.volumeHandle === v.volumeId)), "monthly_minimal_detach_binding_changed");
+    const attachments = await json(["get", "volumeattachments"]);
+    need(Array.isArray(attachments.items), "monthly_minimal_detach_attachment_changed");
+    const ours = attachments.items.filter(a => selected.some(v => a.spec?.source?.persistentVolumeName === v.pv));
+    need(ours.every(a => a.spec.attacher === "dobs.csi.digitalocean.com" &&
+      a.spec.nodeName === sourceValue.preparation.commonNode), "monthly_minimal_detach_attachment_changed");
+    if (ours.length > 0) return false;
+    const volumes = await Promise.all(selected.map(async v => {
+      checkDeadline();
+      const result = await run("doctl", ["compute", "volume", "get", v.volumeId, "--output", "json", "--http-retry-max", "0"],
+        { timeout: Math.min(30000, Math.max(1, end - now())), maxBuffer: 1024 * 1024 });
+      need(result.nativeExitCode === 0, "monthly_minimal_detach_provider_read_failed");
+      checkDeadline();
+      let items; try { items = JSON.parse(result.stdout); } catch { throw new Error("monthly_minimal_detach_provider_changed"); }
+      need(Array.isArray(items) && items.length === 1 && items[0]?.id === v.volumeId &&
+        items[0].region?.slug === env.MONTHLY_REGION && items[0].size_gigabytes === v.sizeGiB &&
+        Array.isArray(items[0].droplet_ids) && items[0].droplet_ids.every(id => Number.isSafeInteger(id) && id > 0),
+        "monthly_minimal_detach_provider_changed");
+      return items[0];
+    }));
+    await requireLease();
+    return volumes.every(v => v.droplet_ids.length === 0);
   }
   async function create(object) {
     const value = await json(["create", "-f", "-"], JSON.stringify(object));
@@ -198,6 +232,7 @@ export function createMinimalKubernetes({ env, root }, { run = runExportNative, 
       await command(["-n", namespace, "exec", database.consumer.name, "-c", database.container, "--", "sync"]);
       await replicas(saved.services.find(item => item.name === "pgsql"), 0);
       await waitUntil(() => noPods(true), Boolean);
+      await waitUntil(disksDetached, Boolean, 90000, "monthly_minimal_detach_unproven");
     },
     async confirmPaused(saved) {
       const list = await get("deployments");

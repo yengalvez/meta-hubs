@@ -25,6 +25,7 @@ if(tool==="curl"){
   if(method==="POST"){
     const body=JSON.parse(JSON.parse(/^data = (.+)$/m.exec(input)[1]));
     const volumeId=url.pathname.split("/")[3],role=volumeId===id(2)?"database":"media";state.posts.push(role);
+    if(state.detachRace&&state.detachRemaining>0)state.captureBeforeDetach=true;
     if(role===state.failRole)return finish(JSON.stringify({message:"ONLY FIXTURE FAILURE"})+"\n__YENHUBS_HTTP__500");
     const snapshot={id:id(100+state.snapshots.length),name:body.name,resource_id:volumeId,resource_type:"volume",regions:["ams3"],
       min_disk_size:10,size_gigabytes:1,created_at:new Date().toISOString(),tags:body.tags};state.snapshots.push(snapshot);
@@ -37,7 +38,8 @@ if(tool==="curl"){
   return finish(JSON.stringify({snapshot})+"\n__YENHUBS_HTTP__200");
 }
 if (tool === "doctl") {
-  if (args[1] === "volume" && args[2] === "get") return finish([{ id: args[3], region: { slug: "ams3" }, size_gigabytes: 10 }]);
+  if (args[1] === "volume" && args[2] === "get") return finish([{ id: args[3], region: { slug: "ams3" }, size_gigabytes: 10,
+    droplet_ids: state.detachRace&&state.detachRemaining>0 ? [12345] : [] }]);
   if (args[1] === "volume" && args[2] === "snapshot") {
     const role = args[3] === id(2) ? "database" : "media";
     state.posts.push(role);
@@ -66,6 +68,7 @@ if (args.includes("patch")) {
     const deployment = state.deployments.find(value => value.metadata.name === name);
     if (patch[0].value !== deployment.metadata.uid || patch[1].value !== deployment.metadata.resourceVersion) return finish(null, 1);
     deployment.spec.replicas = patch.at(-1).value; deployment.metadata.generation++;
+    if(state.detachRace&&name==="pgsql"&&deployment.spec.replicas===0)state.detachRemaining=2;
     deployment.metadata.resourceVersion = String(Number(deployment.metadata.resourceVersion)+1);
     deployment.status = { observedGeneration: deployment.metadata.generation, readyReplicas: deployment.spec.replicas };
     state.scales.push({ name, replicas: deployment.spec.replicas }); return finish(deployment);
@@ -134,6 +137,12 @@ if (resource === "pods") return finish({ items: pods() });
 if (resource === "pod") return finish(pods().find(value => value.metadata.name === name));
 if (resource === "deployments") return finish({ items: state.deployments });
 if (resource === "deployment") return finish(state.deployments.find(value => value.metadata.name === name));
+if (resource === "volumeattachments") {
+  const pending=state.detachRemaining>0;
+  if(pending)state.detachRemaining--;
+  return finish({items:pending?["db-pv","media-pv"].map(pv=>({spec:{attacher:"dobs.csi.digitalocean.com",nodeName:"fixture-node",
+    source:{persistentVolumeName:pv}},status:{attached:true}})):[]});
+}
 if (resource === "lease") return finish(state.lease || "");
 if (resource === "hpa") return finish({ items: state.unsupportedHPA ? [{ spec: { scaleTargetRef: { name: "pgsql" } } }] : [] });
 if (resource === "cronjobs" || resource === "jobs") return finish({ items: [] });

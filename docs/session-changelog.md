@@ -1,5 +1,19 @@
 # Session Changelog
 
+## 2026-10-13 · Settle native disk detach before snapshot/resume
+
+Read-only CSI logs, provider actions and existing Pod conditions show the new
+database Pod requested06:56:53 before detach completed06:56:55. A new CSI
+attachment reported attached06:56:56, while actual attach did not occur until
+07:08:26–32; mount succeeded07:09:16 and Reticulum became Ready07:10:32.
+The minimal operator had equated Pod absence with completed detach.
+Wait only for the exact PV attachments to disappear and the two native GETs
+to confirm no attached Droplets, within the existing90s/5min boundaries.
+Keep resume180s, snapshots/Lease/identities/budgets/Job unchanged; no forced
+detach, CSI update or historical guardian. The replay fails with the original
+monthly_minimal_wait_timeout on8dfefee and succeeds with this local correction.
+No production pause, capture, installation, restore or calendar activation.
+
 ## 2026-10-13 · Keep the snapshot ID returned by the official POST
 
 The next real minimal attempt on f66d62e returned original1: successful DB

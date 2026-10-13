@@ -83,6 +83,19 @@ test("an unsupported autoscaler stops before any pause or provider mutation", { 
   const f = await fixture({ unsupportedHPA: true }), result = await f.run();
   assert.equal(result.code,1); assert.equal(result.state.posts.length,0); assert.equal(result.state.scales.length,0);
 });
+test("native entrypoint waits for CSI/provider detach before the two snapshot POSTs, then resumes normally", { timeout: 30000 }, async () => {
+  const f=await fixture({detachRace:true}),result=await f.run();
+  assert.equal(result.code,0,result.stderr);assert.equal(result.signal,null);
+  assert.equal(result.state.captureBeforeDetach,undefined);
+  assert.equal(result.state.detachRemaining,0);
+  assert.deepEqual(result.state.posts,["database","media"]);
+  const commands=result.state.commands, settled=commands.findLastIndex(c=>c.tool==="kubectl"&&c.args.includes("volumeattachments"));
+  const post=commands.findIndex(c=>c.tool==="curl"&&c.args.includes("POST"));
+  assert.ok(settled>=0&&settled<post);
+  assert.ok(result.state.deployments.every(d=>d.status.readyReplicas===d.spec.replicas));
+  assert.equal(result.state.objects.length,0);
+  await inspectPublishedMonthlyPoint(f.output);
+});
 test("expired exclusion abandons capture and resolves a concurrent recovery renewal by readback", { timeout: 30000 }, async () => {
   const f = await fixture({ expireLease: true, conflictOnResume: true }), result = await f.run();
   assert.equal(result.code,1);assert.equal(result.state.resumeConflictSeen,true);
